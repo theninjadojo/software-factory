@@ -51,6 +51,16 @@ def triggers(cfg: Config) -> list[tuple[str, str]]:
             + ([("conflicts", cfg.conflicts.label)] if cfg.conflicts.enabled else []))
 
 
+PRIORITY_RANK = {"priority: high": 0, "priority: low": 2}   # no label = 1 (normal)
+
+
+def priority_rank(issue: dict) -> int:
+    """Pickup order from a `priority: high` / `priority: low` label (lower first). It only orders issues that are
+    already eligible; it never makes one eligible. With both labels the higher priority wins."""
+    ranks = [PRIORITY_RANK[n] for lb in issue.get("labels", []) if (n := lb.get("name", "").strip().lower()) in PRIORITY_RANK]
+    return min(ranks, default=1)
+
+
 def human_comments(gh: GitHub, repo: str, num: int) -> list[str]:
     """Discussion by people (untrusted data). Our own comments are excluded: status lines and stage documents."""
     try:
@@ -756,13 +766,17 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         process_approvals(cfg, gh, conn, classifier)
     for repo in cfg.repos:
         handled: set[int] = set()
+        todo = []
         for kind, label in triggers(cfg):
             for issue in gh.labeled_issues(repo, label):
                 if issue["number"] in handled:            # another trigger label on it is handled first; this one waits
                     continue
                 handled.add(issue["number"])
-                if handle_issue(cfg, gh, conn, classifier, repo, issue, kind, label) == "paused":
-                    return
+                todo.append((kind, label, issue))
+        todo.sort(key=lambda t: priority_rank(t[2]))       # stable: equal priority keeps trigger order
+        for kind, label, issue in todo:
+            if handle_issue(cfg, gh, conn, classifier, repo, issue, kind, label) == "paused":
+                return
     if not cfg.dry_run:
         ci.watch_ci(cfg, gh, conn, lambda text, event="ci_result": alert(text, event=event),
                     lambda *a: run_fix(cfg, gh, *a), ci_submit(cfg, conn))
