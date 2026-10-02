@@ -75,3 +75,5 @@ enabled = true
 fix_rounds = 1
 wait_for_checks_minutes = 10
 timeout_minutes = 90
+queued_warn_minutes = 15     # CI queued this long without starting: warn (self-hosted runners may be offline)
+manual_wait_hours = 24       # keep watching this long for CI that a person starts by hand (repos with manual-only CI)

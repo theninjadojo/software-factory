@@ -167,10 +167,49 @@ class Watch(unittest.TestCase):
         self.assertEqual(self.go(FakeGH([run("unit", conclusion="failure")]), cfg)[0], "failed")
         self.assertEqual(self.fixes, [])
 
-    def test_no_checks_waits_then_reports(self):
+    def test_no_automatic_ci_is_noted_once_and_watching_continues(self):
         self.assertEqual(self.go(FakeGH())[0], "watching")
         self.age(11)
+        gh = FakeGH()
+        status, _, summary = self.go(gh)
+        self.assertEqual((status, summary), ("watching", "waiting-for-ci"))             # not abandoned
+        self.assertIn("start the CI workflow", gh.comments[0][2])
+        self.assertEqual(len(self.notes), 1)
+        self.go(gh)
+        self.assertEqual(len(self.notes), 1)                                           # told once, not every poll
+
+    def test_ci_started_by_hand_later_is_picked_up_and_gets_a_fresh_clock(self):
+        self.age(11)
+        self.go(FakeGH())                                                              # now waiting-for-ci
+        self.age(60 * 5)                                                               # five hours later someone runs CI
+        status, _, summary = self.go(FakeGH([run("a", "in_progress", None)]))
+        self.assertEqual((status, summary), ("watching", "ci running"))                # NOT timed out by the five idle hours
+        self.assertEqual(self.go(FakeGH([run("a")]))[0], "passed")
+
+    def test_gives_up_after_the_manual_wait(self):
+        self.age(11)
+        self.go(FakeGH())
+        self.age(60 * 25)
         self.assertEqual(self.go(FakeGH())[0], "no-ci")
+
+    def test_queued_ci_that_never_starts_points_at_the_runners(self):
+        queued = FakeGH([run("a", "queued", None)])
+        self.assertEqual(self.notes, [])
+        self.go(queued)
+        self.assertEqual(self.notes, [])                                               # not yet
+        self.age(16)
+        self.go(queued)
+        self.assertEqual(len(self.notes), 1)
+        self.assertIn("self-hosted", self.notes[0][1])
+        self.go(queued)
+        self.assertEqual(len(self.notes), 1)                                           # once
+        self.age(100)
+        self.assertEqual(self.go(queued)[0], "timed-out")                              # still eventually gives up
+
+    def test_running_ci_is_not_mistaken_for_queued(self):
+        self.age(60)
+        self.go(FakeGH([run("a", "in_progress", None), run("b", "queued", None, 2)]))
+        self.assertEqual(self.notes, [])
 
     def test_pending_times_out(self):
         self.age(100)

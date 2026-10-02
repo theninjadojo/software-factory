@@ -14,11 +14,11 @@ ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def normalize(checks: list[dict], statuses: list[dict]) -> list[dict]:
-    out = [{"id": c["id"], "name": c["name"], "state": ("pending" if c["status"] != "completed" else
+    out = [{"id": c["id"], "name": c["name"], "status": c["status"], "state": ("pending" if c["status"] != "completed" else
                                                        "success" if c.get("conclusion") in GOOD else "failure"),
             "conclusion": c.get("conclusion"), "url": c.get("html_url"), "actions": True,
             "summary": ((c.get("output") or {}).get("title") or "")} for c in checks]
-    out += [{"id": None, "name": s["context"], "state": s["state"] if s["state"] in ("pending", "success") else "failure",
+    out += [{"id": None, "name": s["context"], "status": s["state"], "state": s["state"] if s["state"] in ("pending", "success") else "failure",
              "conclusion": s["state"], "url": s.get("target_url"), "actions": False, "summary": s.get("description") or ""}
             for s in statuses]
     return out
@@ -81,14 +81,25 @@ def watch_ci(cfg, gh, conn, notify, fix) -> None:
                     continue
                 raise
             state = evaluate(items)
+            if state != "none" and last == "waiting-for-ci":      # CI that someone started by hand: start the clock now
+                dbm.update_pr(conn, repo, number, watch_started=time.time(), summary="ci running")
+                age, last = 0.0, "ci running"
             if state == "none":
-                if age >= cfg.ci.wait_for_checks_minutes:
-                    dbm.update_pr(conn, repo, number, status="no-ci", summary="no checks reported")
-                    msg = report(repo, number, url, "none", items, note="No checks appeared. CI may not run on this branch, or may need approval.")
+                if age >= cfg.ci.manual_wait_hours * 60:
+                    dbm.update_pr(conn, repo, number, status="no-ci", summary="no CI ever ran")
+                elif age >= cfg.ci.wait_for_checks_minutes and last != "waiting-for-ci":
+                    dbm.update_pr(conn, repo, number, summary="waiting-for-ci")
+                    msg = report(repo, number, url, "none", items, note=(
+                        "No automatic CI ran on this branch. If this repository runs CI manually, start the CI workflow on the "
+                        "branch from the Actions tab: the factory keeps watching and will report the result here."))
                     gh.comment(issue_repo, issue_num, msg)
-                    notify(f"No CI ran for {repo}#{number}\n{url}", "ci_result")
+                    notify(f"No automatic CI ran for {repo}#{number}. If CI is manual, run it on the branch; I'll keep watching.\n{url}", "ci_result")
                 continue
             if state == "pending":
+                if all(i["status"] in ("queued", "waiting", "pending") for i in items) and age >= cfg.ci.queued_warn_minutes and last != "queued-warned":
+                    dbm.update_pr(conn, repo, number, summary="queued-warned")
+                    notify(f"CI is queued but has not started for {repo}#{number} after {int(age)} minutes. If the repo uses self-hosted "
+                           f"runners, check that they are running.\n{url}", "ci_result")
                 if age >= cfg.ci.timeout_minutes:
                     dbm.update_pr(conn, repo, number, status="timed-out", summary="checks still pending")
                     gh.comment(issue_repo, issue_num, report(repo, number, url, "timed-out", items))

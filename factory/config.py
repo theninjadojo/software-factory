@@ -94,6 +94,8 @@ class CiCfg:
     wait_for_checks_minutes: int = 10  # how long to wait for any check to appear before reporting "no CI ran"
     timeout_minutes: int = 90
     log_tail_chars: int = 6000
+    queued_warn_minutes: int = 15      # CI queued this long without starting: say so (self-hosted runners may be offline)
+    manual_wait_hours: int = 24        # keep watching this long for CI that a person starts by hand
 
 
 @dataclass(frozen=True)
