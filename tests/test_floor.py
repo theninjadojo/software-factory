@@ -55,7 +55,7 @@ class Stations(unittest.TestCase):
 class Render(unittest.TestCase):
     def test_no_inline_styles_anywhere_because_the_csp_forbids_them(self):
         d = data(running=[run(1, "stage", "architect", 18, "A <b>title</b>")], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}])
-        html = floor.render(d, "tok", "architect", [NEED, ASK], lambda n, c: "<form></form>")
+        html = floor.render(d, "tok", "architect", [NEED, ASK], lambda n, c, b="/": "<form></form>")
         self.assertNotIn("style=", html)
         self.assertNotIn("<b>title</b>", html)
         self.assertIn("&lt;b&gt;title&lt;/b&gt;", html)
@@ -64,8 +64,8 @@ class Render(unittest.TestCase):
         evil = '<img src=x onerror=alert(1)>'
         d = data(running=[run(1, "stage", "architect", 18, evil)], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": evil}])
         need = {**NEED, "title": evil, "reason": evil}
-        html = floor.render(d, "tok", "build", [need], lambda n, c: "")
-        html += floor.render(d, "tok", "architect", [need], lambda n, c: "")
+        html = floor.render(d, "tok", "build", [need], lambda n, c, b="/": "")
+        html += floor.render(d, "tok", "architect", [need], lambda n, c, b="/": "")
         self.assertNotIn("<img", html)
 
     def test_unknown_station_falls_back_and_selection_is_marked(self):
@@ -75,7 +75,7 @@ class Render(unittest.TestCase):
         self.assertIn("<h2>Architect</h2>", floor.render(d, "t", "<script>", [], None))
 
     def test_the_tray_has_every_state(self):
-        forms = lambda n, c: f"[{n['issue']}]"
+        forms = lambda n, c, b="/": f"[{n['issue']}]"
         self.assertIn("Save a GitHub token", floor.tray(None, "t", forms))
         self.assertIn("Nothing needs you", floor.tray([], "t", forms))
         html = floor.tray([NEED, ASK], "t", forms)

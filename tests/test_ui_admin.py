@@ -342,6 +342,14 @@ class Labels(AdminCase):
         for needle in ("bug", "run:stage", "/labels/issue?repo="):
             self.assertIn(needle, html)
 
+    def refused(self, cookie, csrf, fields, back="/"):
+        """A refusal sends the person back to the page they were on, with the reason shown there once (never a different page)."""
+        s, h, _ = self.post(cookie, csrf, "/tickets/start", {**fields, "back": back})
+        self.assertEqual((s, h["Location"]), (303, back))
+        page = self.req("GET", back, cookie=cookie)[2]
+        self.assertIn('class="flash bad"', page)
+        self.assertNotIn('class="flash bad"', self.req("GET", back, cookie=cookie)[2])            # shown once
+
     def approvals(self):
         return self.db.execute("SELECT repo, issue, action FROM approvals ORDER BY issue").fetchall()
 
@@ -372,7 +380,7 @@ class Labels(AdminCase):
         _, _, html = self.req("GET", "/tickets", cookie=cookie)
         self.assertIn("starting", html)
         self.assertNotIn('name="action" value="build"', html)
-        self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="build"))[0], 400)
+        self.refused(cookie, csrf, self.fields(action="build"), "/tickets")
         self.assertEqual(len(self.approvals()), 1)
 
     def test_the_approval_written_by_the_ui_is_what_the_factory_runs(self):
@@ -399,9 +407,11 @@ class Labels(AdminCase):
         closed = {"number": 7, "title": "T", "state": "closed", "labels": []}
         for issue in (busy, queued, closed):
             self.gh.get_issue.return_value = issue
-            self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="build"))[0], 400)
+            self.refused(cookie, csrf, self.fields(action="build"))
         self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": []}
-        for f in (self.fields(action="rm -rf"), self.fields(action="factory:ready"), {"repo": "evil/repo", "n": "7", "action": "auto"}, self.fields(n="x", action="auto")):
+        for f in (self.fields(action="rm -rf"), self.fields(action="factory:ready")):
+            self.refused(cookie, csrf, f, "/tickets")
+        for f in ({"repo": "evil/repo", "n": "7", "action": "auto"}, self.fields(n="x", action="auto")):          # malformed: not a page the person was on
             self.assertEqual(self.post(cookie, csrf, "/tickets/start", f)[0], 400)
         self.gh.add_labels.assert_not_called()
         self.assertEqual(self.req("POST", "/tickets/start", urlencode(self.fields(action="auto")), cookie=cookie)[0], 403)
@@ -428,11 +438,48 @@ class Labels(AdminCase):
         self.gh.add_labels.assert_not_called()
         self.gh.remove_label.assert_called_once_with(self.REPO, 7, "factory:auto")
 
+    def test_an_action_returns_to_the_page_it_came_from_and_only_to_ours(self):
+        cookie, csrf = self.session()
+        for back, want in (("/", "/"), ("/?station=build", "/?station=build"), ("/tickets?repo=a%2Fb&state=open&page=1", "/tickets?repo=a%2Fb&state=open&page=1"),
+                           ("https://evil.example/", "/tickets"), ("//evil.example", "/tickets"), ("/settings", "/tickets"), ("/?station=<b>", "/tickets"), ("", "/tickets")):
+            self.db.execute("DELETE FROM approvals")
+            self.db.commit()
+            s, h, _ = self.post(cookie, csrf, "/tickets/start", {**self.fields(action="build"), "back": back})
+            self.assertEqual((s, h["Location"]), (303, want), back)
+
+    def test_the_result_message_is_shown_on_the_page_you_came_back_to(self):
+        cookie, csrf = self.session()
+        self.post(cookie, csrf, "/tickets/start", {**self.fields(action="build"), "back": "/"})
+        with mock.patch("factory.ui.server.L.needs_you", return_value=[]):
+            page = self.req("GET", "/", cookie=cookie)[2]
+            self.assertIn("Started.", page)
+            self.assertNotIn("Started.", self.req("GET", "/", cookie=cookie)[2])
+        self.post(cookie, csrf, "/tickets/start", {**self.fields(action="build"), "back": "/"})        # refused: already starting
+        with mock.patch("factory.ui.server.L.needs_you", return_value=[]):
+            fragment = self.req("GET", "/fragment/overview", cookie=cookie)[2]
+            self.assertNotIn("cannot be started", fragment)                                      # the refresh must not eat the message
+            self.assertIn("cannot be started", self.req("GET", "/", cookie=cookie)[2])
+
+    def test_accept_recommendations_from_the_floor_needs_no_stage_and_returns_there(self):
+        """Regression: the Floor's button sent no stage and was refused as 'does not match the ticket's questions'."""
+        cookie, csrf = self.session()
+        self.gh.repo_labels.return_value = [{"name": "factory:auto"}]
+        with mock.patch("factory.ui.labels.Q.record", return_value=("architect", True)) as rec:
+            s, h, _ = self.post(cookie, csrf, "/tickets/answer", {**self.fields(), "accept": "1", "back": "/?station=architect"})
+        self.assertEqual((s, h["Location"]), (303, "/?station=architect"))
+        self.assertIsNone(rec.call_args.args[3])                           # no stage given: the latest stage's questions
+        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:auto"])
+        with mock.patch("factory.ui.labels.Q.record") as rec:               # a single answer still must name its stage
+            s, h, _ = self.post(cookie, csrf, "/tickets/answer", {**self.fields(), "q": "q1", "o": "a", "back": "/"})
+        self.assertEqual(s, 303)
+        rec.assert_not_called()
+        self.assertIn("does not match", self.req("GET", "/tickets", cookie=cookie)[2])
+
     def test_skip_and_stage_actions_are_refused_when_nothing_is_waiting(self):
         cookie, csrf = self.session()
         self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:auto"}]}   # queued, no "human" decision
         for action in ("skip", "stage:architect", "build"):
-            self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action=action))[0], 400)
+            self.refused(cookie, csrf, self.fields(action=action))
         self.gh.remove_label.assert_not_called()
         self.gh.add_labels.assert_not_called()
 

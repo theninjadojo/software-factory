@@ -25,6 +25,36 @@ NEEDS_PERSON = "needs a person"
 NO_TOKEN = "Save a GitHub token on the Credentials page first."
 
 
+# After an action the browser goes back to the page the button was on, and the result is shown there once. The message is kept on
+# the server per session (never taken from the URL), so a link cannot make the page say something.
+_flash: dict = {}
+_flash_lock = threading.Lock()
+BACK = re.compile(r"^/(?:\?station=[a-z]{1,12}|tickets(?:\?[\w=&%.:/#+-]{0,300})?)?$")
+
+
+def flash_set(csrf: str, msg: str, kind: str = "ok") -> None:
+    with _flash_lock:
+        if len(_flash) > 200:
+            _flash.clear()
+        _flash[csrf] = (msg, kind)
+
+
+def flash_pop(csrf: str):
+    with _flash_lock:
+        return _flash.pop(csrf, None)
+
+
+def _back(form) -> str:
+    """Where to return to: only the Floor or the Tickets page, with their own query. Anything else goes to Tickets."""
+    b = form.get("back", "")
+    return b if BACK.fullmatch(b) and "//" not in b else "/tickets"
+
+
+def _done(h, form, csrf: str, msg: str, kind: str = "ok") -> None:
+    flash_set(csrf, msg, kind)
+    h._redirect(_back(form))
+
+
 class Refused(Exception):
     """A request we reject with a message safe to show."""
 
@@ -228,8 +258,14 @@ def list_get(h, q: dict, csrf: str) -> None:
     if label and text:
         issues = [i for i in issues if label in _names(i)]
     decisions = _decisions(h, repo)
-    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues, decisions, csrf, _asked(h, gh, cfg, repo, issues, decisions), _approved(h))
-          + pager(repo, state, label, text, page_no, more), csrf, FLASH.get(q.get("ok", "")))
+    from urllib.parse import urlencode
+    back = "/tickets?" + urlencode({"repo": repo, "state": state, "label": label, "q": text, "page": page_no})
+    if not BACK.fullmatch(back):
+        back = "/tickets"
+    shown = flash_pop(csrf) or (FLASH.get(q.get("ok", "")), "ok")
+    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names)
+          + table(cfg, repo, issues, decisions, csrf, _asked(h, gh, cfg, repo, issues, decisions), _approved(h), back)
+          + pager(repo, state, label, text, page_no, more), csrf, shown[0], shown[1])
 
 
 def filters(cfg, repo, state, label, text, names) -> str:
@@ -243,22 +279,23 @@ def filters(cfg, repo, state, label, text, names) -> str:
             f'<input name="q" placeholder="search title or #number" value="{esc(text)}"><button>Filter</button></form>')
 
 
-def action_forms(repo: str, n: int, acts, csrf: str) -> str:
+def action_forms(repo: str, n: int, acts, csrf: str, back: str = "/tickets") -> str:
     """One POST form per available action; the first is the primary button. The browser only names an action."""
-    hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
+    hidden = (f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
+              f'<input type="hidden" name="back" value="{esc(back)}">')
     return "".join(
         f'<form method="post" action="/tickets/start" class="inline">{hidden}'
         f'<button name="action" value="{esc(a)}" class="{"" if k == 0 else "secondary"}" title="{esc("Removes the trigger labels" if lab is None else "Applies " + lab)}" '
         f'aria-label="{esc(text)} #{int(n)}">{esc(text)}</button></form> ' for k, (a, text, lab) in enumerate(acts))
 
 
-def action_forms_for(need: dict, csrf: str) -> str:
+def action_forms_for(need: dict, csrf: str, back: str = "/") -> str:
     """The buttons for one row of the Floor's "Needs you" tray."""
     if need.get("questions"):
         hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(need["repo"])}"><input type="hidden" name="n" value="{int(need["issue"])}">'
         return (f'<form method="post" action="/tickets/answer" class="inline">{hidden}<button name="accept" value="1" '
                 f'aria-label="Accept recommendations for #{int(need["issue"])}">Accept recommendations</button></form> ')
-    return action_forms(need["repo"], need["issue"], need["acts"], csrf)
+    return action_forms(need["repo"], need["issue"], need["acts"], csrf, back)
 
 
 _needs_cache: dict = {"at": 0.0, "rows": None}
@@ -336,11 +373,11 @@ def _asked(h, gh, cfg, repo, issues, decisions) -> dict:
     return {n: cur for n, cur in results if cur and cur.pending()}
 
 
-def question_cards(repo: str, n: int, st, csrf: str) -> str:
+def question_cards(repo: str, n: int, st, csrf: str, back: str = "/tickets") -> str:
     """One card per question: a button per option, a free-text 'other', and Accept all recommendations. The browser only
     names a question and an option id; both are checked against the ticket's questions on GitHub when the answer arrives."""
     hidden = (f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
-              f'<input type="hidden" name="stage" value="{esc(st.stage)}">')
+              f'<input type="hidden" name="stage" value="{esc(st.stage)}"><input type="hidden" name="back" value="{esc(back)}">')
     cards = []
     for q in st.questions:
         ans = st.answers.get(q.id)
@@ -363,7 +400,7 @@ def question_cards(repo: str, n: int, st, csrf: str) -> str:
             f'the next stage starts.</p><div class="cards one">{"".join(cards)}</div><p>{accept}</p></details>')
 
 
-def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approved: frozenset | set = frozenset()) -> str:
+def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approved: frozenset | set = frozenset(), back: str = "/tickets") -> str:
     asked = asked or {}
     if not issues:
         return '<p class="muted">No issues match this filter.</p>'
@@ -377,7 +414,7 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
     def buttons(i) -> str:
         status, acts = actions_for(cfg, i, decisions.get((repo, i["number"])), (repo, i["number"]) in approved)
         note = f'<span class="muted">{esc(status)}</span> ' if status else ""
-        return note + action_forms(repo, i["number"], acts, csrf) + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
+        return note + action_forms(repo, i["number"], acts, csrf, back) + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
 
     def steps(i) -> str:
         names = set(_names(i))
@@ -394,7 +431,7 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
         f'<td data-l="Progress">{steps(i)}</td>'
         f'<td data-l="Labels">{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td data-l="Factory">{factory_cell(i["number"])}</td>'
         f'<td class="actions" data-l="Start">{buttons(i)}</td></tr>'
-        + (f'<tr class="questions"><td colspan="6">{question_cards(repo, i["number"], asked[i["number"]], csrf)}</td></tr>' if i["number"] in asked else "")
+        + (f'<tr class="questions"><td colspan="6">{question_cards(repo, i["number"], asked[i["number"]], csrf, back)}</td></tr>' if i["number"] in asked else "")
         for i in issues)
     return ('<div class="scroll"><table class="tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
@@ -525,7 +562,7 @@ def start(h, form, csrf: str) -> None:
         return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
     gh = _gh(h)
     if gh is None:
-        return _page(h, 400, "Tickets", "", csrf, NO_TOKEN, "bad")
+        return _done(h, form, csrf, NO_TOKEN, "bad")
     try:
         issue = gh.get_issue(repo, n)
         if "pull_request" in issue:
@@ -550,12 +587,12 @@ def start(h, form, csrf: str) -> None:
         with _needs_lock:
             _needs_cache["rows"] = None                      # the Floor's tray must not show it again
     except Refused as e:
-        return _render_issue(h, csrf, repo, n, str(e), "bad", 400)
+        return _done(h, form, csrf, str(e), "bad")
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: start %s on %s#%d failed", action, repo, n)
-        return _render_issue(h, csrf, repo, n, _github_error(e), "bad", 502)
+        return _done(h, form, csrf, _github_error(e), "bad")
     log.info("tickets: %s on %s#%d from the UI", "approved " + action if approval_for(cfg, action) else "started " + action, repo, n)
-    h._redirect(f"/tickets?repo={repo}&ok={'skipped' if action == 'skip' else 'started'}")
+    _done(h, form, csrf, FLASH["skipped" if action == "skip" else "started"])
 
 
 def answer(h, form, csrf: str) -> None:
@@ -574,10 +611,11 @@ def answer(h, form, csrf: str) -> None:
     picks = None if accept_all else {form.get("q", ""): ("other", other) if other else ("option", form.get("o", ""))}
     gh = _gh(h)
     if gh is None:
-        return _page(h, 400, "Tickets", "", csrf, NO_TOKEN, "bad")
+        return _done(h, form, csrf, NO_TOKEN, "bad")
     try:
-        if not re.fullmatch(r"[a-z]{1,20}", stage):
-            raise Refused("That answer does not match the ticket's questions. Reload the page.")
+        if stage or not accept_all:      # accepting every recommendation needs no stage: the latest stage's questions are used
+            if not re.fullmatch(r"[a-z]{1,20}", stage):
+                raise Refused("That answer does not match the ticket's questions. Reload the page.")
         issue = gh.get_issue(repo, n)
         if "pull_request" in issue:
             return h._send(404, "no such issue", "text/plain")
@@ -586,15 +624,13 @@ def answer(h, form, csrf: str) -> None:
             raise Refused(f"Answers cannot be recorded now ({status}).")
         if status != "queued":
             _existing(gh, repo, cfg.auto_label)               # checked before anything is posted
-        _, done = Q.record(gh, repo, n, stage, picks, "factory UI", accept_all)
+        _, done = Q.record(gh, repo, n, stage or None, picks, "factory UI", accept_all)
         if done and status != "queued":
             gh.add_labels(repo, n, [cfg.auto_label])
-    except Q.Refused as e:
-        return _render_issue(h, csrf, repo, n, str(e), "bad", 400)
-    except Refused as e:
-        return _render_issue(h, csrf, repo, n, str(e), "bad", 400)
+    except (Q.Refused, Refused) as e:
+        return _done(h, form, csrf, str(e), "bad")
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: answer on %s#%d failed", repo, n)
-        return _render_issue(h, csrf, repo, n, _github_error(e), "bad", 502)
+        return _done(h, form, csrf, _github_error(e), "bad")
     log.info("tickets: answers recorded on %s#%d from the UI", repo, n)
-    h._redirect(f"/tickets?repo={repo}&ok={'continued' if done else 'answered'}")
+    _done(h, form, csrf, FLASH["continued" if done else "answered"])

@@ -107,3 +107,7 @@ table becomes cards. The theme is dark only, using system fonts and no inline st
 buttons queue a person's approval in the factory's database, the same row the Telegram buttons write, and the factory runs the ticket
 at its next poll without asking the classifier again (a label would send it back through the classifier, which can answer
 "needs a person" again). While an approval is waiting the ticket shows *starting* and has no buttons.
+
+**Where you land.** An action returns you to the page you clicked from (the Floor, with the same station selected, or the Tickets page
+with the same filters) and the result is shown there once. The message is kept on the server for your session; nothing in the URL can
+make a page say something. The return address is checked against the Floor and Tickets pages only.

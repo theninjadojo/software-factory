@@ -214,7 +214,9 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/fragment/overview"):
             body = views.overview_fragment(self.app.overview(), csrf, q.get("station"), L.needs_you(self), L.action_forms_for)
             if path == "/":
-                return self._send(200, views.page("Factory floor", f'<div id="live">{body}</div>', path, csrf, wide=True))
+                shown = L.flash_pop(csrf)                  # the result of the button that sent you back here (the refresh fragment never takes it)
+                return self._send(200, views.page("Factory floor", f'<div id="live">{body}</div>', path, csrf, wide=True,
+                                                  flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
         route = admin.GET.get(path)
         if route:

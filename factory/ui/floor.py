@@ -246,7 +246,7 @@ def status_row(d: dict, csrf: str, now: float) -> str:
             f'<span class="fl-grow"></span>{queue}{btn}</div>' + (f'<p class="bad-text">last error: {esc(err)}</p>' if err else ""))
 
 
-def tray(needs, csrf: str, forms) -> str:
+def tray(needs, csrf: str, forms, back: str = "/") -> str:
     head = '<h2 id="needs">Needs you</h2>'
     if needs is None:
         return f'<section class="fl-tray" aria-labelledby="needs">{head}<p class="muted">Save a GitHub token on the Credentials page to see the tickets waiting for you.</p></section>'
@@ -255,7 +255,7 @@ def tray(needs, csrf: str, forms) -> str:
     cards = "".join(
         f'<div class="card fl-need"><p><span class="badge warn">{esc(n["repo"].split("/")[-1])}#{int(n["issue"])}</span> '
         f'<span class="muted">{esc(n["reason"])}</span></p><p class="fl-t">{esc(n["title"])}</p>'
-        f'<div class="fl-acts">{forms(n, csrf)}<a class="btn secondary" href="/tickets?repo={esc(n["repo"])}&amp;q=%23{int(n["issue"])}">Open</a></div></div>'
+        f'<div class="fl-acts">{forms(n, csrf, back)}<a class="btn secondary" href="/tickets?repo={esc(n["repo"])}&amp;q=%23{int(n["issue"])}">Open</a></div></div>'
         for n in needs[:6])
     more = f'<p class="muted"><a href="/tickets">{len(needs) - 6} more in Tickets →</a></p>' if len(needs) > 6 else ""
     return f'<section class="fl-tray" aria-labelledby="needs">{head}<div class="fl-cards">{cards}</div>{more}</section>'
@@ -268,7 +268,7 @@ def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=No
     nodes = "".join(node(sid, live[sid], sel) for sid in ORDER)
     floor = (f'<div class="fl-grid"><div><div class="fl-wrap"><div class="fl-map" role="group" aria-label="Factory floor, live">'
              f'{belts(live)}{crates(live)}{nodes}</div></div>{rail(live, sel)}</div>{inspector(sel, live[sel], d, now)}</div>')
-    out = status_row(d, csrf, now) + kpis(d, needs) + floor + tray(needs, csrf, forms or (lambda n, c: ""))
+    out = status_row(d, csrf, now) + kpis(d, needs) + floor + tray(needs, csrf, forms or (lambda n, c, b="/": ""), f"/?station={sel}")
     out += f"<h2>Recent runs</h2>{views.runs_table(d['runs'])}"
     if d["prs"]:
         out += f"<h2>PRs being watched</h2>{views.prs_table(d['prs'])}"
