@@ -115,3 +115,20 @@ make a page say something. The return address is checked against the Floor and T
 **Finishing on the Floor.** A ticket with open questions shows its question cards right in the *Needs you* tray: one button per option, a
 free-text answer, and *Accept recommendations*. A ticket the factory asked about shows Run <stage> / Build anyway / Skip there too. Nothing
 sends you to another page, and the live refresh pauses while you are typing or a field has focus, so an answer in progress is never lost.
+
+## Needs you (page and Floor section)
+
+`/needs` (also the section at the bottom of the Floor, and a tab with a count badge on phones) lists every ticket waiting for a person,
+newest first, with filters for *Questions* and *Decisions*. Each row says who and why, and puts the recommendation first:
+
+- **A decision** (the factory was unsure): the reason, a confidence meter, and *Run <stage>* (recommended) / *Build anyway* / *Skip*.
+- **Questions** from a stage: how many need a person and how many were safe defaults. *Accept recommendations* records the
+  recommended option for every question not yet answered. *Answer* opens the questions: an option per question (the recommended one is
+  tagged), or your own words, then **Send answers**, which records what you chose (the button counts how many questions have an
+  answer). A ticket with more than two questions opens them in a popup; with scripts off, the form is on the Tickets page.
+- **Accept recommendations on N tickets** (two or more tickets with questions) first shows exactly which answer each question will
+  get, then asks you to confirm. Safe defaults are never listed because the factory has already accepted them.
+
+Everything is checked on the server like the Tickets page's answers: the repository must be configured, ticket numbers are validated,
+and each ticket's questions are re-read from GitHub, so a page that is out of date cannot record a stale answer.
+The page refreshes itself, but never while a popup is open, a field is focused, or an option is chosen.

@@ -29,7 +29,7 @@ NO_TOKEN = "Save a GitHub token on the Credentials page first."
 # the server per session (never taken from the URL), so a link cannot make the page say something.
 _flash: dict = {}
 _flash_lock = threading.Lock()
-BACK = re.compile(r"^/(?:\?station=[a-z]{1,12}|tickets(?:\?[\w=&%.:/#+-]{0,300})?)?$")
+BACK = re.compile(r"^/(?:\?(?:station|need)=[a-z]{1,12}(?:&(?:station|need)=[a-z]{1,12})?|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?)?$")
 
 
 def flash_set(csrf: str, msg: str, kind: str = "ok") -> None:
@@ -293,13 +293,19 @@ def action_forms_for(need: dict, csrf: str, back: str = "/") -> str:
     """Everything needed to finish a "Needs you" row on the Floor: the buttons for a ticket the factory asked about, or the question
     cards (an option per question, a free-text answer, and Accept recommendations) for one with questions."""
     if need.get("questions"):
-        return question_cards(need["repo"], need["issue"], need["st"], csrf, back, True)
+        return question_form(need["repo"], need["issue"], need["st"], csrf, back)
     return action_forms(need["repo"], need["issue"], need["acts"], csrf, back)
 
 
 _needs_cache: dict = {"at": 0.0, "rows": None}
 _needs_lock = threading.Lock()
 NEEDS_TTL = 20      # seconds: the Floor refreshes every 5s, GitHub is asked at most this often
+
+
+def needs_cached():
+    """The tray's rows if they were read recently, else None. Never calls GitHub: the nav badge uses it on every page."""
+    with _needs_lock:
+        return _needs_cache["rows"] if _needs_cache["rows"] is not None and time.time() - _needs_cache["at"] < NEEDS_TTL * 6 else None
 
 
 def needs_you(h) -> list | None:
@@ -328,8 +334,11 @@ def needs_you(h) -> list | None:
                 d = decisions.get((repo, i["number"]))
                 status, acts = actions_for(cfg, i, d, (repo, i["number"]) in queued)
                 if status == NEEDS_PERSON:
+                    detail = (d or {}).get("detail", "")
+                    m = re.search(r"cls=(\w+)/(\w+)/human=\w+/conf=([0-9.]+)", detail)
                     rows.append({"repo": repo, "issue": i["number"], "title": i.get("title", "")[:120], "acts": acts, "at": (d or {}).get("decided_at", 0),
-                                 "reason": ((d or {}).get("detail", "").rsplit(";", 1)[-1].strip() or "needs a person")[:80]})
+                                 "reason": (detail.rsplit(";", 1)[-1].strip() or "needs a person")[:80],
+                                 **({"kind": m.group(1), "complexity": m.group(2), "conf": min(1.0, float(m.group(3)))} if m else {})})
                 elif i["number"] in waiting.get(repo, ()) and status not in ("closed", "running", "queued"):
                     rows.append({"repo": repo, "issue": i["number"], "title": i.get("title", "")[:120], "acts": [], "questions": True,
                                  "at": (decisions.get((repo, i["number"])) or {}).get("decided_at", 0), "reason": "questions waiting for you"})
@@ -379,31 +388,32 @@ def _asked(h, gh, cfg, repo, issues, decisions) -> dict:
     return {n: cur for n, cur in results if cur and cur.pending()}
 
 
-def question_cards(repo: str, n: int, st, csrf: str, back: str = "/tickets", is_open: bool = False) -> str:
-    """One card per question: a button per option, a free-text 'other', and Accept all recommendations. The browser only
-    names a question and an option id; both are checked against the ticket's questions on GitHub when the answer arrives."""
+def question_form(repo: str, n: int, st, csrf: str, back: str = "/tickets") -> str:
+    """One form for all of a stage's open questions: an option per question (radio), a free-text answer, Send answers for what was
+    chosen, and Accept all recommendations for the rest. The browser only names question and option ids; both are checked against
+    the questions the factory posted on the ticket when the answer arrives."""
     hidden = (f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
               f'<input type="hidden" name="stage" value="{esc(st.stage)}"><input type="hidden" name="back" value="{esc(back)}">')
-    cards = []
-    for q in st.questions:
-        ans = st.answers.get(q.id)
-        cls = badge("safe default", "good") if q.safe else badge("needs a person", "warn") + (f' <span class="muted">{esc(q.why)}</span>' if q.why else "")
-        qh = hidden + f'<input type="hidden" name="q" value="{esc(q.id)}">'
-        buttons = "".join(f'<button name="o" value="{esc(o)}" class="{"" if o == q.recommended else "secondary"}" '
-                          f'aria-label="{esc(q.id)}: {esc(lab)}">{esc(lab)}{" (recommended)" if o == q.recommended else ""}</button> '
-                          for o, lab in q.options)
-        cards.append(
-            f'<div class="card question"><p><strong>{esc(q.id)}.</strong> {esc(q.text)} {cls}</p>'
-            f'<p class="muted">Recommended: {esc(q.label(q.recommended))}: {esc(q.reason)}</p>'
-            f'<p>{esc(Q.describe(q, ans))}</p>'
-            f'<form method="post" action="/tickets/answer" class="inline">{qh}{buttons}</form>'
-            f'<form method="post" action="/tickets/answer" class="filters">{qh}<input name="other" maxlength="{Q.MAX_OTHER}" required '
-            f'placeholder="Other: your own answer" aria-label="Other answer to {esc(q.id)}"><button class="secondary">Answer</button></form></div>')
-    accept = (f'<form method="post" action="/tickets/answer" class="inline">{hidden}<button name="accept" value="1" '
-              f'title="Records the recommended option for every question not answered yet, then starts the next stage">Accept all recommendations</button></form>')
-    return (f'<details{" open" if is_open else ""}><summary>{len(st.pending())} question(s) from the {esc(st.stage)} need an answer</summary>'
-            f'<p class="muted">Answers are posted on the ticket as the factory\'s account. When no question needing a person is left, '
-            f'the next stage starts.</p><div class="cards one">{"".join(cards)}</div><p>{accept}</p></details>')
+    blocks = []
+    for k, q in enumerate(st.questions, 1):
+        cls = badge("safe default", "good") if q.safe else badge("needs a person", "bad") + (f' <span class="muted">{esc(q.why)}</span>' if q.why else "")
+        head = f'<div class="nd-qhead"><span class="muted fl-mono">{k} of {len(st.questions)}</span> {cls}</div><h3 class="nd-qt">{esc(q.text)}</h3>'
+        if q.id in st.answers:
+            blocks.append(f'<div class="nd-q" data-q="done">{head}<p class="muted">{esc(Q.describe(q, st.answers[q.id]))}</p></div>')
+            continue
+        opts = "".join(
+            f'<label class="nd-opt{" rec" if o == q.recommended else ""}"><input type="radio" name="a_{esc(q.id)}" value="{esc(o)}">'
+            f'<span class="nd-r"></span><span class="fl-grow">{esc(lab)}</span>'
+            + ('<span class="badge warn">Recommended</span>' if o == q.recommended else "") + "</label>" for o, lab in q.options)
+        blocks.append(
+            f'<div class="nd-q" data-q="open">{head}<div class="nd-opts" role="radiogroup" aria-label="{esc(q.text)}">{opts}</div>'
+            f'<label class="muted nd-own">Or write your own<input name="x_{esc(q.id)}" maxlength="{Q.MAX_OTHER}" placeholder="Your own answer"></label>'
+            f'<p class="muted nd-why">Recommended: {esc(q.label(q.recommended))}. {esc(q.reason)}</p></div>')
+    return (f'<form method="post" action="/tickets/answer" class="nd-form">{hidden}<div class="nd-qs">{"".join(blocks)}</div>'
+            '<div class="nd-foot"><button name="send" value="1" class="nd-send">Send answers</button> '
+            '<button name="accept" value="1" class="secondary" formnovalidate '
+            'title="Records the recommended option for every question not answered yet, then starts the next stage">Accept all recommendations</button>'
+            '<span class="muted">Answers are posted on the ticket as the factory\'s account. The next stage starts at the next poll.</span></div></form>')
 
 
 def _epoch(iso) -> float:
@@ -459,7 +469,7 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
         f'<td data-l="Progress">{steps(i)}</td>'
         f'<td data-l="Labels">{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td data-l="Factory">{factory_cell(i["number"])}</td>'
         f'<td class="actions" data-l="Start">{buttons(i)}</td></tr>'
-        + (f'<tr class="questions"><td colspan="6">{question_cards(repo, i["number"], asked[i["number"]], csrf, back)}</td></tr>' if i["number"] in asked else "")
+        + (f'<tr class="questions"><td colspan="6">{question_form(repo, i["number"], asked[i["number"]], csrf, back)}</td></tr>' if i["number"] in asked else "")
         for i in issues)
     return ('<div class="scroll"><table class="tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
@@ -623,11 +633,39 @@ def start(h, form, csrf: str) -> None:
     _done(h, form, csrf, FLASH["skipped" if action == "skip" else "started"])
 
 
+def _record(gh, cfg, h, repo: str, n: int, stage, picks, accept_all: bool) -> bool:
+    """Record a person's answers on one ticket, after the same checks wherever they come from. True when nothing needing a person is
+    left, in which case the auto label starts the next stage through the factory's normal gates."""
+    issue = gh.get_issue(repo, n)
+    if "pull_request" in issue:
+        raise Refused("That is a pull request, not a ticket.")
+    status, _ = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)))
+    if status in ("closed", "running"):
+        raise Refused(f"Answers cannot be recorded now ({status}).")
+    if status != "queued":
+        _existing(gh, repo, cfg.auto_label)               # checked before anything is posted
+    _, done = Q.record(gh, repo, n, stage, picks, "factory UI", accept_all)
+    if done and status != "queued":
+        gh.add_labels(repo, n, [cfg.auto_label])
+    return done
+
+
+def _picks(form) -> dict:
+    """The answers in the form: a_<question> is an option id, x_<question> is the person's own words (which win)."""
+    picks = {}
+    for k, v in form.items():
+        if k.startswith("a_") and v:
+            picks[k[2:]] = ("option", v)
+    for k, v in form.items():
+        if k.startswith("x_") and v.strip():
+            picks[k[2:]] = ("other", v.strip())
+    return picks
+
+
 def answer(h, form, csrf: str) -> None:
-    """A person's answer to an open question, or Accept all recommendations. Posted as the factory's account in the marked
-    answers comment, which the factory then reads as a person's input (never as an instruction). The question and option ids
-    are validated against the questions the factory posted on the ticket; when nothing needing a person is left, the auto
-    label starts the next stage through the factory's normal gates."""
+    """A person's answers to open questions, or Accept all recommendations. Posted as the factory's account in the marked answers
+    comment, which the factory then reads as a person's input (never as an instruction). The question and option ids are validated
+    against the questions the factory posted on the ticket."""
     cfg = h.app.cfg()
     try:
         repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
@@ -635,8 +673,7 @@ def answer(h, form, csrf: str) -> None:
         return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
     stage = form.get("stage", "")
     accept_all = form.get("accept") == "1"
-    other = (form.get("other") or "").strip()
-    picks = None if accept_all else {form.get("q", ""): ("other", other) if other else ("option", form.get("o", ""))}
+    picks = None if accept_all else _picks(form)
     gh = _gh(h)
     if gh is None:
         return _done(h, form, csrf, NO_TOKEN, "bad")
@@ -644,21 +681,44 @@ def answer(h, form, csrf: str) -> None:
         if stage or not accept_all:      # accepting every recommendation needs no stage: the latest stage's questions are used
             if not re.fullmatch(r"[a-z]{1,20}", stage):
                 raise Refused("That answer does not match the ticket's questions. Reload the page.")
-        issue = gh.get_issue(repo, n)
-        if "pull_request" in issue:
-            return h._send(404, "no such issue", "text/plain")
-        status, _ = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)))
-        if status in ("closed", "running"):
-            raise Refused(f"Answers cannot be recorded now ({status}).")
-        if status != "queued":
-            _existing(gh, repo, cfg.auto_label)               # checked before anything is posted
-        _, done = Q.record(gh, repo, n, stage or None, picks, "factory UI", accept_all)
-        if done and status != "queued":
-            gh.add_labels(repo, n, [cfg.auto_label])
+        if not accept_all and not picks:
+            raise Refused("Choose an answer first, or accept the recommendations.")
+        done = _record(gh, cfg, h, repo, n, stage or None, picks, accept_all)
     except (Q.Refused, Refused) as e:
         return _done(h, form, csrf, str(e), "bad")
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: answer on %s#%d failed", repo, n)
         return _done(h, form, csrf, _github_error(e), "bad")
+    with _needs_lock:
+        _needs_cache["rows"] = None                          # the tray must not show it again
     log.info("tickets: answers recorded on %s#%d from the UI", repo, n)
     _done(h, form, csrf, FLASH["continued" if done else "answered"])
+
+
+TICKETS = re.compile(r"^[\w.-]+/[\w.-]+#\d{1,9}$")
+
+
+def answer_all(h, form, csrf: str) -> None:
+    """Accept the recommendations on several tickets at once. The person has just been shown what each recommendation is; the tickets
+    named here are checked like any other (configured repository, valid number) and every ticket's questions are re-read from GitHub."""
+    cfg = h.app.cfg()
+    refs = [t for t in (form.get("tickets") or "").split(",") if t][:20]
+    if not refs or any(not TICKETS.fullmatch(t) for t in refs):
+        return _done(h, form, csrf, "That list of tickets is not valid. Reload the page.", "bad")
+    gh = _gh(h)
+    if gh is None:
+        return _done(h, form, csrf, NO_TOKEN, "bad")
+    ok, failed = 0, []
+    for ref in refs:
+        repo, _, num = ref.rpartition("#")
+        try:
+            _repo(cfg, repo), _number(num)
+            _record(gh, cfg, h, repo, int(num), None, None, True)
+            ok += 1
+        except (Q.Refused, Refused, urllib.error.URLError, OSError):
+            failed.append(ref.split("/")[-1])
+    with _needs_lock:
+        _needs_cache["rows"] = None
+    log.info("tickets: recommendations accepted on %d ticket(s) from the UI, %d failed", ok, len(failed))
+    msg = f"Recommendations accepted on {ok} ticket{'s' if ok != 1 else ''}." + (f" Could not do: {', '.join(failed)}." if failed else "")
+    _done(h, form, csrf, msg, "bad" if failed and not ok else "ok")

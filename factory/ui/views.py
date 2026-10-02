@@ -7,7 +7,7 @@ import time
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
-NAV = [("/", "Floor"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
+NAV = [("/", "Floor"), ("/needs", "Needs you"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
        ("/settings", "Settings"), ("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram")]
 PRIMARY = 4         # the first four stay on the phone tab bar; the rest sit behind "More"
 
@@ -62,9 +62,10 @@ def csrf_field(csrf: str) -> str:
     return f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
 
 
-def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False) -> str:
+def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None) -> str:
     items = list(nav or NAV)
-    link = lambda p, n, extra="": f'<a href="{p}"{" class=\"" + ("active " if p == active else "") + extra + "\"" if (p == active or extra) else ""}>{esc(n)}</a>'
+    count = lambda p: f' <span class="navbadge">{int(badges[p])}</span>' if badges and badges.get(p) else ""
+    link = lambda p, n, extra="": f'<a href="{p}"{" class=\"" + ("active " if p == active else "") + extra + "\"" if (p == active or extra) else ""}>{esc(n)}{count(p)}</a>'
     links = "".join(link(p, n, "sec" if i >= PRIMARY else "") for i, (p, n) in enumerate(items))
     more = ("".join(link(p, n) for p, n in items[PRIMARY:]))
     more_on = " active" if any(p == active for p, _ in items[PRIMARY:]) else ""
@@ -89,10 +90,10 @@ def login_page(error: str | None = None, setup_hint: bool = False) -> str:
 
 
 
-def overview_fragment(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None) -> str:
+def overview_fragment(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None, flt: str = "") -> str:
     """The Floor page body (see floor.py)."""
     from . import floor
-    return floor.render(d, csrf, selected, needs, forms)
+    return floor.render(d, csrf, selected, needs, forms, flt)
 
 
 def runs_table(runs: list[dict]) -> str:

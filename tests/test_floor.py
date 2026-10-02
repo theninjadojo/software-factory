@@ -82,10 +82,10 @@ class Render(unittest.TestCase):
         self.assertIn("Save a GitHub token", floor.tray(None, "t", forms))
         self.assertIn("Nothing needs you", floor.tray([], "t", forms))
         html = floor.tray([NEED, ASK], "t", forms)
-        self.assertIn("[13]", html) and self.assertIn("[19]", html)
+        self.assertIn("shop-web#13", html)
+        self.assertIn("shop-web#19", html)
         self.assertIn("https://github.com/your-org/shop-web/issues/13", html)         # the ticket on GitHub, not another page of this UI
-        self.assertIn("fl-need wide", html)                                           # a ticket with questions gets the full row
-        many = floor.tray([dict(NEED, issue=i) for i in range(9)], "t", forms)
+        many = floor.tray([dict(NEED, issue=i) for i in range(15)], "t", forms)
         self.assertIn("3 more in Tickets", many)
 
 
@@ -131,9 +131,8 @@ class Inline(UiCase):
         cookie, _ = self.session()
         with mock.patch("factory.ui.server.L.needs_you", return_value=[ASK, NEED]):
             html = self.req("GET", "/?station=build", cookie=cookie)[2]
-        self.assertIn("<details open>", html)
-        for needle in ('name="o" value="a"', 'name="o" value="b"', 'name="other"', 'name="accept" value="1"', 'name="stage" value="architect"',
-                       'name="back" value="/?station=build"', "Run analyst"):
+        for needle in ('name="a_q1" value="a"', 'name="a_q1" value="b"', 'name="x_q1"', 'name="accept" value="1"', 'name="send" value="1"',
+                       'name="stage" value="architect"', 'name="back" value="/?station=build"', "Run analyst", "nd-tog"):
             self.assertIn(needle, html)
 
     def test_needs_you_attaches_the_questions_and_drops_stale_rows(self):
@@ -161,6 +160,59 @@ class Inline(UiCase):
         self.assertEqual([r["issue"] for r in rows], [19])                         # #20 is already answered: no longer waiting
         self.assertEqual(rows[0]["st"].stage, "architect")
         L._needs_cache.update(at=0.0, rows=None)
+
+
+def many(n):
+    return Q.StageQuestions("architect", [Q.Question(f"q{i}", f"Question {i}?", (("a", "A"), ("b", "B")), "a", "why", Q.PERSON) for i in range(1, n + 1)])
+
+
+class Needs(UiCase):
+    """The Needs-you redesign: rows, filters, popup, batched answers, bulk accept, its own page and nav count."""
+
+    def test_rows_filters_popup_and_bulk(self):
+        rows = [ASK, dict(ASK, issue=20, st=many(1)), dict(ASK, issue=21, st=many(3)), NEED]
+        html = floor.tray(rows, "tok", None, "/?station=build")
+        self.assertIn("nd-tog", html)                                              # one or two questions: inline
+        self.assertIn('<dialog id="nd-d2"', html)                                  # three questions: a popup
+        self.assertIn('data-dialog="nd-d2"', html)
+        self.assertIn("<noscript>", html)                                          # and a link when scripts are off
+        self.assertIn("Recommended: <b>run analyst</b>", html)
+        self.assertIn('action="/tickets/answer-all"', html)                        # bulk accept, behind a "these are the answers" list
+        self.assertIn('name="tickets" value="your-org/shop-web#19,your-org/shop-web#20,your-org/shop-web#21"', html)
+        q = floor.tray(rows, "tok", None, "/?station=build", "questions")
+        self.assertNotIn("Run analyst", q)
+        self.assertIn('class="on" href="/?station=build&amp;need=questions"', q)
+        d = floor.tray(rows, "tok", None, "/?station=build", "decisions")
+        self.assertIn("Run analyst", d)
+        self.assertNotIn("nd-tog", d)
+        self.assertNotIn("answer-all", d)                                          # fewer than two tickets with questions: no bulk button
+
+    def test_the_confidence_meter_and_meta_come_from_the_decision(self):
+        row = dict(NEED, kind="feature", complexity="high", conf=0.5)
+        html = floor.tray([row], "t", None)
+        self.assertIn('<meter class="nd-meter" min="0" max="1" value="0.50"', html)
+        self.assertIn("feature · high complexity", html)
+        self.assertNotIn("style=", html)
+
+    def test_needs_page_nav_count_and_fragment(self):
+        cookie, _ = self.session()
+        with mock.patch("factory.ui.server.L.needs_you", return_value=[ASK, NEED]):
+            s, _, html = self.req("GET", "/needs", cookie=cookie)
+            frag = self.req("GET", "/fragment/needs?need=questions", cookie=cookie)[2]
+        self.assertEqual(s, 200)
+        self.assertIn('data-src="/fragment/needs"', html)
+        self.assertIn('<span class="navbadge">2</span>', html)
+        self.assertIn("nd-list", frag)
+        self.assertNotIn("Run analyst", frag)
+        self.assertEqual(self.req("GET", "/fragment/needs")[0], 401)
+        self.assertNotIn("style=", html)
+
+    def test_the_back_address_allows_needs_and_the_filter_only(self):
+        from factory.ui import labels as L
+        for ok in ("/needs", "/needs?need=questions", "/?need=decisions", "/?station=build&need=questions"):
+            self.assertTrue(L.BACK.fullmatch(ok), ok)
+        for bad in ("/needs?x=1", "/?need=<b>", "//evil", "/needs/../settings", "/?station=a&station=b&need=c"):
+            self.assertFalse(L.BACK.fullmatch(bad), bad)
 
 
 class Pages(UiCase):

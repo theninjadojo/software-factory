@@ -475,6 +475,39 @@ class Labels(AdminCase):
         rec.assert_not_called()
         self.assertIn("does not match", self.req("GET", "/tickets", cookie=cookie)[2])
 
+    def test_several_answers_are_sent_together_and_validated(self):
+        cookie, csrf = self.session()
+        self.gh.repo_labels.return_value = [{"name": "factory:auto"}]
+        with mock.patch("factory.ui.labels.Q.record", return_value=("architect", False)) as rec:
+            s, h, _ = self.post(cookie, csrf, "/tickets/answer", {**self.fields(), "stage": "architect", "a_q1": "a", "a_q2": "b", "x_q2": "  my own  ",
+                                                                    "send": "1", "back": "/needs"})
+        self.assertEqual((s, h["Location"]), (303, "/needs"))
+        self.assertEqual(rec.call_args.args[4], {"q1": ("option", "a"), "q2": ("other", "my own")})      # typed words win over the radio
+        self.assertFalse(rec.call_args.args[6])
+        with mock.patch("factory.ui.labels.Q.record") as rec:                                           # nothing chosen: refused, never recorded
+            s, h, _ = self.post(cookie, csrf, "/tickets/answer", {**self.fields(), "stage": "architect", "send": "1", "back": "/"})
+        rec.assert_not_called()
+        self.assertEqual(s, 303)
+        self.assertIn("Choose an answer first", self.req("GET", "/", cookie=cookie)[2])
+
+    def test_accept_on_several_tickets_validates_each_one(self):
+        cookie, csrf = self.session()
+        self.gh.repo_labels.return_value = [{"name": "factory:auto"}]
+        seen = []
+        with mock.patch("factory.ui.labels.Q.record", side_effect=lambda gh, repo, n, *a: seen.append((repo, n, a[-1])) or ("architect", True)):
+            s, h, _ = self.post(cookie, csrf, "/tickets/answer-all", {"tickets": f"{self.REPO}#7,{self.REPO}#8", "back": "/needs"})
+        self.assertEqual((s, h["Location"]), (303, "/needs"))
+        self.assertEqual(seen, [(self.REPO, 7, True), (self.REPO, 8, True)])                             # accept_all, every ticket re-read from GitHub
+        for bad in ("", "evil/repo#7", f"{self.REPO}#x", f"{self.REPO}#7;rm", "a#1," * 3):
+            with mock.patch("factory.ui.labels.Q.record") as rec:
+                s, _, _ = self.post(cookie, csrf, "/tickets/answer-all", {"tickets": bad, "back": "/"})
+            rec.assert_not_called()
+            self.assertEqual(s, 303, bad)
+        with mock.patch("factory.ui.labels.Q.record") as rec:                                              # a repository that is not configured
+            self.post(cookie, csrf, "/tickets/answer-all", {"tickets": "evil/repo#7", "back": "/"})
+        rec.assert_not_called()
+        self.assertEqual(self.req("POST", "/tickets/answer-all", urlencode({"tickets": f"{self.REPO}#7"}), cookie=cookie)[0], 403)
+
     def test_skip_and_stage_actions_are_refused_when_nothing_is_waiting(self):
         cookie, csrf = self.session()
         self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:auto"}]}   # queued, no "human" decision

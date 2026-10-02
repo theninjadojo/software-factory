@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 from .. import db as dbm
 from .. import pause
 from ..config import load
-from . import admin, views
+from . import admin, floor, views
 from . import labels as L
 from .auth import AuthStore, Sessions, Throttle
 from .settings import Form
@@ -210,12 +210,24 @@ class Handler(BaseHTTPRequestHandler):
         self._send(401, views.login_page("Wrong password."))
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
-        page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, **kw))
+        cached = L.needs_cached()                              # the nav count: never a GitHub call, only what the tray already read
+        badges = {"/needs": len(cached)} if cached else None
+        page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))
+        flt = q.get("need", "") if q.get("need") in ("questions", "decisions") else ""
         if path in ("/", "/fragment/overview"):
-            body = views.overview_fragment(self.app.overview(), csrf, q.get("station"), L.needs_you(self), L.action_forms_for)
+            body = views.overview_fragment(self.app.overview(), csrf, q.get("station"), L.needs_you(self), L.action_forms_for, flt)
             if path == "/":
                 shown = L.flash_pop(csrf)                  # the result of the button that sent you back here (the refresh fragment never takes it)
-                return self._send(200, views.page("Factory floor", f'<div id="live">{body}</div>', path, csrf, wide=True,
+                return self._send(200, views.page("Factory floor", f'<div id="live">{body}</div>', path, csrf, wide=True, badges=badges,
+                                                  flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
+            return self._send(200, body)
+        if path in ("/needs", "/fragment/needs"):
+            rows = L.needs_you(self)
+            body = floor.tray(rows, csrf, None, "/needs" + (f"?need={flt}" if flt else ""), flt, heading=False)
+            if path == "/needs":
+                shown = L.flash_pop(csrf)
+                return self._send(200, views.page("Needs you", f'<div id="live" data-src="/fragment/needs">{body}</div>', path, csrf, wide=True,
+                                                  badges={"/needs": len(rows)} if rows else None,
                                                   flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
         route = admin.GET.get(path)
