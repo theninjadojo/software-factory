@@ -15,8 +15,9 @@ from urllib.parse import parse_qs, urlparse
 from .. import db as dbm
 from .. import pause
 from ..config import load
-from . import views
+from . import admin, views
 from .auth import AuthStore, Sessions, Throttle
+from .settings import Form
 
 log = logging.getLogger("factory.ui")
 STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8"}
@@ -110,7 +111,10 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if n > MAX_BODY:
             return None
-        return {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode("utf-8", "replace"), keep_blank_values=True).items()}
+        parsed = parse_qs(self.rfile.read(n).decode("utf-8", "replace"), keep_blank_values=True)
+        form = Form({k: v[0] for k, v in parsed.items()})
+        form.lists = parsed
+        return form
 
     def do_GET(self):
         self._handle()
@@ -186,6 +190,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, views.overview_fragment(self.app.overview(), csrf))
         if path == "/":
             return page("Overview", f'<div id="live">{views.overview_fragment(self.app.overview(), csrf)}</div>')
+        route = admin.GET.get(path)
+        if route:
+            return route(self, q, csrf)
         db = self.app.ro_db()
         if db is None:
             return page("No data yet", '<p class="muted">The orchestrator has not created its database yet.</p>')
@@ -222,6 +229,9 @@ class Handler(BaseHTTPRequestHandler):
             (state / "PAUSED").unlink(missing_ok=True)
             (state / "pause_until").unlink(missing_ok=True)
             return self._redirect("/")
+        route = admin.POST.get(path)
+        if route:
+            return route(self, form, csrf)
         self._send(404, "not found", "text/plain")
 
 

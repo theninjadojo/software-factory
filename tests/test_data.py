@@ -167,3 +167,21 @@ class UnknownSenders(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KindAliasConfig(unittest.TestCase):
+    def test_aliases_are_configurable_and_validated(self):
+        from factory.classifier import RuleClassifier, kind_from_labels
+        self.assertEqual(kind_from_labels({"enhancement"}), "feature")                        # default aliases
+        self.assertEqual(kind_from_labels({"enhancement"}, {}), None)                         # turned off
+        self.assertEqual(kind_from_labels({"story"}, {"story": "feature"}), "feature")
+        self.assertEqual(RuleClassifier({"story": "feature"}).classify("t", "b", ["story", "complexity:low"]).kind, "feature")
+        base = Path("config.example.toml").read_text()
+        for aliases, ok in (('{ story = "feature" }', True), ('{ story = "rm -rf" }', False)):
+            with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+                f.write(base.replace('[classifier]\n', f'[classifier]\nkind_aliases = {aliases}\n', 1))
+            if ok:
+                self.assertEqual(load(f.name).kind_aliases, {"story": "feature"})
+            else:
+                with self.assertRaises(ValueError):
+                    load(f.name)

@@ -22,9 +22,12 @@ class UiCase(unittest.TestCase):
         d = Path(self.tmp.name)
         self.db_path = str(d / "state" / "factory.db")
         (d / "state").mkdir()
-        cfg = Path("config.example.toml").read_text().replace("/srv/factory/state/factory.db", self.db_path)
+        # EVERY path in the config must point into the temp dir: UI tests write secrets, and /srv/factory may be a live install.
+        cfg = Path("config.example.toml").read_text().replace("/srv/factory", str(d))
+        assert "/srv/factory" not in cfg
         (d / "config.toml").write_text(cfg)
         self.state = d / "state"
+        self.root = d
         self.db = dbm.connect(self.db_path)
         self.app = App(str(d / "config.toml"), {"localhost", "127.0.0.1"})
         self.app.auth.set_password(PASSWORD)

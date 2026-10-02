@@ -414,9 +414,9 @@ def main() -> None:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             raise SystemExit("another orchestrator is already running")
-    clf = RuleClassifier()
+    clf = RuleClassifier(cfg.kind_aliases)
     if cfg.classifier_backend == "jev" and cfg.openrouter_key_file and Path(cfg.openrouter_key_file).exists():
-        clf = JevClassifier(Path(cfg.openrouter_key_file).read_text().strip(), cfg.jev_model)
+        clf = JevClassifier(Path(cfg.openrouter_key_file).read_text().strip(), cfg.jev_model, kind_aliases=cfg.kind_aliases)
     log.info("classifier: %s", type(clf).__name__)
     global alert_filter
     alert_filter = lambda event: event_enabled(cfg.telegram_verbosity, event, cfg.telegram_events)

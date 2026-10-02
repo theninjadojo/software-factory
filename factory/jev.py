@@ -77,10 +77,10 @@ def effort_from_score(score: float) -> str:
     return "low" if score < 0.6 else "medium" if score < 1.4 else "high"
 
 
-def parse_answers(answers: dict, labels: set[str]) -> Classification:
+def parse_answers(answers: dict, labels: set[str], aliases: dict | None = None) -> Classification:
     """Strict parse. Maintainer kind label overrides the model; a complexity label is a floor, never a ceiling."""
     confs = []
-    kind = kind_from_labels(labels)
+    kind = kind_from_labels(labels, aliases)
     if kind is None:
         a = answers["kind"]
         if a["type"] != "choice" or a["choice"] not in KINDS:
@@ -123,10 +123,10 @@ def build_state(title: str, body: str, labels: list[str], comments: list[str] | 
 
 
 class JevClassifier:
-    def __init__(self, api_key: str, model: str = "typesafe/jev-1.13", timeout: int = 20, post=None):
-        self.key, self.model, self.timeout = api_key, model, timeout
+    def __init__(self, api_key: str, model: str = "typesafe/jev-1.13", timeout: int = 20, post=None, kind_aliases: dict | None = None):
+        self.key, self.model, self.timeout, self.aliases = api_key, model, timeout, kind_aliases
         self._post = post or self._http_post
-        self.fallback = RuleClassifier()
+        self.fallback = RuleClassifier(kind_aliases)
 
     def _http_post(self, body: dict) -> dict:
         req = urllib.request.Request(
@@ -140,7 +140,7 @@ class JevClassifier:
         try:
             resp = self._post({"model": self.model, "state": build_state(title, body, labels, comments, project, stages_done),
                                "questions": QUESTIONS})
-            c = dataclasses.replace(parse_answers(resp["answers"], set(labels)), source=self.model)
+            c = dataclasses.replace(parse_answers(resp["answers"], set(labels), self.aliases), source=self.model)
             log.info("jev: %s tier->%s effort=%s human=%s conf=%.2f cost=$%s", c.kind, c.complexity, c.effort,
                      c.needs_human, c.confidence, resp.get("usage", {}).get("cost"))
             return c

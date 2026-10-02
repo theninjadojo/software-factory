@@ -8,10 +8,11 @@ COMPLEXITY = {"low", "medium", "high"}
 KIND_ALIASES = {"enhancement": "feature", "documentation": "docs"}   # GitHub's default label names
 
 
-def kind_from_labels(labels) -> str | None:
-    names = set(labels)
+def kind_from_labels(labels, aliases: dict | None = None) -> str | None:
+    """A kind label (bug, feature, ...) or a configured alias for one (for example GitHub's `enhancement`)."""
+    names, aliases = set(labels), (KIND_ALIASES if aliases is None else aliases)
     return next((k for k in sorted(KINDS) if k in names), None) or next(
-        (KIND_ALIASES[a] for a in sorted(KIND_ALIASES) if a in names), None)
+        (aliases[a] for a in sorted(aliases) if a in names), None)
 
 
 @dataclass(frozen=True)
@@ -38,13 +39,15 @@ class Classifier(Protocol):
 
 
 class RuleClassifier:
+    def __init__(self, kind_aliases: dict | None = None):
+        self.kind_aliases = kind_aliases
     """Placeholder until the Jev (OpenRouter Decisions) classifier is wired in.
     Uses maintainer-applied labels only; ignores issue body entirely."""
 
     def classify(self, title: str, body: str, labels: list[str], comments: list[str] | None = None, project: dict | None = None,
                  stages_done: list[str] | None = None) -> Classification:
         names = set(labels)
-        kind = kind_from_labels(names)
+        kind = kind_from_labels(names, self.kind_aliases)
         level = next((c for c in COMPLEXITY if f"complexity:{c}" in names), None)
         if kind is None or level is None:
             return Classification(kind or "chore", level or "medium", needs_human=False, confidence=0.4)

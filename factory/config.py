@@ -3,6 +3,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .classifier import KIND_ALIASES, KINDS
+
 
 @dataclass(frozen=True)
 class Route:
@@ -96,6 +98,7 @@ class Config:
     ci: CiCfg = field(default_factory=CiCfg)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
+    kind_aliases: dict = field(default_factory=lambda: dict(KIND_ALIASES))   # label -> kind (bug/feature/docs/chore/question)
 
 
 def project_for(cfg: Config, repo: str) -> Project:
@@ -118,6 +121,15 @@ def _runner(rn: dict) -> "RunnerCfg":
     return r
 
 
+def _aliases(v) -> dict:
+    if v is None:
+        return dict(KIND_ALIASES)
+    bad = {k: x for k, x in v.items() if x not in KINDS}
+    if bad:
+        raise ValueError(f"classifier.kind_aliases values must be one of {sorted(KINDS)}, got {bad}")
+    return dict(v)
+
+
 def _verbosity(v: str) -> str:
     from .events import LEVELS
     if v not in LEVELS:
@@ -127,7 +139,7 @@ def _verbosity(v: str) -> str:
 
 def _events(v):
     from .events import ALL_EVENTS
-    if v is None:
+    if v is None or v == "level":
         return None
     unknown = set(v) - ALL_EVENTS
     if unknown:
@@ -200,4 +212,5 @@ def parse(raw: dict) -> Config:
         ci=CiCfg(**raw.get("ci", {})),
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),
+        kind_aliases=_aliases(raw.get("classifier", {}).get("kind_aliases")),
     )
