@@ -143,6 +143,14 @@ class GitHub:
     def add_labels(self, repo: str, issue: int, labels: list[str]) -> None:
         self._req("POST", f"/repos/{repo}/issues/{issue}/labels", {"labels": labels})
 
+    def create_label(self, repo: str, name: str, color: str = "ededed", description: str = "") -> None:
+        """Create a repository label if it does not exist yet (GitHub answers 422 when it does)."""
+        try:
+            self._req("POST", f"/repos/{repo}/labels", {"name": name, "color": color, "description": description[:100]})
+        except urllib.error.HTTPError as e:
+            if e.code != 422:
+                raise
+
     def remove_label(self, repo: str, issue: int, label: str) -> None:
         try:
             self._req("DELETE", f"/repos/{repo}/issues/{issue}/labels/{urllib.parse.quote(label, safe='')}")

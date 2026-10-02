@@ -341,7 +341,69 @@ class Labels(AdminCase):
         self.assertEqual(s, 200)
         for needle in ("bug", "run:stage", "/labels/issue?repo="):
             self.assertIn(needle, html)
-        self.assertNotIn(">Labels</a>", html)
+
+    def test_start_buttons_apply_the_trigger_label_for_each_action(self):
+        self.gh.repo_labels.return_value = [{"name": n} for n in ("factory:auto", "factory:ready", "factory:analyze", "factory:design", "factory:architect")]
+        cookie, csrf = self.session()
+        s, _, html = self.req("GET", "/tickets", cookie=cookie)
+        for action in ("auto", "analyst", "designer", "architect", "build"):
+            self.assertIn(f'name="action" value="{action}"', html)
+        for action, label in (("auto", "factory:auto"), ("build", "factory:ready"), ("analyst", "factory:analyze")):
+            self.gh.add_labels.reset_mock()
+            s, h, _ = self.post(cookie, csrf, "/tickets/start", self.fields(action=action))
+            self.assertEqual(s, 303)
+            self.gh.add_labels.assert_called_once_with(self.REPO, 7, [label])
+
+    def test_start_is_refused_when_not_available_or_invalid(self):
+        self.gh.repo_labels.return_value = [{"name": "factory:auto"}, {"name": "factory:ready"}]
+        cookie, csrf = self.session()
+        busy = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:working"}]}
+        queued = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:auto"}]}
+        closed = {"number": 7, "title": "T", "state": "closed", "labels": []}
+        for issue in (busy, queued, closed):
+            self.gh.get_issue.return_value = issue
+            self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="build"))[0], 400)
+        self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": []}
+        for f in (self.fields(action="rm -rf"), self.fields(action="factory:ready"), {"repo": "evil/repo", "n": "7", "action": "auto"}, self.fields(n="x", action="auto")):
+            self.assertEqual(self.post(cookie, csrf, "/tickets/start", f)[0], 400)
+        self.gh.add_labels.assert_not_called()
+        self.assertEqual(self.req("POST", "/tickets/start", urlencode(self.fields(action="auto")), cookie=cookie)[0], 403)
+        self.gh.add_labels.assert_not_called()
+
+    def test_needs_a_person_offers_the_telegram_choices_and_clears_trigger_labels(self):
+        dbm.record(self.db, self.REPO, 7, "T", "human", "x; cls=feature/high/human=True/conf=0.80/stage=architect; needs a person")
+        issue = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:auto"}]}
+        self.gh.get_issue.return_value = issue
+        self.gh.issues.return_value = ([issue], False)
+        self.gh.repo_labels.return_value = [{"name": n} for n in ("factory:auto", "factory:ready", "factory:architect")]
+        cookie, csrf = self.session()
+        _, _, html = self.req("GET", "/tickets", cookie=cookie)
+        self.assertIn("needs a person", html)
+        self.assertLess(html.index('value="stage:architect"'), html.index('value="build"'))
+        self.assertIn('value="skip"', html)
+        self.assertNotIn('value="auto"', html)
+        self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="stage:architect"))[0], 303)
+        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:architect"])
+        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "factory:auto")
+        self.gh.add_labels.reset_mock(); self.gh.remove_label.reset_mock()
+        self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="skip"))[0], 303)
+        self.gh.add_labels.assert_not_called()
+        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "factory:auto")
+
+    def test_skip_and_stage_actions_are_refused_when_nothing_is_waiting(self):
+        cookie, csrf = self.session()
+        self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:auto"}]}   # queued, no "human" decision
+        for action in ("skip", "stage:architect", "build"):
+            self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action=action))[0], 400)
+        self.gh.remove_label.assert_not_called()
+        self.gh.add_labels.assert_not_called()
+
+    def test_done_stages_are_not_offered_again(self):
+        self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "stage:analysed"}]}
+        self.gh.issues.return_value = ([self.gh.get_issue.return_value], False)
+        _, _, html = self.req("GET", "/tickets", cookie=self.session()[0])
+        self.assertNotIn('value="analyst"', html)
+        self.assertIn('value="designer"', html)
 
     def test_label_names_are_escaped_and_token_never_rendered(self):
         self.gh.get_issue.return_value["labels"] = [{"name": "<script>"}]

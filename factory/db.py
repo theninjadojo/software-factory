@@ -24,6 +24,15 @@ def connect(path: str) -> sqlite3.Connection:
             updated REAL NOT NULL, summary TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (repo, number))"""
     )
+    # Every PR the factory opened (build and design), tracked for merge conflicts whether or not CI is watched. A separate
+    # table: `prs` is written positionally and feeds the CI watcher and the reviewer.
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS pr_conflicts (
+            repo TEXT NOT NULL, number INTEGER NOT NULL, issue_repo TEXT NOT NULL, issue_num INTEGER NOT NULL,
+            state TEXT NOT NULL DEFAULT 'unknown', notified_sha TEXT NOT NULL DEFAULT '',
+            attempts INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '', updated REAL NOT NULL,
+            PRIMARY KEY (repo, number))"""
+    )
     db.execute(
         """CREATE TABLE IF NOT EXISTS runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, stage TEXT, repo TEXT NOT NULL,
@@ -84,6 +93,31 @@ def update_pr(db, repo: str, number: int, **fields) -> None:
     assert set(fields) <= allowed
     sets = ", ".join(f"{k}=?" for k in fields) + ", updated=?"
     db.execute(f"UPDATE prs SET {sets} WHERE repo=? AND number=?", (*fields.values(), time.time(), repo, number))
+    db.commit()
+
+
+# state: unknown | clean | conflicting | needs-person | closed. notified_sha: the head last reported as conflicting.
+def track_pr(db, repo: str, number: int, issue_repo: str, issue_num: int) -> None:
+    db.execute("INSERT OR IGNORE INTO pr_conflicts (repo, number, issue_repo, issue_num, updated) VALUES (?,?,?,?,?)",
+               (repo, number, issue_repo, issue_num, time.time()))
+    db.commit()
+
+
+def tracked_prs(db) -> list[dict]:
+    return _dicts(db.execute("SELECT repo, number, issue_repo, issue_num, state, notified_sha, attempts FROM pr_conflicts "
+                             "WHERE state != 'closed' ORDER BY updated"))
+
+
+def conflicts_for_issue(db, issue_repo: str, issue_num: int) -> list[dict]:
+    return _dicts(db.execute("SELECT repo, number, state, notified_sha, attempts FROM pr_conflicts "
+                             "WHERE issue_repo=? AND issue_num=? AND state != 'closed' ORDER BY repo, number", (issue_repo, issue_num)))
+
+
+def update_conflict(db, repo: str, number: int, **fields) -> None:
+    allowed = {"state", "notified_sha", "attempts", "detail"}
+    assert set(fields) <= allowed
+    sets = ", ".join(f"{k}=?" for k in fields) + ", updated=?"
+    db.execute(f"UPDATE pr_conflicts SET {sets} WHERE repo=? AND number=?", (*fields.values(), time.time(), repo, number))
     db.commit()
 
 

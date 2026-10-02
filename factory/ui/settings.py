@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import DEFAULT_ROLES, CiCfg, ReviewCfg, RunnerCfg, deep_merge, default_harnesses, load_raw, overrides_path, parse
+from ..config import DEFAULT_ROLES, CiCfg, ConflictsCfg, ReviewCfg, RunnerCfg, deep_merge, default_harnesses, load_raw, overrides_path, parse
 from ..events import ALL_EVENTS
 from ..tomlw import dumps
 
@@ -111,6 +111,13 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("ci.timeout_minutes", "Give up on pending checks after (minutes)", "int", lo=5, hi=720),
         Field("ci.log_tail_chars", "Failing-log excerpt size", "int", lo=1000, hi=20000),
     ]),
+    "conflicts": ("Merge conflicts", [
+        Field("conflicts.enabled", "Resolve merge conflicts on factory PRs", "bool",
+              "Checks every PR the factory opened. The base branch is merged into the PR branch (never rebased or force-pushed); an agent edits only the conflicted files."),
+        Field("conflicts.auto", "Apply the label automatically", "bool", "Off: the factory only reports a conflict and a person applies the label."),
+        Field("conflicts.label", "Conflicts label", "text", "Apply it to a ticket to resolve the conflicts in its open factory PRs."),
+        Field("conflicts.max_attempts", "Resolution attempts per PR", "int", "Then a person is asked.", lo=0, hi=50),
+    ]),
 }
 
 
@@ -176,6 +183,8 @@ def default_for(key: str):
         return getattr(CiCfg(), name, None)
     if section == "review":
         return getattr(ReviewCfg(), name, None)
+    if section == "conflicts":
+        return getattr(ConflictsCfg(), name, None)
     if section == "roles":
         role, _, field = name.partition(".")
         return next((getattr(r, field) for r in DEFAULT_ROLES if r.name == role), None)

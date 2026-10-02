@@ -107,6 +107,17 @@ class CiCfg:
 
 
 @dataclass(frozen=True)
+class ConflictsCfg:
+    """Notice factory PRs that conflict with their base branch and resolve them when the label is on the ticket. The
+    orchestrator merges the base into the PR branch; an agent edits only the conflicted files. Nothing is rebased or
+    force-pushed. Independent of [ci]. Off by default (a resolution costs a run and pushes a merge commit)."""
+    enabled: bool = False
+    auto: bool = True                     # apply the label itself when a conflict is found (a person can always apply it)
+    label: str = "factory:fix-conflicts"
+    max_attempts: int = 10                # resolution runs per PR; then a person is asked
+
+
+@dataclass(frozen=True)
 class ProjectRepo:
     repo: str            # owner/name
     role: str = ""       # one line telling the agent and the classifier what this repo is for
@@ -143,6 +154,7 @@ class Config:
     auto_chain: bool = True              # after an auto stage, continue to the next one when nothing needs a person
     auto_confirm_stages: bool = False    # True: also ask a person before auto runs a read-only stage (analyst, designer, architect)
     ci: CiCfg = field(default_factory=CiCfg)
+    conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
@@ -302,6 +314,9 @@ def parse(raw: dict) -> Config:
     for r in roles:
         if not valid_dir(r.design_dir):
             raise ValueError(f"roles.{r.name}.design_dir must be a relative folder such as docs/design")
+    conflicts = ConflictsCfg(**raw.get("conflicts", {}))
+    if conflicts.max_attempts < 0 or not conflicts.label.strip():
+        raise ValueError("conflicts.max_attempts must be 0 or more and conflicts.label must not be empty")
     review = ReviewCfg(**raw.get("review", {}))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
@@ -328,6 +343,7 @@ def parse(raw: dict) -> Config:
         auto_confirm_stages=bool(raw.get("auto", {}).get("confirm_stages", False)),
         auto_chain=bool(raw.get("auto", {}).get("chain", True)),
         ci=CiCfg(**raw.get("ci", {})),
+        conflicts=conflicts,
         review=review,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         harnesses=harnesses,

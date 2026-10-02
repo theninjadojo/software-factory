@@ -39,3 +39,5 @@ fieldset { border:1px solid var(--line); border-radius:10px; background:var(--pa
 .station-link:focus-visible { outline:2px solid var(--accent); }
 .step-count { font-variant-numeric:tabular-nums; }
 @media (max-width:640px) { .belt { flex-direction:column; } .station:not(:last-child)::after { content:"▼"; right:auto; left:1rem; top:auto; bottom:-1.4rem; transform:none; } }
+
+button.secondary { background:var(--panel); color:var(--text); border-color:var(--line); } td.actions { white-space:nowrap; } td.actions form { margin-right:.25rem; }
