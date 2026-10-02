@@ -19,6 +19,10 @@ anything that matters.
 | Prompt structure | Untrusted text cannot close the prompt's wrapper tags | `tests/test_runner.py` |
 | Telegram | Only the configured user id; a fixed set of commands; strict callback parsing; plain-text messages | `tests/test_telegram.py` |
 | Multi-repo changes | All patches validated before anything is pushed | `tests/test_runner.py` |
+| The admin UI | Password (scrypt), CSRF on every POST, HttpOnly/SameSite=Strict cookies, login throttling, Host allowlist, strict CSP, read-only database access, escaped output, GitHub-only links | `tests/test_ui.py` |
+| Credentials in the UI | Write-only: stored 0600, never rendered back, scrubbed from error messages | `tests/test_ui_admin.py` |
+| Settings changes | Validated by loading the merged config before writing; confirmation for going live, widening the sandbox hosts, or changing a harness | `tests/test_ui_admin.py`, `tests/test_ui_harness.py` |
+| Which hosts a sandbox can reach | The proxy allowlist follows config, and keeps the last good list if a reload fails | `tests/test_harness.py` |
 
 ## Residual risks (read these)
 
@@ -32,6 +36,10 @@ anything that matters.
   OpenRouter and TypeSafe for classification. Do not use free or logging tiers for private text without reading their terms.
 - **CI runs your repos' code on factory PRs** with whatever secrets your workflows expose to pull requests. That is your
   repos' configuration, not the factory's, but protected paths stop the agent editing workflows.
+- **The admin UI is an admin surface.** Anyone who can sign in can replace credentials and change what the factory does. Keep it on
+  loopback or behind a VPN/TLS proxy, with a strong password.
+- **Harness commands are shell commands you configure**, run inside the sandbox. They come from config, never from ticket text,
+  but a bad one weakens the agent's behaviour (not the sandbox).
 - **Token scope.** The GitHub token can write branches and PRs in every repo it is installed on. Scope it narrowly and
   prefer a dedicated bot account.
 

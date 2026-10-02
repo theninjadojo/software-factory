@@ -1,6 +1,6 @@
 # software-factory: orchestrator + egress proxy, with sandboxes started on the host's container engine.
 #
-#   cp config.example.toml config.toml        # then edit it (see README: set engine = "docker", image = "factory-agent:latest")
+#   mkdir config && cp config.example.toml config/config.toml   # then edit it (set engine = "docker", image = "factory-agent:latest")
 #   cp .env.example .env                      # then edit it
 #   docker compose --profile build build      # builds the orchestrator image AND the agent sandbox image
 #   docker compose up -d
@@ -25,7 +25,7 @@ services:
     build: .
     command: ["python3", "-m", "factory.proxy", "/etc/factory/config.toml"]
     volumes:
-      - ./config.toml:/etc/factory/config.toml:ro
+      - ./config:/etc/factory:ro
       - ${FACTORY_HOME:-/srv/factory}/run:${FACTORY_HOME:-/srv/factory}/run
 
   orchestrator:
@@ -36,12 +36,27 @@ services:
       DOCKER_HOST: unix:///var/run/docker.sock
     # Host paths are mounted at the SAME path inside: the engine resolves sandbox bind mounts on the host.
     volumes:
-      - ./config.toml:/etc/factory/config.toml:ro
+      - ./config:/etc/factory:ro
       - ${FACTORY_HOME:-/srv/factory}/secrets:${FACTORY_HOME:-/srv/factory}/secrets:ro
       - ${FACTORY_HOME:-/srv/factory}/state:${FACTORY_HOME:-/srv/factory}/state
       - ${FACTORY_HOME:-/srv/factory}/work:${FACTORY_HOME:-/srv/factory}/work
       - ${FACTORY_HOME:-/srv/factory}/run:${FACTORY_HOME:-/srv/factory}/run
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+
+  ui:             # the admin dashboard: loopback only by default. No engine socket, no work directory.
+    <<: *common
+    command: ["python3", "-m", "factory.ui", "--config", "/etc/factory/config.toml", "--listen", "0.0.0.0:8787"]
+    environment:
+      FACTORY_UI_ALLOWED_HOSTS: ${FACTORY_UI_ALLOWED_HOSTS:-}
+    ports:
+      - "${FACTORY_UI_BIND:-127.0.0.1}:${FACTORY_UI_PORT:-8787}:8787"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+    volumes:
+      - ./config:/etc/factory                      # writable: the UI saves config.overrides.toml here
+      - ${FACTORY_HOME:-/srv/factory}/secrets:${FACTORY_HOME:-/srv/factory}/secrets   # write-only credential entry
+      - ${FACTORY_HOME:-/srv/factory}/state:${FACTORY_HOME:-/srv/factory}/state
 
   sandbox-image:  # build-only: `docker compose --profile build build` produces factory-agent:latest
     build: ./sandbox

@@ -1,0 +1,14 @@
+[Unit]
+Description=Software factory admin UI
+After=factory.service
+
+[Service]
+# Set the password once first:  python3 -m factory.ui --config /srv/factory/config.toml --set-password
+# Loopback only. Reach it with an SSH tunnel (ssh -L 8787:127.0.0.1:8787 host) or put TLS in front of it.
+ExecStart=/usr/bin/python3 -m factory.ui --config /srv/factory/config.toml --listen 127.0.0.1:8787
+WorkingDirectory=/srv/factory/app
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

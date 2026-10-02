@@ -252,7 +252,8 @@ def main() -> None:
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     host, _, port = args.listen.rpartition(":")
-    app = App(args.config, {"localhost", "127.0.0.1", "::1", host, *args.allowed_host}, args.secure_cookie)
+    extra = [h.strip() for h in os.environ.get("FACTORY_UI_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    app = App(args.config, {"localhost", "127.0.0.1", "::1", host, *args.allowed_host, *extra}, args.secure_cookie)
     if args.set_password:
         pw = os.environ.get("FACTORY_UI_PASSWORD") or getpass.getpass("New UI password (min 10 chars): ")
         app.auth.set_password(pw)

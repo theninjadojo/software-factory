@@ -17,6 +17,8 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 | `sanitize.py` | Cleans agent-written markdown before it is posted to GitHub. |
 | `telegram.py` / `events.py` | Alerts, commands and buttons; event categories and verbosity levels. |
 | `github.py` | A minimal GitHub client. Writes are limited to comments, labels and PRs (branches are pushed with git). |
+| `ui/` | The admin UI: `server.py` (HTTP, auth, headers), `views.py`/`forms.py` (escaped HTML), `settings.py` (validated edits to the overrides file), `integrations.py` (credentials and outbound checks), `admin.py` (routes). See [ui.md](ui.md). |
+| `tomlw.py` | A minimal TOML writer for the overrides file. |
 | `db.py` / `pause.py` / `ctl.py` | SQLite state (decisions, approvals, watched PRs), the pause switch, and a tiny operator CLI. |
 
 ## One issue, end to end
@@ -49,8 +51,14 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 
 ## State
 
-SQLite in the state directory: `decisions` (one row per issue state seen, so nothing is processed twice), `approvals`
+SQLite (WAL) in the state directory: `runs` (one row per agent run, with output and log tail), `events` (the timeline), `status` (heartbeat), `decisions` (one row per issue state seen, so nothing is processed twice), `approvals`
 (Telegram Run/Skip), `prs` (PRs being watched for CI). A lock file ensures one orchestrator at a time.
+
+## Harnesses
+
+A harness is `{image, credential file, command, allowed hosts}`. The sandbox entrypoint runs the command from the harness
+selected by the route or role (`AGENT_COMMAND`); everything around it (workspace, patch validation, proxy) is the same for every
+agent. The proxy allows the runner's hosts plus those of enabled harnesses.
 
 ## Engines
 

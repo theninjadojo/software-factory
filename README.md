@@ -58,6 +58,10 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 - **Telegram.** Alerts with a verbosity setting, `/status /pause /resume`, and Run/Skip buttons for tickets that need a
   person. Only your Telegram user id is obeyed.
 - **Recovery.** If the orchestrator restarts mid-task, leftovers are cleared and the ticket is requeued.
+- **Admin UI.** See what is happening and what happened (runs, decisions, PRs and CI, an event timeline), and change settings,
+  credentials, Telegram and agent harnesses without editing files. Authenticated, loopback by default. See [docs/ui.md](docs/ui.md).
+- **Other agents.** A harness is `{image, credential, command, hosts}`. Claude Code is built in; Codex and Gemini ship as
+  experimental templates.
 
 ## Quick start
 
@@ -77,7 +81,7 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 git clone <this repo> && cd software-factory
 sudo mkdir -p /srv/factory/{secrets,state,work,run} && sudo chown -R 1000:1000 /srv/factory
 
-cp config.example.toml config.toml     # edit: engine = "docker", image = "factory-agent:latest", your repos/projects
+mkdir config && cp config.example.toml config/config.toml   # edit: engine = "docker", image = "factory-agent:latest", your repos/projects
 cp .env.example .env                   # set DOCKER_GID=$(stat -c %g /var/run/docker.sock)
 
 # secrets: files, 0600, never in the repo (use `read -rs` so they stay out of shell history)
@@ -86,11 +90,13 @@ printf 'ANTHROPIC_API_KEY=%s\n' "$KEY" > /srv/factory/secrets/claude.env
 chmod 600 /srv/factory/secrets/*
 
 docker compose --profile build build   # the orchestrator image and the agent sandbox image
+docker compose run --rm ui python3 -m factory.ui --config /etc/factory/config.toml --set-password   # choose the UI password
 docker compose up -d                   # starts in dry-run: it logs decisions and acts on nothing
+# the UI is now at http://127.0.0.1:8787 (see docs/ui.md for remote access)
 docker compose logs -f orchestrator
 ```
 
-When the dry run looks right, set `dry_run = false` in `config.toml` and `docker compose up -d` again.
+When the dry run looks right, go live from the UI (or set `dry_run = false` in `config/config.toml`) and `docker compose up -d` again.
 **Read the security note in `docker-compose.yml`:** on a rootful Docker the engine socket the orchestrator uses is
 root-equivalent on the host. Prefer rootless Docker, or the native install below.
 
@@ -113,7 +119,7 @@ Create a bot with BotFather, put its token in `secrets/telegram_token`, message 
 
 ## Configuration
 
-Everything is in one TOML file; `config.example.toml` documents every key. The parts you will touch first:
+Everything is in one TOML file (plus the optional `config.overrides.toml` the UI writes); `config.example.toml` documents every key. The parts you will touch first:
 `[github]` (repos, trigger label), `[[projects]]` (repos that work together, with a one-line role for each),
 `[routing.*]` (tier → model and effort), `[runner]` (engine, image, allowed hosts), `[classifier]`, `[telegram]`, `[ci]`.
 
@@ -134,8 +140,7 @@ Everything is in one TOML file; `config.example.toml` documents every key. The p
 
 - A verification worker for a Mac (or any machine): pull-based, runs only recipes defined on the worker itself, to build
   and test web, Android and iOS and return logs and screenshots.
-- A web UI: live and historical runs, editable settings, Telegram setup, credential entry, and adapters to connect other
-  agent harnesses (Codex CLI, Gemini CLI).
+- Verifying the Codex and Gemini harness templates end to end (the mechanism is tested; their command lines are not yet).
 
 ## Development
 

@@ -24,6 +24,12 @@ Run `systemctl --user ...` as that user with `XDG_RUNTIME_DIR=/run/user/<uid>` s
 `scripts/deploy.sh user@host` tars the checkout, runs the tests on the host, and restarts the service. Add `--image` when
 `sandbox/` changed. It **refuses to restart while an agent run is in flight**, because a restart kills the run.
 
+### The UI
+
+`systemctl --user enable --now factory-ui` after setting the password (see [ui.md](ui.md)). It listens on loopback; use
+`ssh -L 8787:127.0.0.1:8787 host`. It writes `config.overrides.toml` next to `config.toml`, so both files must be readable by
+the orchestrator and the proxy, and the UI must be able to write the overrides, the state directory and the secrets directory.
+
 ## Day to day
 
 - Status: `python3 -m factory.ctl status` (mode, paused?, last decisions). Pause/resume: `ctl pause|resume`, or `/pause`
@@ -32,6 +38,7 @@ Run `systemctl --user ...` as that user with `XDG_RUNTIME_DIR=/run/user/<uid>` s
   `rate_limit_backoff_seconds`.
 - Restarts: on startup the orchestrator clears leftover work directories and sandbox containers and requeues any ticket
   stuck in a `factory:working*` state.
+- Settings changed in the UI apply when the orchestrator is next idle (it re-executes itself). `ls state/RESTART` shows one is pending.
 - Adding a repo: add it to `[github] repos` (standalone) or to a project in `[[projects]]`, create the factory labels in
   it, and make sure the bot account has write access and the token covers it. Restart.
 - Rotating a secret: replace the file, restart the orchestrator.
