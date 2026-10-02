@@ -75,3 +75,9 @@ services:
     image: factory-agent-gemini:latest
     profiles: ["gemini"]
     entrypoint: ["true"]
+
+  sandbox-image-opencode:  # EXPERIMENTAL: `docker compose --profile opencode build` produces factory-agent-opencode:latest
+    build: {context: ./sandbox, dockerfile: opencode/Dockerfile}
+    image: factory-agent-opencode:latest
+    profiles: ["opencode"]
+    entrypoint: ["true"]

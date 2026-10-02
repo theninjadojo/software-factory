@@ -17,6 +17,11 @@ class Route:
 
 CLAUDE_COMMAND = 'claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions'
 CODEX_COMMAND = 'codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -m "$MODEL" "$(cat /task/prompt.txt)"'
+OPENCODE_COMMAND = 'opencode run --model "$MODEL" "$(cat /task/prompt.txt)"'
+OPENCODE_IMAGE = "localhost/factory-agent-opencode:latest"
+OPENCODE_NOTICE = ("Ticket text, code and repository contents are sent to {0} and the upstream model provider. "
+                   "Free or logging tiers may retain or train on them.")
+MODEL_RE = re.compile(r"[A-Za-z0-9._:/@+\[\]-]{1,200}")
 GEMINI_COMMAND = 'gemini --yolo --model "$MODEL" --prompt "$(cat /task/prompt.txt)"'
 
 
@@ -33,6 +38,8 @@ class HarnessCfg:
     experimental: bool = False
     env_var: str = ""                    # the variable the UI writes into env_file
     notes: str = ""
+    data_notice: str = ""                # shown on the Harnesses page: where ticket text and code go when this harness runs
+    model_hint: str = ""                 # the model-id format this harness expects
 
 
 @dataclass(frozen=True)
@@ -178,6 +185,14 @@ def default_harnesses(rn: "RunnerCfg") -> dict:
         "gemini": HarnessCfg("gemini", "localhost/factory-agent-gemini:latest", str(secrets / "gemini.env"), GEMINI_COMMAND,
                              ("generativelanguage.googleapis.com",), False, True, "GEMINI_API_KEY",
                              "Google Gemini CLI. Build the image from sandbox/gemini/. Needs an API key. Not yet verified end to end."),
+        "opencode-openrouter": HarnessCfg(
+            "opencode-openrouter", OPENCODE_IMAGE, str(secrets / "opencode-openrouter.env"), OPENCODE_COMMAND, ("openrouter.ai",),
+            False, True, "OPENROUTER_API_KEY", "OpenCode CLI via OpenRouter (Qwen and others). Build the image from sandbox/opencode/. Not yet verified end to end.",
+            OPENCODE_NOTICE.format("OpenRouter"), "openrouter/<vendor>/<model>, e.g. openrouter/qwen/qwen3-coder"),
+        "opencode-zen": HarnessCfg(
+            "opencode-zen", OPENCODE_IMAGE, str(secrets / "opencode-zen.env"), OPENCODE_COMMAND, ("opencode.ai",),
+            False, True, "OPENCODE_API_KEY", "OpenCode CLI via OpenCode Zen (Big Pickle). Build the image from sandbox/opencode/. Needs an API key. Not yet verified end to end.",
+            OPENCODE_NOTICE.format("OpenCode Zen"), "opencode/<model>, e.g. opencode/big-pickle"),
     }
 
 
@@ -266,6 +281,15 @@ def _harnesses(raw: dict, rn: "RunnerCfg") -> dict:
         if not all(re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}", x) for x in h.allow_hosts):
             raise ValueError(f"harnesses.{h.name}.allow_hosts has an invalid host name")
     return out
+
+
+def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None) -> None:
+    models = [(f"routing.{k}.model", r.model) for k, r in routes.items()] + [(f"roles.{r.name}.model", r.model) for r in roles]
+    if review is not None:
+        models.append(("review.model", review.model))
+    for where, m in models:
+        if not isinstance(m, str) or not MODEL_RE.fullmatch(m):
+            raise ValueError(f"{where} is not a valid model id (letters, digits and . _ : / @ + [ ] - only, up to 200 characters)")
 
 
 def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "ReviewCfg | None" = None) -> None:
@@ -358,6 +382,7 @@ def parse(raw: dict) -> Config:
     review = ReviewCfg(**raw.get("review", {}))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
+    _check_models(routes, roles, review)
     _check_harness_use(routes, roles, harnesses, review)
     return Config(
         db_path=g["db_path"],

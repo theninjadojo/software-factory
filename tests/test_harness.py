@@ -65,6 +65,22 @@ class HarnessConfig(unittest.TestCase):
         both = allowed_hosts(load_with('\n[harnesses.codex]\nenabled = true\n[harnesses.gemini]\nenabled = false\n'))
         self.assertEqual(both, ("api.anthropic.com", "api.openai.com"))
 
+    def test_opencode_harnesses_start_off_and_open_only_their_own_host(self):
+        h = default_harnesses(RunnerCfg())
+        self.assertFalse(h["opencode-openrouter"].enabled or h["opencode-zen"].enabled)
+        self.assertEqual(allowed_hosts(load_with("")), ("api.anthropic.com",))
+        self.assertEqual(allowed_hosts(load_with('\n[harnesses.opencode-openrouter]\nenabled = true\n')), ("api.anthropic.com", "openrouter.ai"))
+        self.assertEqual(allowed_hosts(load_with('\n[harnesses.opencode-zen]\nenabled = true\n')), ("api.anthropic.com", "opencode.ai"))
+        self.assertTrue(h["opencode-openrouter"].data_notice and h["opencode-zen"].model_hint)
+
+    def test_model_ids_are_validated_at_load(self):
+        cfg = load_with('\n[harnesses.opencode-openrouter]\nenabled = true\n',
+                        low_tier_on("opencode-openrouter").replace('model = "haiku"', 'model = "openrouter/qwen/qwen3-coder"', 1))
+        self.assertEqual(cfg.routes["low"].harness, "opencode-openrouter")
+        for bad in ('x; rm -rf /', 'a b', '$(id)', ''):
+            with self.assertRaises(ValueError):
+                load_with("", EXAMPLE.read_text().replace('model = "haiku"', f'model = "{bad}"', 1))
+
     def test_harness_for_always_has_claude(self):
         self.assertEqual(harness_for(ROLE_CFG, "claude-code").name, "claude-code")        # a Config built without harnesses
         self.assertIsNone(harness_for(ROLE_CFG, "codex"))

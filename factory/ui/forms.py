@@ -180,9 +180,11 @@ def harnesses_page(cfg, eff: dict, csrf: str, errors=None) -> str:
                           f'<p>Credential ({esc(h.env_var)}): {status}</p><input type="password" name="value" placeholder="paste a key to replace it" autocomplete="off" class="wide"> '
                           '<button>Save key</button></form>')
         uses = ", ".join(used.get(name, [])) or "nothing yet"
+        notice = (f'<p class="muted"><strong>Data:</strong> {esc(h.data_notice)}</p>' if h.data_notice else "") \
+            + (f'<p class="muted">Model id: {esc(h.model_hint)}</p>' if h.model_hint else "")
         cards.append(
             f'<form method="post" action="/harnesses/save" class="card harness">{csrf_field(csrf)}<input type="hidden" name="name" value="{esc(name)}">'
-            f'<h3>{esc(name)}</h3><p>{flags}</p><p class="muted">{esc(h.notes)}</p><p class="muted">Used by: {esc(uses)}</p>'
+            f'<h3>{esc(name)}</h3><p>{flags}</p><p class="muted">{esc(h.notes)}</p>{notice}<p class="muted">Used by: {esc(uses)}</p>'
             f'<div class="field"><label class="check"><input type="checkbox" name="enabled" value="1"{" checked" if h.enabled else ""}> Enabled</label></div>'
             f'<div class="field"><label>Image</label><input name="image" value="{esc(h.image)}" class="wide"></div>'
             f'<div class="field"><label>Command run in the sandbox</label><textarea name="command" rows="4">{esc(h.command)}</textarea>'
@@ -191,6 +193,6 @@ def harnesses_page(cfg, eff: dict, csrf: str, errors=None) -> str:
             '<label class="check danger"><input type="checkbox" name="confirm" value="1"> I understand: enabling a harness or changing its command, image or hosts changes what runs in the sandbox and what it can reach.</label>'
             f'<div><button>Save {esc(name)}</button></div></form>{credential}')
     note = ('<p class="muted">A harness is the agent program the sandbox runs. Routes and roles choose one by name (Settings → Routing and Role agents). '
-            'Codex and Gemini are <strong>experimental templates</strong>: the plumbing is tested, but their command lines have not been verified end to end. '
-            'Build their images from <code>sandbox/codex</code> and <code>sandbox/gemini</code>. Each login also has its own terms for unattended use.</p>')
+            'Codex, Gemini and OpenCode (OpenRouter, Zen) are <strong>experimental templates</strong>: the plumbing is tested, but their command lines have not been verified end to end. '
+            'Build their images from <code>sandbox/codex</code>, <code>sandbox/gemini</code> and <code>sandbox/opencode</code>. Each login also has its own terms for unattended use.</p>')
     return note + '<div class="cards one">' + "".join(cards) + "</div>"
