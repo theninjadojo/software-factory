@@ -291,6 +291,8 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
         ident = ["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
         git([*ident, "checkout", "-q", "-b", branch], base, env)
         git([*ident, "commit", "-q", "-m", f"Design mockups for {home_repo}#{num}\n\nStatic canvases written by the designer agent."], base, env)
+        sha = git(["rev-parse", "HEAD"], base, env).stdout.strip()
+        ref = sha if re.fullmatch(r"[0-9a-f]{40}", sha) else branch          # a commit link outlives the branch
         push_factory_branch(base, branch, env)
         pr = gh.create_pr(
             r, branch, gh.default_branch(r), f"[factory] design mockups for #{num}: {title[:60]}",
@@ -299,7 +301,7 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
             "this draft to keep them with the repository. Treat them as a first draft.\n\n" + "\n".join(f"- `{x}`" for x in paths),
             draft=True)
         urls.append(pr)
-        files += [{"repo": r, "path": x, "url": f"https://github.com/{r}/blob/{branch}/{x}", "pr": pr} for x in paths]
+        files += [{"repo": r, "path": x, "url": f"https://github.com/{r}/blob/{ref}/{x}", "pr": pr} for x in paths]
     return files, notes, " ".join(urls)
 
 
