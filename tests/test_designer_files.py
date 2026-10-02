@@ -67,7 +67,7 @@ class DesignerFlow(unittest.TestCase):
             self.assertEqual((res.files, gh.prs), ([], []), name)
 
     def test_files_are_collected_even_when_gitignore_covers_the_folder(self):
-        """Regression from a live run: little-ninjas ignores `design/` (a pattern that also matches docs/design). The agent created its
+        """Regression from a live run: a real repository git-ignores `design/` (a pattern that also matches docs/design). The agent created its
         file, git did not see it, and nothing was published. The sandbox now force-adds exactly <design_dir>/factory-*.dc.html."""
         def edits(w):
             (w / "web" / ".git" / "info").mkdir(parents=True, exist_ok=True)

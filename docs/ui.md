@@ -57,7 +57,9 @@ The UI can change what the factory does and what it can reach, so:
   untrusted. Only `https://github.com/...` links are rendered as links.
 - **Secrets are write-only**: stored 0600 and never rendered back, not even masked. A page shows "set" and when it changed.
   Error messages from outbound checks have the token scrubbed.
-- The UI has no shell and starts no processes. It writes validated settings and credential files, and nothing else.
+- The UI has no shell and starts no processes. It writes validated settings and credential files, and (on the Labels page) adds and
+  removes issue labels through GitHub as the factory's account. That needs the GitHub token, which the UI reads on the server and never
+  sends to the browser. Because the write-access check accepts the factory's account, applying a trigger label here **starts work**.
 - It needs write access to the config directory, the state directory and the secrets directory. It does **not** need the
   container engine socket or the work directory, and the compose service does not mount them.
 - Anyone who can sign in can replace your credentials, so treat the password like one. Keep it off the open internet.

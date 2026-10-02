@@ -22,6 +22,7 @@ anything that matters.
 | Design mockups written by the designer | Only brand-new `design/factory-<ticket>-<slug>.dc.html` files (at most 3, 150 KB each); the patch must add nothing else. Each file is parsed against a tag allowlist: no scripts except the fixed `support.js` include, no event handlers, forms, iframes, images or `url()`, links are `#` only, the only external resource is Google Fonts. A failing file is dropped and the document still posts. Published on a draft PR from a `factory/*` branch | `tests/test_designfiles.py`, `tests/test_designer_files.py` |
 | The code reviewer | Read-only role: it posts a sanitized comment and nothing else. The GitHub client has no approve / request-changes call, it only checks out branches the factory created, and a reviewer failure cannot undo a build | `tests/test_review.py` |
 | The admin UI | Password (scrypt), CSRF on every POST, HttpOnly/SameSite=Strict cookies, login throttling, Host allowlist, strict CSP, read-only database access, escaped output, GitHub-only links | `tests/test_ui.py` |
+| The UI's Labels page | Acts as the factory's GitHub account, server-side only: the repo must be configured, the issue number is validated, only labels that already exist can be added, search text is free text (no qualifiers), errors are fixed messages | `tests/test_ui_admin.py`, `tests/test_ci.py` |
 | Credentials in the UI | Write-only: stored 0600, never rendered back, scrubbed from error messages | `tests/test_ui_admin.py` |
 | Settings changes | Validated by loading the merged config before writing; confirmation for going live, widening the sandbox hosts, or changing a harness | `tests/test_ui_admin.py`, `tests/test_ui_harness.py` |
 | Which hosts a sandbox can reach | The proxy allowlist follows config, and keeps the last good list if a reload fails | `tests/test_harness.py` |
@@ -40,6 +41,8 @@ anything that matters.
   repos' configuration, not the factory's, but protected paths stop the agent editing workflows.
 - **The admin UI is an admin surface.** Anyone who can sign in can replace credentials and change what the factory does. Keep it on
   loopback or behind a VPN/TLS proxy, with a strong password.
+- **The UI can start work.** Its Labels page applies labels as the factory's GitHub account, which the write-access check accepts, so a
+  signed-in UI admin can trigger builds exactly as if they had applied the label on GitHub. The UI therefore also holds the GitHub token.
 - **Harness commands are shell commands you configure**, run inside the sandbox. They come from config, never from ticket text,
   but a bad one weakens the agent's behaviour (not the sandbox).
 - **Token scope.** The GitHub token can write branches and PRs in every repo it is installed on. Scope it narrowly and

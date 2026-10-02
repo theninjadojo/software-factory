@@ -62,6 +62,22 @@ class Evaluate(unittest.TestCase):
         self.assertIn("@insidefence", text)                           # mentions in code fences never ping, left as-is
 
 
+class SearchIsFreeText(unittest.TestCase):
+    def test_search_text_cannot_add_qualifiers_or_reach_other_repositories(self):
+        from urllib.parse import parse_qs, urlparse
+        from factory.github import GitHub
+        seen = []
+        gh = GitHub("tok")
+        gh._get = lambda path: (seen.append(path), {"items": []})[1]
+        gh.search_issues("o/r", 'foo repo:secret/x user:evil org:acme "quoted" is:closed label:"x y"', "open")
+        q = parse_qs(urlparse(seen[0]).query)["q"][0]
+        self.assertTrue(q.startswith("repo:o/r is:issue in:title "))
+        rest = q[len("repo:o/r is:issue in:title "):].replace(" is:open", "")
+        self.assertNotIn(":", rest)                                   # no qualifier survives
+        self.assertIn("foo", rest)
+        self.assertLessEqual(len(rest), 100 + len(" is:open"))
+
+
 class GitHubFallback(unittest.TestCase):
     """The Checks API is not offered to every token; Actions-only tokens must still give CI results."""
 

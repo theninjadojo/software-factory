@@ -1,4 +1,5 @@
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,6 +38,8 @@ class GitHub:
         return [i for i in raw if "pull_request" not in i], len(raw) == per_page
 
     def search_issues(self, repo: str, text: str, state: str = "open", page: int = 1, per_page: int = 50) -> tuple[list[dict], bool]:
+        # Free text only: a ':' would let the caller add search qualifiers (repo:, user:, org:...) and read other repositories.
+        text = re.sub(r"[^\w\s#.-]", " ", text)[:100].strip()
         term = f"repo:{repo} is:issue in:title {text}" + ("" if state == "all" else f" is:{state}")
         raw = self._get("/search/issues?" + urllib.parse.urlencode({"q": term, "per_page": per_page, "page": page}))["items"]
         return raw, len(raw) == per_page
