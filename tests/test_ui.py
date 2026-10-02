@@ -284,3 +284,39 @@ class StageDocuments(UiCase):
         out = L.question_form(self.REPO, 5, Q.StageQuestions("designer", [q]), "csrf")
         self.assertIn(f'href="/ticket/doc?repo={self.REPO}&amp;n=5&amp;stage=designer" target="_blank" rel="noopener"', out)
         self.assertNotIn("/ticket/doc", L.question_form("evil/../x", 5, Q.StageQuestions("designer", [q]), "csrf"))
+
+
+class ImportantEvents(UiCase):
+    def test_important_view_hides_routine_events_and_everything_keeps_all(self):
+        for kind, msg in (("run:start", "r-start"), ("decision", "d-real"), ("decision", "ignored: nope"), ("decision", "dry-run: would run"),
+                          ("alert:pr_ready", "a-ready"), ("error", "e-boom"), ("startup", "s-up"), ("restart", "x-restart"),
+                          ("rate-limit", "rl"), ("answers", "ans")):
+            dbm.add_event(self.db, kind, msg, "o/web", 1, None)
+        kinds = lambda rows: {r["kind"] + ":" + r["message"] for r in rows}
+        imp = kinds(dbm.recent_events(self.db, 100, "important"))
+        self.assertEqual(imp, {"decision:d-real", "alert:pr_ready:a-ready", "error:e-boom"})
+        self.assertEqual(len(dbm.recent_events(self.db, 100, None)), 10)
+        self.assertEqual(kinds(dbm.recent_events(self.db, 100, "alerts")), {"alert:pr_ready:a-ready", "error:e-boom"})
+        cookie, _ = self.session()
+        default = self.req("GET", "/events", cookie=cookie)[2]
+        self.assertIn("d-real", default)
+        self.assertNotIn("r-start", default)
+        self.assertIn("r-start", self.req("GET", "/events?kind=all", cookie=cookie)[2])
+
+    def test_runs_summary_prs_cards_and_links(self):
+        rid = dbm.start_run(self.db, "build", "o/web", 1, "T <b>", "h", "sonnet", "low", "{}")
+        dbm.finish_run(self.db, rid, "pr", "ok", "https://github.com/o/web/pull/2", "", "")
+        dbm.watch_pr(self.db, "o/web", 2, "o/web", 1)
+        dbm.update_pr(self.db, "o/web", 2, status="failed", rounds=1)
+        dbm.watch_pr(self.db, "bad repo", 3, "o/web", 1)
+        cookie, _ = self.session()
+        runs = self.req("GET", "/runs?status=passed", cookie=cookie)[2]
+        self.assertIn("1 today · 1 passed · 0 failed", runs)
+        self.assertIn("Build opened PR", runs)
+        self.assertIn("status=passed", runs)
+        prs = self.req("GET", "/prs", cookie=cookie)[2]
+        self.assertIn("2 open · 0 passing · 1 failing", prs)
+        self.assertIn("Fix round 1 of ", prs)
+        self.assertIn('href="https://github.com/o/web/pull/2"', prs)
+        self.assertNotIn("github.com/bad repo", prs)
+        self.assertNotIn("<b>", prs)
