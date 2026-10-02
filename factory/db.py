@@ -168,3 +168,15 @@ def latest_decisions(db, limit: int = 100) -> list[dict]:
 def watched_prs(db, limit: int = 100) -> list[dict]:
     return _dicts(db.execute("SELECT repo, number, issue_repo, issue_num, status, rounds, watch_started, updated, summary "
                              "FROM prs ORDER BY updated DESC LIMIT ?", (limit,)))
+
+
+def tickets(db, limit: int = 100) -> list[dict]:
+    """One row per ticket the factory has looked at: its latest decision and how many runs it has had."""
+    return _dicts(db.execute(
+        """SELECT d.repo, d.issue, d.outcome, d.detail, d.decided_at,
+                  (SELECT COUNT(*) FROM runs r WHERE r.repo=d.repo AND r.issue=d.issue) AS runs,
+                  (SELECT r.status FROM runs r WHERE r.repo=d.repo AND r.issue=d.issue ORDER BY r.id DESC LIMIT 1) AS last_run,
+                  (SELECT r.title FROM runs r WHERE r.repo=d.repo AND r.issue=d.issue ORDER BY r.id DESC LIMIT 1) AS title
+           FROM decisions d
+           WHERE d.decided_at = (SELECT MAX(d2.decided_at) FROM decisions d2 WHERE d2.repo=d.repo AND d2.issue=d.issue)
+           GROUP BY d.repo, d.issue ORDER BY d.decided_at DESC LIMIT ?""", (limit,)))
