@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 
 from .. import db as dbm
 from .. import questions as Q
@@ -75,10 +76,46 @@ def _number(value: str) -> int:
     return int(value)
 
 
+# Every GitHub call costs about half a second, and the UI makes a new client per request, so what rarely changes is cached here
+# and what is independent is fetched in parallel (a click used to take several seconds).
+_logins: dict = {}          # token -> the account's login (never changes for a token)
+_label_cache: dict = {}     # repo -> (time, [label names])
+LABEL_TTL = 60
+
+
+def _par(*calls):
+    """Run independent GitHub reads at once; results come back in order and the first error is raised."""
+    if len(calls) == 1:
+        return [calls[0]()]
+    with ThreadPoolExecutor(max_workers=min(8, len(calls))) as ex:
+        futures = [ex.submit(c) for c in calls]
+        return [f.result() for f in futures]
+
+
+def _login(gh: GitHub) -> str:
+    if gh.token not in _logins:
+        _logins[gh.token] = gh.login()
+    gh._login = _logins[gh.token]
+    return gh._login
+
+
+def label_names(gh: GitHub, repo: str, fresh: bool = False) -> list[str]:
+    """The repository's label names, cached for a minute (labels rarely change; a miss is re-checked fresh before refusing)."""
+    hit = _label_cache.get(repo)
+    if hit and not fresh and time.time() - hit[0] < LABEL_TTL:
+        return hit[1]
+    names = sorted(l["name"] for l in gh.repo_labels(repo))
+    _label_cache[repo] = (time.time(), names)
+    return names
+
+
 def _existing(gh: GitHub, repo: str, *names: str) -> None:
-    have = {l["name"] for l in gh.repo_labels(repo)}
     for n in names:
-        if not n or len(n) > 50 or n not in have:
+        if not n or len(n) > 50:
+            raise Refused(f"That label does not exist in {repo}.")
+    if any(n not in label_names(gh, repo) for n in names):
+        have = set(label_names(gh, repo, fresh=True))     # it may have been created in the last minute
+        if any(n not in have for n in names):
             raise Refused(f"That label does not exist in {repo}.")
 
 
@@ -117,7 +154,11 @@ def human_actions(cfg, names: set, decision: dict) -> list[tuple[str, str, str |
 
 def _gh(h):
     token = I.read_secret(h.app.cfg(), "github")
-    return GitHub(token) if token else None
+    if not token:
+        return None
+    gh = GitHub(token)
+    gh._login = _logins.get(token)          # already known: no /user call
+    return gh
 
 
 def _page(h, status: int, title: str, body: str, csrf: str, flash=None, kind="ok") -> None:
@@ -149,14 +190,15 @@ def list_get(h, q: dict, csrf: str) -> None:
     if gh is None:
         return _page(h, 200, "Tickets", views.tickets_page(_decisions(h, None)), csrf, NO_TOKEN + " Showing the factory's decisions only.", "bad")
     try:
-        names = sorted(l["name"] for l in gh.repo_labels(repo))
-        if text.lstrip("#").isdigit() and len(text.lstrip("#")) <= 9:
-            issue = gh.get_issue(repo, int(text.lstrip("#")))
-            issues, more = ([] if "pull_request" in issue else [issue]), False
-        elif text:
-            issues, more = gh.search_issues(repo, text, state, page_no)
-        else:
-            issues, more = gh.issues(repo, state, label or None, page_no)
+        def fetch():
+            if text.lstrip("#").isdigit() and len(text.lstrip("#")) <= 9:
+                issue = gh.get_issue(repo, int(text.lstrip("#")))
+                return ([] if "pull_request" in issue else [issue]), False
+            if text:
+                return gh.search_issues(repo, text, state, page_no)
+            return gh.issues(repo, state, label or None, page_no)
+
+        names, (issues, more) = _par(lambda: label_names(gh, repo), fetch)
     except (urllib.error.URLError, OSError, ValueError) as e:
         return _page(h, 502, "Tickets", filters(cfg, repo, state, label, text, []), csrf, _github_error(e), "bad")
     if label and text:
@@ -220,8 +262,7 @@ def needs_you(h) -> list | None:
         db.close()
     rows = []
     try:
-        for repo in cfg.repos:
-            issues, _ = gh.issues(repo, "open", None, 1)
+        for repo, (issues, _) in zip(cfg.repos, _par(*[(lambda r=r: gh.issues(r, "open", None, 1)) for r in cfg.repos])):
             for i in issues:
                 d = decisions.get((repo, i["number"]))
                 status, acts = actions_for(cfg, i, d)
@@ -250,17 +291,24 @@ def _asked(h, gh, cfg, repo, issues, decisions) -> dict:
         waiting = dbm.questions_waiting(db, repo)
     finally:
         db.close()
-    out = {}
-    for i in [i for i in issues if i["number"] in waiting][:10]:
-        if actions_for(cfg, i, decisions.get((repo, i["number"])))[0] in ("closed", "running", "queued"):
-            continue
+    todo = [i for i in issues if i["number"] in waiting
+            and actions_for(cfg, i, decisions.get((repo, i["number"])))[0] not in ("closed", "running", "queued")][:10]
+    if not todo:
+        return {}
+    try:
+        me = _login(gh)
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+        return {}
+
+    def one(i):
         try:
-            cur = Q.latest(Q.from_comments(gh.issue_comments(repo, i["number"]), gh.login()))
+            return i["number"], Q.latest(Q.from_comments(gh.issue_comments(repo, i["number"]), me))
         except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
-            continue
-        if cur and cur.pending():
-            out[i["number"]] = cur
-    return out
+            return i["number"], None
+
+    with ThreadPoolExecutor(max_workers=min(8, len(todo))) as ex:
+        results = list(ex.map(one, todo))
+    return {n: cur for n, cur in results if cur and cur.pending()}
 
 
 def question_cards(repo: str, n: int, st, csrf: str) -> str:
@@ -362,8 +410,7 @@ def _render_issue(h, csrf: str, repo: str, n: int, flash=None, kind="ok", status
     if gh is None:
         return _page(h, 400, "Tickets", "", csrf, NO_TOKEN, "bad")
     try:
-        issue = gh.get_issue(repo, n)
-        names = sorted(l["name"] for l in gh.repo_labels(repo))
+        issue, names = _par(lambda: gh.get_issue(repo, n), lambda: label_names(gh, repo))
     except (urllib.error.URLError, OSError, ValueError) as e:
         return _page(h, 404 if isinstance(e, urllib.error.HTTPError) and e.code == 404 else 502, "Tickets", "", csrf, _github_error(e), "bad")
     if "pull_request" in issue:

@@ -116,5 +116,50 @@ class Pages(UiCase):
             self.assertNotIn("style=", self.req("GET", path, cookie=cookie)[2], path)
 
 
+class Speed(unittest.TestCase):
+    """The UI made a new GitHub client per request and called GitHub one step after another: a click took seconds."""
+
+    def setUp(self):
+        from factory.ui import labels as L
+        self.L = L
+        L._label_cache.clear()
+        L._logins.clear()
+        self.gh = mock.MagicMock()
+        self.gh.token = "tok-1"
+        self.gh.repo_labels.return_value = [{"name": "factory:ready"}, {"name": "bug"}]
+
+    def test_label_names_are_cached_and_a_miss_is_rechecked_once(self):
+        self.L._existing(self.gh, "o/r", "bug")
+        self.L._existing(self.gh, "o/r", "factory:ready")
+        self.assertEqual(self.gh.repo_labels.call_count, 1)
+        self.gh.repo_labels.return_value.append({"name": "new-one"})       # created since: one fresh read finds it
+        self.L._existing(self.gh, "o/r", "new-one")
+        self.assertEqual(self.gh.repo_labels.call_count, 2)
+        with self.assertRaises(self.L.Refused):                             # still unknown: refused after the fresh read
+            self.L._existing(self.gh, "o/r", "nope")
+        with self.assertRaises(self.L.Refused):
+            self.L._existing(self.gh, "o/r", "x" * 51)
+
+    def test_the_cache_expires(self):
+        self.L.label_names(self.gh, "o/r")
+        self.L._label_cache["o/r"] = (time.time() - self.L.LABEL_TTL - 1, ["stale"])
+        self.assertEqual(self.L.label_names(self.gh, "o/r"), ["bug", "factory:ready"])
+
+    def test_the_account_login_is_looked_up_once_per_token(self):
+        self.gh.login.return_value = "bot"
+        self.assertEqual(self.L._login(self.gh), "bot")
+        self.assertEqual(self.L._login(self.gh), "bot")
+        self.assertEqual(self.gh.login.call_count, 1)
+
+    def test_parallel_reads_keep_their_order_and_raise_the_first_error(self):
+        self.assertEqual(self.L._par(lambda: 1, lambda: 2, lambda: 3), [1, 2, 3])
+        self.assertEqual(self.L._par(lambda: 7), [7])
+
+        def boom():
+            raise OSError("down")
+        with self.assertRaises(OSError):
+            self.L._par(lambda: 1, boom)
+
+
 if __name__ == "__main__":
     unittest.main()
