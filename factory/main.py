@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, pause, runner
+from . import ci, pause, runner, subtasks
 from . import db as dbm
 from .classifier import RuleClassifier
 from .config import Config, Route, load, project_for, project_info
@@ -25,6 +25,7 @@ log = logging.getLogger("factory")
 WORKING, DONE, FAILED = "factory:working", "factory:pr-open", "factory:failed"
 tg: Telegram | None = None
 ev = None                                  # sqlite connection for runs/events/status; set in main()
+step_gh = None                             # GitHub client used to mirror pipeline steps as sub-issues; None = off
 alert_filter = lambda event: True      # set from config in main()
 
 
@@ -120,6 +121,8 @@ def begin_run(kind: str, repo: str, issue: dict, route, c=None, stage: str | Non
         run_id = dbm.start_run(ev, kind, repo, issue["number"], issue.get("title", ""), route.harness, route.model, route.effort, cls, stage)
         dbm.set_status(ev, "running", str(run_id))
         emit("run:start", f"{kind}{' ' + stage if stage else ''} started with {route.model} ({route.effort})", repo, issue["number"], run_id)
+        if step_gh is not None:
+            subtasks.sync(step_gh, ev, repo, issue["number"], dbm.step_of(kind, stage))
         return run_id
     except Exception:
         log.exception("could not record run start")
@@ -133,6 +136,9 @@ def end_run(run_id, res, sink: dict) -> None:
         dbm.finish_run(ev, run_id, res.status, res.detail, res.pr_url or "", res.output, sink.get("log", ""))
         dbm.set_status(ev, "running", "")
         emit(f"run:{res.status}", res.detail[:300], None, None, run_id)
+        if step_gh is not None:
+            r = dbm.get_run(ev, run_id)
+            subtasks.sync(step_gh, ev, r["repo"], r["issue"], dbm.step_of(r["kind"], r["stage"]))
     except Exception:
         log.exception("could not record run end")
 
@@ -373,7 +379,7 @@ def run_fix(cfg: Config, gh: GitHub, repo: str, number: int, issue_repo: str, is
     if not branch.startswith("factory/") or pr["head"]["repo"]["full_name"] != repo:
         return False                                     # never touch a branch the factory did not create
     issue = gh.get_issue(issue_repo, issue_num)
-    run_id, sink = begin_run("fix", repo, issue, cfg.routes["medium"]), {}
+    run_id, sink = begin_run("fix", issue_repo, issue, cfg.routes["medium"]), {}
     res = runner.run_task(cfg, gh, issue_repo, issue, cfg.routes["medium"], prior=stage_outputs(gh, issue_repo, issue_num),
                           comments=human_comments(gh, issue_repo, issue_num), fix_branch=branch, failures=failures, sink=sink)
     end_run(run_id, res, sink)
@@ -544,6 +550,8 @@ def main() -> None:
     conn, gh = dbm.connect(cfg.db_path), GitHub(token)
     global ev
     ev = conn
+    global step_gh
+    step_gh = gh if cfg.subtasks.enabled and not cfg.dry_run and token else None
     if not args.once:
         stranded = dbm.mark_interrupted(conn)
         emit("startup", f"orchestrator started ({'dry-run' if cfg.dry_run else 'LIVE'}), {len(cfg.repos)} repo(s)"

@@ -180,16 +180,18 @@ def run_detail(r: dict) -> str:
     return out + '<p><a href="/runs">← all runs</a></p>'
 
 
-def tickets_page(rows: list[dict]) -> str:
+def tickets_page(rows: list[dict], counts: dict | None = None) -> str:
+    counts = counts or {}
     if not rows:
         return '<p class="muted">The factory has not looked at any ticket yet.</p>'
     body = "".join(
         f'<tr><td>{ticket_link(t["repo"], t["issue"])}<br><span class="muted">{esc(t["title"])}</span></td><td>{badge(t["outcome"])}</td>'
         f'<td class="wrap">{esc(t["detail"])}</td><td>{esc(t["runs"])}{" · " + badge(t["last_run"]) if t["last_run"] else ""}</td>'
         f'<td title="{esc(ts(t["decided_at"]))}">{esc(ago(t["decided_at"]))}</td>'
+        f'<td>{steps_cell(t, counts)}</td>'
         f'<td><a href="/labels/issue?repo={esc(t["repo"])}&amp;n={int(t["issue"])}">Edit labels</a></td></tr>' for t in rows)
     return ('<p class="muted">The latest decision for each ticket. <em>ignored</em> means the label was not applied by someone with write access.</p>'
-            '<div class="scroll"><table><thead><tr><th>Ticket</th><th>Decision</th><th>Why</th><th>Runs</th><th>When</th><th>Labels</th></tr></thead>'
+            '<div class="scroll"><table><thead><tr><th>Ticket</th><th>Decision</th><th>Why</th><th>Runs</th><th>When</th><th>Steps</th><th>Labels</th></tr></thead>'
             f'<tbody>{body}</tbody></table></div>')
 
 
@@ -199,3 +201,48 @@ def events_page(events: list[dict], kind: str, older: int | None) -> str:
     form = f'<form method="get" class="filters"><select name="kind">{opts}</select><button>Filter</button></form>'
     more = f'<p class="pager"><a href="/events?kind={esc(kind)}&amp;before={int(older)}">older →</a></p>' if older else ""
     return form + events_table(events) + more
+
+
+STEP_TITLES = {"analyze": "Analyze", "design": "Design", "architect": "Architect", "implement": "Implement", "review": "Review", "ci-fix": "CI fix"}
+STEP_GLYPH = {"done": "✓", "running": "●", "failed": "✕", "queued": "○"}
+STEP_BADGE = {"done": "good", "running": "warn", "failed": "bad", "queued": ""}
+
+
+def step_summary(counts) -> str:
+    done, total = counts
+    return f"{int(done)} of {int(total)} steps done"
+
+
+def pipeline(steps: list[dict]) -> str:
+    """Read-only belt of stations, one per pipeline step. Every value is escaped; links are checked against GH_URL."""
+    if not steps:
+        return '<p class="muted">No pipeline steps yet. They appear when the factory starts working on this ticket.</p>'
+    items = ""
+    for s in steps:
+        name, status = STEP_TITLES.get(s["step"], s["step"]), s["status"]
+        label = f'{name}, {status}, {s["role"]} agent, {s["model"]}, {int(s["attempts"])} attempt(s)'
+        items += (f'<li class="station {esc(status)}"><a class="station-link" href="#step-{esc(s["step"])}" aria-label="{esc(label)}">'
+                  f'<span aria-hidden="true">{STEP_GLYPH.get(status, "○")}</span> <strong>{esc(name)}</strong></a><br>'
+                  f'{badge(status.capitalize(), STEP_BADGE.get(status, ""))}'
+                  f'<p class="muted">{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])}<br>{int(s["attempts"])} attempt(s)</p></li>')
+    run_links = lambda s: " ".join(f'<a href="/runs/{int(i)}">#{int(i)}</a>' for i in s["run_ids"])
+    rows = "".join(
+        f'<tr id="step-{esc(s["step"])}"><th>{esc(STEP_TITLES.get(s["step"], s["step"]))}</th><td>{badge(s["status"].capitalize(), STEP_BADGE.get(s["status"], ""))}</td>'
+        f'<td>{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])} <span class="muted">effort {esc(s["effort"])}</span></td>'
+        f'<td>{int(s["attempts"])}</td><td>{run_links(s)}</td>'
+        f'<td>{pr_links(s["pr_urls"]) or "—"}</td></tr>' for s in steps)
+    return (f'<ol class="belt">{items}</ol><div class="scroll"><table><thead><tr><th>Step</th><th>Status</th><th>Agent</th><th>Attempts</th>'
+            f'<th>Runs</th><th>PRs</th></tr></thead><tbody>{rows}</tbody></table></div>')
+
+
+def ticket_detail(repo: str, issue: int, steps: list[dict]) -> str:
+    done = sum(s["status"] == "done" for s in steps)
+    head = f'<p>{ticket_link(repo, issue)} <span class="step-count" role="status">{esc(step_summary((done, len(steps))))}</span></p>'
+    return head + "<h2>Pipeline</h2>" + pipeline(steps) + '<p><a href="/tickets">← all tickets</a></p>'
+
+
+def steps_cell(t: dict, counts: dict) -> str:
+    c = counts.get((t["repo"], t["issue"]))
+    if not c or not c[1] or not REPO.match(str(t["repo"])):
+        return "—"
+    return f'<a class="step-count" href="/ticket?repo={esc(t["repo"])}&amp;n={int(t["issue"])}">{int(c[0])}/{int(c[1])}</a>'
