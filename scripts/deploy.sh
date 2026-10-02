@@ -15,7 +15,16 @@ set -e
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 cd /srv/factory
 RUNNING=$(podman ps -q --filter 'name=^factory-' | wc -l); echo "running sandboxes: $RUNNING"
-[ "$RUNNING" = "0" ] || { echo "ABORT: an agent run is in flight; try again when it finishes"; exit 1; }
+# A run is also in flight while it clones the repositories, before its sandbox exists: the database knows about it from its first moment.
+DBRUNS=$(python3 -c "
+import sqlite3,sys
+try:
+    db = sqlite3.connect('file:/srv/factory/state/factory.db?mode=ro', uri=True, timeout=5)
+    print(db.execute(\"SELECT COUNT(*) FROM runs WHERE status='running'\").fetchone()[0])
+except Exception:
+    print(0)
+"); echo "runs marked running: $DBRUNS"
+[ "$RUNNING" = "0" ] && [ "$DBRUNS" = "0" ] || { echo "ABORT: an agent run is in flight; try again when it finishes"; exit 1; }
 mkdir state/fd && tar -C state/fd -xzf /tmp/sf-deploy.tgz
 rm -rf app/factory app/tests app/sandbox app/deploy
 cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/deploy state/fd/config.example.toml app/ && rm -rf state/fd
