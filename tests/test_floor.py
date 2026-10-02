@@ -221,7 +221,7 @@ class Pages(UiCase):
         with mock.patch("factory.ui.server.L.needs_you", return_value=[NEED, ASK]):
             s, h, html = self.req("GET", "/", cookie=cookie)
         self.assertEqual(s, 200)
-        for needle in ("Factory floor", 'class="fl-map"', "Needs you", "/tickets/start", "/tickets/answer", 'class="more"', "Floor</a>"):
+        for needle in ("Factory floor", 'class="fl-map"', "Needs you", "/tickets/start", "/tickets/answer", 'class="more"', "Factory</a>"):
             self.assertIn(needle, html)
         self.assertNotIn("style=", html)
         self.assertIn("Run analyst", html)

@@ -10,8 +10,8 @@ from ..sanitize import md_render
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
-NAV = [("/", "Floor"), ("/needs", "Needs you"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
-       ("/settings", "Settings"), ("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram")]
+NAV = [("/", "Factory"), ("/needs", "Needs you"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
+       ("/settings", "Settings")]
 PRIMARY = 4         # the first four stay on the phone tab bar; the rest sit behind "More"
 
 GOOD = {"pr", "stage", "passed", "success", "closed", "ok"}
@@ -71,7 +71,7 @@ def csrf_field(csrf: str) -> str:
     return f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
 
 
-def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None) -> str:
+def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "") -> str:
     items = list(nav or NAV)
     count = lambda p: f' <span class="navbadge">{int(badges[p])}</span>' if badges and badges.get(p) else ""
     link = lambda p, n, extra="": f'<a href="{p}"{" class=\"" + ("active " if p == active else "") + extra + "\"" if (p == active or extra) else ""}>{esc(n)}{count(p)}</a>'
@@ -80,6 +80,8 @@ def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | N
     more_on = " active" if any(p == active for p, _ in items[PRIMARY:]) else ""
     nav_html = (f'<nav aria-label="Main">{links}<details class="more{more_on}"><summary>More</summary><div class="more-list">{more}</div></details></nav>'
                 if len(items) > PRIMARY else f"<nav aria-label=Main>{links}</nav>")
+    if side:
+        body = f'<div class="with-side">{side}<div class="side-body">{body}</div></div>'
     note = f'<div class="flash {esc(flash_kind)}" role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<meta name="color-scheme" content="dark"><title>{esc(title)} · software-factory</title><link rel="stylesheet" href="/static/style.css"></head><body>'

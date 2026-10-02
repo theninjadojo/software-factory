@@ -182,3 +182,11 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .doc-tabs a, .doc-tabs span, .nd-doc a { display: inline-block; min-height: 44px; line-height: 44px; }
 .doc-tabs a[aria-current] { font-weight: bold; }
 .nd-doc { margin: 0 0 .5rem; }
+.with-side { display:flex; gap:1.5rem; align-items:flex-start; } .side-body { flex:1; min-width:0; }
+.side { display:flex; flex-direction:column; gap:.2rem; flex:0 0 11rem; } .side a { padding:.4rem .7rem; border-radius:6px; color:var(--muted); text-decoration:none; }
+.side a:hover, .side a.active { background:var(--bg); color:var(--text); } .side a.active { box-shadow:inset 2px 0 0 var(--accent); }
+.side-h { margin:.8rem .7rem .2rem; font-size:.75rem; text-transform:uppercase; color:var(--muted); }
+.srow { display:flex; flex-wrap:wrap; gap:.5rem 1.5rem; justify-content:space-between; align-items:center; padding:.7rem 0; border-bottom:1px solid var(--line); }
+.srow .what { flex:1 1 16rem; } .srow .ctl { flex:0 1 20rem; } .srow .ctl input:not([type=checkbox]), .srow .ctl select, .srow .ctl textarea { width:100%; }
+.settings.rows button { margin-top:1rem; }
+@media (max-width:700px) { .with-side { flex-direction:column; gap:.5rem; } .side { flex-direction:row; flex-wrap:wrap; flex-basis:auto; } .side-h { display:none; } }

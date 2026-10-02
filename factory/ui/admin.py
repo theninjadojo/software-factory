@@ -14,8 +14,11 @@ FLASH = {
 }
 
 
-def _send_page(h, status: int, title: str, body: str, active: str, csrf: str, flash=None, kind="ok") -> None:
-    h._send(status, views.page(title, body, active, csrf, nav=views.NAV, flash=flash, flash_kind=kind))
+def _send_page(h, status: int, title: str, body: str, active: str, csrf: str, flash=None, kind="ok", section: str = "") -> None:
+    """Every admin page renders inside the Settings layout: the Settings tab is lit and the side list marks the page."""
+    cached = L.needs_cached()
+    side = forms.side_list(section or active.lstrip("/"))
+    h._send(status, views.page(title, body, "/settings", csrf, nav=views.NAV, flash=flash, flash_kind=kind, badges={"/needs": len(cached)} if cached else None, side=side))
 
 
 def _files(h):
@@ -46,9 +49,11 @@ def render_settings(h, section: str, csrf: str, submitted=None, tester: str = ""
 
 def settings_get(h, q: dict, csrf: str) -> None:
     section = q.get("section", "general")
+    if section == "labels":
+        return _send_page(h, 200, "Settings", forms.labels_page(h.app.cfg()), "/settings", csrf, FLASH.get(q.get("ok", "")), section="labels")
     if section != "projects" and section not in S.SECTIONS:
         return h._send(404, "no such section", "text/plain")
-    _send_page(h, 200, "Settings", render_settings(h, section, csrf), "/settings", csrf, FLASH.get(q.get("ok", "")))
+    _send_page(h, 200, "Settings", render_settings(h, section, csrf), "/settings", csrf, FLASH.get(q.get("ok", "")), section=section)
 
 
 def settings_save(h, form, csrf: str) -> None:
@@ -58,7 +63,7 @@ def settings_save(h, form, csrf: str) -> None:
     except S.SettingsError as e:
         if section not in S.SECTIONS:
             return h._send(404, "no such section", "text/plain")
-        return _send_page(h, 422, "Settings", render_settings(h, section, csrf, submitted=form), "/settings", csrf, " · ".join(e.messages), "bad")
+        return _send_page(h, 422, "Settings", render_settings(h, section, csrf, submitted=form), "/settings", csrf, " · ".join(e.messages), "bad", section=section)
     h._redirect(f"/settings?section={section}&ok=saved")
 
 
@@ -66,7 +71,7 @@ def projects_save(h, form, csrf: str) -> None:
     try:
         S.save_projects(h.app.config_path, h.app.state_dir(), form)
     except S.SettingsError as e:
-        return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf, submitted=form), "/settings", csrf, " · ".join(e.messages), "bad")
+        return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf, submitted=form), "/settings", csrf, " · ".join(e.messages), "bad", section="projects")
     h._redirect("/settings?section=projects&ok=saved")
 
 
@@ -75,7 +80,7 @@ def classify_test(h, form, csrf: str) -> None:
     labels = [x.strip() for x in (form.get("labels") or "").split(",") if x.strip()][:30]
     c, how = I.classify_sample(cfg, (form.get("title") or "")[:300], (form.get("body") or "")[:15000], labels)
     result = forms.classification_result(c, how, decide(cfg, c))
-    _send_page(h, 200, "Settings", render_settings(h, "classifier", csrf, tester=result), "/settings", csrf)
+    _send_page(h, 200, "Settings", render_settings(h, "classifier", csrf, tester=result), "/settings", csrf, section="classifier")
 
 
 # ------------------------------------------------------------------ credentials

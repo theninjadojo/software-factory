@@ -28,17 +28,37 @@ def _fmt(f: S.Field, v) -> str:
     return str(v)
 
 
-def tabs(active: str, base: str = "/settings") -> str:
-    return '<p class="tabs">' + " ".join(f'<a href="{base}?section={k}"{" class=active" if k == active else ""}>{esc(t)}</a>' for k, t in TABS) + "</p>"
+SIDE = [("general", "General", "/settings?section=general"), ("routing", "Routing", "/settings?section=routing"),
+        ("roles", "Role agents", "/settings?section=roles"), ("projects", "Projects", "/settings?section=projects"),
+        ("harnesses", "Harnesses", "/harnesses"), ("credentials", "Credentials", "/credentials"), ("telegram", "Telegram", "/telegram"),
+        ("labels", "Labels", "/settings?section=labels")]
+SIDE_MORE = [(k, t, f"/settings?section={k}") for k, t in TABS if k not in {s[0] for s in SIDE}]
 
 
-def field_row(f: S.Field, eff: dict, base: dict, submitted=None) -> str:
+def side_list(active: str) -> str:
+    link = lambda k, t, href: f'<a href="{href}"{" class=active aria-current=page" if k == active else ""}>{esc(t)}</a>'
+    return ('<nav class="side" aria-label="Settings">' + "".join(link(*x) for x in SIDE)
+            + '<span class="side-h">More settings</span>' + "".join(link(*x) for x in SIDE_MORE) + "</nav>")
+
+
+def labels_page(cfg) -> str:
+    rows = [("Build label", cfg.trigger_label), ("Review label", cfg.review.label), ("Reviewed label", cfg.review.done_label), ("Conflicts label", cfg.conflicts.label)]
+    return ('<p class="muted">Labels are edited per ticket, as the factory\'s GitHub account: open <a href="/tickets">Tickets</a> and press <strong>Labels</strong>. '
+            'The labels the factory itself reacts to are set under General, Code review and Merge conflicts.</p><table class="meta">'
+            + "".join(f"<tr><th>{esc(k)}</th><td><code>{esc(v)}</code></td></tr>" for k, v in rows) + "</table>")
+
+
+def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = False) -> str:
     value = effective_value(f, eff, submitted)
     name = esc(f.key)
     if f.kind == "bool":
         on = (submitted.get(f.key) == "1") if submitted is not None else bool(value)
-        control = f'<label class="check"><input type="checkbox" name="{name}" value="1"{" checked" if on else ""}> {esc(f.label)}</label>'
-        head = ""
+        if row:
+            control = f'<input type="checkbox" id="{name}" name="{name}" value="1"{" checked" if on else ""}>'
+            head = f'<label for="{name}">{esc(f.label)}</label>'
+        else:
+            control = f'<label class="check"><input type="checkbox" name="{name}" value="1"{" checked" if on else ""}> {esc(f.label)}</label>'
+            head = ""
     else:
         head = f'<label for="{name}">{esc(f.label)}</label>'
         if f.kind == "select":
@@ -56,6 +76,8 @@ def field_row(f: S.Field, eff: dict, base: dict, submitted=None) -> str:
         note = f'<span class="muted"> · changed here (config.toml says: {esc(_fmt(f, pinned))})</span>'
     help_ = f'<div class="muted">{esc(f.help)}{note}</div>' if (f.help or note) else ""
     confirm = (f'<label class="check danger"><input type="checkbox" name="confirm__{name}" value="1"> I understand: {esc(f.danger)}</label>' if f.danger else "")
+    if row:
+        return f'<div class="srow"><div class="what">{head}{help_}</div><div class="ctl">{control}</div>{confirm}</div>'
     return f'<div class="field">{head}{control}{help_}{confirm}</div>'
 
 
@@ -67,16 +89,17 @@ def effective_value(f: S.Field, eff: dict, submitted=None):
 
 def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None) -> str:
     title, fields = S.SECTIONS[section][0], S.fields_for(section, eff)
-    rows = "".join(field_row(f, eff, base, submitted) for f in fields)
-    return (f'{tabs(section)}<form method="post" action="/settings/save" class="settings">{csrf_field(csrf)}'
-            f'<input type="hidden" name="section" value="{esc(section)}">{rows}<button>Save {esc(title.lower())}</button></form>'
+    general = section == "general"
+    rows = "".join(field_row(f, eff, base, submitted, row=general) for f in fields)
+    return (f'<form method="post" action="/settings/save" class="settings{" rows" if general else ""}">{csrf_field(csrf)}'
+            f'<input type="hidden" name="section" value="{esc(section)}">{rows}<button>{"Save changes" if general else "Save " + esc(title.lower())}</button></form>'
             '<p class="muted">Saving writes <code>config.overrides.toml</code>; your <code>config.toml</code> is never touched. '
-            'Changes apply when the orchestrator is next idle (it never restarts mid-task).</p>')
+            + ("Changes apply the next time the factory is idle.</p>" if general else "Changes apply when the orchestrator is next idle (it never restarts mid-task).</p>"))
 
 
 def projects_form(base: dict, eff: dict, csrf: str, submitted=None) -> str:
     projects = list(eff.get("projects", [])) + [{"name": "", "description": "", "repos": []}]
-    out = [tabs("projects"), '<p class="muted">Repositories that work together are one project: agents get all of them side by side and may change several in one task.</p>',
+    out = ['<p class="muted">Repositories that work together are one project: agents get all of them side by side and may change several in one task.</p>',
            f'<form method="post" action="/settings/projects" class="settings">{csrf_field(csrf)}']
     for i, p in enumerate(projects[:20]):
         repos = list(p.get("repos", [])) + [{"repo": "", "role": ""}, {"repo": "", "role": ""}]
