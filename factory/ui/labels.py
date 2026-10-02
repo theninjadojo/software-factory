@@ -12,7 +12,8 @@ from .views import badge, csrf_field, esc
 log = logging.getLogger("factory.ui")
 NUM = re.compile(r"^\d{1,9}$")
 STATES = ("open", "closed", "all")
-FLASH = {"added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced."}
+FLASH = {"started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced."}
+VERBS = {"analyst": "Analyze", "designer": "Design", "architect": "Architect"}
 NO_TOKEN = "Save a GitHub token on the Credentials page first."
 
 
@@ -73,6 +74,26 @@ def _existing(gh: GitHub, repo: str, *names: str) -> None:
             raise Refused(f"That label does not exist in {repo}.")
 
 
+def actions_for(cfg, issue: dict) -> tuple[str, list[tuple[str, str, str]]]:
+    """What can be started on a ticket right now: (status text, [(action, button text, label to apply)]).
+    The mapping is fixed here and built from config; the browser only ever names an action, never a label."""
+    names = set(_names(issue))
+    if issue.get("state") != "open":
+        return "closed", []
+    if any(n == "factory:working" or n.startswith("factory:working-") for n in names):
+        return "running", []
+    triggers = {cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else [])}
+    if names & triggers:
+        return "queued", []
+    acts = [("auto", "Auto", cfg.auto_label)]
+    acts += [(r.name, VERBS.get(r.name, r.name.capitalize()), r.label) for r in cfg.roles if r.done_label not in names]
+    acts.append(("build", "Build", cfg.trigger_label))
+    if cfg.review.enabled and "factory:pr-open" in names:
+        acts.append(("review", "Review", cfg.review.label))
+    status = "failed" if "factory:failed" in names else "pr open" if "factory:pr-open" in names else ""
+    return status, acts
+
+
 def _gh(h):
     token = I.read_secret(h.app.cfg(), "github")
     return GitHub(token) if token else None
@@ -119,7 +140,7 @@ def list_get(h, q: dict, csrf: str) -> None:
         return _page(h, 502, "Tickets", filters(cfg, repo, state, label, text, []), csrf, _github_error(e), "bad")
     if label and text:
         issues = [i for i in issues if label in _names(i)]
-    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues, _decisions(h, repo)) + pager(repo, state, label, text, page_no, more), csrf)
+    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues, _decisions(h, repo), csrf) + pager(repo, state, label, text, page_no, more), csrf, FLASH.get(q.get("ok", "")))
 
 
 def filters(cfg, repo, state, label, text, names) -> str:
@@ -133,7 +154,7 @@ def filters(cfg, repo, state, label, text, names) -> str:
             f'<input name="q" placeholder="search title or #number" value="{esc(text)}"><button>Filter</button></form>')
 
 
-def table(cfg, repo, issues, decisions) -> str:
+def table(cfg, repo, issues, decisions, csrf) -> str:
     if not issues:
         return '<p class="muted">No issues match this filter.</p>'
     def factory_cell(n) -> str:
@@ -143,11 +164,21 @@ def table(cfg, repo, issues, decisions) -> str:
         run = f' · {d["runs"]} run{"s" if d["runs"] != 1 else ""}' + (f' ({esc(d["last_run"])})' if d["last_run"] else "") if d["runs"] else ""
         return f'{badge(d["outcome"])}{run}<br><span class="muted">{esc(views.ago(d["decided_at"]))}</span>'
 
+    def buttons(i) -> str:
+        status, acts = actions_for(cfg, i)
+        hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(i["number"])}">'
+        out = "".join(
+            f'<form method="post" action="/tickets/start" class="inline">{hidden}'
+            f'<button name="action" value="{esc(a)}" class="{"" if a == "auto" else "secondary"}" title="Applies {esc(lab)}" '
+            f'aria-label="{esc(text)} #{int(i["number"])}">{esc(text)}</button></form> ' for a, text, lab in acts)
+        note = f'<span class="muted">{esc(status)}</span> ' if status else ""
+        return note + out + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
+
     rows = "".join(
         f'<tr><td>{views.ticket_link(repo, i["number"])}<br><span class="muted">{esc(i.get("title"))}</span></td><td>{badge(i.get("state"), "")}</td>'
         f'<td>{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td>{factory_cell(i["number"])}</td>'
-        f'<td><a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Edit</a></td></tr>' for i in issues)
-    return ('<div class="scroll"><table><thead><tr><th>Issue</th><th>State</th><th>Labels</th><th>Factory</th><th></th></tr></thead>'
+        f'<td class="actions">{buttons(i)}</td></tr>' for i in issues)
+    return ('<div class="scroll"><table><thead><tr><th>Issue</th><th>State</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 
@@ -263,3 +294,34 @@ def replace(h, form, csrf: str) -> None:
         log.info("labels: replaced %r with %r on %s#%d", old, new, repo, n)
 
     _act(h, form, csrf, "replaced", steps)
+
+
+def start(h, form, csrf: str) -> None:
+    """One-click start: apply the trigger label for a named action. The ticket is re-read first, so a stale page cannot
+    start something that is already running or queued, and the action must be one actions_for() offers right now."""
+    cfg = h.app.cfg()
+    action = form.get("action", "")
+    try:
+        repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
+    except Refused as e:
+        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
+    gh = _gh(h)
+    if gh is None:
+        return _page(h, 400, "Tickets", "", csrf, NO_TOKEN, "bad")
+    try:
+        issue = gh.get_issue(repo, n)
+        if "pull_request" in issue:
+            return h._send(404, "no such issue", "text/plain")
+        status, acts = actions_for(cfg, issue)
+        chosen = next((lab for a, _, lab in acts if a == action), None)
+        if chosen is None:
+            raise Refused(f"That cannot be started now ({status or 'not available'}).")
+        _existing(gh, repo, chosen)
+        gh.add_labels(repo, n, [chosen])
+    except Refused as e:
+        return _render_issue(h, csrf, repo, n, str(e), "bad", 400)
+    except (urllib.error.URLError, OSError) as e:
+        log.warning("tickets: start %s on %s#%d failed", action, repo, n)
+        return _render_issue(h, csrf, repo, n, _github_error(e), "bad", 502)
+    log.info("tickets: started %s on %s#%d from the UI", action, repo, n)
+    h._redirect(f"/tickets?repo={repo}&ok=started")

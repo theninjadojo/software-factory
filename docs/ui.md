@@ -63,3 +63,11 @@ The UI can change what the factory does and what it can reach, so:
 - It needs write access to the config directory, the state directory and the secrets directory. It does **not** need the
   container engine socket or the work directory, and the compose service does not mount them.
 - Anyone who can sign in can replace your credentials, so treat the password like one. Keep it off the open internet.
+
+## Tickets: start work with a button
+
+`/tickets` lists the open issues of a configured repository with their labels and the factory's latest decision. Each row has
+buttons for what can be started right now: **Auto**, the stages not yet done (**Analyze**, **Design**, **Architect**), **Build**,
+and **Review** (when enabled and a PR is open). A button applies the matching trigger label as the factory's account, and the
+orchestrator starts the work at its next poll. A ticket that is running or queued shows its status instead of buttons. The browser
+only names an action; the label comes from config, and the ticket is re-read before the label is applied.
