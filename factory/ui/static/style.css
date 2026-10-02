@@ -182,3 +182,13 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .doc-tabs a, .doc-tabs span, .nd-doc a { display: inline-block; min-height: 44px; line-height: 44px; }
 .doc-tabs a[aria-current] { font-weight: bold; }
 .nd-doc { margin: 0 0 .5rem; }
+
+/* ---- Needs you: calmer cards; Tickets: title bar, chips, progress ---- */
+.nd-top { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; padding:1rem 1.2rem .4rem; } .nd-tag { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:.3rem; }
+.nd-low { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; padding:.4rem 1.2rem 1rem; }
+.nd-row .nd-body { display:block; }
+.tk-bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; margin:0 0 .8rem; } .tk-bar form { display:flex; gap:.5rem; flex-wrap:wrap; }
+.tk-seg { margin:0 0 .8rem; } .tk-seg a[aria-current] { border-color:var(--accent); background:#2a2112; color:var(--text); }
+.tk-foot { color:var(--muted); font-size:.85rem; }
+.pg { display:inline-flex; align-items:center; gap:3px; } .pg i { width:14px; height:6px; border-radius:3px; background:var(--panel2); border:1px solid var(--line2); } .pg i.on { background:var(--accent); border-color:var(--accent); }
+@media (max-width:700px) { .nd-top { flex-direction:column; } .nd-tag { justify-content:flex-start; } }

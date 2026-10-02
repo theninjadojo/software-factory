@@ -342,6 +342,33 @@ class Labels(AdminCase):
         for needle in ("bug", "run:stage", "/labels/issue?repo="):
             self.assertIn(needle, html)
 
+    def test_tickets_page_shows_stage_progress_chips_and_footer(self):
+        issue = {"number": 7, "title": "<script>x</script>", "state": "open", "updated_at": "2026-10-02T10:00:00Z",
+                 "labels": [{"name": "factory:working-architect"}, {"name": "stage:analysed"}]}
+        self.gh.issues.return_value = ([issue], True)
+        self.gh.count_issues.return_value = 24
+        cookie, _ = self.session()
+        _, _, html = self.req("GET", "/tickets", cookie=cookie)
+        for needle in ("New ticket", 'type="search"', "In progress", "Needs you", "Done", "<th>Stage</th>", "<th>Updated</th>", "Architect working",
+                       "1/4", "Showing 1 of 24", 'action="/tickets/create"', 'name="csrf"'):
+            self.assertIn(needle, html)
+        self.assertNotIn("<script>x</script>", html)
+        self.assertIn("&lt;script&gt;x&lt;/script&gt;", html)
+        self.assertIn('aria-current=page>All', html)
+
+    def test_stage_chips_search_on_github_across_pages(self):
+        issue = {"number": 7, "title": "T", "state": "closed", "labels": []}
+        self.gh.search_page.return_value = ([issue], False, 24)
+        cookie, _ = self.session()
+        _, _, html = self.req("GET", "/tickets?stage=done", cookie=cookie)
+        self.assertEqual(self.gh.search_page.call_args.args[2], "closed")
+        self.assertIn("Showing 1 of 24", html)
+        self.assertIn("Done", html)
+        self.req("GET", "/tickets?stage=progress", cookie=cookie)
+        self.assertIn("factory:working", self.gh.search_page.call_args.kwargs["labels"])
+        self.req("GET", "/tickets?stage=%3Cb%3E", cookie=cookie)                   # an unknown stage is ignored, never passed on
+        self.assertEqual(self.gh.search_page.call_count, 2)
+
     def refused(self, cookie, csrf, fields, back="/"):
         """A refusal sends the person back to the page they were on, with the reason shown there once (never a different page)."""
         s, h, _ = self.post(cookie, csrf, "/tickets/start", {**fields, "back": back})
