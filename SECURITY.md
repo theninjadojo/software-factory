@@ -19,6 +19,7 @@ anything that matters.
 | Prompt structure | Untrusted text cannot close the prompt's wrapper tags | `tests/test_runner.py` |
 | Telegram | Only the configured user id; a fixed set of commands; strict callback parsing; plain-text messages | `tests/test_telegram.py` |
 | Multi-repo changes | All patches validated before anything is pushed | `tests/test_runner.py` |
+| The code reviewer | Read-only role: it posts a sanitized comment and nothing else. The GitHub client has no approve / request-changes call, it only checks out branches the factory created, and a reviewer failure cannot undo a build | `tests/test_review.py` |
 | The admin UI | Password (scrypt), CSRF on every POST, HttpOnly/SameSite=Strict cookies, login throttling, Host allowlist, strict CSP, read-only database access, escaped output, GitHub-only links | `tests/test_ui.py` |
 | Credentials in the UI | Write-only: stored 0600, never rendered back, scrubbed from error messages | `tests/test_ui_admin.py` |
 | Settings changes | Validated by loading the merged config before writing; confirmation for going live, widening the sandbox hosts, or changing a harness | `tests/test_ui_admin.py`, `tests/test_ui_harness.py` |

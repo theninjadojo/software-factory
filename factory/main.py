@@ -40,7 +40,8 @@ def working_label(kind: str) -> str:
 
 def triggers(cfg: Config) -> list[tuple[str, str]]:
     """(kind, label), in the order an issue carrying several of them is handled: stages first, then auto, then build."""
-    return [(r.name, r.label) for r in cfg.roles] + [("auto", cfg.auto_label), ("implement", cfg.trigger_label)]
+    order = [(r.name, r.label) for r in cfg.roles] + [("auto", cfg.auto_label), ("implement", cfg.trigger_label)]
+    return order + ([("review", cfg.review.label)] if cfg.review.enabled else [])
 
 
 def human_comments(gh: GitHub, repo: str, num: int) -> list[str]:
@@ -196,6 +197,12 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
                 if m:
                     dbm.watch_pr(conn, m.group(1), int(m.group(2)), repo, num)
         alert(f"PR ready: {repo}#{num}\n{res.pr_url}\n{picked(route, c)}", event="pr_ready")
+        if cfg.review.enabled and cfg.review.auto:
+            prs = [(m.group(1), int(m.group(2))) for m in map(PR_URL.match, res.pr_url.split()) if m]
+            try:
+                review_changes(cfg, gh, repo, issue, prs)
+            except Exception:
+                log.exception("automatic review failed")           # a review problem must never undo a finished build
     else:
         gh.add_labels(repo, num, [FAILED])
         gh.comment(repo, num, f"Factory run did not produce a PR ({res.status}). A person should take a look.")
@@ -261,6 +268,53 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
     return res
 
 
+def review_comment(route, text: str) -> str:
+    return ("<!-- factory:review -->\n"
+            f"### Automated code review (model: {route.model}, effort: {route.effort})\n\n" + sanitize_markdown(text)
+            + "\n\n---\n_A draft review by an agent. It never approves or requests changes: a person decides. Verify before relying on it._")
+
+
+def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, trigger_label: str | None = None) -> runner.RunResult | None:
+    """Independent review of the factory's PR branches for a ticket. Posts a comment on each PR; changes nothing else."""
+    if not prs:
+        return None
+    num = issue["number"]
+    try:
+        first_repo, first_num = prs[0]
+        branch = gh.get_pr(first_repo, first_num)["head"]["ref"]
+    except Exception:
+        log.exception("review: could not read the PR branch")
+        return None
+    if not branch.startswith("factory/"):                     # never review (or check out) a branch the factory did not create
+        return None
+    route = Route(cfg.review.harness, cfg.review.model, cfg.review.effort)
+    alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
+    run_id, sink = begin_run("review", repo, issue, route, None, "reviewer"), {}
+    res = runner.run_task(cfg, gh, repo, issue, route, role="reviewer", prior=stage_outputs(gh, repo, num),
+                          comments=human_comments(gh, repo, num), fix_branch=branch, sink=sink)
+    end_run(run_id, res, sink)
+    if res.status == "rate-limited":
+        if trigger_label:
+            requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
+        else:
+            alert(f"Review of {repo}#{num} hit a rate limit. Apply `{cfg.review.label}` to the ticket to retry.", event="rate_limit")
+    elif res.status == "stage":
+        body = review_comment(route, res.output)
+        links = []
+        for r, n in prs:
+            try:
+                gh.comment(r, n, body)
+                links.append(f"https://github.com/{r}/pull/{n}")
+            except Exception:
+                log.exception("could not post the review on %s#%s", r, n)
+        gh.add_labels(repo, num, [cfg.review.done_label])
+        verdict = next((v for v in ("Blocking issues", "Needs changes", "Looks good") if v.lower() in res.output[:600].lower()), "see the PR")
+        alert(f"Review done: {repo}#{num}: {verdict}\n" + "\n".join(links), event="review_done")
+    else:
+        alert(f"Review failed: {repo}#{num} ({res.status})\n{res.detail[:300]}", event="failure")
+    return res
+
+
 def recover(cfg: Config, gh: GitHub) -> None:
     """Run once at startup. The single-instance lock means anything left over is from a run that died
     (crash, restart): clear its leftovers and requeue the issue so work is never silently stranded."""
@@ -273,7 +327,8 @@ def recover(cfg: Config, gh: GitHub) -> None:
     # "software-factory-orchestrator-1" and remove the factory itself.
     subprocess.run(f"{eng} ps -aq --filter name=^factory- | xargs -r {eng} rm -f", shell=True,
                    capture_output=True, timeout=60)
-    requeue = {WORKING: cfg.trigger_label, **{working_label(r.name): r.label for r in cfg.roles}}
+    requeue = {WORKING: cfg.trigger_label, **{working_label(r.name): r.label for r in cfg.roles},
+               **({working_label("review"): cfg.review.label} if cfg.review.enabled else {})}
     for repo in cfg.repos:
         try:
             for working, trigger in requeue.items():
@@ -351,6 +406,22 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
     if not cfg.dry_run and (why_paused := pause.paused(Path(cfg.db_path).parent)):
         log.info("paused (%s); leaving %s#%d queued", why_paused, repo, num)
         return "paused"
+    if kind == "review":
+        prs = dbm.prs_for_issue(conn, repo, num)
+        if cfg.dry_run:
+            dbm.record(conn, repo, num, updated, "review", f"{why}; would review {len(prs)} PR(s) [dry-run]")
+            emit("decision", f"dry-run: would review {len(prs)} PR(s)", repo, num)
+            return None
+        claim(gh, repo, num, label, "review")
+        if prs:
+            res = review_changes(cfg, gh, repo, issue, prs, label)
+            outcome = res.status if res else "skipped"
+        else:
+            gh.comment(repo, num, "No open factory pull requests were found for this ticket, so there is nothing to review.")
+            outcome = "no-prs"
+        gh.remove_label(repo, num, working_label("review"))
+        dbm.record(conn, repo, num, updated, f"run:{outcome}", f"{why}; review of {len(prs)} PR(s)")
+        return None
     labels = [lb["name"] for lb in issue.get("labels", [])]
     done = stages_done(cfg, labels)
     c = classifier.classify(issue["title"], issue.get("body") or "", labels, human_comments(gh, repo, num),

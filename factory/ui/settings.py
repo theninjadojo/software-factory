@@ -5,11 +5,11 @@ import dataclasses
 import os
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import DEFAULT_ROLES, CiCfg, RunnerCfg, deep_merge, default_harnesses, load_raw, overrides_path, parse
+from ..config import DEFAULT_ROLES, CiCfg, ReviewCfg, RunnerCfg, deep_merge, default_harnesses, load_raw, overrides_path, parse
 from ..events import ALL_EVENTS
 from ..tomlw import dumps
 
@@ -85,6 +85,15 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               "One per line. This is the ONLY way out of the sandbox. Keep it to the model API unless tasks truly need a registry.",
               danger="Widening the sandbox's reachable hosts weakens its isolation."),
     ]),
+    "review": ("Code review", [
+        Field("review.enabled", "Enable the code reviewer", "bool", "An independent agent reviews the factory's PRs and comments. It never approves or changes code."),
+        Field("review.auto", "Review every PR the factory opens", "bool", "Off: only when a person applies the review label to the ticket."),
+        Field("review.label", "Review label", "text", "Apply it to a ticket to (re-)review its open factory PRs."),
+        Field("review.done_label", "Reviewed label", "text"),
+        Field("review.model", "Reviewer model", "text", "Use a different harness and model family from the builder for a genuinely independent opinion."),
+        Field("review.effort", "Reviewer effort", "select", choices=EFFORTS),
+        Field("review.harness", "Reviewer agent harness", "select", choices=("claude-code",)),
+    ]),
     "ci": ("CI feedback", [
         Field("ci.enabled", "Watch CI on factory PRs", "bool"),
         Field("ci.fix_rounds", "Agent fix rounds after a failure", "int", "0 = report only.", lo=0, hi=5),
@@ -108,6 +117,8 @@ def fields_for(section: str, eff: dict) -> list[Field]:
         return _routing_fields(harness_choices(eff))
     if section == "roles":
         return _role_fields(harness_choices(eff))
+    if section == "review":
+        return [replace(f, choices=harness_choices(eff)) if f.key == "review.harness" else f for f in SECTIONS["review"][1]]
     return SECTIONS[section][1]
 
 
@@ -153,6 +164,8 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     if section == "ci":
         return getattr(CiCfg(), name, None)
+    if section == "review":
+        return getattr(ReviewCfg(), name, None)
     if section == "roles":
         role, _, field = name.partition(".")
         return next((getattr(r, field) for r in DEFAULT_ROLES if r.name == role), None)

@@ -180,3 +180,9 @@ def tickets(db, limit: int = 100) -> list[dict]:
            FROM decisions d
            WHERE d.decided_at = (SELECT MAX(d2.decided_at) FROM decisions d2 WHERE d2.repo=d.repo AND d2.issue=d.issue)
            GROUP BY d.repo, d.issue ORDER BY d.decided_at DESC LIMIT ?""", (limit,)))
+
+
+def prs_for_issue(db, issue_repo: str, issue_num: int) -> list[tuple[str, int]]:
+    """Open factory PRs raised for a ticket (the ones a review should cover)."""
+    return [(r, n) for r, n in db.execute(
+        "SELECT repo, number FROM prs WHERE issue_repo=? AND issue_num=? AND status != 'closed' ORDER BY number", (issue_repo, issue_num))]

@@ -14,7 +14,7 @@ EVENT_HELP = {
     "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from Telegram",
     "info": "Anything else",
 }
-TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("runner", "Agent runner"), ("ci", "CI feedback")]
+TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("runner", "Agent runner"), ("ci", "CI feedback")]
 
 
 def _fmt(f: S.Field, v) -> str:

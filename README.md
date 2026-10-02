@@ -41,6 +41,7 @@ document), and the orchestrator validates that data before it touches GitHub.
 | `factory:design` | A **designer** writes the UX design (flows, states, copy, accessibility). Read-only. |
 | `factory:architect` | An **architect** writes the technical plan (data model, API, cross-repo order, tests). Read-only. |
 | `factory:ready` | **Build it.** Agents edit the repos and open one PR per changed repo. Earlier stage documents are given to the builder. |
+| `factory:review` | A **code reviewer** reviews the ticket's open PRs and comments on each one (see below). Needs `[review] enabled = true`. |
 | `factory:auto` | The classifier picks the next stage from the ticket and which stages are already done (`stage:*` labels), runs it, and suggests the next one. |
 
 Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `factory:failed`, `stage:analysed`,
@@ -53,6 +54,11 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 - **Role agents.** Analyst, designer, architect: their output lands on the ticket, and later stages build on it.
 - **Classification.** [Jev](https://openrouter.ai/) (a typed "decision model" via OpenRouter) reads the whole ticket and
   picks tier, effort and stage as *typed answers*, never free text. Falls back to your labels if it errors.
+- **Code review.** An independent reviewer agent reads the PR branches of every repo in the change, with full history, and posts a
+  structured review (verdict, blocking / should-fix / nits with file and line, what is missing, what it could not verify) on each PR.
+  It runs automatically after the factory opens a PR, or when a person labels the ticket `factory:review`. It never approves, requests
+  changes, merges or edits code. Give it a different harness and model family from the builder for a genuinely independent opinion.
+  Off by default (it costs a run per PR).
 - **CI feedback.** Watches the repos' own CI on factory PRs, reports pass/fail, and can give the agent a fix round with
   the failing logs.
 - **Telegram.** Alerts with a verbosity setting, `/status /pause /resume`, and Run/Skip buttons for tickets that need a

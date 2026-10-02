@@ -74,6 +74,19 @@ class RunnerCfg:
 
 
 @dataclass(frozen=True)
+class ReviewCfg:
+    """An independent code-review agent. It reads the PR branches and posts a comment; it never approves, requests
+    changes, merges or edits code. Off by default (it costs a run per PR); pick a different harness for a second opinion."""
+    enabled: bool = False
+    auto: bool = True                    # review every PR the factory opens
+    label: str = "factory:review"        # a person applies it to a ticket to (re-)review its PRs
+    done_label: str = "stage:reviewed"
+    model: str = "sonnet"
+    effort: str = "high"
+    harness: str = "claude-code"
+
+
+@dataclass(frozen=True)
 class CiCfg:
     """Watch the repos' own CI on factory PRs and report it; optionally let the agent fix failures."""
     enabled: bool = True
@@ -118,6 +131,7 @@ class Config:
     roles: tuple[Role, ...] = DEFAULT_ROLES
     auto_label: str = "factory:auto"
     ci: CiCfg = field(default_factory=CiCfg)
+    review: ReviewCfg = field(default_factory=ReviewCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
@@ -199,8 +213,11 @@ def _harnesses(raw: dict, rn: "RunnerCfg") -> dict:
     return out
 
 
-def _check_harness_use(routes: dict, roles: tuple, harnesses: dict) -> None:
-    for where, harness in [(f"routing.{k}", r.harness) for k, r in routes.items()] + [(f"roles.{r.name}", r.harness) for r in roles]:
+def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "ReviewCfg | None" = None) -> None:
+    uses = [(f"routing.{k}", r.harness) for k, r in routes.items()] + [(f"roles.{r.name}", r.harness) for r in roles]
+    if review is not None and review.enabled:
+        uses.append(("review", review.harness))
+    for where, harness in uses:
         if harness not in harnesses or not harnesses[harness].enabled:
             raise ValueError(f"{where} uses the harness {harness!r}, which does not exist or is not enabled")
 
@@ -268,7 +285,10 @@ def parse(raw: dict) -> Config:
     runner_cfg = _runner(rn)
     harnesses = _harnesses(raw, runner_cfg)
     roles = tuple(dataclasses.replace(r, **raw.get("roles", {}).get(r.name, {})) for r in DEFAULT_ROLES)
-    _check_harness_use(routes, roles, harnesses)
+    review = ReviewCfg(**raw.get("review", {}))
+    if review.effort not in ("low", "medium", "high"):
+        raise ValueError("review.effort must be low, medium or high")
+    _check_harness_use(routes, roles, harnesses, review)
     return Config(
         db_path=g["db_path"],
         poll_seconds=int(g["poll_seconds"]),
@@ -289,6 +309,7 @@ def parse(raw: dict) -> Config:
         roles=roles,
         auto_label=raw.get("auto", {}).get("label", "factory:auto"),
         ci=CiCfg(**raw.get("ci", {})),
+        review=review,
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),

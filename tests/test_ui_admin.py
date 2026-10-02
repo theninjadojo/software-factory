@@ -139,6 +139,22 @@ class Settings(AdminCase):
             self.assertEqual(self.req("POST", path, "x=1", cookie=cookie)[0], 403, path)
 
 
+class ReviewSettings(AdminCase):
+    def test_the_reviewer_can_be_enabled_and_configured_from_the_ui(self):
+        cookie, csrf = self.session()
+        self.assertIn("Code review", self.req("GET", "/settings?section=review", cookie=cookie)[2])
+        form = [("section", "review"), ("review.enabled", "1"), ("review.auto", "1"), ("review.label", "factory:review"),
+                ("review.done_label", "stage:reviewed"), ("review.model", "opus"), ("review.effort", "high"), ("review.harness", "claude-code")]
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)
+        cfg = load(str(self.root / "config.toml"))
+        self.assertEqual((cfg.review.enabled, cfg.review.model, cfg.review.auto), (True, "opus", True))
+        bad = [x for x in form if x[0] != "review.effort"] + [("review.effort", "extreme")]
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", bad)[0], 422)
+        off = [x for x in form if x[0] not in ("review.enabled", "review.auto")]
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", off)[0], 303)
+        self.assertFalse(load(str(self.root / "config.toml")).review.enabled)
+
+
 class Credentials(AdminCase):
     def test_secrets_are_stored_0600_and_never_shown_again(self):
         cookie, csrf = self.session()

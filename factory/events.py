@@ -1,6 +1,6 @@
 """Alert categories and verbosity levels (shared by config, the orchestrator and Telegram)."""
 CRITICAL = frozenset({"needs_human", "failure", "rate_limit"})
-NORMAL = CRITICAL | {"pr_ready", "stage_done", "ci_result", "ci_fix", "recovery"}
+NORMAL = CRITICAL | {"pr_ready", "stage_done", "ci_result", "ci_fix", "recovery", "review_done"}
 ALL_EVENTS = NORMAL | {"started", "startup", "skipped", "info"}
 LEVELS = {"quiet": CRITICAL, "normal": NORMAL, "verbose": ALL_EVENTS}
 

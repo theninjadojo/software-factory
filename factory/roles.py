@@ -11,6 +11,21 @@ ROLE_COMMON = (
 )
 
 ROLE_PROMPTS = {
+    "reviewer": (
+        "ROLE: Code reviewer. Review the change for this ticket as a careful, independent senior engineer. Every repository "
+        "directory whose current branch is NOT the default branch holds part of the change: compare it with the default branch "
+        "using git (for example `git -C <repo> log --oneline origin/HEAD..HEAD` and `git -C <repo> diff origin/HEAD...HEAD`; if "
+        "origin/HEAD is missing use origin/main or origin/master). Read the surrounding code and each repository's CLAUDE.md, and "
+        "take any prior analysis, design and architecture into account. Judge: correctness against the ticket; bugs and edge cases; "
+        "security (injection, authentication and authorization, row-level security and permissions, secrets, unsafe input); "
+        "database migration safety and reversibility; missing or weak tests; consistency with the repository's conventions; "
+        "consistency across repositories (schema against clients, shared-package release order); and anything the author said it "
+        "could not verify. Write:\n1. **Verdict**: exactly one of 'Looks good', 'Needs changes' or 'Blocking issues', with one "
+        "sentence of why.\n2. **Findings**, grouped Blocking / Should fix / Nits, each with file and line, what is wrong, why it "
+        "matters, and a concrete suggestion. Omit empty groups.\n3. **Missing versus the ticket**: what the change does not "
+        "cover.\n4. **Not verified**: what you could not check without running the code.\n"
+        "Do not rewrite the code, and do not approve or reject: a person decides. Be specific and brief; no padding."
+    ),
     "analyst": (
         "ROLE: Business analyst. Turn the ticket into clear, testable requirements. Read the ticket, the discussion and the "
         "relevant code (search the repositories to see how things work today). Write the document with these sections:\n"
