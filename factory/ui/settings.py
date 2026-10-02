@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import DEFAULT_ROLES, CiCfg, ConflictsCfg, ReviewCfg, RunnerCfg, deep_merge, default_harnesses, load_raw, overrides_path, parse
+from ..config import DEFAULT_ROLES, CiCfg, ConflictsCfg, PmCfg, ReviewCfg, RunnerCfg, deep_merge, default_harnesses, load_raw, overrides_path, parse
 from ..events import ALL_EVENTS
 from ..tomlw import dumps
 
@@ -104,6 +104,18 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("review.effort", "Reviewer effort", "select", choices=EFFORTS),
         Field("review.harness", "Reviewer agent harness", "select", choices=("claude-code",)),
     ]),
+    "pm": ("Project manager", [
+        Field("pm.enabled", "Enable the project manager", "bool",
+              "On a sweep an agent ranks each repository's factory tickets with priority labels and records blockers; while it is on, "
+              "a build waits for its open blockers. A person's priority label always wins. It never starts or stops work."),
+        Field("pm.interval_minutes", "Minutes between sweeps", "int", "Only when the tickets changed; each sweep is one run per repository.", lo=10, hi=10080),
+        Field("pm.max_tickets", "Tickets per sweep", "int", lo=1, hi=200),
+        Field("pm.body_chars", "Characters of each ticket body", "int", lo=200, hi=10000),
+        Field("pm.unblock_label", "Unblock label", "text", "A person with write access applies it to make the factory ignore the project manager's blockers on a ticket."),
+        Field("pm.model", "Project manager model", "text"),
+        Field("pm.effort", "Project manager effort", "select", choices=EFFORTS),
+        Field("pm.harness", "Project manager agent harness", "select", choices=("claude-code",)),
+    ]),
     "ci": ("CI feedback", [
         Field("ci.enabled", "Watch CI on factory PRs", "bool"),
         Field("ci.fix_rounds", "Agent fix rounds after a failure", "int", "0 = report only.", lo=0, hi=5),
@@ -136,6 +148,8 @@ def fields_for(section: str, eff: dict) -> list[Field]:
         return _role_fields(harness_choices(eff))
     if section == "review":
         return [replace(f, choices=harness_choices(eff)) if f.key == "review.harness" else f for f in SECTIONS["review"][1]]
+    if section == "pm":
+        return [replace(f, choices=harness_choices(eff)) if f.key == "pm.harness" else f for f in SECTIONS["pm"][1]]
     return SECTIONS[section][1]
 
 
@@ -185,6 +199,8 @@ def default_for(key: str):
         return getattr(ReviewCfg(), name, None)
     if section == "conflicts":
         return getattr(ConflictsCfg(), name, None)
+    if section == "pm":
+        return getattr(PmCfg(), name, None)
     if section == "roles":
         role, _, field = name.partition(".")
         return next((getattr(r, field) for r in DEFAULT_ROLES if r.name == role), None)

@@ -71,6 +71,15 @@ def connect(path: str) -> sqlite3.Connection:
             run_id INTEGER NOT NULL, repo TEXT NOT NULL, path TEXT NOT NULL, url TEXT NOT NULL, pr TEXT NOT NULL DEFAULT '',
             created REAL NOT NULL, PRIMARY KEY (run_id, repo, path))"""
     )
+    db.execute(                                     # the project manager's latest validated assessment of each ticket
+        """CREATE TABLE IF NOT EXISTS pm_assessments (
+            repo TEXT NOT NULL, issue INTEGER NOT NULL, priority TEXT NOT NULL,
+            applied_label TEXT NOT NULL DEFAULT '',     -- the priority label the PM itself last put on the ticket ('' = none)
+            overridden INTEGER NOT NULL DEFAULT 0,      -- 1 = a person's priority label differs, so the PM left it alone
+            blocked_by TEXT NOT NULL DEFAULT '',        -- comma-separated issue numbers in the same repository
+            reason TEXT NOT NULL DEFAULT '', issue_updated TEXT NOT NULL DEFAULT '', run_id INTEGER, assessed REAL NOT NULL,
+            PRIMARY KEY (repo, issue))"""
+    )
     ensure_step_tables(db)
     return db
 
@@ -124,6 +133,25 @@ def questions_waiting(db, repo: str) -> set[int]:
         return {n for (n,) in db.execute("SELECT issue FROM open_questions WHERE repo=?", (repo,))}
     except Exception:                               # an older database the orchestrator has not upgraded yet
         return set()
+
+
+def pm_assessment(db, repo: str, issue: int) -> dict | None:
+    cur = db.execute("SELECT * FROM pm_assessments WHERE repo=? AND issue=?", (repo, issue))
+    row = cur.fetchone()
+    return dict(zip([c[0] for c in cur.description], row)) if row else None
+
+
+def pm_blocked_by(db, repo: str, issue: int) -> list[int]:
+    row = db.execute("SELECT blocked_by FROM pm_assessments WHERE repo=? AND issue=?", (repo, issue)).fetchone()
+    return [int(x) for x in row[0].split(",") if x.isdigit()] if row else []
+
+
+def set_pm_assessment(db, repo: str, issue: int, priority: str, applied_label: str, overridden: bool, blocked_by: list,
+                      reason: str, issue_updated: str, run_id: int | None) -> None:
+    db.execute("INSERT OR REPLACE INTO pm_assessments VALUES (?,?,?,?,?,?,?,?,?,?)",
+               (repo, issue, priority, applied_label, int(bool(overridden)), ",".join(str(int(n)) for n in blocked_by),
+                reason, issue_updated, run_id, time.time()))
+    db.commit()
 
 
 def watch_pr(db, repo: str, number: int, issue_repo: str, issue_num: int) -> None:
