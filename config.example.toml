@@ -77,3 +77,14 @@ wait_for_checks_minutes = 10
 timeout_minutes = 90
 queued_warn_minutes = 15     # CI queued this long without starting: warn (self-hosted runners may be offline)
 manual_wait_hours = 24       # keep watching this long for CI that a person starts by hand (repos with manual-only CI)
+
+# Merge conflicts on factory PRs (build and design), checked whether or not [ci] is on. When a PR conflicts with its base
+# branch it is reported once per head commit; with auto = true the factory applies `label` to the ticket itself (a person
+# can apply it too). The orchestrator then merges the base branch into the PR branch; if git leaves conflicts, an agent edits
+# only the conflicted files and the merge commit is pushed. Never a rebase or a force-push. A conflict in a protected path
+# (.github/ ...), a binary file, or a merge that changes .github/workflows/ (the token has no Workflows permission) is left to a person.
+[conflicts]
+enabled = false
+auto = true
+label = "factory:fix-conflicts"
+max_attempts = 10            # resolution runs per PR; then a person is asked
