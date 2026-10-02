@@ -93,3 +93,13 @@ enabled = false
 auto = true
 label = "factory:fix-conflicts"
 max_attempts = 10            # resolution runs per PR; then a person is asked
+
+# Other models through OpenCode (experimental; build the image with `docker compose --profile opencode build`).
+# Enable on the Harnesses page, paste the key there, then route a tier to it. Ticket text never chooses these.
+# [harnesses.opencode-openrouter]
+# enabled = true
+# [routing.low]
+# harness = "opencode-openrouter"
+# model = "openrouter/qwen/qwen3-coder"
+# effort = "low"
+# (Big Pickle: enable harnesses.opencode-zen and use harness = "opencode-zen", model = "opencode/big-pickle".)
