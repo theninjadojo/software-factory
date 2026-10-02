@@ -563,7 +563,7 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
         f'<td data-l="Progress">{progress(i)}</td><td data-l="Updated">{updated(i)}</td>'
         f'<td class="actions" data-l="Actions">{buttons(i)}</td></tr>'
         for i in issues)
-    return ('<div class="scroll"><table class="tickets"><thead><tr><th>Ticket</th><th>Stage</th><th>Progress</th><th>Updated</th><th>Actions</th></tr></thead>'
+    return ('<div class="scroll"><table class="tickets stack"><thead><tr><th>Ticket</th><th>Stage</th><th>Progress</th><th>Updated</th><th>Actions</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 
