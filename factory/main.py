@@ -19,7 +19,7 @@ from .github import GitHub
 from .jev import JevClassifier
 from .pool import Pool, key as jobkey
 from .roles import MARKER, STAGE_TO_ROLE
-from .router import decide
+from .router import decide, pick_stage
 from .sanitize import sanitize_markdown
 from .telegram import Telegram
 
@@ -341,6 +341,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             nxt = classifier.classify(issue["title"], issue.get("body") or "", labels,
                                       comments + ["(just completed) " + (settled + doc)[:3000]],
                                       project_info(project_for(cfg, repo), repo), stages_done(cfg, labels))
+            nxt, _ = pick_stage(cfg, nxt, stages_done(cfg, labels), len(project_for(cfg, repo).repos) > 1)
             hint = next_hint(cfg, nxt)
             # Keep going only when nothing needs a person and the classifier named a real next step. A needs-a-person question
             # always stops the chain; with only safe defaults the classifier still has to agree (a second opinion that can only
@@ -688,6 +689,11 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
     role = next((r for r in cfg.roles if r.name == kind), None)       # explicit stage label: the human chose it
 
     if kind == "auto":
+        before = c.stage
+        c, adjusted = pick_stage(cfg, c, done, len(project_for(cfg, repo).repos) > 1)
+        if adjusted:
+            summary = f"{summary}; stage {before} -> {c.stage} ({adjusted})"
+            emit("decision", f"auto: {c.stage} instead of {before} ({adjusted})", repo, num)
         st = STAGE_TO_ROLE.get(c.stage or "")
         sure = min(c.confidence, c.stage_confidence if c.stage_confidence is not None else c.confidence) >= cfg.confidence_threshold
         # A read-only stage (analyst, designer, architect) only writes a document on the ticket, and low confidence or "needs a person"
@@ -711,6 +717,11 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
                       human_buttons(cfg, repo, num, c, done), event="needs_human")
             return None
         role = next((r for r in cfg.roles if r.name == st), None)
+        names = [r.name for r in cfg.roles]
+        skipped = [n for n in names if n not in done and (role is None or names.index(n) < names.index(role.name))]
+        if skipped:
+            summary += f"; skipped={','.join(skipped)}"
+            emit("decision", f"auto: {role.name if role else 'build'} ({c.stage}, {c.confidence:.2f}, {c.source}); skipped {', '.join(skipped)}", repo, num)
 
     if role:
         detail = f"{why}; {summary}; stage={role.name}"

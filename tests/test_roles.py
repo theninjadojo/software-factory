@@ -100,10 +100,36 @@ class Flows(unittest.TestCase):
 
     def test_auto_implement_goes_through_the_normal_route(self):
         gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        fake, _ = self.run_poll(gh, FakeClf(stage="implement", complexity="medium"), result=RunResult("pr", "ok", "http://pr"))
+        self.assertIsNone(fake.call_args.kwargs.get("role"))
+        self.assertEqual(fake.call_args.args[4].model, CFG.routes["medium"].model)
+        self.assertIn(("add", ("factory:pr-open",)), gh.calls)
+
+    def test_auto_prefers_the_architect_before_building_a_high_complexity_ticket(self):
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        fake, conn = self.run_poll(gh, FakeClf(stage="implement", complexity="high"))
+        self.assertEqual(fake.call_args.kwargs["role"], "architect")
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto", "stage:architected"])]})
         fake, _ = self.run_poll(gh, FakeClf(stage="implement", complexity="high"), result=RunResult("pr", "ok", "http://pr"))
         self.assertIsNone(fake.call_args.kwargs.get("role"))
-        self.assertEqual(fake.call_args.args[4].model, "opus")
-        self.assertIn(("add", ("factory:pr-open",)), gh.calls)
+
+    def test_an_explicit_ready_label_on_a_high_ticket_still_builds(self):
+        gh = FakeGH({"factory:ready": [issue(labels=["factory:ready"])]})
+        fake, _ = self.run_poll(gh, FakeClf(stage="implement", complexity="high"), result=RunResult("pr", "ok", "http://pr"))
+        self.assertIsNone(fake.call_args.kwargs.get("role"))
+
+    def test_no_stage_from_the_model_runs_the_analyst_but_not_from_labels(self):
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        fake, _ = self.run_poll(gh, FakeClf(stage=None))
+        self.assertEqual(fake.call_args.kwargs["role"], "analyst")
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        fake, _ = self.run_poll(gh, FakeClf(stage=None, source="labels"), result=RunResult("pr", "ok", "http://pr"))
+        self.assertIsNone(fake.call_args.kwargs.get("role"))
+
+    def test_a_skip_to_build_is_recorded_for_the_admin_ui(self):
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        _, conn = self.run_poll(gh, FakeClf(stage="implement", complexity="low"), result=RunResult("pr", "ok", "http://pr"))
+        self.assertIn("skipped=analyst,designer,architect", conn.execute("select detail from decisions").fetchone()[0])
 
     def test_auto_sends_unsure_or_needs_human_or_repeated_stage_to_a_person_once_the_analyst_is_done(self):
         for kw, labels in ((dict(needs_human=True), ["stage:analysed"]), (dict(stage_confidence=0.3), ["stage:analysed"]),
@@ -151,7 +177,7 @@ class Flows(unittest.TestCase):
     def test_a_confident_build_is_unaffected_and_confirm_stages_still_asks(self):
         from dataclasses import replace
         gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
-        fake, _ = self.run_poll(gh, FakeClf(stage="implement", complexity="high"), result=RunResult("pr", "ok", "http://pr"))
+        fake, _ = self.run_poll(gh, FakeClf(stage="implement", complexity="medium"), result=RunResult("pr", "ok", "http://pr"))
         self.assertIsNone(fake.call_args.kwargs.get("role"))
         gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
         fake, conn = self.run_poll(gh, FakeClf(stage="implement", needs_human=True), cfg=replace(CFG, auto_confirm_stages=True))
