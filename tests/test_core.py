@@ -115,3 +115,13 @@ class KindAliases(unittest.TestCase):
         self.assertIsNone(kind_from_labels({"priority: low", "help wanted"}))
         c = RuleClassifier().classify("t", "b", ["enhancement", "complexity:high"])
         self.assertEqual((c.kind, c.complexity), ("feature", "high"))
+
+
+class PriorityRankTests(unittest.TestCase):
+    def test_order(self):
+        from factory.main import priority_rank
+        lab = lambda *n: {"labels": [{"name": x} for x in n]}
+        self.assertLess(priority_rank(lab("Priority: High")), priority_rank(lab()))
+        self.assertLess(priority_rank(lab()), priority_rank(lab("priority: low")))
+        self.assertEqual(priority_rank(lab("priority: low", "priority: high")), priority_rank(lab("priority: high")))
+        self.assertEqual(priority_rank(lab("priority: urgent!!")), priority_rank({}))
