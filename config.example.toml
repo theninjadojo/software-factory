@@ -28,6 +28,9 @@ effort = "medium"
 harness = "claude-code"
 model = "opus"
 effort = "high"
+# Optional, admin-only: models tried in order (same harness and effort, up to 3) when this one is rate limited or the API errors.
+# Also valid under [roles.<name>] and [review]. Ticket text and the classifier cannot set or change it.
+# fallback_models = ["sonnet"]
 
 [runner]
 # Rendered previews of the designer's mockups (PNG screenshots committed to the draft PR). Needs the factory-render image:

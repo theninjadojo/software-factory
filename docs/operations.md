@@ -34,8 +34,11 @@ the orchestrator and the proxy, and the UI must be able to write the overrides, 
 
 - Status: `python3 -m factory.ctl status` (mode, paused?, last decisions). Pause/resume: `ctl pause|resume`, or `/pause`
   and `/resume` on Telegram. A pause stops new work; it does not interrupt a running task.
+- Fallback models: a route, role or `[review]` may list `fallback_models` (up to 3, same harness and effort). When the model hits a
+  limit or a 5xx/overloaded API error, the next model is tried in a fresh run and a `fallback` alert is sent. Only the admin config
+  sets the list; ticket text and the classifier cannot.
 - Rate limits: when the agent hits a plan or API limit the ticket is requeued and the orchestrator pauses for
-  `rate_limit_backoff_seconds`.
+  `rate_limit_backoff_seconds`, once every fallback model is also limited. A chain that ends on a 5xx fails as before.
 - Restarts: on startup the orchestrator clears leftover work directories and sandbox containers and requeues any ticket
   stuck in a `factory:working*` state.
 - Settings changed in the UI apply when the orchestrator is next idle (it re-executes itself). `ls state/RESTART` shows one is pending.
