@@ -45,7 +45,7 @@ document), and the orchestrator validates that data before it touches GitHub.
 | `factory:fix-conflicts` | **Resolve merge conflicts** in the ticket's open factory PRs: the base branch is merged into each PR branch and an agent resolves what git cannot (see below). The factory applies it itself when it finds a conflict. Needs `[conflicts] enabled = true`. |
 | `factory:auto` | The classifier picks the next stage from the ticket and which stages are already done (`stage:*` labels) and runs it. It then **continues to the next stage by itself while nothing needs a person**, reading the document it just wrote (open questions make it stop and ask you on Telegram). Read-only stages never wait for approval. Stages are skipped when not needed: a small, clear ticket goes straight to a build. A high-complexity ticket (or a medium one spanning several repositories) gets the architect first, and a classification with no stage runs the analyst first. An explicit stage or `factory:ready` label is always obeyed. The skipped stages are recorded in the admin UI. When the classifier is unsure (low confidence, or it says a person is needed) and no analysis exists yet, it runs the analyst first instead of asking; a person is asked only after that, or before a build it is still unsure about. |
 
-Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `factory:failed`, `stage:analysed`,
+Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `factory:failed`, `factory:needs-answers` (open questions wait for a person; cleared when they are answered or a later job starts), `stage:analysed`,
 `stage:designed`, `stage:architected`.
 
 ### Features

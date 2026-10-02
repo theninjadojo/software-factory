@@ -22,6 +22,7 @@ BLOCK = re.compile(r"^```factory-questions[ \t]*\n(.*?)^```[ \t]*$\n?", re.M | r
 STAGE_HEAD = re.compile(r"<!-- factory:stage=([a-z]+) -->\n")
 DATA_HEAD = "<!-- factory:questions "
 ANSWERS = "<!-- factory:answers -->"
+NEEDS_ANSWERS = "factory:needs-answers"        # label on the issue while questions wait for a person
 QID = re.compile(r"[a-z0-9][a-z0-9-]{0,15}")
 OID = re.compile(r"[a-z0-9][a-z0-9-]{0,7}")
 MAX_QUESTIONS, MAX_TEXT, MAX_LABEL, MAX_REASON, MAX_OTHER = 10, 500, 200, 300, 1000
@@ -259,7 +260,10 @@ def record(gh, repo: str, num: int, stage: str | None, picks: dict | None, sourc
             raise Refused("That answer does not match the ticket's questions. Reload the page.")
     if chosen:
         gh.comment(repo, num, answers_comment(cur.stage, cur.questions, chosen, source))
-    return cur.stage, not StageQuestions(cur.stage, cur.questions, {**cur.answers, **chosen}).pending()
+    done = not StageQuestions(cur.stage, cur.questions, {**cur.answers, **chosen}).pending()
+    if done and not any(s.pending() for s in stages if s.stage != cur.stage):
+        gh.remove_label(repo, num, NEEDS_ANSWERS)
+    return cur.stage, done
 
 
 def describe(q: Question, ans) -> str:

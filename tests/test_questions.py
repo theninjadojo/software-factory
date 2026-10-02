@@ -153,6 +153,7 @@ class Answers(unittest.TestCase):
         body = [c for c in gh.calls if c[0] == "comment"][0][1]
         self.assertTrue(body.startswith(Q.ANSWERS))
         self.assertEqual(Q.from_comments(gh.comments, "bot")[0].answers, {"q1": ("option", "a"), "q2": ("option", "a")})
+        self.assertIn(("rm", Q.NEEDS_ANSWERS), gh.calls)           # nothing waits for a person any more
 
     def test_answer_text_cannot_ping_or_end_the_data_comment(self):
         qs = Q.extract(doc(q()))[1]
