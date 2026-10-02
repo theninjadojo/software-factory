@@ -5,6 +5,7 @@ import re
 import urllib.error
 
 from .. import db as dbm
+from .. import questions as Q
 from ..github import GitHub
 from ..roles import STAGE_TO_ROLE
 from . import integrations as I, views
@@ -13,7 +14,9 @@ from .views import badge, csrf_field, esc
 log = logging.getLogger("factory.ui")
 NUM = re.compile(r"^\d{1,9}$")
 STATES = ("open", "closed", "all")
-FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it is labelled again.", "started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced."}
+FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it is labelled again.", "started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced.",
+         "answered": "Answer recorded on the ticket. Other questions still need an answer.",
+         "continued": "Answers recorded on the ticket. The factory starts the next stage at its next poll."}
 VERBS = {"analyst": "Analyze", "designer": "Design", "architect": "Architect"}
 NEEDS_PERSON = "needs a person"
 NO_TOKEN = "Save a GitHub token on the Credentials page first."
@@ -156,7 +159,9 @@ def list_get(h, q: dict, csrf: str) -> None:
         return _page(h, 502, "Tickets", filters(cfg, repo, state, label, text, []), csrf, _github_error(e), "bad")
     if label and text:
         issues = [i for i in issues if label in _names(i)]
-    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues, _decisions(h, repo), csrf) + pager(repo, state, label, text, page_no, more), csrf, FLASH.get(q.get("ok", "")))
+    decisions = _decisions(h, repo)
+    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues, decisions, csrf, _asked(h, gh, cfg, repo, issues, decisions))
+          + pager(repo, state, label, text, page_no, more), csrf, FLASH.get(q.get("ok", "")))
 
 
 def filters(cfg, repo, state, label, text, names) -> str:
@@ -170,7 +175,58 @@ def filters(cfg, repo, state, label, text, names) -> str:
             f'<input name="q" placeholder="search title or #number" value="{esc(text)}"><button>Filter</button></form>')
 
 
-def table(cfg, repo, issues, decisions, csrf) -> str:
+def _asked(h, gh, cfg, repo, issues, decisions) -> dict:
+    """{issue number: StageQuestions} for tickets waiting on a person's answers. The database only says which tickets to look
+    at; the questions and answers are read from the factory's own comments on GitHub (at most 10 tickets per page)."""
+    db = h.app.ro_db()
+    if db is None:
+        return {}
+    try:
+        waiting = dbm.questions_waiting(db, repo)
+    finally:
+        db.close()
+    out = {}
+    for i in [i for i in issues if i["number"] in waiting][:10]:
+        if actions_for(cfg, i, decisions.get((repo, i["number"])))[0] in ("closed", "running", "queued"):
+            continue
+        try:
+            cur = Q.latest(Q.from_comments(gh.issue_comments(repo, i["number"]), gh.login()))
+        except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+            continue
+        if cur and cur.pending():
+            out[i["number"]] = cur
+    return out
+
+
+def question_cards(repo: str, n: int, st, csrf: str) -> str:
+    """One card per question: a button per option, a free-text 'other', and Accept all recommendations. The browser only
+    names a question and an option id; both are checked against the ticket's questions on GitHub when the answer arrives."""
+    hidden = (f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
+              f'<input type="hidden" name="stage" value="{esc(st.stage)}">')
+    cards = []
+    for q in st.questions:
+        ans = st.answers.get(q.id)
+        cls = badge("safe default", "good") if q.safe else badge("needs a person", "warn") + (f' <span class="muted">{esc(q.why)}</span>' if q.why else "")
+        qh = hidden + f'<input type="hidden" name="q" value="{esc(q.id)}">'
+        buttons = "".join(f'<button name="o" value="{esc(o)}" class="{"" if o == q.recommended else "secondary"}" '
+                          f'aria-label="{esc(q.id)}: {esc(lab)}">{esc(lab)}{" (recommended)" if o == q.recommended else ""}</button> '
+                          for o, lab in q.options)
+        cards.append(
+            f'<div class="card question"><p><strong>{esc(q.id)}.</strong> {esc(q.text)} {cls}</p>'
+            f'<p class="muted">Recommended: {esc(q.label(q.recommended))}: {esc(q.reason)}</p>'
+            f'<p>{esc(Q.describe(q, ans))}</p>'
+            f'<form method="post" action="/tickets/answer" class="inline">{qh}{buttons}</form>'
+            f'<form method="post" action="/tickets/answer" class="filters">{qh}<input name="other" maxlength="{Q.MAX_OTHER}" required '
+            f'placeholder="Other: your own answer" aria-label="Other answer to {esc(q.id)}"><button class="secondary">Answer</button></form></div>')
+    accept = (f'<form method="post" action="/tickets/answer" class="inline">{hidden}<button name="accept" value="1" '
+              f'title="Records the recommended option for every question not answered yet, then starts the next stage">Accept all recommendations</button></form>')
+    return (f'<details><summary>{len(st.pending())} question(s) from the {esc(st.stage)} need an answer</summary>'
+            f'<p class="muted">Answers are posted on the ticket as the factory\'s account. When no question needing a person is left, '
+            f'the next stage starts.</p><div class="cards one">{"".join(cards)}</div><p>{accept}</p></details>')
+
+
+def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None) -> str:
+    asked = asked or {}
     if not issues:
         return '<p class="muted">No issues match this filter.</p>'
     def factory_cell(n) -> str:
@@ -193,7 +249,9 @@ def table(cfg, repo, issues, decisions, csrf) -> str:
     rows = "".join(
         f'<tr><td>{views.ticket_link(repo, i["number"])}<br><span class="muted">{esc(i.get("title"))}</span></td><td>{badge(i.get("state"), "")}</td>'
         f'<td>{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td>{factory_cell(i["number"])}</td>'
-        f'<td class="actions">{buttons(i)}</td></tr>' for i in issues)
+        f'<td class="actions">{buttons(i)}</td></tr>'
+        + (f'<tr class="questions"><td colspan="5">{question_cards(repo, i["number"], asked[i["number"]], csrf)}</td></tr>' if i["number"] in asked else "")
+        for i in issues)
     return ('<div class="scroll"><table><thead><tr><th>Issue</th><th>State</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
@@ -349,3 +407,45 @@ def start(h, form, csrf: str) -> None:
         return _render_issue(h, csrf, repo, n, _github_error(e), "bad", 502)
     log.info("tickets: started %s on %s#%d from the UI", action, repo, n)
     h._redirect(f"/tickets?repo={repo}&ok={'skipped' if action == 'skip' else 'started'}")
+
+
+def answer(h, form, csrf: str) -> None:
+    """A person's answer to an open question, or Accept all recommendations. Posted as the factory's account in the marked
+    answers comment, which the factory then reads as a person's input (never as an instruction). The question and option ids
+    are validated against the questions the factory posted on the ticket; when nothing needing a person is left, the auto
+    label starts the next stage through the factory's normal gates."""
+    cfg = h.app.cfg()
+    try:
+        repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
+    except Refused as e:
+        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
+    stage = form.get("stage", "")
+    accept_all = form.get("accept") == "1"
+    other = (form.get("other") or "").strip()
+    picks = None if accept_all else {form.get("q", ""): ("other", other) if other else ("option", form.get("o", ""))}
+    gh = _gh(h)
+    if gh is None:
+        return _page(h, 400, "Tickets", "", csrf, NO_TOKEN, "bad")
+    try:
+        if not re.fullmatch(r"[a-z]{1,20}", stage):
+            raise Refused("That answer does not match the ticket's questions. Reload the page.")
+        issue = gh.get_issue(repo, n)
+        if "pull_request" in issue:
+            return h._send(404, "no such issue", "text/plain")
+        status, _ = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)))
+        if status in ("closed", "running"):
+            raise Refused(f"Answers cannot be recorded now ({status}).")
+        if status != "queued":
+            _existing(gh, repo, cfg.auto_label)               # checked before anything is posted
+        _, done = Q.record(gh, repo, n, stage, picks, "factory UI", accept_all)
+        if done and status != "queued":
+            gh.add_labels(repo, n, [cfg.auto_label])
+    except Q.Refused as e:
+        return _render_issue(h, csrf, repo, n, str(e), "bad", 400)
+    except Refused as e:
+        return _render_issue(h, csrf, repo, n, str(e), "bad", 400)
+    except (urllib.error.URLError, OSError) as e:
+        log.warning("tickets: answer on %s#%d failed", repo, n)
+        return _render_issue(h, csrf, repo, n, _github_error(e), "bad", 502)
+    log.info("tickets: answers recorded on %s#%d from the UI", repo, n)
+    h._redirect(f"/tickets?repo={repo}&ok={'continued' if done else 'answered'}")

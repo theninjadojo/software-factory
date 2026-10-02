@@ -1,4 +1,4 @@
-"""Telegram: alerts out, a few fixed commands and Run/Skip buttons in.
+"""Telegram: alerts out, a few fixed commands and Run/Skip/answer buttons in.
 Trust model: only updates from the configured chat id are acted on; everything else is dropped.
 Free text is never executed or forwarded to an agent. Messages go out as plain text (no parse_mode)."""
 import json
@@ -24,10 +24,12 @@ def authorized(update: dict, chat_id: int) -> bool:
 
 
 def parse_callback(data: str) -> tuple[str, str, int] | None:
-    """'run|owner/repo|12' -> ('run','owner/repo',12); 'stage:architect|owner/repo|12' likewise. Anything else -> None."""
+    """'run|owner/repo|12' -> ('run','owner/repo',12); 'stage:architect|...', 'accept|...' (accept the recommendations) and
+    'q:q1:b|...' (option b of question q1) likewise. Anything else -> None. An answer is checked against the ticket's questions later."""
     try:
         action, repo, num = data.split("|")
-        if (action in ("run", "skip") or re.fullmatch(r"stage:[a-z]{1,20}", action)) and repo.count("/") == 1:
+        if (action in ("run", "skip", "accept") or re.fullmatch(r"stage:[a-z]{1,20}", action)
+                or re.fullmatch(r"q:[a-z0-9][a-z0-9-]{0,15}:[a-z0-9][a-z0-9-]{0,7}", action)) and repo.count("/") == 1:
             return action, repo, int(num)
     except ValueError:
         pass
@@ -46,10 +48,13 @@ class Telegram:
         with urllib.request.urlopen(req, timeout=40) as r:
             return json.load(r)["result"]
 
-    def send(self, text: str, buttons: list[tuple[str, str]] | None = None) -> None:
+    def send(self, text: str, buttons: list | None = None) -> None:
+        """buttons: one row of (text, data), or a list of rows. Data 'url:https://...' is a link (the configured UI address)."""
         params = {"chat_id": self.chat_id, "text": text[:3500]}
         if buttons:
-            params["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in buttons]]}
+            rows = buttons if isinstance(buttons[0], list) else [buttons]
+            params["reply_markup"] = {"inline_keyboard": [[{"text": t, "url": d[4:]} if d.startswith("url:") else {"text": t, "callback_data": d}
+                                                           for t, d in row] for row in rows if row]}
         try:
             self._call("sendMessage", **params)
         except Exception:

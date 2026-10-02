@@ -53,6 +53,11 @@ def connect(path: str) -> sqlite3.Connection:
     db.execute(
         """CREATE TABLE IF NOT EXISTS status (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated REAL NOT NULL)"""
     )
+    db.execute(                                     # a hint for the UI: tickets whose latest stage left questions for a person
+        """CREATE TABLE IF NOT EXISTS open_questions (
+            repo TEXT NOT NULL, issue INTEGER NOT NULL, stage TEXT NOT NULL, pending INTEGER NOT NULL, updated REAL NOT NULL,
+            PRIMARY KEY (repo, issue))"""
+    )
     ensure_step_tables(db)
     return db
 
@@ -90,6 +95,22 @@ def drop_approval(db, repo: str, issue: int, action: str) -> None:
     """Delete an approval once it is handled (one waiting for a free slot stays). A newer, different answer is kept."""
     db.execute("DELETE FROM approvals WHERE repo=? AND issue=? AND action=?", (repo, issue, action))
     db.commit()
+
+
+def set_questions(db, repo: str, issue: int, stage: str, pending: int) -> None:
+    if pending:
+        db.execute("INSERT OR REPLACE INTO open_questions VALUES (?,?,?,?,?)", (repo, issue, stage, pending, time.time()))
+    else:
+        db.execute("DELETE FROM open_questions WHERE repo=? AND issue=?", (repo, issue))
+    db.commit()
+
+
+def questions_waiting(db, repo: str) -> set[int]:
+    """Only a hint: the UI re-reads the questions and answers from GitHub before showing or recording anything."""
+    try:
+        return {n for (n,) in db.execute("SELECT issue FROM open_questions WHERE repo=?", (repo,))}
+    except Exception:                               # an older database the orchestrator has not upgraded yet
+        return set()
 
 
 def watch_pr(db, repo: str, number: int, issue_repo: str, issue_num: int) -> None:

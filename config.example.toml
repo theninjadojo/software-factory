@@ -50,6 +50,7 @@ token_file = "/srv/factory/secrets/telegram_token"
 chat_id = 0   # your numeric Telegram user id; the only account the bot will obey
 verbosity = "normal"   # quiet: needs-a-person, failures, rate limits | normal: + PR ready, stage done, CI results | verbose: everything
 # events = ["needs_human", "failure", "pr_ready"]   # optional explicit list; overrides verbosity.
+# ui_url = "https://factory.example.internal"   # optional: an "Open in UI" button on open-question messages
 # All events: needs_human failure rate_limit pr_ready stage_done ci_result ci_fix recovery started startup skipped info
 
 [classifier]
