@@ -525,7 +525,7 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
         f'<td data-l="Labels">{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td data-l="Factory">{factory_cell(i["number"])}</td>'
         f'<td class="actions" data-l="Start">{buttons(i)}</td></tr>'
         for i in issues)
-    return ('<div class="scroll"><table class="tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
+    return ('<div class="scroll"><table class="stack tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 

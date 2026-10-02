@@ -240,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             body = floor.tray(rows, csrf, None, "/needs" + (f"?need={flt}" if flt else ""), flt, heading=False)
             if path == "/needs":
                 shown = L.flash_pop(csrf)
-                return self._send(200, views.page("Needs you", f'<div id="live" data-src="/fragment/needs">{body}</div>', path, csrf, wide=True,
+                return self._send(200, views.page("Needs you", f'<p class="ph-only"><a href="/">← Factory</a></p><div id="live" data-src="/fragment/needs">{body}</div>', path, csrf, wide=True,
                                                   badges={"/needs": len(rows)} if rows else None,
                                                   flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
