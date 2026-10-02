@@ -1,0 +1,11 @@
+#!/bin/sh
+# A stand-in agent CLI for testing the harness mechanism: no model, no vendor credentials.
+repo=$(ls /work | head -1)
+{
+  echo "prompt-bytes: $(wc -c < /task/prompt.txt)"
+  echo "uid: $(id -u)"
+  if curl -sS -m 4 -o /dev/null https://example.com 2>/dev/null; then echo "network: OPEN"; else echo "network: blocked"; fi
+  echo "model: $MODEL"
+  echo "credential-present: $([ -n "$FAKE_AGENT_KEY" ] && echo yes || echo no)"
+} > "/work/$repo/agent-report.txt"
+echo "fake agent finished"

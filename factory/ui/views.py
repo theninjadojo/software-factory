@@ -8,7 +8,7 @@ GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 NAV = [("/", "Overview"), ("/runs", "Runs"), ("/tickets", "Tickets"), ("/prs", "PRs & CI"), ("/events", "Events"),
-       ("/settings", "Settings"), ("/credentials", "Credentials"), ("/telegram", "Telegram")]
+       ("/settings", "Settings"), ("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram")]
 
 GOOD = {"pr", "stage", "passed", "success", "closed", "ok"}
 WARN = {"running", "watching", "rate-limited", "human", "dry-run", "no-ci", "timed-out", "no-change", "paused"}

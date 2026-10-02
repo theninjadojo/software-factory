@@ -1,13 +1,17 @@
 #!/bin/sh
 # Runs inside the sandbox. No network except a unix socket to the host allowlist proxy.
 # /work holds one git repository per directory (a multi-repo project).
+# AGENT_COMMAND is set by the orchestrator from the selected harness's configuration (never from ticket text) and
+# reads the task from /task/prompt.txt; $MODEL and $MAX_TURNS are available to it.
 socat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:/run/proxy.sock &
 export HTTPS_PROXY=http://127.0.0.1:3128 HTTP_PROXY=http://127.0.0.1:3128
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 HOME=/home/agent
 cd /work || exit 1
 git config --global --add safe.directory '*'
-claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" \
-  --dangerously-skip-permissions > /out/agent.log 2>&1
+if [ -z "$AGENT_COMMAND" ]; then
+  AGENT_COMMAND='claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions'
+fi
+sh -c "$AGENT_COMMAND" > /out/agent.log 2>&1
 echo $? > /out/exit_code
 for d in /work/*/; do
   n=$(basename "$d")

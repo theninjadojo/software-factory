@@ -65,7 +65,7 @@ def effective_value(f: S.Field, eff: dict, submitted=None):
 
 
 def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None) -> str:
-    title, fields = S.SECTIONS[section]
+    title, fields = S.SECTIONS[section][0], S.fields_for(section, eff)
     rows = "".join(field_row(f, eff, base, submitted) for f in fields)
     return (f'{tabs(section)}<form method="post" action="/settings/save" class="settings">{csrf_field(csrf)}'
             f'<input type="hidden" name="section" value="{esc(section)}">{rows}<button>Save {esc(title.lower())}</button></form>'
@@ -156,3 +156,40 @@ def telegram_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") ->
         f'<h2>Set up</h2><p class="muted">Message your bot once, then press Find. Messages from anyone else are never acted on.</p>'
         f'<form method="post" action="/telegram/detect" class="inline">{csrf_field(csrf)}<button>Find my chat id</button></form> '
         f'<form method="post" action="/telegram/test" class="inline">{csrf_field(csrf)}<button>Send a test message</button></form>{found}')
+
+
+def harnesses_page(cfg, eff: dict, csrf: str, errors=None) -> str:
+    from .integrations import harness_credential_status
+    used = {}
+    for k, r in cfg.routes.items():
+        used.setdefault(r.harness, []).append(f"routing.{k}")
+    for r in cfg.roles:
+        used.setdefault(r.harness, []).append(f"role {r.name}")
+    cards = []
+    for name, h in cfg.harnesses.items():
+        cred = harness_credential_status(cfg, name)
+        flags = badge("enabled", "good") if h.enabled else badge("disabled", "warn")
+        if h.experimental:
+            flags += " " + badge("experimental", "warn")
+        if name == "claude-code":
+            credential = '<p class="muted">Credential: managed on the <a href="/credentials">Credentials</a> page.</p>'
+        else:
+            status = (badge("set", "good") + f' <span class="muted">{esc(cred["vars"])} · updated {esc(ago(cred["updated"]))}</span>') if cred["set"] else badge("not set", "warn")
+            credential = (f'<form method="post" action="/harnesses/credential" class="inline-form">{csrf_field(csrf)}<input type="hidden" name="name" value="{esc(name)}">'
+                          f'<p>Credential ({esc(h.env_var)}): {status}</p><input type="password" name="value" placeholder="paste a key to replace it" autocomplete="off" class="wide"> '
+                          '<button>Save key</button></form>')
+        uses = ", ".join(used.get(name, [])) or "nothing yet"
+        cards.append(
+            f'<form method="post" action="/harnesses/save" class="card harness">{csrf_field(csrf)}<input type="hidden" name="name" value="{esc(name)}">'
+            f'<h3>{esc(name)}</h3><p>{flags}</p><p class="muted">{esc(h.notes)}</p><p class="muted">Used by: {esc(uses)}</p>'
+            f'<div class="field"><label class="check"><input type="checkbox" name="enabled" value="1"{" checked" if h.enabled else ""}> Enabled</label></div>'
+            f'<div class="field"><label>Image</label><input name="image" value="{esc(h.image)}" class="wide"></div>'
+            f'<div class="field"><label>Command run in the sandbox</label><textarea name="command" rows="4">{esc(h.command)}</textarea>'
+            '<div class="muted">Set by you, never by ticket text. Reads the task from <code>/task/prompt.txt</code>; <code>$MODEL</code> and <code>$MAX_TURNS</code> are available.</div></div>'
+            f'<div class="field"><label>Hosts it may reach</label><textarea name="allow_hosts" rows="2">{esc(chr(10).join(h.allow_hosts))}</textarea></div>'
+            '<label class="check danger"><input type="checkbox" name="confirm" value="1"> I understand: enabling a harness or changing its command, image or hosts changes what runs in the sandbox and what it can reach.</label>'
+            f'<div><button>Save {esc(name)}</button></div></form>{credential}')
+    note = ('<p class="muted">A harness is the agent program the sandbox runs. Routes and roles choose one by name (Settings → Routing and Role agents). '
+            'Codex and Gemini are <strong>experimental templates</strong>: the plumbing is tested, but their command lines have not been verified end to end. '
+            'Build their images from <code>sandbox/codex</code> and <code>sandbox/gemini</code>. Each login also has its own terms for unattended use.</p>')
+    return note + '<div class="cards one">' + "".join(cards) + "</div>"

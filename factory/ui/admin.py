@@ -110,6 +110,31 @@ def credentials_test(h, form, csrf: str) -> None:
     _send_page(h, 400, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, "There is no test for that credential.", "bad")
 
 
+# ------------------------------------------------------------------ harnesses
+def harnesses_get(h, q: dict, csrf: str) -> None:
+    _, eff = _files(h)
+    _send_page(h, 200, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf), "/harnesses", csrf, FLASH.get(q.get("ok", "")))
+
+
+def harnesses_save(h, form, csrf: str) -> None:
+    try:
+        S.save_harness(h.app.config_path, h.app.state_dir(), form.get("name", ""), form)
+    except S.SettingsError as e:
+        _, eff = _files(h)
+        return _send_page(h, 422, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf), "/harnesses", csrf, " · ".join(e.messages), "bad")
+    h._redirect("/harnesses?ok=saved")
+
+
+def harnesses_credential(h, form, csrf: str) -> None:
+    try:
+        I.save_harness_credential(h.app.cfg(), form.get("name", ""), form.get("value", ""))
+    except ValueError as e:
+        _, eff = _files(h)
+        return _send_page(h, 400, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf), "/harnesses", csrf, str(e), "bad")
+    S.request_restart(h.app.state_dir())
+    h._redirect("/harnesses?ok=secret")
+
+
 # ------------------------------------------------------------------ telegram
 def _telegram(h, csrf: str, flash=None, kind="ok", status: int = 200, unknown=None, result: str = "") -> None:
     _, eff = _files(h)
@@ -158,7 +183,7 @@ def telegram_test(h, form, csrf: str) -> None:
     _telegram(h, csrf, r["message"], "ok" if r["ok"] else "bad")
 
 
-GET = {"/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get}
+GET = {"/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get}
 POST = {"/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
-        "/credentials/save": credentials_save, "/credentials/test": credentials_test,
+        "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test}

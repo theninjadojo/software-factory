@@ -153,3 +153,24 @@ def classify_sample(cfg: Config, title: str, body: str, labels: list[str]) -> tu
         c = JevClassifier(key, cfg.jev_model, kind_aliases=cfg.kind_aliases).classify(title[:300], body[:15000], labels)
         return c, ("Jev (" + c.source + ")" if c.source != "labels" else "Jev was unreachable: fell back to labels")
     return RuleClassifier(cfg.kind_aliases).classify(title, body, labels), "labels only"
+
+
+def save_harness_credential(cfg: Config, name: str, value: str) -> None:
+    """Writes VAR=value into the harness's credential file. claude-code is managed on the Credentials page."""
+    from ..config import harness_for
+    h = harness_for(cfg, name)
+    if h is None or not h.env_var or not re.fullmatch(r"[A-Z][A-Z0-9_]*", h.env_var):
+        raise ValueError("this harness has no credential variable to set here")
+    value = (value or "").strip()
+    if not SECRET_RE.match(value):
+        raise ValueError("that does not look like a key (8-500 characters, no spaces or line breaks)")
+    write_secret(Path(h.env_file), f"{h.env_var}={value}\n")
+
+
+def harness_credential_status(cfg: Config, name: str) -> dict:
+    from ..config import harness_for
+    h = harness_for(cfg, name)
+    p = Path(h.env_file) if h else None
+    if not p or not p.is_file() or p.stat().st_size == 0:
+        return {"set": False}
+    return {"set": True, "updated": p.stat().st_mtime, "vars": ", ".join(sorted({ln.split("=", 1)[0] for ln in p.read_text().splitlines() if "=" in ln}))}

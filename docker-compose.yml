@@ -48,3 +48,15 @@ services:
     image: factory-agent:latest
     profiles: ["build"]
     entrypoint: ["true"]
+
+  sandbox-image-codex:   # EXPERIMENTAL: `docker compose --profile codex build` produces factory-agent-codex:latest
+    build: {context: ./sandbox, dockerfile: codex/Dockerfile}
+    image: factory-agent-codex:latest
+    profiles: ["codex"]
+    entrypoint: ["true"]
+
+  sandbox-image-gemini:  # EXPERIMENTAL: `docker compose --profile gemini build` produces factory-agent-gemini:latest
+    build: {context: ./sandbox, dockerfile: gemini/Dockerfile}
+    image: factory-agent-gemini:latest
+    profiles: ["gemini"]
+    entrypoint: ["true"]

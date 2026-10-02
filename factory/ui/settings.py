@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import DEFAULT_ROLES, CiCfg, RunnerCfg, deep_merge, load_raw, overrides_path, parse
+from ..config import DEFAULT_ROLES, CiCfg, RunnerCfg, deep_merge, default_harnesses, load_raw, overrides_path, parse
 from ..events import ALL_EVENTS
 from ..tomlw import dumps
 
@@ -36,13 +36,14 @@ class Field:
     danger: str = ""         # non-empty: changing it requires an explicit confirmation
 
 
-def _role_fields() -> list[Field]:
+def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
     out = []
     for r in DEFAULT_ROLES:
         out += [Field(f"roles.{r.name}.label", f"{r.name.title()}: trigger label", "text"),
                 Field(f"roles.{r.name}.done_label", f"{r.name.title()}: done label", "text"),
                 Field(f"roles.{r.name}.model", f"{r.name.title()}: model", "text", "sonnet, opus, haiku (or a full model id)"),
-                Field(f"roles.{r.name}.effort", f"{r.name.title()}: effort", "select", choices=EFFORTS)]
+                Field(f"roles.{r.name}.effort", f"{r.name.title()}: effort", "select", choices=EFFORTS),
+                Field(f"roles.{r.name}.harness", f"{r.name.title()}: agent harness", "select", choices=harnesses)]
     return out + [Field("auto.label", "Auto-allocate label", "text", "A person applies it and the classifier picks the next stage.")]
 
 
@@ -67,7 +68,7 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("github.repos", "Standalone repositories", "repos", "owner/name, one per line. Repos of a project (see Projects) are added automatically."),
     ]),
     "routing": ("Routing", _routing_fields()),
-    "roles": ("Role agents", _role_fields()),
+    "roles": ("Role agents", _role_fields()),     # the harness choices are filled in by fields_for()
     "classifier": ("Classifier", [
         Field("classifier.backend", "Classifier", "select", "Jev reads the whole ticket; labels uses only your labels.", choices=("rules", "jev")),
         Field("classifier.model", "Jev model", "text", "typesafe/jev-1.13 pins a version; ~typesafe/jev-latest follows the newest."),
@@ -92,6 +93,22 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("ci.log_tail_chars", "Failing-log excerpt size", "int", lo=1000, hi=20000),
     ]),
 }
+
+
+def harness_choices(eff: dict) -> tuple:
+    """Names of the enabled harnesses, for the selectors on the routing and roles pages."""
+    try:
+        return tuple(n for n, h in parse(eff).harnesses.items() if h.enabled) or ("claude-code",)
+    except (ValueError, KeyError, TypeError):
+        return ("claude-code",)
+
+
+def fields_for(section: str, eff: dict) -> list[Field]:
+    if section == "routing":
+        return _routing_fields(harness_choices(eff))
+    if section == "roles":
+        return _role_fields(harness_choices(eff))
+    return SECTIONS[section][1]
 
 
 # ---------------------------------------------------------------- dotted-path helpers
@@ -126,6 +143,11 @@ def del_in(d: dict, dotted: str) -> None:
 
 def default_for(key: str):
     section, _, name = key.partition(".")
+    if section == "harnesses":
+        hname, _, field = name.partition(".")
+        h = default_harnesses(RunnerCfg()).get(hname)
+        v = getattr(h, field, None) if h else None
+        return list(v) if isinstance(v, tuple) else v
     if section == "runner":
         v = getattr(RunnerCfg(), name, None)
         return list(v) if isinstance(v, tuple) else v
@@ -268,9 +290,9 @@ def save_section(cfg_path: str, state_dir: Path, section: str, form: Form) -> li
     """Returns human-readable notes (for example 'switched to live'). Raises SettingsError."""
     if section not in SECTIONS:
         raise SettingsError(["Unknown settings section."])
-    fields = SECTIONS[section][1]
     base, ov = base_raw(cfg_path), overrides_raw(cfg_path)
     eff = deep_merge(base, ov)
+    fields = fields_for(section, eff)
     values, errors = {}, []
     for f in fields:
         try:
@@ -352,4 +374,42 @@ def set_chat_id(cfg_path: str, state_dir: Path, chat_id: int) -> None:
         raise SettingsError(["Chat id must not be negative."])
     base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
     _store(new_ov, base, "telegram.chat_id", chat_id)
+    _commit(cfg_path, state_dir, new_ov)
+
+
+IMAGE_RE = re.compile(r"^[\w./:@-]{1,200}$")
+
+
+def save_harness(cfg_path: str, state_dir: Path, name: str, form: Form) -> None:
+    base, ov = base_raw(cfg_path), overrides_raw(cfg_path)
+    eff = deep_merge(base, ov)
+    known = parse(eff).harnesses
+    if name not in known:
+        raise SettingsError(["Unknown harness."])
+    cur = known[name]
+    enabled = form.get("enabled") == "1"
+    image = (form.get("image") or "").strip()
+    command = (form.get("command") or "").strip()
+    errors = []
+    if not IMAGE_RE.match(image):
+        errors.append("Image: a container image name such as localhost/factory-agent-codex:latest.")
+    if not command or len(command) > 4000 or "\x00" in command or "/task/prompt.txt" not in command:
+        errors.append("Command: required, and it must read the task from /task/prompt.txt.")
+    try:
+        hosts = parse_value(Field("hosts", "Allowed hosts", "hosts"), Form({"hosts": form.get("allow_hosts", "")}))
+    except ValueError as e:
+        hosts = None
+        errors.append(str(e))
+    if name == "claude-code" and not enabled:
+        errors.append("claude-code is the default harness and stays enabled.")
+    if not errors:
+        widened = (enabled and not cur.enabled) or hosts != list(cur.allow_hosts) or command != cur.command or image != cur.image
+        if widened and form.get("confirm") != "1":
+            errors.append("Tick the confirmation box: enabling a harness, or changing its command, image or hosts, changes what runs "
+                          "in the sandbox and what it can reach.")
+    if errors:
+        raise SettingsError(errors)
+    new_ov = copy.deepcopy(ov)
+    for field, value in (("enabled", enabled), ("image", image), ("command", command), ("allow_hosts", hosts)):
+        _store(new_ov, base, f"harnesses.{name}.{field}", value)
     _commit(cfg_path, state_dir, new_ov)

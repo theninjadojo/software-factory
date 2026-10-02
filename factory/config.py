@@ -1,4 +1,5 @@
 import dataclasses
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,26 @@ class Route:
     effort: str
 
 
+CLAUDE_COMMAND = 'claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions'
+CODEX_COMMAND = 'codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -m "$MODEL" "$(cat /task/prompt.txt)"'
+GEMINI_COMMAND = 'gemini --yolo --model "$MODEL" --prompt "$(cat /task/prompt.txt)"'
+
+
+@dataclass(frozen=True)
+class HarnessCfg:
+    """An agent CLI the sandbox can run. The command is configuration (admin-set), never derived from ticket text; it runs
+    inside the locked-down sandbox with $MODEL, $MAX_TURNS and the prompt at /task/prompt.txt."""
+    name: str
+    image: str
+    env_file: str                        # KEY=value lines handed to the sandbox (the agent's credential)
+    command: str
+    allow_hosts: tuple[str, ...]         # added to the egress allowlist while this harness is enabled
+    enabled: bool = True
+    experimental: bool = False
+    env_var: str = ""                    # the variable the UI writes into env_file
+    notes: str = ""
+
+
 @dataclass(frozen=True)
 class Role:
     """A read-only stage agent (analyst, designer, architect) triggered by a label; its output is posted on the ticket."""
@@ -21,6 +42,7 @@ class Role:
     done_label: str
     model: str
     effort: str
+    harness: str = "claude-code"
 
 
 DEFAULT_ROLES = (
@@ -96,9 +118,37 @@ class Config:
     roles: tuple[Role, ...] = DEFAULT_ROLES
     auto_label: str = "factory:auto"
     ci: CiCfg = field(default_factory=CiCfg)
+    harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
     kind_aliases: dict = field(default_factory=lambda: dict(KIND_ALIASES))   # label -> kind (bug/feature/docs/chore/question)
+
+
+def default_harnesses(rn: "RunnerCfg") -> dict:
+    secrets = Path(rn.claude_env_file).parent
+    return {
+        "claude-code": HarnessCfg("claude-code", rn.image, rn.claude_env_file, CLAUDE_COMMAND, ("api.anthropic.com",), True, False,
+                                  "", "Claude Code. The credential is managed on the Credentials page."),
+        "codex": HarnessCfg("codex", "localhost/factory-agent-codex:latest", str(secrets / "codex.env"), CODEX_COMMAND, ("api.openai.com",),
+                            False, True, "CODEX_API_KEY", "OpenAI Codex CLI (codex exec). Build the image from sandbox/codex/. Not yet verified end to end."),
+        "gemini": HarnessCfg("gemini", "localhost/factory-agent-gemini:latest", str(secrets / "gemini.env"), GEMINI_COMMAND,
+                             ("generativelanguage.googleapis.com",), False, True, "GEMINI_API_KEY",
+                             "Google Gemini CLI. Build the image from sandbox/gemini/. Needs an API key. Not yet verified end to end."),
+    }
+
+
+def harness_for(cfg: "Config", name: str):
+    """The harness a route or role asked for, or None. claude-code always exists, built from the [runner] settings."""
+    return cfg.harnesses.get(name) or (default_harnesses(cfg.runner).get(name) if name == "claude-code" else None)
+
+
+def allowed_hosts(cfg: "Config") -> tuple[str, ...]:
+    """Everything the egress proxy may tunnel to: the runner's own list plus the hosts of every enabled harness."""
+    hosts = list(cfg.runner.allow_hosts)
+    for h in (cfg.harnesses or default_harnesses(cfg.runner)).values():
+        if h.enabled:
+            hosts += [x for x in h.allow_hosts if x not in hosts]
+    return tuple(hosts)
 
 
 def project_for(cfg: Config, repo: str) -> Project:
@@ -128,6 +178,31 @@ def _aliases(v) -> dict:
     if bad:
         raise ValueError(f"classifier.kind_aliases values must be one of {sorted(KINDS)}, got {bad}")
     return dict(v)
+
+
+def _harnesses(raw: dict, rn: "RunnerCfg") -> dict:
+    out = default_harnesses(rn)
+    for name, over in raw.get("harnesses", {}).items():
+        over = {k: (tuple(v) if k == "allow_hosts" else v) for k, v in over.items()}
+        if name in out:
+            out[name] = dataclasses.replace(out[name], **over)
+        else:
+            missing = {"image", "env_file", "command", "allow_hosts"} - set(over)
+            if missing:
+                raise ValueError(f"harnesses.{name}: missing {sorted(missing)}")
+            out[name] = HarnessCfg(name=name, **over)
+    for h in out.values():
+        if not h.command.strip() or "\x00" in h.command or len(h.command) > 4000:
+            raise ValueError(f"harnesses.{h.name}.command is empty or invalid")
+        if not all(re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}", x) for x in h.allow_hosts):
+            raise ValueError(f"harnesses.{h.name}.allow_hosts has an invalid host name")
+    return out
+
+
+def _check_harness_use(routes: dict, roles: tuple, harnesses: dict) -> None:
+    for where, harness in [(f"routing.{k}", r.harness) for k, r in routes.items()] + [(f"roles.{r.name}", r.harness) for r in roles]:
+        if harness not in harnesses or not harnesses[harness].enabled:
+            raise ValueError(f"{where} uses the harness {harness!r}, which does not exist or is not enabled")
 
 
 def _verbosity(v: str) -> str:
@@ -190,6 +265,10 @@ def parse(raw: dict) -> Config:
             seen[r.repo] = p.name
             if r.repo not in repos:
                 repos.append(r.repo)
+    runner_cfg = _runner(rn)
+    harnesses = _harnesses(raw, runner_cfg)
+    roles = tuple(dataclasses.replace(r, **raw.get("roles", {}).get(r.name, {})) for r in DEFAULT_ROLES)
+    _check_harness_use(routes, roles, harnesses)
     return Config(
         db_path=g["db_path"],
         poll_seconds=int(g["poll_seconds"]),
@@ -200,16 +279,17 @@ def parse(raw: dict) -> Config:
         repos=repos,
         trusted_permissions=frozenset(gh["trusted_permissions"]),
         routes=routes,
-        runner=_runner(rn),
+        runner=runner_cfg,
         telegram_token_file=raw.get("telegram", {}).get("token_file"),
         telegram_chat_id=raw.get("telegram", {}).get("chat_id"),
         classifier_backend=raw.get("classifier", {}).get("backend", "rules"),
         openrouter_key_file=raw.get("classifier", {}).get("key_file"),
         jev_model=raw.get("classifier", {}).get("model", "typesafe/jev-1.13"),
         projects=projects,
-        roles=tuple(dataclasses.replace(r, **raw.get("roles", {}).get(r.name, {})) for r in DEFAULT_ROLES),
+        roles=roles,
         auto_label=raw.get("auto", {}).get("label", "factory:auto"),
         ci=CiCfg(**raw.get("ci", {})),
+        harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),
         kind_aliases=_aliases(raw.get("classifier", {}).get("kind_aliases")),

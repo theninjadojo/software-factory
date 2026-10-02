@@ -217,7 +217,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                    trigger_label: str | None = None) -> runner.RunResult:
     """Run an analyst, designer or architect and put its document on the ticket."""
     num, trigger_label = issue["number"], trigger_label or role.label
-    route = Route("claude-code", role.model, role.effort)
+    route = Route(role.harness, role.model, role.effort)
     alert(f"Starting {role.name}: {repo}#{num}: {issue['title'][:80]}\nAgent: {route.model}, effort {route.effort}"
           + (f"\nchosen by {c.source} (stage {c.stage}, confidence {c.stage_confidence:.2f})" if c and c.stage_confidence else ""), event="started")
     claim(gh, repo, num, trigger_label, role.name)

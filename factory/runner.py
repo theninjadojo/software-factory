@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config, Project, Route, RunnerCfg, project_for
+from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
 from .roles import ROLE_COMMON, ROLE_PROMPTS
 from .github import GitHub
 
@@ -177,7 +177,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
             f"<issue>\n<title>{_neutral(title[:300])}</title>\n<body>\n{_neutral(body[:20000])}\n</body>\n</issue>\n")
 
 
-def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path) -> list[str]:
+def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: HarnessCfg | None = None) -> list[str]:
+    harness = harness or default_harnesses(rn)["claude-code"]
     # Podman maps the host user onto the container user (keep-id). Docker has no such flag: run as uid 1000 and rely on
     # the workspace being world-writable, which run_task arranges.
     user = ["--userns=keep-id:uid=1000,gid=1000"] if rn.engine == "podman" else ["--user", "1000:1000"]
@@ -187,10 +188,11 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path) -> list[str]:
         "--tmpfs", "/tmp:rw,size=512m", "--tmpfs", "/home/agent:rw,size=512m,mode=1777",
         "-v", f"{d/'work'}:/work:rw", "-v", f"{d/'task'}:/task:ro", "-v", f"{d/'out'}:/out:rw",
         "-v", f"{rn.proxy_socket}:/run/proxy.sock",
-        "--env-file", rn.claude_env_file,
+        "--env-file", harness.env_file,
+        "-e", f"AGENT_COMMAND={harness.command}",
         "-e", f"MODEL={route.model}", "-e", f"MAX_TURNS={rn.max_turns}",
         "-e", f"MAX_THINKING_TOKENS={rn.thinking_tokens.get(route.effort, 8000)}",
-        rn.image,
+        harness.image,
     ]
 
 
@@ -202,6 +204,11 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
     if fix_branch and not fix_branch.startswith(BRANCH_PREFIX):
         return RunResult("failed", "refusing to modify a non-factory branch")
     rn, num = cfg.runner, issue["number"]
+    harness = harness_for(cfg, route.harness)
+    if harness is None or not harness.enabled:
+        return RunResult("failed", f"the harness {route.harness!r} is not available (enable it on the Harnesses page)")
+    if not Path(harness.env_file).is_file():
+        return RunResult("failed", f"no credential file for {harness.name} at {harness.env_file}")
     project = project_for(cfg, repo)
     names = {r.repo: r.repo.split("/")[1] for r in project.repos}
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -229,7 +236,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
         try:
-            proc = subprocess.run(sandbox_cmd(rn, route, name, d), timeout=rn.timeout_seconds, check=False,
+            proc = subprocess.run(sandbox_cmd(rn, route, name, d, harness), timeout=rn.timeout_seconds, check=False,
                                   capture_output=True, text=True)
         except subprocess.TimeoutExpired:
             subprocess.run([rn.engine, "kill", name], check=False, capture_output=True)
