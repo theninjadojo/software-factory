@@ -8,6 +8,7 @@ Trust boundaries:
   * only branches named factory/* are ever pushed
 """
 import base64
+import json
 import logging
 import os
 import re
@@ -176,6 +177,36 @@ def looks_rate_limited(text: str, code: str) -> bool:
     """A failed run that mentions a limit, or a very short reply that does. A long document that merely discusses
     rate limiting (the ticket may be about it) must not be mistaken for a plan or API limit."""
     return bool(RATE_LIMIT.search(text[-2000:])) and (code != "0" or len(text.strip()) < 400)
+
+
+MAX_USAGE_LOG = 2_000_000
+_CLAUDE_USAGE = {"input_tokens": "tokens_in", "output_tokens": "tokens_out",
+                 "cache_read_input_tokens": "tokens_cache_read", "cache_creation_input_tokens": "tokens_cache_write"}
+
+
+def parse_usage(text: str, fmt: str) -> tuple[str, dict | None]:
+    """The agent's text and its token counts, from what the harness printed. The log is agent-controlled: only whole
+    numbers in range are kept, and anything that does not parse leaves the text as it was with no counts.
+    claude-json: `claude -p --output-format json` prints one result object, as the whole log or its last line (stderr,
+    which shares the log, may come first)."""
+    if fmt != "claude-json" or not text.strip() or len(text) > MAX_USAGE_LOG:
+        return text, None
+    body = text.strip()
+    head, _, last = body.rpartition("\n")
+    for before, candidate in (("", body), (head, last)):
+        try:
+            obj = json.loads(candidate)
+        except (ValueError, RecursionError):           # agent-controlled: deep nesting must not end the run
+            continue
+        if not isinstance(obj, dict) or obj.get("type") != "result":
+            continue
+        raw = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
+        usage = {col: raw[k] for k, col in _CLAUDE_USAGE.items()
+                 if type(raw.get(k)) is int and 0 <= raw[k] <= 10 ** 9}
+        result = obj.get("result")
+        out = (before.rstrip() + "\n" + result if before.strip() else result) if isinstance(result, str) else text
+        return out, usage or None
+    return text, None
 
 
 def build_prompt(title: str, body: str, project: Project, issue_repo: str, role: str | None = None,
@@ -404,9 +435,10 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             subprocess.run([rn.engine, "kill", name], check=False, capture_output=True)
             return RunResult("failed", f"agent timed out after {rn.timeout_seconds}s")
         logf = d / "out" / "agent.log"
-        text = logf.read_text(errors="replace") if logf.exists() else ""
+        text, usage = parse_usage(logf.read_text(errors="replace") if logf.exists() else "", harness.usage_format)
         if sink is not None:
             sink["log"] = text[-8000:]               # the caller records it (the workspace is deleted afterwards)
+            sink["usage"] = usage
         codef = d / "out" / "exit_code"
         code = codef.read_text().strip() if codef.exists() else "?"
         if role:

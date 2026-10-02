@@ -58,6 +58,14 @@ def report(repo: str, number: int, url: str, state: str, items: list[dict], logs
     return sanitize_markdown(body)
 
 
+def record(db, state: str, repo: str, number: int, issue_repo: str, issue_num: int, what: str) -> None:
+    """A ci:<state> event on the ticket, so its journey shows each CI round. Observability never stops the watcher."""
+    try:
+        dbm.add_event(db, f"ci:{state}", f"{repo}#{number}: {what}", issue_repo, issue_num)
+    except Exception:
+        log.exception("could not record the CI result")
+
+
 def _inline(conn):
     def submit(issue_repo, issue_num, job) -> bool:
         job(conn)
@@ -112,11 +120,13 @@ def watch_ci(cfg, gh, conn, notify, fix, submit=None) -> None:
                            f"runners, check that they are running.\n{url}", "ci_result")
                 if age >= cfg.ci.timeout_minutes:
                     dbm.update_pr(conn, repo, number, status="timed-out", summary="checks still pending")
+                    record(conn, "timed-out", repo, number, issue_repo, issue_num, "checks still pending")
                     gh.comment(issue_repo, issue_num, report(repo, number, url, "timed-out", items))
                     notify(f"CI timed out for {repo}#{number}\n{url}", "ci_result")
                 continue
             if state == "passed":
                 dbm.update_pr(conn, repo, number, status="passed", summary=f"{len(items)} checks passed")
+                record(conn, "passed", repo, number, issue_repo, issue_num, f"{len(items)} checks passed")
                 gh.comment(repo, number, report(repo, number, url, "passed", items))
                 gh.comment(issue_repo, issue_num, f"CI passed on {url} ({len(items)} checks).")
                 notify(f"CI passed: {repo}#{number} ({len(items)} checks)\n{url}", "ci_result")
@@ -128,6 +138,7 @@ def watch_ci(cfg, gh, conn, notify, fix, submit=None) -> None:
                               url=url, items=items, logs=logs, names=names):
                     gh.comment(repo, number, report(repo, number, url, "failed", items, logs,
                                                     f"Giving the agent a fix round ({rounds + 1} of {cfg.ci.fix_rounds})."))
+                    record(db, "failed", repo, number, issue_repo, issue_num, f"failing: {names}")
                     notify(f"CI failed: {repo}#{number} ({names}). Starting fix round {rounds + 1} of {cfg.ci.fix_rounds}.\n{url}", "ci_fix")
                     pushed = fix(repo, number, issue_repo, issue_num, f"Failing checks: {names}\n\n{logs}")
                     if pushed is None:                  # rate limited: try again next time, round not used
@@ -139,6 +150,7 @@ def watch_ci(cfg, gh, conn, notify, fix, submit=None) -> None:
                 submit(issue_repo, issue_num, fix_round)    # busy: left as it is, so the next pass offers the round again
                 continue
             dbm.update_pr(conn, repo, number, status="failed", summary=f"failing: {names}")
+            record(conn, "failed", repo, number, issue_repo, issue_num, f"failing: {names}")
             gh.comment(repo, number, report(repo, number, url, "failed", items, logs, "No automatic fix rounds left."))
             gh.comment(issue_repo, issue_num, f"CI failed on {url} ({names}). A person should take a look.")
             notify(f"CI failed: {repo}#{number} ({names}). Needs a person.\n{url}", "failure")

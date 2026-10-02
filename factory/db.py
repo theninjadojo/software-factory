@@ -5,6 +5,7 @@ import time
 from . import designfiles
 
 _local = threading.local()
+TOKEN_COLS = ("tokens_in", "tokens_out", "tokens_cache_read", "tokens_cache_write")   # per run; NULL when the harness did not say
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -52,6 +53,11 @@ def connect(path: str) -> sqlite3.Connection:
             run_id INTEGER, message TEXT NOT NULL)"""
     )
     db.execute("CREATE INDEX IF NOT EXISTS events_kind ON events(kind, id)")
+    db.execute("CREATE INDEX IF NOT EXISTS events_ticket ON events(repo, issue, id)")
+    have = {r[1] for r in db.execute("PRAGMA table_info(runs)")}
+    for col in TOKEN_COLS:                          # added later: nullable, so older rows read as "not reported"
+        if col not in have:
+            db.execute(f"ALTER TABLE runs ADD COLUMN {col} INTEGER")
     db.execute(
         """CREATE TABLE IF NOT EXISTS status (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated REAL NOT NULL)"""
     )
@@ -183,9 +189,14 @@ def start_run(db, kind: str, repo: str, issue: int, title: str, harness: str | N
     return cur.lastrowid
 
 
-def finish_run(db, run_id: int, status: str, detail: str = "", pr_urls: str = "", output: str = "", log_tail: str = "") -> None:
-    db.execute("UPDATE runs SET finished=?, status=?, detail=?, pr_urls=?, output=?, log_tail=? WHERE id=?",
-               (time.time(), status, detail[:1000], pr_urls, output[:MAX_OUTPUT], log_tail[-MAX_LOG:], run_id))
+def finish_run(db, run_id: int, status: str, detail: str = "", pr_urls: str = "", output: str = "", log_tail: str = "",
+               usage: dict | None = None) -> None:
+    """usage: token counts by TOKEN_COLS name (runner.parse_usage validates them); anything missing is stored as NULL."""
+    u = usage or {}
+    toks = [u.get(c) if type(u.get(c)) is int else None for c in TOKEN_COLS]
+    db.execute("UPDATE runs SET finished=?, status=?, detail=?, pr_urls=?, output=?, log_tail=?, "
+               + ", ".join(f"{c}=?" for c in TOKEN_COLS) + " WHERE id=?",
+               (time.time(), status, detail[:1000], pr_urls, output[:MAX_OUTPUT], log_tail[-MAX_LOG:], *toks, run_id))
     db.commit()
 
 
@@ -404,3 +415,97 @@ def doc_stages(db, repo: str, issue: int) -> list[str]:
     except sqlite3.OperationalError:
         return []
     return [s for s in DOC_STAGES if s in have]
+
+
+# ---- ticket journey: the route a ticket took, in order (runs, routing decisions, CI rounds, a stop for a person) ----
+# Floor station ids (ui/floor.py STATIONS). A CI fix run is drawn at Build, so a loop reads build, CI, build, CI.
+_RUN_STATION = {"build": "build", "fix": "build", "review": "review", "conflicts": "conflicts"}
+_CI_STATE = {"ci:passed": "done", "ci:failed": "failed", "ci:timed-out": "failed"}
+_TICKET_RUNS = ("WHERE (r.repo=? AND r.issue=?) OR (r.kind='fix' AND EXISTS (SELECT 1 FROM prs p WHERE p.repo=r.repo "
+                "AND p.issue_num=r.issue AND p.issue_repo=? AND p.issue_num=?)) ORDER BY r.id")
+
+
+def run_station(kind: str, stage: str | None) -> str | None:
+    if kind == "stage":
+        return stage if stage in DOC_STAGES else "review" if stage == "reviewer" else None
+    return _RUN_STATION.get(kind)
+
+
+def _tokens(r: dict) -> dict:
+    """Tokens in (uncached input plus cache reads and writes) and out; None where the harness did not report them."""
+    parts = [r.get(c) for c in ("tokens_in", "tokens_cache_read", "tokens_cache_write")]
+    return {"in": sum(p for p in parts if p is not None) if any(p is not None for p in parts) else None,
+            "out": r.get("tokens_out")}
+
+
+def journey(db, repo: str, issue: int, now: float | None = None) -> dict:
+    """The ticket's steps in the order they happened, numbered from 1, with totals. Each step: n, station, kind (run,
+    decision, ci or person), state (done, running, failed, queued or waiting), started, finished, seconds and, for runs,
+    run_id, stage, status, harness, model, effort and tokens {in, out}. Text fields are raw: the UI escapes them.
+    Read-only; works on a database the orchestrator has not upgraded yet (no token counts)."""
+    now = time.time() if now is None else now
+    cols = "r.id, r.kind, r.stage, r.harness, r.model, r.effort, r.started, r.finished, r.status"
+    args = (repo, issue, repo, issue)
+    try:
+        runs = _dicts(db.execute(f"SELECT {cols}, " + ", ".join(f"r.{c}" for c in TOKEN_COLS) + f" FROM runs r {_TICKET_RUNS}", args))
+    except sqlite3.OperationalError:
+        try:
+            runs = _dicts(db.execute(f"SELECT {cols} FROM runs r {_TICKET_RUNS}", args))
+        except sqlite3.OperationalError:
+            runs = []
+    try:
+        events = _dicts(db.execute("SELECT id, ts, kind, message FROM events WHERE repo=? AND issue=? "
+                                   "AND (kind='decision' OR kind LIKE 'ci:%') ORDER BY id", (repo, issue)))
+    except sqlite3.OperationalError:
+        events = []
+    try:
+        asked = db.execute("SELECT stage, pending, updated FROM open_questions WHERE repo=? AND issue=?", (repo, issue)).fetchone()
+    except sqlite3.OperationalError:
+        asked = None
+    # An event and the run it led to can share a clock tick: the event (a decision, a CI result) comes first.
+    merged = sorted([(e["ts"], 0, e["id"], e) for e in events] + [(r["started"], 1, r["id"], r) for r in runs], key=lambda x: x[:3])
+    steps: list[dict] = []
+    for _, is_run, _, x in merged:
+        if is_run:
+            state = step_status(x["status"])
+            end = x["finished"]
+            steps.append({"kind": "run", "station": run_station(x["kind"], x["stage"]), "state": state, "run_id": x["id"],
+                          "run_kind": x["kind"], "stage": x["stage"], "status": x["status"], "harness": x["harness"],
+                          "model": x["model"], "effort": x["effort"], "started": x["started"], "finished": end,
+                          "seconds": (end if end is not None else now) - x["started"] if state == "running" or end is not None else None,
+                          "tokens": _tokens(x), "message": ""})
+        elif x["kind"] == "decision":
+            person = x["message"].startswith(("needs a person", "human:")) and not x["message"].endswith("[dry-run]")
+            steps.append({"kind": "person" if person else "decision",
+                          "station": "needs" if person else "trust" if x["message"].startswith("ignored") else "classify",
+                          "state": "done", "started": x["ts"], "finished": x["ts"], "seconds": None, "message": x["message"]})
+        elif x["kind"] in _CI_STATE:
+            steps.append({"kind": "ci", "station": "ci", "state": _CI_STATE[x["kind"]], "started": x["ts"], "finished": x["ts"],
+                          "seconds": None, "message": x["message"]})
+    # Stopped for a person: the route ends at the step that asked (a stage's open questions, or the router's call).
+    if asked and not any(s["kind"] == "run" and s["started"] > asked[2] for s in steps):
+        steps.append({"kind": "person", "station": "needs", "state": "waiting", "stage": asked[0], "pending": asked[1],
+                      "started": asked[2], "finished": None, "seconds": None, "message": f"{asked[1]} open question(s) from the {asked[0]}"})
+    elif steps and steps[-1]["kind"] == "person":
+        steps[-1].update(state="waiting", finished=None)
+    for i, s in enumerate(steps, 1):
+        s["n"] = i
+    run_steps = [s for s in steps if s["kind"] == "run"]
+    if not steps:
+        status = "none"
+    elif any(s["state"] == "running" for s in run_steps):
+        status = "running"
+    else:
+        status = {"waiting": "waiting", "failed": "failed", "queued": "queued"}.get(steps[-1]["state"], "done")
+    started = steps[0]["started"] if steps else None
+    finished = max((s["finished"] for s in steps if s["finished"] is not None), default=None) if status in ("done", "failed") else None
+    tok_in = [s["tokens"]["in"] for s in run_steps if s["tokens"]["in"] is not None]
+    tok_out = [s["tokens"]["out"] for s in run_steps if s["tokens"]["out"] is not None]
+    models: dict[str, int] = {}
+    for s in run_steps:
+        if s["model"]:
+            models[s["model"]] = models.get(s["model"], 0) + 1
+    return {"steps": steps, "status": status, "started": started, "finished": finished,
+            "seconds": ((finished if finished is not None else now) - started) if started is not None else None,
+            "tokens": {"in": sum(tok_in) if tok_in else None, "out": sum(tok_out) if tok_out else None},
+            "models": models, "waiting": steps[-1] if status == "waiting" else None}

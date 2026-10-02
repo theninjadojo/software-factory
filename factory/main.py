@@ -164,7 +164,7 @@ def end_run(run_id, res, sink: dict) -> None:
         return
     try:
         db = _ev()
-        dbm.finish_run(db, run_id, res.status, res.detail, res.pr_url or "", res.output, sink.get("log", ""))
+        dbm.finish_run(db, run_id, res.status, res.detail, res.pr_url or "", res.output, sink.get("log", ""), sink.get("usage"))
         dbm.add_design_files(db, run_id, getattr(res, "files", None) or [])
         emit(f"run:{res.status}", res.detail[:300], None, None, run_id)
         if step_gh is not None:
