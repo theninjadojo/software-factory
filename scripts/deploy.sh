@@ -7,7 +7,7 @@
 set -euo pipefail
 TARGET="${1:?usage: deploy.sh user@host [--image]}"; REBUILD="${2:-}"
 cd "$(dirname "$0")/.."
-tar -czf /tmp/sf-deploy.tgz factory tests sandbox config.example.toml
+tar -czf /tmp/sf-deploy.tgz factory tests sandbox deploy config.example.toml
 scp -q /tmp/sf-deploy.tgz "$TARGET:/tmp/sf-deploy.tgz"; rm -f /tmp/sf-deploy.tgz
 ssh "$TARGET" "cat > /tmp/sf-deploy.sh && chmod 755 /tmp/sf-deploy.sh && sudo -n -u factory /tmp/sf-deploy.sh $REBUILD; rm -f /tmp/sf-deploy.sh /tmp/sf-deploy.tgz" <<'REMOTE'
 #!/bin/bash
@@ -17,9 +17,11 @@ cd /srv/factory
 RUNNING=$(podman ps -q --filter 'name=^factory-' | wc -l); echo "running sandboxes: $RUNNING"
 [ "$RUNNING" = "0" ] || { echo "ABORT: an agent run is in flight; try again when it finishes"; exit 1; }
 mkdir state/fd && tar -C state/fd -xzf /tmp/sf-deploy.tgz
-rm -rf app/factory app/tests app/sandbox
-cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/config.example.toml app/ && rm -rf state/fd
-cd app && python3 -m unittest discover -s tests 2>&1 | tail -3
+rm -rf app/factory app/tests app/sandbox app/deploy
+cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/deploy state/fd/config.example.toml app/ && rm -rf state/fd
+cd app
+if ! python3 -m unittest discover -s tests > /tmp/sf-tests.log 2>&1; then tail -25 /tmp/sf-tests.log; echo 'TESTS FAILED: not restarting (the new code is on disk but the running service is unchanged)'; exit 1; fi
+tail -3 /tmp/sf-tests.log
 if [ "$1" = "--image" ]; then podman build -q -t factory-agent -f sandbox/Dockerfile sandbox; fi
 systemctl --user restart factory.service; sleep 8
 systemctl --user is-active factory-proxy.service factory.service
