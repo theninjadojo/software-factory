@@ -97,7 +97,7 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
     ]),
     "review": ("Code review", [
         Field("review.enabled", "Enable the code reviewer", "bool", "An independent agent reviews the factory's PRs and comments. It never approves or changes code."),
-        Field("review.auto", "Review every PR the factory opens", "bool", "Off: only when a person applies the review label to the ticket."),
+        Field("review.auto", "Review every PR the factory opens", "bool", "PRs open as drafts and are marked ready once the review is posted. Off: PRs open ready; only the review label starts a review."),
         Field("review.label", "Review label", "text", "Apply it to a ticket to (re-)review its open factory PRs."),
         Field("review.done_label", "Reviewed label", "text"),
         Field("review.model", "Reviewer model", "text", "Use a different harness and model family from the builder for a genuinely independent opinion."),

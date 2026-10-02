@@ -57,7 +57,7 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   picks tier, effort and stage as *typed answers*, never free text. Falls back to your labels if it errors.
 - **Code review.** An independent reviewer agent reads the PR branches of every repo in the change, with full history, and posts a
   structured review (verdict, blocking / should-fix / nits with file and line, what is missing, what it could not verify) on each PR.
-  It runs automatically after the factory opens a PR, or when a person labels the ticket `factory:review`. It never approves, requests
+  It runs automatically after the factory opens a PR (which stays a draft until the review is posted), or when a person labels the ticket `factory:review`. It never approves, requests
   changes, merges or edits code. Give it a different harness and model family from the builder for a genuinely independent opinion.
   Off by default (it costs a run per PR).
 - **CI feedback.** Watches the repos' own CI on factory PRs, reports pass/fail, and can give the agent a fix round with
