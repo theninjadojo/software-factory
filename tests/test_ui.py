@@ -237,3 +237,50 @@ class DesignFileLinks(unittest.TestCase):
                 "model": "m", "effort": "e", "pr_urls": "", "sub_number": None}
         self.assertIn(self.GOOD["url"], views.pipeline([step], {7: [self.GOOD]}))
         self.assertNotIn("Design files", views.pipeline([step], {}))
+
+
+class StageDocuments(UiCase):
+    EVIL = ("# Plan\n<script>alert(1)</script> <img src=x onerror=alert(1)> ![p](https://evil.example/p.png) [bad](javascript:alert(1)) "
+            "[ok](https://github.com/o/r/issues/1) [off](https://evil.example/x) **bold** `<b>`\n\n- one\n\n| a | b |\n|---|---|\n| <i>x</i> | 2 |\n\n```\n<script>unclosed")
+    REPO = "your-org/standalone-service"
+
+    def test_markdown_is_escaped_and_only_github_links_are_made(self):
+        from factory.sanitize import md_render
+        out, heads = md_render(self.EVIL)
+        for bad in ("<script", "<img", "<i>", 'href="javascript:', "evil.example\"", "<b>"):
+            self.assertNotIn(bad, out)
+        self.assertIn('href="https://github.com/o/r/issues/1"', out)
+        self.assertIn("<strong>bold</strong>", out)
+        self.assertIn("<h2 ", out)                                   # document headings start below the page's h1
+        self.assertEqual([t for _, t in heads], ["Plan"])
+
+    def test_readable_drops_the_marker_data_line_and_questions_block(self):
+        from factory import questions as Q
+        doc = "<!-- factory:stage=analyst -->\n<!-- factory:questions {} -->\nBody\n\n```factory-questions\n{}\n```\n"
+        self.assertEqual(Q.readable(doc), "Body")
+
+    def test_the_page_shows_the_stored_document_and_ignores_request_text(self):
+        cookie, _ = self.session()
+        rid = dbm.start_run(self.db, "stage", self.REPO, 5, "t", "h", "m", "e", stage="analyst")
+        dbm.finish_run(self.db, rid, "stage", output=self.EVIL)
+        s, _, html = self.req("GET", f"/ticket/doc?repo={self.REPO}&n=5&stage=analyst&doc=%3Cb%3Ehi&body=%3Cb%3Ehi", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn("Analysis", html)
+        self.assertIn(f"run #{rid}", html)
+        self.assertNotIn("<script>alert", html)
+        self.assertNotIn("<b>hi", html)
+        self.assertIn("/ticket/doc?repo=", self.req("GET", f"/ticket?repo={self.REPO}&n=5", cookie=cookie)[2])
+
+    def test_a_missing_document_is_a_message_and_bad_parameters_are_refused(self):
+        cookie, _ = self.session()
+        self.assertIn("No document recorded", self.req("GET", f"/ticket/doc?repo={self.REPO}&n=5&stage=designer", cookie=cookie)[2])
+        for q in (f"repo={self.REPO}&n=5&stage=reviewer", f"repo={self.REPO}&n=x&stage=analyst", "repo=o/r&n=5&stage=analyst", "repo=../x&n=5&stage=analyst"):
+            self.assertEqual(self.req("GET", "/ticket/doc?" + q, cookie=cookie)[0], 404, q)
+
+    def test_question_cards_link_to_the_stage_document_in_a_new_tab(self):
+        from factory import questions as Q
+        from factory.ui import labels as L
+        q = Q.Question("q1", "Which?", (("a", "A"),), "a", "r", Q.PERSON)
+        out = L.question_form(self.REPO, 5, Q.StageQuestions("designer", [q]), "csrf")
+        self.assertIn(f'href="/ticket/doc?repo={self.REPO}&amp;n=5&amp;stage=designer" target="_blank" rel="noopener"', out)
+        self.assertNotIn("/ticket/doc", L.question_form("evil/../x", 5, Q.StageQuestions("designer", [q]), "csrf"))

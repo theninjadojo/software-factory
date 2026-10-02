@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import db as dbm
 from .. import pause
+from .. import questions as Q
 from ..config import load
 from . import admin, floor, views
 from . import labels as L
@@ -209,6 +210,19 @@ class Handler(BaseHTTPRequestHandler):
         time.sleep(0.4)                                   # slow down guessing
         self._send(401, views.login_page("Wrong password."))
 
+    def _doc(self, db, repo: str, n: int, stage: str) -> str:
+        """The stored document first; GitHub (the factory's own stage comment) when it is missing or was cut short."""
+        doc, notice, source = dbm.stage_doc(db, repo, n, stage), "", "Stored output"
+        text = Q.readable(doc["output"]) if doc else ""
+        if not doc or doc["truncated"]:
+            full = L.stage_comment(self, repo, n, stage)
+            if full:
+                text, source = Q.readable(full), "Complete, from GitHub"
+            elif doc:
+                notice = ('<p class="muted"><strong>Warning:</strong> this document was cut short when it was stored, and the full text could not be '
+                          'fetched from GitHub. Open the ticket on GitHub for the rest.</p>')
+        return views.doc_page(repo, n, stage, dbm.doc_stages(db, repo, n), doc, text, source, notice, "/needs")
+
     def _get(self, path: str, q: dict, csrf: str) -> None:
         cached = L.needs_cached()                              # the nav count: never a GitHub call, only what the tray already read
         badges = {"/needs": len(cached)} if cached else None
@@ -248,13 +262,20 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/tickets":
                 rows = dbm.tickets(db)
                 return page("Tickets", views.tickets_page(rows, dbm.step_counts(db, rows)))
+            if path == "/ticket/doc":
+                n, stage = q.get("n", ""), q.get("stage", "")
+                if not views.REPO.match(q.get("repo", "")) or not n.isdigit() or q["repo"] not in self.app.cfg().repos:
+                    return self._send(404, "no such ticket", "text/plain")
+                if stage not in views.DOC_LABEL:
+                    return self._send(404, "Unknown stage.", "text/plain")
+                return page(f"{views.DOC_LABEL[stage]} · {q['repo']} #{int(n)}", self._doc(db, q["repo"], int(n), stage))
             if path == "/ticket":
                 n = q.get("n", "")
                 if not views.REPO.match(q.get("repo", "")) or not n.isdigit():
                     return self._send(404, "no such ticket", "text/plain")
                 steps = dbm.steps_for_ticket(db, q["repo"], int(n))
                 files = dbm.design_files_for_runs(db, [i for s in steps if s["step"] == "design" for i in s["run_ids"]])
-                return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), steps, files))
+                return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), steps, files, dbm.doc_stages(db, q["repo"], int(n))))
             if path == "/prs":
                 return page("PRs & CI", views.prs_table(dbm.watched_prs(db)))
             if path == "/events":

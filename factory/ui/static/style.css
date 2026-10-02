@@ -176,3 +176,10 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
   .nd-dialog { width:100vw; max-width:none; margin:auto 0 0; border-radius:20px 20px 0 0; max-height:88vh; }
 }
 .disclose { margin:.4rem 0; } .disclose summary { cursor:pointer; color:var(--accent); } .disclose form.field { max-width:34rem; }
+
+.docview { max-width: 70ch; overflow-wrap: anywhere; }
+.docview pre { overflow-x: auto; }
+.doc-tabs { display: flex; gap: 1rem; overflow-x: auto; white-space: nowrap; }
+.doc-tabs a, .doc-tabs span, .nd-doc a { display: inline-block; min-height: 44px; line-height: 44px; }
+.doc-tabs a[aria-current] { font-weight: bold; }
+.nd-doc { margin: 0 0 .5rem; }
