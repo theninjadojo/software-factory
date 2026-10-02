@@ -186,9 +186,10 @@ def tickets_page(rows: list[dict]) -> str:
     body = "".join(
         f'<tr><td>{ticket_link(t["repo"], t["issue"])}<br><span class="muted">{esc(t["title"])}</span></td><td>{badge(t["outcome"])}</td>'
         f'<td class="wrap">{esc(t["detail"])}</td><td>{esc(t["runs"])}{" · " + badge(t["last_run"]) if t["last_run"] else ""}</td>'
-        f'<td title="{esc(ts(t["decided_at"]))}">{esc(ago(t["decided_at"]))}</td></tr>' for t in rows)
+        f'<td title="{esc(ts(t["decided_at"]))}">{esc(ago(t["decided_at"]))}</td>'
+        f'<td><a href="/labels/issue?repo={esc(t["repo"])}&amp;n={int(t["issue"])}">Edit labels</a></td></tr>' for t in rows)
     return ('<p class="muted">The latest decision for each ticket. <em>ignored</em> means the label was not applied by someone with write access.</p>'
-            '<div class="scroll"><table><thead><tr><th>Ticket</th><th>Decision</th><th>Why</th><th>Runs</th><th>When</th></tr></thead>'
+            '<div class="scroll"><table><thead><tr><th>Ticket</th><th>Decision</th><th>Why</th><th>Runs</th><th>When</th><th>Labels</th></tr></thead>'
             f'<tbody>{body}</tbody></table></div>')
 
 
