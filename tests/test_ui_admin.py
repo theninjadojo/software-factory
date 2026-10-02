@@ -334,10 +334,19 @@ class Labels(AdminCase):
         self.assertIn("GitHub refused", html)
         self.assertNotIn("Label added", html)
 
+    def test_tickets_page_merges_github_labels_with_the_factory_decision(self):
+        dbm.record(self.db, self.REPO, 7, "T", "run:stage", "analyst first")
+        cookie, _ = self.session()
+        s, _, html = self.req("GET", "/tickets", cookie=cookie)
+        self.assertEqual(s, 200)
+        for needle in ("bug", "run:stage", "/labels/issue?repo="):
+            self.assertIn(needle, html)
+        self.assertNotIn(">Labels</a>", html)
+
     def test_label_names_are_escaped_and_token_never_rendered(self):
         self.gh.get_issue.return_value["labels"] = [{"name": "<script>"}]
         cookie, _ = self.session()
-        for path in ("/labels", f"/labels/issue?repo={quote(self.REPO)}&n=7"):
+        for path in ("/tickets", f"/labels/issue?repo={quote(self.REPO)}&n=7"):
             s, _, html = self.req("GET", path, cookie=cookie)
             self.assertEqual(s, 200)
             self.assertNotIn("<script>", html.replace('<script src="/static/app.js" defer></script>', ""))

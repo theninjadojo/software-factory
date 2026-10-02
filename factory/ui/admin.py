@@ -184,7 +184,7 @@ def telegram_test(h, form, csrf: str) -> None:
 
 
 GET = {"/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
-       "/labels": L.list_get, "/labels/issue": L.issue_get}
+       "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get}
 POST = {"/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,

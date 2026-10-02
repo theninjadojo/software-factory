@@ -4,6 +4,7 @@ import logging
 import re
 import urllib.error
 
+from .. import db as dbm
 from ..github import GitHub
 from . import integrations as I, views
 from .views import badge, csrf_field, esc
@@ -78,21 +79,33 @@ def _gh(h):
 
 
 def _page(h, status: int, title: str, body: str, csrf: str, flash=None, kind="ok") -> None:
-    h._send(status, views.page(title, body, "/labels", csrf, flash=flash, flash_kind=kind))
+    h._send(status, views.page(title, body, "/tickets", csrf, flash=flash, flash_kind=kind))
 
 
 # ------------------------------------------------------------------ pages
+def _decisions(h, repo) -> dict | list:
+    """The factory's latest decision per ticket: a list (repo=None) or a {(repo, issue): row} map for one repo."""
+    db = h.app.ro_db()
+    if db is None:
+        return [] if repo is None else {}
+    try:
+        rows = dbm.tickets(db, 500)
+    finally:
+        db.close()
+    return rows if repo is None else {(t["repo"], t["issue"]): t for t in rows if t["repo"] == repo}
+
+
 def list_get(h, q: dict, csrf: str) -> None:
     cfg = h.app.cfg()
     if not cfg.repos:
-        return _page(h, 200, "Labels", '<p class="muted">No repositories are configured. Add one in <a href="/settings?section=projects">Settings</a>.</p>', csrf)
+        return _page(h, 200, "Tickets", '<p class="muted">No repositories are configured. Add one in <a href="/settings?section=projects">Settings</a>.</p>', csrf)
     repo = q.get("repo") if q.get("repo") in cfg.repos else cfg.repos[0]
     state = q.get("state") if q.get("state") in STATES else "open"
     label, text = (q.get("label") or "")[:50], (q.get("q") or "").strip()[:100]
     page_no = int(q["page"]) if (q.get("page") or "").isdigit() and 1 <= int(q["page"]) <= 1000 else 1
     gh = _gh(h)
     if gh is None:
-        return _page(h, 400, "Labels", "", csrf, NO_TOKEN, "bad")
+        return _page(h, 200, "Tickets", views.tickets_page(_decisions(h, None)), csrf, NO_TOKEN + " Showing the factory's decisions only.", "bad")
     try:
         names = sorted(l["name"] for l in gh.repo_labels(repo))
         if text.lstrip("#").isdigit() and len(text.lstrip("#")) <= 9:
@@ -103,10 +116,10 @@ def list_get(h, q: dict, csrf: str) -> None:
         else:
             issues, more = gh.issues(repo, state, label or None, page_no)
     except (urllib.error.URLError, OSError, ValueError) as e:
-        return _page(h, 502, "Labels", filters(cfg, repo, state, label, text, []), csrf, _github_error(e), "bad")
+        return _page(h, 502, "Tickets", filters(cfg, repo, state, label, text, []), csrf, _github_error(e), "bad")
     if label and text:
         issues = [i for i in issues if label in _names(i)]
-    _page(h, 200, "Labels", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues) + pager(repo, state, label, text, page_no, more), csrf)
+    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues, _decisions(h, repo)) + pager(repo, state, label, text, page_no, more), csrf)
 
 
 def filters(cfg, repo, state, label, text, names) -> str:
@@ -120,14 +133,21 @@ def filters(cfg, repo, state, label, text, names) -> str:
             f'<input name="q" placeholder="search title or #number" value="{esc(text)}"><button>Filter</button></form>')
 
 
-def table(cfg, repo, issues) -> str:
+def table(cfg, repo, issues, decisions) -> str:
     if not issues:
         return '<p class="muted">No issues match this filter.</p>'
+    def factory_cell(n) -> str:
+        d = decisions.get((repo, n))
+        if not d:
+            return '<span class="muted">not seen</span>'
+        run = f' · {d["runs"]} run{"s" if d["runs"] != 1 else ""}' + (f' ({esc(d["last_run"])})' if d["last_run"] else "") if d["runs"] else ""
+        return f'{badge(d["outcome"])}{run}<br><span class="muted">{esc(views.ago(d["decided_at"]))}</span>'
+
     rows = "".join(
         f'<tr><td>{views.ticket_link(repo, i["number"])}<br><span class="muted">{esc(i.get("title"))}</span></td><td>{badge(i.get("state"), "")}</td>'
-        f'<td>{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td>'
+        f'<td>{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td>{factory_cell(i["number"])}</td>'
         f'<td><a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Edit</a></td></tr>' for i in issues)
-    return ('<div class="scroll"><table><thead><tr><th>Issue</th><th>State</th><th>Labels</th><th></th></tr></thead>'
+    return ('<div class="scroll"><table><thead><tr><th>Issue</th><th>State</th><th>Labels</th><th>Factory</th><th></th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 
@@ -135,7 +155,7 @@ def pager(repo, state, label, text, page_no, more) -> str:
     from urllib.parse import urlencode
 
     def link(text_, p):
-        return f'<a href="/labels?{esc(urlencode({"repo": repo, "state": state, "label": label, "q": text, "page": p}))}">{text_}</a>'
+        return f'<a href="/tickets?{esc(urlencode({"repo": repo, "state": state, "label": label, "q": text, "page": p}))}">{text_}</a>'
 
     return '<p class="pager">' + (link("← newer", page_no - 1) if page_no > 1 else "") + " " + (link("older →", page_no + 1) if more else "") + "</p>"
 
@@ -158,18 +178,18 @@ def _edit_body(cfg, repo: str, n: int, issue: dict, all_labels: list[str], csrf:
             + (f'<h2>Replace a label</h2><form method="post" action="/labels/replace" class="filters">{hidden}Replace '
                f'<select name="old" aria-label="Label to replace" required>{opt(have)}</select> with '
                f'<select name="new" aria-label="New label" required><option value="">choose an existing label</option>{opt(addable)}</select><button>Replace</button></form>'
-               if have else "") + '</div><p><a href="/labels">← all labels</a></p>')
+               if have else "") + '</div><p><a href="/tickets">← all tickets</a></p>')
 
 
 def _render_issue(h, csrf: str, repo: str, n: int, flash=None, kind="ok", status: int = 200) -> None:
     cfg, gh = h.app.cfg(), _gh(h)
     if gh is None:
-        return _page(h, 400, "Labels", "", csrf, NO_TOKEN, "bad")
+        return _page(h, 400, "Tickets", "", csrf, NO_TOKEN, "bad")
     try:
         issue = gh.get_issue(repo, n)
         names = sorted(l["name"] for l in gh.repo_labels(repo))
     except (urllib.error.URLError, OSError, ValueError) as e:
-        return _page(h, 404 if isinstance(e, urllib.error.HTTPError) and e.code == 404 else 502, "Labels", "", csrf, _github_error(e), "bad")
+        return _page(h, 404 if isinstance(e, urllib.error.HTTPError) and e.code == 404 else 502, "Tickets", "", csrf, _github_error(e), "bad")
     if "pull_request" in issue:
         return h._send(404, "no such issue", "text/plain")
     _page(h, status, f"Edit labels · {repo}#{n}", _edit_body(cfg, repo, n, issue, names, csrf), csrf, flash, kind)
@@ -191,10 +211,10 @@ def _act(h, form, csrf: str, action: str, steps) -> None:
     try:
         repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
     except Refused as e:
-        return _page(h, 400, "Labels", "", csrf, str(e), "bad")
+        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
     gh = _gh(h)
     if gh is None:
-        return _page(h, 400, "Labels", "", csrf, NO_TOKEN, "bad")
+        return _page(h, 400, "Tickets", "", csrf, NO_TOKEN, "bad")
     try:
         steps(gh, repo, n)
     except Refused as e:
