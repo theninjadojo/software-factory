@@ -1,5 +1,8 @@
 import sqlite3
+import threading
 import time
+
+_local = threading.local()
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -54,6 +57,16 @@ def connect(path: str) -> sqlite3.Connection:
     return db
 
 
+def local(path: str) -> sqlite3.Connection:
+    """This thread's own connection to path: a sqlite connection must not be shared between threads."""
+    conns = getattr(_local, "conns", None)
+    if conns is None:
+        conns = _local.conns = {}
+    if path not in conns:
+        conns[path] = connect(path)
+    return conns[path]
+
+
 def seen(db, repo: str, issue: int, updated_at: str) -> bool:
     return db.execute(
         "SELECT 1 FROM decisions WHERE repo=? AND issue=? AND updated_at=?",
@@ -69,11 +82,14 @@ def record(db, repo: str, issue: int, updated_at: str, outcome: str, detail: str
     db.commit()
 
 
-def pop_approvals(db) -> list[tuple[str, int, str]]:
-    rows = db.execute("SELECT repo, issue, action FROM approvals ORDER BY created").fetchall()
-    db.execute("DELETE FROM approvals")
+def approvals(db) -> list[tuple[str, int, str]]:
+    return db.execute("SELECT repo, issue, action FROM approvals ORDER BY created").fetchall()
+
+
+def drop_approval(db, repo: str, issue: int, action: str) -> None:
+    """Delete an approval once it is handled (one waiting for a free slot stays). A newer, different answer is kept."""
+    db.execute("DELETE FROM approvals WHERE repo=? AND issue=? AND action=?", (repo, issue, action))
     db.commit()
-    return rows
 
 
 def watch_pr(db, repo: str, number: int, issue_repo: str, issue_num: int) -> None:
