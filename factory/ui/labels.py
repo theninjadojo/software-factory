@@ -436,7 +436,9 @@ def question_form(repo: str, n: int, st, csrf: str, back: str = "/tickets") -> s
             f'<div class="nd-q" data-q="open">{head}<div class="nd-opts" role="radiogroup" aria-label="{esc(q.text)}">{opts}</div>'
             f'<label class="muted nd-own">Or write your own<input name="x_{esc(q.id)}" maxlength="{Q.MAX_OTHER}" placeholder="Your own answer"></label>'
             f'<p class="muted nd-why">Recommended: {esc(q.label(q.recommended))}. {esc(q.reason)}</p></div>')
-    return (f'<form method="post" action="/tickets/answer" class="nd-form">{hidden}<div class="nd-qs">{"".join(blocks)}</div>'
+    read = views.doc_link(repo, n, st.stage, "Read the " + views.DOC_NOUN.get(st.stage, "document"), True)
+    read = f'<p class="nd-doc">{read}</p>' if read else ""
+    return (f'<form method="post" action="/tickets/answer" class="nd-form">{hidden}{read}<div class="nd-qs">{"".join(blocks)}</div>'
             '<div class="nd-foot"><button name="send" value="1" class="nd-send">Send answers</button> '
             '<button name="accept" value="1" class="secondary" formnovalidate '
             'title="Records the recommended option for every question not answered yet, then starts the next stage">Accept all recommendations</button>'
@@ -827,3 +829,19 @@ def answer_all(h, form, csrf: str) -> None:
     log.info("tickets: recommendations accepted on %d ticket(s) from the UI, %d failed", ok, len(failed))
     msg = f"Recommendations accepted on {ok} ticket{'s' if ok != 1 else ''}." + (f" Could not do: {', '.join(failed)}." if failed else "")
     _done(h, form, csrf, msg, "bad" if failed and not ok else "ok")
+
+
+def stage_comment(h, repo: str, issue: int, stage: str) -> str | None:
+    """The newest stage document the factory's own account posted on the ticket, or None. Read from GitHub, never from the request."""
+    gh = _gh(h)
+    if gh is None or repo not in h.app.cfg().repos:
+        return None
+    try:
+        me, found = _login(gh), None
+        for c in gh.issue_comments(repo, issue):
+            m = Q.STAGE_HEAD.match(c.get("body") or "")
+            if m and m.group(1) == stage and (c.get("user") or {}).get("login") == me:
+                found = c["body"]
+        return found
+    except Exception:
+        return None

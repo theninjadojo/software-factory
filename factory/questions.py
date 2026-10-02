@@ -292,3 +292,12 @@ def section(questions: list) -> str:
     if any(q.safe for q in questions):
         out.append("_A person can overturn an assumption with a comment, or on the factory UI's Tickets page, before the build._")
     return "\n\n".join(out)
+
+
+def readable(doc: str) -> str:
+    """A stage document for people: without its stage marker, the data line after it, or its questions block (the question cards show those)."""
+    if (m := STAGE_HEAD.match(doc)):
+        doc = doc[m.end():]
+    if doc.startswith(DATA_HEAD):
+        doc = doc.partition("\n")[2]
+    return extract(doc)[0].strip()

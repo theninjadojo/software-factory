@@ -129,6 +129,12 @@ newest first, with filters for *Questions* and *Decisions*. Each row says who an
 - **Accept recommendations on N tickets** (two or more tickets with questions) first shows exactly which answer each question will
   get, then asks you to confirm. Safe defaults are never listed because the factory has already accepted them.
 
+**Reading the stage document.** Each question card has a *Read the analysis* (or design, architecture) link that opens `/ticket/doc?repo=&n=&stage=` in a
+new tab, so an answer in progress is never lost. The page shows the stage's latest document from the stored run output, and fetches the factory's own
+stage comment from GitHub when the stored text was cut short or is missing. It is rendered from a small escaped Markdown subset (raw HTML is
+shown as text, no images, links only to github.com) without the questions block. The ticket view (`/ticket`) and the run page link to it too.
+The repository must be configured and the document is read only from stored data, never from the request.
+
 Everything is checked on the server like the Tickets page's answers: the repository must be configured, ticket numbers are validated,
 and each ticket's questions are re-read from GitHub, so a page that is out of date cannot record a stale answer.
 The page refreshes itself, but never while a popup is open, a field is focused, or an option is chosen.

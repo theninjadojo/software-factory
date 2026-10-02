@@ -5,6 +5,7 @@ import re
 import time
 
 from .. import designfiles
+from ..sanitize import md_render
 
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
@@ -172,6 +173,8 @@ def run_detail(r: dict, files=()) -> str:
                 f"<tbody>{rows}</tbody></table>")
     if cls:
         out += f"<h2>Classification</h2><pre>{esc(cls)}</pre>"
+    if r["output"] and r["stage"] in DOC_LABEL and REPO.match(str(r["repo"])):
+        out += f'<p>{doc_link(r["repo"], r["issue"], r["stage"], "Open the latest " + DOC_NOUN[r["stage"]] + " as a page")}</p>'
     if r["output"]:
         out += f"<h2>Output document</h2><pre class=\"doc\">{esc(r['output'])}</pre>"
     if r["log_tail"]:
@@ -207,6 +210,23 @@ STEP_GLYPH = {"done": "✓", "running": "●", "failed": "✕", "queued": "○"}
 STEP_BADGE = {"done": "good", "running": "warn", "failed": "bad", "queued": ""}
 
 
+STEP_STAGE = {"analyze": "analyst", "design": "designer", "architect": "architect"}
+DOC_LABEL = {"analyst": "Analysis", "designer": "Design", "architect": "Architecture"}
+DOC_NOUN = {"analyst": "analysis", "designer": "design", "architect": "architecture"}
+
+
+def doc_url(repo: str, issue, stage: str) -> str:
+    return f"/ticket/doc?repo={esc(repo)}&amp;n={int(issue)}&amp;stage={esc(stage)}"
+
+
+def doc_link(repo: str, issue, stage: str, label: str, new_tab: bool = False) -> str:
+    """A link to a stage document page; nothing when the repo or stage is not one the page accepts."""
+    if not REPO.match(str(repo)) or stage not in DOC_LABEL:
+        return ""
+    tab = ' target="_blank" rel="noopener"' if new_tab else ""
+    return f'<a href="{doc_url(repo, issue, stage)}"{tab}>{esc(label)}<span aria-hidden="true">{" ↗" if new_tab else ""}</span></a>'
+
+
 def step_summary(counts) -> str:
     done, total = counts
     return f"{int(done)} of {int(total)} steps done"
@@ -217,7 +237,7 @@ def step_files(s: dict, files_by_run: dict | None) -> str:
     return f'<br><span class="muted">Design files:</span><br>{links}' if links else ""
 
 
-def pipeline(steps: list[dict], files_by_run: dict | None = None) -> str:
+def pipeline(steps: list[dict], files_by_run: dict | None = None, repo: str = "", issue: int = 0, docs=()) -> str:
     """Read-only belt of stations, one per pipeline step. Every value is escaped; links are checked against GH_URL."""
     if not steps:
         return '<p class="muted">No pipeline steps yet. They appear when the factory starts working on this ticket.</p>'
@@ -230,19 +250,20 @@ def pipeline(steps: list[dict], files_by_run: dict | None = None) -> str:
                   f'{badge(status.capitalize(), STEP_BADGE.get(status, ""))}'
                   f'<p class="muted">{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])}<br>{int(s["attempts"])} attempt(s)</p></li>')
     run_links = lambda s: " ".join(f'<a href="/runs/{int(i)}">#{int(i)}</a>' for i in s["run_ids"])
+    doc_of = lambda s: (" " + doc_link(repo, issue, STEP_STAGE[s["step"]], "Read document")) if STEP_STAGE.get(s["step"]) in docs else ""
     rows = "".join(
         f'<tr id="step-{esc(s["step"])}"><th>{esc(STEP_TITLES.get(s["step"], s["step"]))}</th><td>{badge(s["status"].capitalize(), STEP_BADGE.get(s["status"], ""))}</td>'
         f'<td>{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])} <span class="muted">effort {esc(s["effort"])}</span></td>'
-        f'<td>{int(s["attempts"])}</td><td>{run_links(s)}</td>'
+        f'<td>{int(s["attempts"])}</td><td>{run_links(s)}{doc_of(s)}</td>'
         f'<td>{pr_links(s["pr_urls"]) or "—"}{step_files(s, files_by_run)}</td></tr>' for s in steps)
     return (f'<ol class="belt">{items}</ol><div class="scroll"><table><thead><tr><th>Step</th><th>Status</th><th>Agent</th><th>Attempts</th>'
             f'<th>Runs</th><th>PRs</th></tr></thead><tbody>{rows}</tbody></table></div>')
 
 
-def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None) -> str:
+def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=()) -> str:
     done = sum(s["status"] == "done" for s in steps)
     head = f'<p>{ticket_link(repo, issue)} <span class="step-count" role="status">{esc(step_summary((done, len(steps))))}</span></p>'
-    return head + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run) + '<p><a href="/tickets">← all tickets</a></p>'
+    return head + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs) + '<p><a href="/tickets">← all tickets</a></p>'
 
 
 def steps_cell(t: dict, counts: dict) -> str:
@@ -250,3 +271,20 @@ def steps_cell(t: dict, counts: dict) -> str:
     if not c or not c[1] or not REPO.match(str(t["repo"])):
         return "—"
     return f'<a class="step-count" href="/ticket?repo={esc(t["repo"])}&amp;n={int(t["issue"])}">{int(c[0])}/{int(c[1])}</a>'
+
+
+def doc_page(repo: str, issue: int, stage: str, have: list[str], doc: dict | None, text: str, source: str, notice: str = "", back: str = "/tickets") -> str:
+    """A stage document, rendered from escaped Markdown. `text` is stored or GitHub-posted agent output and is never taken from the request."""
+    tabs = " ".join(f'<a href="{doc_url(repo, issue, s)}"{" aria-current=\"page\"" if s == stage else ""}>{esc(DOC_LABEL[s])}</a>' if s in have or s == stage
+                    else f'<span class="muted">{esc(DOC_LABEL[s])}</span>' for s in DOC_LABEL)
+    head = (f'<p>{ticket_link(repo, issue)} · <a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">Pipeline</a></p>'
+            f'<nav aria-label="Stage documents" class="doc-tabs">{tabs}</nav>')
+    if not text:
+        return head + ('<p class="muted">No document recorded for this stage yet.</p><p class="muted">The stage has not run, or its output was not kept.</p>'
+                       f'{notice}<p><a href="{esc(back)}">← Back to questions</a></p>')
+    body, heads = md_render(text)
+    meta = " · ".join(x for x in (esc(DOC_LABEL[stage]), f'<a href="/runs/{int(doc["id"])}">run #{int(doc["id"])}</a>' if doc else "",
+                                  esc(ago(doc["started"])) if doc else "", esc(source)) if x)
+    toc = ("<details class=\"more\"><summary>Contents</summary><ul>" + "".join(f'<li><a href="#{i}">{esc(t)}</a></li>' for i, t in heads) + "</ul></details>") if heads else ""
+    back_link = f'<p><a href="{esc(back)}">← Back to questions</a></p>'
+    return (f'{head}<p class="muted">{meta}</p>{notice}{toc}<article class="docview">{body}</article>{back_link}')

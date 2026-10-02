@@ -377,3 +377,30 @@ def step_counts(db, rows: list[dict]) -> dict[tuple[str, int], tuple[int, int]]:
     """(done, total) steps for each ticket row, for the Tickets list."""
     return {(t["repo"], t["issue"]): (sum(s["status"] == "done" for s in st), len(st))
             for t in rows for st in [steps_for_ticket(db, t["repo"], t["issue"])]}
+
+
+DOC_STAGES = ("analyst", "designer", "architect")
+
+
+def stage_doc(db, repo: str, issue: int, stage: str) -> dict | None:
+    """The latest finished run of a stage that kept a document: id, started, output and whether it was cut at MAX_OUTPUT."""
+    if stage not in DOC_STAGES:
+        return None
+    try:
+        rows = _dicts(db.execute("SELECT id, started, output FROM runs WHERE repo=? AND issue=? AND stage=? AND output<>'' "
+                                 "ORDER BY id DESC LIMIT 1", (repo, issue, stage)))
+    except sqlite3.OperationalError:
+        return None
+    if not rows:
+        return None
+    r = rows[0]
+    return {"id": r["id"], "started": r["started"], "output": r["output"], "truncated": len(r["output"]) >= MAX_OUTPUT}
+
+
+def doc_stages(db, repo: str, issue: int) -> list[str]:
+    """The stages that have a stored document for the ticket, in pipeline order."""
+    try:
+        have = {r[0] for r in db.execute("SELECT DISTINCT stage FROM runs WHERE repo=? AND issue=? AND output<>''", (repo, issue))}
+    except sqlite3.OperationalError:
+        return []
+    return [s for s in DOC_STAGES if s in have]
