@@ -125,7 +125,7 @@ newest first, with filters for *Questions* and *Decisions*. Each row says who an
 - **Questions** from a stage: how many need a person and how many were safe defaults. *Accept recommendations* records the
   recommended option for every question not yet answered. *Answer* opens the questions: an option per question (the recommended one is
   tagged), or your own words, then **Send answers**, which records what you chose (the button counts how many questions have an
-  answer). A ticket with more than two questions opens them in a popup; with scripts off, the form is on the Tickets page.
+  answer). A ticket with more than two questions opens them in a popup; with scripts off, the form is on the Tickets page. The Tickets list always uses the popup, never an inline row.
 - **Accept recommendations on N tickets** (two or more tickets with questions) first shows exactly which answer each question will
   get, then asks you to confirm. Safe defaults are never listed because the factory has already accepted them.
 
