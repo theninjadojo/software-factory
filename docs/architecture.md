@@ -37,10 +37,13 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
      pushed and one PR per changed repo is opened and cross-linked.
    - *Role:* the agent's final message is sanitized and posted as a comment with a hidden marker; a `stage:*` label records
      it; the classifier is asked what should happen next.
-7. **Review (optional).** After a build opens PRs, or when a person labels the ticket `factory:review`, a read-only reviewer is run with the PR
+7. **Design files (designer only).** The designer's workspace may contain new `design/*.dc.html` files. They are collected as a patch, which
+   may only ADD files with the allowed name; each file is validated (see SECURITY.md), then committed to a `factory/design-*` branch and opened as a
+   draft PR, and the ticket comment links them.
+8. **Review (optional).** After a build opens PRs, or when a person labels the ticket `factory:review`, a read-only reviewer is run with the PR
    branches checked out and its comment is posted on every PR of the change. It is a role like the analyst, so it uses the same sandbox,
    sanitizer and harness selection; it only ever comments.
-8. **CI.** Each PR is watched; the result is posted; on failure the agent may get a fix round that adds a commit to the
+9. **CI.** Each PR is watched; the result is posted; on failure the agent may get a fix round that adds a commit to the
    same branch.
 
 ## Why the sandbox looks the way it does

@@ -44,6 +44,9 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
                 Field(f"roles.{r.name}.model", f"{r.name.title()}: model", "text", "sonnet, opus, haiku (or a full model id)"),
                 Field(f"roles.{r.name}.effort", f"{r.name.title()}: effort", "select", choices=EFFORTS),
                 Field(f"roles.{r.name}.harness", f"{r.name.title()}: agent harness", "select", choices=harnesses)]
+        if r.name == "designer":
+            out.append(Field("roles.designer.design_files", "Designer: write design mockup files", "bool",
+                             "In a repo with a design/ folder of .dc.html canvases, add static mockups there on a draft PR and link them from the ticket."))
     return out + [Field("auto.label", "Auto-allocate label", "text", "A person applies it and the classifier picks the next stage.")]
 
 

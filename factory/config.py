@@ -43,11 +43,12 @@ class Role:
     model: str
     effort: str
     harness: str = "claude-code"
+    design_files: bool = False           # designer only: also write static design mockups into the repo's design/ folder
 
 
 DEFAULT_ROLES = (
     Role("analyst", "factory:analyze", "stage:analysed", "sonnet", "medium"),
-    Role("designer", "factory:design", "stage:designed", "sonnet", "medium"),
+    Role("designer", "factory:design", "stage:designed", "sonnet", "medium", "claude-code", True),
     Role("architect", "factory:architect", "stage:architected", "opus", "high"),
 )
 

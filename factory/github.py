@@ -123,5 +123,5 @@ class GitHub:
             if e.code != 404:
                 raise
 
-    def create_pr(self, repo: str, head: str, base: str, title: str, body: str) -> str:
-        return self._req("POST", f"/repos/{repo}/pulls", {"head": head, "base": base, "title": title, "body": body})["html_url"]
+    def create_pr(self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False) -> str:
+        return self._req("POST", f"/repos/{repo}/pulls", {"head": head, "base": base, "title": title, "body": body, "draft": draft})["html_url"]

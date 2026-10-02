@@ -14,11 +14,12 @@ import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
-from .roles import ROLE_COMMON, ROLE_PROMPTS
+from . import designfiles
+from .roles import DESIGN_FILES, ROLE_PROMPTS, common_for
 from .github import GitHub
 
 log = logging.getLogger("factory.runner")
@@ -39,6 +40,8 @@ class RunResult:
     detail: str
     pr_url: str | None = None
     output: str = ""      # a role agent's document (status "stage")
+    files: list = field(default_factory=list)   # design files published for a designer run: {repo, path, url, pr}
+    notes: str = ""       # anything worth telling a person (for example design files that were dropped)
 
 
 def bad_path(p: str, rn: RunnerCfg) -> str | None:
@@ -134,15 +137,19 @@ def looks_rate_limited(text: str, code: str) -> bool:
 
 
 def build_prompt(title: str, body: str, project: Project, issue_repo: str, role: str | None = None,
-                 prior: dict | None = None, comments: list | None = None, failures: str | None = None) -> str:
+                 prior: dict | None = None, comments: list | None = None, failures: str | None = None,
+                 ticket: tuple | None = None, design_files: bool = False) -> str:
     repos = "\n".join(f"- {r.repo.split('/')[1]}/ : {r.role or 'part of the project'}" for r in project.repos)
     head = (
         f"You are working in a multi-repository workspace for the project '{project.name}'. {project.description}\n"
         f"Each directory under the current directory is a separate git repository:\n{repos}\n\n"
         f"The ticket below was filed in '{issue_repo.split('/')[1]}'. "
+        + (f"Its number is {ticket[1]} (use it in design file names). " if ticket else "")
     )
     if role:
-        task = ROLE_PROMPTS[role] + "\n" + ROLE_COMMON
+        task = ROLE_PROMPTS[role] + "\n" + common_for(role, design_files)
+        if role == "designer" and design_files:
+            task += DESIGN_FILES
     else:
         task = (
             "Resolve it by editing whichever repositories need changes, "
@@ -196,6 +203,45 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: Harnes
     ]
 
 
+def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, title: str, d: Path, names: dict, patches: dict,
+                         env: dict, stamp: str) -> tuple[list, list, str]:
+    """Turn the designer's new design/*.dc.html files into a draft PR. Every file is validated twice (the patch may only ADD
+    files with the right names, then each file's content is checked); anything that fails is dropped and reported, never
+    published. Returns (files, notes, pr_urls)."""
+    files, notes, urls = [], [], []
+    for r, patch in patches.items():
+        base, short = d / "base" / names[r], names[r]
+        try:
+            text = patch.read_text(errors="strict")
+            paths = designfiles.check_patch_adds_only(text, num)
+            check_patch_text(text, rn)                                    # the generic patch rules too (size, protected paths, symlinks)
+            git(["apply", "--index", "--whitespace=nowarn", str(patch)], base, env)
+            staged = [x for x in git(["diff", "--cached", "--name-status", "--no-renames", "-z"], base, env).stdout.split("\0") if x]
+            if staged[0::2] != ["A"] * len(paths) or sorted(staged[1::2]) != sorted(paths):
+                raise designfiles.DesignFileRejected("the patch changed something other than the new design files")
+            for pth in paths:
+                designfiles.validate_html((base / pth).read_text(errors="strict"))
+        except (designfiles.DesignFileRejected, PatchRejected, UnicodeDecodeError, subprocess.CalledProcessError) as e:
+            git(["reset", "--hard"], base, env)
+            git(["clean", "-fdx"], base, env)
+            notes.append(f"{short}: design files were not published ({str(e)[:160]})")
+            continue
+        branch = f"{BRANCH_PREFIX}design-{num}-{stamp}"
+        ident = ["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
+        git([*ident, "checkout", "-q", "-b", branch], base, env)
+        git([*ident, "commit", "-q", "-m", f"Design mockups for {home_repo}#{num}\n\nStatic canvases written by the designer agent."], base, env)
+        push_factory_branch(base, branch, env)
+        pr = gh.create_pr(
+            r, branch, gh.default_branch(r), f"[factory] design mockups for #{num}: {title[:60]}",
+            f"Static design canvases (`.dc.html`) written by the designer agent for {home_repo}#{num}, in the same format as the other "
+            "files in `design/`. They are new files only; nothing else changes.\n\nOpen them in Claude Design (design-sync), or merge "
+            "this draft to keep them with the repository. Treat them as a first draft.\n\n" + "\n".join(f"- `{x}`" for x in paths),
+            draft=True)
+        urls.append(pr)
+        files += [{"repo": r, "path": x, "url": f"https://github.com/{r}/blob/{branch}/{x}", "pr": pr} for x in paths]
+    return files, notes, " ".join(urls)
+
+
 def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role: str | None = None,
              prior: dict | None = None, comments: list | None = None, fix_branch: str | None = None,
              failures: str | None = None, sink: dict | None = None) -> RunResult:
@@ -210,6 +256,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
     if not Path(harness.env_file).is_file():
         return RunResult("failed", f"no credential file for {harness.name} at {harness.env_file}")
     project = project_for(cfg, repo)
+    want_design = role == "designer" and any(r.name == "designer" and r.design_files for r in cfg.roles)
     names = {r.repo: r.repo.split("/")[1] for r in project.repos}
     stamp = time.strftime("%Y%m%d-%H%M%S")
     d = Path(rn.work_dir) / f"{project.name}-{num}-{stamp}"
@@ -231,7 +278,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 git(["clone", "--quiet", url, dest], None, env, 300)
             shutil.copytree(d / "base" / names[r.repo], d / "work" / names[r.repo], symlinks=True)   # base stays pristine
         (d / "task" / "prompt.txt").write_text(
-            build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures))
+            build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
+                         (repo, num), want_design))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
@@ -254,7 +302,18 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 return RunResult("failed", f"sandbox did not start (podman exit {proc.returncode}): {proc.stderr[-400:]}")
             if code != "0" or not text.strip():
                 return RunResult("failed", f"{role} exited {code}. Log tail: {text[-600:]}")
-            return RunResult("stage", f"{role} document ready", output=text.strip())
+            result = RunResult("stage", f"{role} document ready", output=text.strip())
+            if want_design:
+                made = {r.repo: d / "out" / f"{names[r.repo]}.diff" for r in project.repos
+                        if (d / "out" / f"{names[r.repo]}.diff").exists() and (d / "out" / f"{names[r.repo]}.diff").stat().st_size > 0}
+                if made:
+                    try:
+                        files, notes, urls = publish_design_files(rn, gh, repo, num, issue["title"], d, names, made, env, stamp)
+                        result.files, result.notes, result.pr_url = files, "; ".join(notes), urls or None
+                    except Exception as e:             # publishing is a bonus: the written document is never lost to it
+                        log.exception("design files could not be published")
+                        result.notes = f"design files were not published ({type(e).__name__})"
+            return result
         patches = {r.repo: d / "out" / f"{names[r.repo]}.diff" for r in project.repos
                    if (d / "out" / f"{names[r.repo]}.diff").exists() and (d / "out" / f"{names[r.repo]}.diff").stat().st_size > 0}
         if not patches:

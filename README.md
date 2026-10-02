@@ -38,7 +38,7 @@ document), and the orchestrator validates that data before it touches GitHub.
 | Label | What happens |
 |---|---|
 | `factory:analyze` | An **analyst** writes requirements, acceptance criteria and open questions on the ticket. Read-only. |
-| `factory:design` | A **designer** writes the UX design (flows, states, copy, accessibility). Read-only. |
+| `factory:design` | A **designer** writes the UX design (flows, states, copy, accessibility) on the ticket. In a repo with a `design/` folder of Claude Design canvases (`*.dc.html`) it also adds static mockups there on a **draft PR** and links them from the ticket. |
 | `factory:architect` | An **architect** writes the technical plan (data model, API, cross-repo order, tests). Read-only. |
 | `factory:ready` | **Build it.** Agents edit the repos and open one PR per changed repo. Earlier stage documents are given to the builder. |
 | `factory:review` | A **code reviewer** reviews the ticket's open PRs and comments on each one (see below). Needs `[review] enabled = true`. |

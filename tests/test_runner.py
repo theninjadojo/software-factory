@@ -132,10 +132,10 @@ class RunTaskEndToEnd(unittest.TestCase):
 
         class GH:
             token = "tok"
-            def __init__(self): self.prs, self.comments = [], []
+            def __init__(self): self.prs, self.comments, self.drafts = [], [], []
             def default_branch(self, repo): return "main"
-            def create_pr(self, repo, head, base, title, body):
-                self.prs.append((repo, head, body)); return f"https://github.com/{repo}/pull/{len(self.prs)}"
+            def create_pr(self, repo, head, base, title, body, draft=False):
+                self.prs.append((repo, head, body)); self.drafts.append(draft); return f"https://github.com/{repo}/pull/{len(self.prs)}"
             def comment(self, repo, num, body): self.comments.append((repo, num, body))
 
         real_git, real_run = runner.git, subprocess.run

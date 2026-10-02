@@ -90,6 +90,21 @@ class HarnessPage(AdminCase):
         self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)
         self.assertEqual({r.name: r.harness for r in self.cfg().roles}["architect"], "codex")
 
+    def test_the_designer_design_files_switch_is_a_setting(self):
+        cookie, csrf = self.session()
+        self.assertIn("Designer: write design mockup files", self.req("GET", "/settings?section=roles", cookie=cookie)[2])
+        self.assertTrue(next(r for r in self.cfg().roles if r.name == "designer").design_files)          # on by default
+        form = {"section": "roles", "auto.label": "factory:auto"}
+        for name, label, done, model, eff in (("analyst", "factory:analyze", "stage:analysed", "sonnet", "medium"),
+                                              ("designer", "factory:design", "stage:designed", "sonnet", "medium"),
+                                              ("architect", "factory:architect", "stage:architected", "opus", "high")):
+            form.update({f"roles.{name}.label": label, f"roles.{name}.done_label": done, f"roles.{name}.model": model,
+                         f"roles.{name}.effort": eff, f"roles.{name}.harness": "claude-code"})
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)                           # checkbox not ticked
+        self.assertFalse(next(r for r in self.cfg().roles if r.name == "designer").design_files)
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", {**form, "roles.designer.design_files": "1"})[0], 303)
+        self.assertTrue(next(r for r in self.cfg().roles if r.name == "designer").design_files)
+
     def test_harness_credentials_are_write_only_and_stored_0600(self):
         cookie, csrf = self.session()
         key = "sk-test-VERYSECRET1234567890"
