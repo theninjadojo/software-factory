@@ -322,3 +322,18 @@ class ImportantEvents(UiCase):
         self.assertIn('href="https://github.com/o/web/pull/2"', prs)
         self.assertNotIn("github.com/bad repo", prs)
         self.assertNotIn("<b>", prs)
+
+
+class ResponsiveContractTests(unittest.TestCase):
+    def test_phone_rules_present(self):
+        import pathlib
+        css = (pathlib.Path(__file__).resolve().parent.parent / "factory/ui/static/style.css").read_text()
+        phone = css[css.index("@media (max-width:760px)"):]
+        for needle in ("font-size:16px", "table.meta", "safe-area-inset-bottom", "max-width:calc(100vw - 1rem)"):
+            self.assertIn(needle, phone)
+
+    def test_viewport_allows_zoom(self):
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent / "factory/ui/views.py").read_text()
+        self.assertIn("viewport-fit=cover", src)
+        self.assertNotIn("user-scalable", src)
