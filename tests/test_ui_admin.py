@@ -342,17 +342,54 @@ class Labels(AdminCase):
         for needle in ("bug", "run:stage", "/labels/issue?repo="):
             self.assertIn(needle, html)
 
-    def test_start_buttons_apply_the_trigger_label_for_each_action(self):
+    def approvals(self):
+        return self.db.execute("SELECT repo, issue, action FROM approvals ORDER BY issue").fetchall()
+
+    def test_start_buttons_queue_an_approval_or_apply_a_label(self):
+        """Build and the stages must not go back through the classifier (it would ask again: the click would seem to do nothing)."""
         self.gh.repo_labels.return_value = [{"name": n} for n in ("factory:auto", "factory:ready", "factory:analyze", "factory:design", "factory:architect")]
         cookie, csrf = self.session()
         s, _, html = self.req("GET", "/tickets", cookie=cookie)
         for action in ("auto", "analyst", "designer", "architect", "build"):
             self.assertIn(f'name="action" value="{action}"', html)
-        for action, label in (("auto", "factory:auto"), ("build", "factory:ready"), ("analyst", "factory:analyze")):
-            self.gh.add_labels.reset_mock()
-            s, h, _ = self.post(cookie, csrf, "/tickets/start", self.fields(action=action))
+        for action, want in (("build", "run"), ("analyst", "stage:analyst"), ("architect", "stage:architect")):
+            self.db.execute("DELETE FROM approvals")
+            self.db.commit()
+            s, _, _ = self.post(cookie, csrf, "/tickets/start", self.fields(action=action))
             self.assertEqual(s, 303)
-            self.gh.add_labels.assert_called_once_with(self.REPO, 7, [label])
+            self.assertEqual(self.approvals(), [(self.REPO, 7, want)], action)
+        self.gh.add_labels.assert_not_called()
+        self.gh.add_labels.reset_mock()
+        self.db.execute("DELETE FROM approvals")
+        self.db.commit()
+        self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="auto"))[0], 303)       # Auto is the classifier's call: a label
+        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:auto"])
+        self.assertEqual(self.approvals(), [])
+
+    def test_a_queued_decision_hides_the_buttons_and_cannot_be_repeated(self):
+        cookie, csrf = self.session()
+        self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="build"))[0], 303)
+        _, _, html = self.req("GET", "/tickets", cookie=cookie)
+        self.assertIn("starting", html)
+        self.assertNotIn('name="action" value="build"', html)
+        self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="build"))[0], 400)
+        self.assertEqual(len(self.approvals()), 1)
+
+    def test_the_approval_written_by_the_ui_is_what_the_factory_runs(self):
+        """The UI's row must be exactly what process_approvals consumes: a build that skips the classifier."""
+        from dataclasses import replace
+        from factory import main as m
+        from factory.config import load
+        from factory.runner import RunResult
+        from test_roles import FakeGH, issue
+        cookie, csrf = self.session()
+        self.post(cookie, csrf, "/tickets/start", self.fields(action="build"))
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        cfg = replace(load(str(self.root / "config.toml")), repos=[self.REPO], dry_run=False)
+        with mock.patch.object(m.runner, "run_task", return_value=RunResult("pr", "ok", "http://pr")) as run, \
+             mock.patch.object(m, "alert"):
+            m.process_approvals(cfg, gh, self.db, mock.MagicMock())
+        self.assertEqual(self.approvals(), [])
 
     def test_start_is_refused_when_not_available_or_invalid(self):
         self.gh.repo_labels.return_value = [{"name": "factory:auto"}, {"name": "factory:ready"}]
@@ -383,9 +420,10 @@ class Labels(AdminCase):
         self.assertIn('value="skip"', html)
         self.assertNotIn('value="auto"', html)
         self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="stage:architect"))[0], 303)
-        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:architect"])
-        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "factory:auto")
-        self.gh.add_labels.reset_mock(); self.gh.remove_label.reset_mock()
+        self.assertEqual(self.approvals(), [(self.REPO, 7, "stage:architect")])        # the factory clears the labels and runs it itself
+        self.gh.add_labels.assert_not_called()
+        self.db.execute("DELETE FROM approvals")
+        self.db.commit()
         self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="skip"))[0], 303)
         self.gh.add_labels.assert_not_called()
         self.gh.remove_label.assert_called_once_with(self.REPO, 7, "factory:auto")

@@ -55,6 +55,16 @@ class App:
             return None
         return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
 
+    def add_approval(self, repo: str, issue: int, action: str) -> None:
+        """Queue a person's decision for the orchestrator, exactly as the Telegram buttons do: it runs the ticket without asking the
+        classifier again. The only write the UI makes to the database; the caller has validated repo, issue and action."""
+        db = sqlite3.connect(self.cfg().db_path, timeout=10)
+        try:
+            db.execute("INSERT OR REPLACE INTO approvals VALUES (?,?,?,?)", (repo, int(issue), action, time.time()))
+            db.commit()
+        finally:
+            db.close()
+
     def overview(self) -> dict:
         cfg, db = self.cfg(), self.ro_db()
         summary = {"poll_seconds": cfg.poll_seconds, "live": not cfg.dry_run, "classifier": cfg.classifier_backend,

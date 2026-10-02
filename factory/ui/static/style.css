@@ -83,11 +83,11 @@ progress.fl-bar.wide { position:static; width:100%; display:block; margin:.4rem 
 .fl-n.fl-needs { left:530px; top:436px; width:160px; }
 .fl-doc { left:724px; top:20px; width:120px; height:292px; flex-direction:column; justify-content:center; text-align:center; }
 .fl-pr { left:724px; top:332px; width:120px; } .fl-review { left:874px; top:332px; width:130px; } .fl-ci { left:724px; top:436px; width:120px; } .fl-conflicts { left:874px; top:436px; width:130px; }
-.b-poll { left:146px; top:269px; width:30px; } .b-trust { left:306px; top:269px; width:30px; } .b-cls { left:476px; top:269px; width:24px; } .b-trunk { left:500px; top:62px; height:416px; }
+.b-poll { left:146px; top:269px; width:30px; } .b-trust { left:306px; top:269px; width:30px; } .b-cls { left:476px; top:269px; width:24px; } .fl-b.v.b-trunk { left:500px; top:62px; height:416px; }
 .b-in-analyst { left:503px; top:61px; width:27px; } .b-in-designer { left:503px; top:165px; width:27px; } .b-in-architect { left:503px; top:269px; width:27px; }
 .b-in-build { left:503px; top:373px; width:27px; } .b-in-needs { left:503px; top:477px; width:27px; }
 .b-out-analyst { left:690px; top:61px; width:34px; } .b-out-designer { left:690px; top:165px; width:34px; } .b-out-architect { left:690px; top:269px; width:34px; } .b-out-build { left:690px; top:373px; width:34px; }
-.b-pr-review { left:844px; top:373px; width:30px; } .b-pr-ci { left:783px; top:416px; height:20px; } .b-ci-conflicts { left:844px; top:477px; width:30px; }
+.b-pr-review { left:844px; top:373px; width:30px; } .fl-b.v.b-pr-ci { left:783px; top:416px; height:20px; } .b-ci-conflicts { left:844px; top:477px; width:30px; }
 .c-analyst { left:504px; top:51px; } .c-designer { left:504px; top:155px; } .c-architect { left:504px; top:259px; } .c-build { left:504px; top:363px; }
 .fl-insp { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:1rem; display:flex; flex-direction:column; gap:.8rem; }
 .fl-insp h2, .fl-insp h3 { margin:0; } .fl-insp p { margin:0; }

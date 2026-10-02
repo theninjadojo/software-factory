@@ -102,3 +102,8 @@ Telegram (Run <stage>, Build anyway, Skip, or Accept recommendations for stage q
 The map is read-only: stations are links, not controls, so pause and reroute can be added later without redrawing it. On a phone the
 map becomes a vertical list of stations, the navigation becomes a bottom tab bar (the rest sits behind **More**), and the Tickets
 table becomes cards. The theme is dark only, using system fonts and no inline styles (the page's CSP forbids them).
+
+**What the buttons do.** *Auto* and *Review* apply their trigger label (the classifier decides). *Build*, *Build anyway* and the stage
+buttons queue a person's approval in the factory's database, the same row the Telegram buttons write, and the factory runs the ticket
+at its next poll without asking the classifier again (a label would send it back through the classifier, which can answer
+"needs a person" again). While an approval is waiting the ticket shows *starting* and has no buttons.

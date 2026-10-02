@@ -119,7 +119,7 @@ def _existing(gh: GitHub, repo: str, *names: str) -> None:
             raise Refused(f"That label does not exist in {repo}.")
 
 
-def actions_for(cfg, issue: dict, decision: dict | None = None) -> tuple[str, list[tuple[str, str, str | None]]]:
+def actions_for(cfg, issue: dict, decision: dict | None = None, approved: bool = False) -> tuple[str, list[tuple[str, str, str | None]]]:
     """What can be started on a ticket right now: (status text, [(action, button text, label to apply)]).
     The mapping is fixed here and built from config; the browser only ever names an action, never a label."""
     names = set(_names(issue))
@@ -127,6 +127,8 @@ def actions_for(cfg, issue: dict, decision: dict | None = None) -> tuple[str, li
         return "closed", []
     if any(n == "factory:working" or n.startswith("factory:working-") for n in names):
         return "running", []
+    if approved:                                  # a person's decision is already queued for the factory
+        return "starting", []
     triggers = {cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else []),
                 *([cfg.conflicts.label] if cfg.conflicts.enabled else [])}
     if names & triggers:
@@ -150,6 +152,28 @@ def human_actions(cfg, names: set, decision: dict) -> list[tuple[str, str, str |
     pick = next((r for r in cfg.roles if r.name == STAGE_TO_ROLE.get(m.group(1) if m else "") and r.done_label not in names), None)
     acts = [(f"stage:{pick.name}", f"Run {pick.name}", pick.label)] if pick else []
     return acts + [("build", "Build anyway" if pick else "Build", cfg.trigger_label), ("skip", "Skip", None)]
+
+
+def approval_for(cfg, action: str) -> str | None:
+    """A person's explicit decision to run a ticket now, as the orchestrator's approvals know it (the same words the Telegram
+    buttons use): "run" builds, "stage:<role>" runs that stage. Neither asks the classifier again. Anything else: None."""
+    if action == "build":
+        return "run"
+    name = action.removeprefix("stage:")
+    return f"stage:{name}" if name in {r.name for r in cfg.roles} else None
+
+
+def _approved(h) -> set:
+    """{(repo, issue)} with a decision already queued for the factory."""
+    db = h.app.ro_db()
+    if db is None:
+        return set()
+    try:
+        return {(r, n) for r, n, _ in dbm.approvals(db)}
+    except Exception:
+        return set()
+    finally:
+        db.close()
 
 
 def _gh(h):
@@ -204,7 +228,7 @@ def list_get(h, q: dict, csrf: str) -> None:
     if label and text:
         issues = [i for i in issues if label in _names(i)]
     decisions = _decisions(h, repo)
-    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues, decisions, csrf, _asked(h, gh, cfg, repo, issues, decisions))
+    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names) + table(cfg, repo, issues, decisions, csrf, _asked(h, gh, cfg, repo, issues, decisions), _approved(h))
           + pager(repo, state, label, text, page_no, more), csrf, FLASH.get(q.get("ok", "")))
 
 
@@ -260,12 +284,13 @@ def needs_you(h) -> list | None:
         waiting = {repo: dbm.questions_waiting(db, repo) for repo in cfg.repos}
     finally:
         db.close()
+    queued = _approved(h)
     rows = []
     try:
         for repo, (issues, _) in zip(cfg.repos, _par(*[(lambda r=r: gh.issues(r, "open", None, 1)) for r in cfg.repos])):
             for i in issues:
                 d = decisions.get((repo, i["number"]))
-                status, acts = actions_for(cfg, i, d)
+                status, acts = actions_for(cfg, i, d, (repo, i["number"]) in queued)
                 if status == NEEDS_PERSON:
                     rows.append({"repo": repo, "issue": i["number"], "title": i.get("title", "")[:120], "acts": acts, "at": (d or {}).get("decided_at", 0),
                                  "reason": ((d or {}).get("detail", "").rsplit(";", 1)[-1].strip() or "needs a person")[:80]})
@@ -338,7 +363,7 @@ def question_cards(repo: str, n: int, st, csrf: str) -> str:
             f'the next stage starts.</p><div class="cards one">{"".join(cards)}</div><p>{accept}</p></details>')
 
 
-def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None) -> str:
+def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approved: frozenset | set = frozenset()) -> str:
     asked = asked or {}
     if not issues:
         return '<p class="muted">No issues match this filter.</p>'
@@ -350,7 +375,7 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None) -> str:
         return f'{badge(d["outcome"])}{run}<br><span class="muted">{esc(views.ago(d["decided_at"]))}</span>'
 
     def buttons(i) -> str:
-        status, acts = actions_for(cfg, i, decisions.get((repo, i["number"])))
+        status, acts = actions_for(cfg, i, decisions.get((repo, i["number"])), (repo, i["number"]) in approved)
         note = f'<span class="muted">{esc(status)}</span> ' if status else ""
         return note + action_forms(repo, i["number"], acts, csrf) + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
 
@@ -489,7 +514,8 @@ def replace(h, form, csrf: str) -> None:
 
 
 def start(h, form, csrf: str) -> None:
-    """One-click start: apply the trigger label for a named action. The ticket is re-read first, so a stale page cannot
+    """One-click start for a named action: Auto and Review apply their trigger label; Build and the stages queue a person's
+    approval (the same one the Telegram buttons write), because a label would send the ticket back through the classifier. The ticket is re-read first, so a stale page cannot
     start something that is already running or queued, and the action must be one actions_for() offers right now."""
     cfg = h.app.cfg()
     action = form.get("action", "")
@@ -504,26 +530,31 @@ def start(h, form, csrf: str) -> None:
         issue = gh.get_issue(repo, n)
         if "pull_request" in issue:
             return h._send(404, "no such issue", "text/plain")
-        status, acts = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)))
+        status, acts = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)), (repo, n) in _approved(h))
         found = next(((a, lab) for a, _, lab in acts if a == action), None)
         if found is None:
             raise Refused(f"That cannot be started now ({status or 'not available'}).")
-        chosen = found[1]
-        if chosen:
-            _existing(gh, repo, chosen)
-            gh.add_labels(repo, n, [chosen])                 # add first: if it fails nothing has changed
-        if status == NEEDS_PERSON:                           # answering the prompt covers the whole ticket: clear every trigger label
-            held = set(_names(issue))
-            for lab in (cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else []),
-                        *([cfg.conflicts.label] if cfg.conflicts.enabled else [])):
-                if lab in held and lab != chosen:
-                    gh.remove_label(repo, n, lab)
+        chosen, decision = found[1], approval_for(cfg, action)
+        if decision:           # a person's explicit decision: queue it for the factory, which runs it without asking the classifier again
+            h.app.add_approval(repo, n, decision)
+        else:
+            if chosen:
+                _existing(gh, repo, chosen)
+                gh.add_labels(repo, n, [chosen])             # add first: if it fails nothing has changed
+            if status == NEEDS_PERSON:                       # skipping covers the whole ticket: clear every trigger label
+                held = set(_names(issue))
+                for lab in (cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else []),
+                            *([cfg.conflicts.label] if cfg.conflicts.enabled else [])):
+                    if lab in held and lab != chosen:
+                        gh.remove_label(repo, n, lab)
+        with _needs_lock:
+            _needs_cache["rows"] = None                      # the Floor's tray must not show it again
     except Refused as e:
         return _render_issue(h, csrf, repo, n, str(e), "bad", 400)
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: start %s on %s#%d failed", action, repo, n)
         return _render_issue(h, csrf, repo, n, _github_error(e), "bad", 502)
-    log.info("tickets: started %s on %s#%d from the UI", action, repo, n)
+    log.info("tickets: %s on %s#%d from the UI", "approved " + action if approval_for(cfg, action) else "started " + action, repo, n)
     h._redirect(f"/tickets?repo={repo}&ok={'skipped' if action == 'skip' else 'started'}")
 
 
