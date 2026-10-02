@@ -134,6 +134,7 @@ class Config:
     projects: tuple[Project, ...] = ()
     roles: tuple[Role, ...] = DEFAULT_ROLES
     auto_label: str = "factory:auto"
+    auto_chain: bool = True              # after an auto stage, continue to the next one when nothing needs a person
     auto_confirm_stages: bool = False    # True: also ask a person before auto runs a read-only stage (analyst, designer, architect)
     ci: CiCfg = field(default_factory=CiCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
@@ -318,6 +319,7 @@ def parse(raw: dict) -> Config:
         roles=roles,
         auto_label=raw.get("auto", {}).get("label", "factory:auto"),
         auto_confirm_stages=bool(raw.get("auto", {}).get("confirm_stages", False)),
+        auto_chain=bool(raw.get("auto", {}).get("chain", True)),
         ci=CiCfg(**raw.get("ci", {})),
         review=review,
         harnesses=harnesses,

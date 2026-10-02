@@ -194,6 +194,77 @@ class Flows(unittest.TestCase):
                          [("rm", "factory:working-designer"), ("add", ("factory:design",))])
 
 
+class SeqClf(FakeClf):
+    """Answers differently on each call, like a classifier looking at a ticket before and after a stage."""
+    def __init__(self, *calls):
+        super().__init__()
+        self.calls_kw, self.n = list(calls), 0
+
+    def classify(self, *a, **k):
+        self.kw = self.calls_kw[min(self.n, len(self.calls_kw) - 1)]
+        self.n += 1
+        return super().classify(*a, **k)
+
+
+class Chaining(unittest.TestCase):
+    def go(self, calls, cfg=CFG, labels=("factory:auto",), label="factory:auto"):
+        gh = FakeGH({label: [issue(labels=list(labels))]})
+        clf = SeqClf(*calls)
+        with mock.patch.object(m.runner, "run_task", return_value=RunResult("stage", "ok", output="# Doc")), tempfile.TemporaryDirectory() as d:
+            from dataclasses import replace
+            m.poll_once(replace(cfg, db_path=d + "/f.db"), gh, dbm.connect(":memory:"), clf)
+        return gh, clf
+
+    FIRST = dict(stage="analyze", needs_human=True, confidence=0.2, stage_confidence=0.3)
+
+    def test_auto_continues_to_the_next_stage_when_nothing_needs_a_person(self):
+        gh, clf = self.go([self.FIRST, dict(stage="architect", needs_human=False)])
+        self.assertIn(("add", ("stage:analysed",)), gh.calls)
+        self.assertIn(("add", ("factory:auto",)), gh.calls)                      # re-applied: the next poll takes it from here
+
+    def test_it_can_chain_all_the_way_into_a_build(self):
+        gh, _ = self.go([self.FIRST, dict(stage="implement", needs_human=False)])
+        self.assertIn(("add", ("factory:auto",)), gh.calls)
+
+    def test_it_stops_when_the_document_leaves_questions_for_a_person(self):
+        gh, _ = self.go([self.FIRST, dict(stage="design", needs_human=True)])
+        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+
+    def test_it_stops_when_the_classifier_names_no_next_step(self):
+        gh, _ = self.go([self.FIRST, dict(stage=None, needs_human=False)])
+        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+
+    def test_an_explicit_stage_label_never_chains(self):
+        gh, _ = self.go([dict(stage="design", needs_human=False)], labels=("factory:analyze",), label="factory:analyze")
+        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+
+    def test_chaining_can_be_turned_off(self):
+        from dataclasses import replace
+        gh, _ = self.go([self.FIRST, dict(stage="architect", needs_human=False)], cfg=replace(CFG, auto_chain=False))
+        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+
+    def test_the_classifier_sees_the_earlier_document_when_deciding_what_is_next(self):
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto", "stage:analysed"])]},
+                    comments=[{"user": {"login": "bot"}, "body": "<!-- factory:stage=analyst -->\n1. Should refunds be included?"}])
+        clf = FakeClf(stage="architect")
+        with mock.patch.object(m.runner, "run_task", return_value=RunResult("stage", "ok", output="# Plan")), tempfile.TemporaryDirectory() as d:
+            from dataclasses import replace
+            m.poll_once(replace(CFG, db_path=d + "/f.db"), gh, dbm.connect(":memory:"), clf)
+        self.assertTrue(any("Should refunds be included" in c for c in clf.seen[0]["comments"]))
+
+    def test_a_chain_ends_because_finished_stages_are_never_chosen_again(self):
+        gh, clf = self.go([self.FIRST, dict(stage="analyze", needs_human=False)])
+        self.assertIn(("add", ("factory:auto",)), gh.calls)           # it asked for analyze again...
+        gh2 = FakeGH({"factory:auto": [issue(labels=["factory:auto", "stage:analysed"])]})
+        fake_run = mock.Mock(return_value=RunResult("stage", "ok", output="x"))
+        with mock.patch.object(m.runner, "run_task", fake_run), tempfile.TemporaryDirectory() as d:
+            from dataclasses import replace
+            conn = dbm.connect(":memory:")
+            m.poll_once(replace(CFG, db_path=d + "/f.db"), gh2, conn, FakeClf(stage="analyze", needs_human=False))
+        fake_run.assert_not_called()                                    # ...but the gate refuses a stage that is already done
+        self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "human")
+
+
 class Approvals(unittest.TestCase):
     def test_run_from_telegram_clears_every_trigger_label_so_the_ticket_is_not_asked_about_again(self):
         import time

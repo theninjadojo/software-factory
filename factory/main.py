@@ -248,7 +248,7 @@ def stage_comment(role, route, text: str, hint: str | None, files: list | None =
 
 
 def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, role, c=None,
-                   trigger_label: str | None = None) -> runner.RunResult:
+                   trigger_label: str | None = None, chain: bool = False) -> runner.RunResult:
     """Run an analyst, designer or architect and put its document on the ticket."""
     num, trigger_label = issue["number"], trigger_label or role.label
     route = Route(role.harness, role.model, role.effort)
@@ -264,18 +264,25 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, role.name)
     elif res.status == "stage":
         labels = [lb["name"] for lb in gh.get_issue(repo, num).get("labels", [])] + [role.done_label]
-        hint = None
+        hint, go_on = None, False
         try:                                            # ask Jev what should happen next, now that this stage is done
             nxt = classifier.classify(issue["title"], issue.get("body") or "", labels,
                                       comments + ["(just completed) " + res.output[:3000]],
                                       project_info(project_for(cfg, repo), repo), stages_done(cfg, labels))
             hint = next_hint(cfg, nxt)
+            # Keep going only when nothing needs a person (open questions in the document make the classifier say so) and it
+            # named a real next step. The re-applied label goes through the normal auto gate, which still asks before a build it
+            # is unsure about. Stages already done are never chosen again, so a chain always ends.
+            go_on = bool(chain and cfg.auto_chain and not nxt.needs_human and (nxt.stage in STAGE_TO_ROLE or nxt.stage == "implement"))
         except Exception:
             log.exception("next-stage suggestion failed")
         url = gh.comment(repo, num, stage_comment(role, route, res.output, hint, res.files, res.notes))
         gh.add_labels(repo, num, [role.done_label])
+        if go_on:
+            gh.add_labels(repo, num, [cfg.auto_label])             # picked up on the next poll, like any auto request
         alert(f"{role.name.title()} done: {repo}#{num}\n{url}" + (f"\n{len(res.files)} design file(s): {res.pr_url}" if res.files else "")
-              + (f"\nNext: {hint}" if hint else ""), event="stage_done")
+              + ("\nContinuing automatically: " + (hint or "next stage") if go_on else (f"\nWaiting for you: {hint}" if hint else "")),
+              event="stage_done")
     else:
         gh.add_labels(repo, num, [FAILED])
         gh.comment(repo, num, f"Factory {role.name} run did not produce a document ({res.status}). A person should take a look.")
@@ -439,7 +446,10 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         return None
     labels = [lb["name"] for lb in issue.get("labels", [])]
     done = stages_done(cfg, labels)
-    c = classifier.classify(issue["title"], issue.get("body") or "", labels, human_comments(gh, repo, num),
+    seen_by_classifier = human_comments(gh, repo, num)
+    if kind == "auto":                                  # earlier stage documents (and the open questions in them) inform the next call
+        seen_by_classifier += [f"({k} document written by the factory) {v[:2500]}" for k, v in stage_outputs(gh, repo, num).items()]
+    c = classifier.classify(issue["title"], issue.get("body") or "", labels, seen_by_classifier,
                             project_info(project_for(cfg, repo), repo), done)
     summary = f"cls={c.kind}/{c.complexity}/human={c.needs_human}/conf={c.confidence:.2f}/stage={c.stage}"
     role = next((r for r in cfg.roles if r.name == kind), None)       # explicit stage label: the human chose it
@@ -470,7 +480,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             emit("decision", f"dry-run: would run {role.name} ({summary})", repo, num)
             log.info("%s#%d -> stage %s [dry-run]", repo, num, role.name)
             return None
-        res = dispatch_stage(cfg, gh, classifier, repo, issue, role, c if kind == "auto" else None, label)
+        res = dispatch_stage(cfg, gh, classifier, repo, issue, role, c if kind == "auto" else None, label, chain=(kind == "auto"))
         dbm.record(conn, repo, num, updated, f"run:{res.status}", f"{detail}; {res.detail}")
         log.info("%s#%d stage %s: %s", repo, num, role.name, res.status)
         return None

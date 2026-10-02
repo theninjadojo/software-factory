@@ -50,6 +50,8 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
             out.append(Field("roles.designer.design_dir", "Designer: mockup folder", "text",
                              "Relative folder in the repo, for example docs/design. Avoid design/ if your repo git-ignores it."))
     return out + [Field("auto.label", "Auto-allocate label", "text", "A person applies it and the classifier picks the next stage."),
+                  Field("auto.chain", "Auto continues to the next stage", "bool",
+                        "On (default): after a stage, if nothing needs a person, the next stage starts by itself. Off: one stage per label."),
                   Field("auto.confirm_stages", "Ask before auto runs a stage", "bool",
                         "Off (default): analysis, design and architecture run straight away, since they only write a document. A person is "
                         "always asked before a build the classifier is unsure about. On: ask for stages too.")]
@@ -178,7 +180,7 @@ def default_for(key: str):
         role, _, field = name.partition(".")
         return next((getattr(r, field) for r in DEFAULT_ROLES if r.name == role), None)
     return {"auto.label": "factory:auto", "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
-            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "auto.confirm_stages": False}.get(key)
+            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
 def effective(raw: dict, key: str):

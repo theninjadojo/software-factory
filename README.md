@@ -42,7 +42,7 @@ document), and the orchestrator validates that data before it touches GitHub.
 | `factory:architect` | An **architect** writes the technical plan (data model, API, cross-repo order, tests). Read-only. |
 | `factory:ready` | **Build it.** Agents edit the repos and open one PR per changed repo. Earlier stage documents are given to the builder. |
 | `factory:review` | A **code reviewer** reviews the ticket's open PRs and comments on each one (see below). Needs `[review] enabled = true`. |
-| `factory:auto` | The classifier picks the next stage from the ticket and which stages are already done (`stage:*` labels), runs it, and suggests the next one. |
+| `factory:auto` | The classifier picks the next stage from the ticket and which stages are already done (`stage:*` labels) and runs it. It then **continues to the next stage by itself while nothing needs a person**, reading the document it just wrote (open questions make it stop and ask you on Telegram). Read-only stages never wait for approval; a build the classifier is unsure about does. |
 
 Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `factory:failed`, `stage:analysed`,
 `stage:designed`, `stage:architected`.
