@@ -310,6 +310,8 @@ def process_approvals(cfg: Config, gh: GitHub, conn) -> None:
             issue = gh.get_issue(repo, num)
             if issue["state"] != "open" or "pull_request" in issue:
                 continue
+            for _, label in triggers(cfg):         # the approval covers the whole ticket: clear EVERY trigger label (factory:auto
+                gh.remove_label(repo, num, label)  # included), or finishing the run re-triages it and asks a person again
             res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=conn)
             dbm.record(conn, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved via telegram; {res.detail}; {res.pr_url or ''}")
         except Exception:

@@ -125,7 +125,8 @@ class Watch(unittest.TestCase):
     def test_no_access_alerts_once(self):
         err = urllib.error.HTTPError("u", 403, "forbidden", {}, None)
         self.go(FakeGH(error=err)); self.go(FakeGH(error=err))
-        self.assertEqual([e for e, _ in self.notes], ["failure"])
+        self.assertEqual([e for e, _ in self.notes], ["ci_result"])         # a token-permission gap is not a failed run
+        self.assertIn("pull request itself is fine", self.notes[0][1])
         self.assertEqual(self.conn.execute("select status from prs").fetchone()[0], "watching")
 
     def test_disabled(self):

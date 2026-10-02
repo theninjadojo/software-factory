@@ -169,6 +169,27 @@ class Flows(unittest.TestCase):
                          [("rm", "factory:working-designer"), ("add", ("factory:design",))])
 
 
+class Approvals(unittest.TestCase):
+    def test_run_from_telegram_clears_every_trigger_label_so_the_ticket_is_not_asked_about_again(self):
+        import time
+        from dataclasses import replace
+
+        class GH(FakeGH):
+            def get_issue(self, repo, num):
+                return {"number": num, "title": "Add thing", "body": "", "state": "open", "updated_at": "t9",
+                        "labels": [{"name": "factory:auto"}, {"name": "enhancement"}]}
+
+        gh, conn = GH(), dbm.connect(":memory:")
+        conn.execute("INSERT INTO approvals VALUES (?,?,?,?)", ("o/r", 5, "run", time.time()))
+        conn.commit()
+        with mock.patch.object(m.runner, "run_task", return_value=RunResult("pr", "ok", "http://pr")) as rt, tempfile.TemporaryDirectory() as d:
+            m.process_approvals(replace(CFG, db_path=d + "/f.db"), gh, conn)
+        self.assertEqual(rt.call_count, 1)
+        removed = {c[1] for c in gh.calls if c[0] == "rm"}
+        for label in ("factory:ready", "factory:auto", "factory:analyze", "factory:design", "factory:architect"):
+            self.assertIn(label, removed, label)
+
+
 class ConfigAndJev(unittest.TestCase):
     def test_default_roles_and_override(self):
         self.assertEqual([r.name for r in CFG.roles], ["analyst", "designer", "architect"])

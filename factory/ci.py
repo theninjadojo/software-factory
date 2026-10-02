@@ -76,8 +76,8 @@ def watch_ci(cfg, gh, conn, notify, fix) -> None:
                 if e.code in (401, 403, 404):
                     if last != "no-access":
                         dbm.update_pr(conn, repo, number, summary="no-access")
-                        notify(f"Cannot read CI for {repo}#{number}: the GitHub token needs Checks, Actions and Commit statuses "
-                               "read permission. I'll keep trying quietly.", "failure")
+                        notify(f"CI status is not available for {repo}#{number}: the GitHub token needs read access to Checks, Actions and "
+                               "Commit statuses. The pull request itself is fine. I'll keep trying quietly.", "ci_result")
                     continue
                 raise
             state = evaluate(items)
