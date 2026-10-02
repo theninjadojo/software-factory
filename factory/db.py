@@ -252,7 +252,9 @@ def get_status(db) -> dict:
 
 def recent_runs(db, limit: int = 50, offset: int = 0, status: str | None = None, repo: str | None = None) -> list[dict]:
     where, args = [], []
-    if status:
+    if status == "passed":
+        where.append("status IN ('pr','stage')")
+    elif status:
         where.append("status=?"); args.append(status)
     if repo:
         where.append("repo=?"); args.append(repo)
@@ -261,14 +263,33 @@ def recent_runs(db, limit: int = 50, offset: int = 0, status: str | None = None,
     return _dicts(db.execute(sql, (*args, limit, offset)))
 
 
+def runs_summary(db, since: float, repo: str | None = None) -> dict:
+    """Counts for the Runs summary line: started since `since`, how many passed or failed, and the average length of the finished ones."""
+    where, args = "started >= ?", [since]
+    if repo:
+        where += " AND repo=?"; args.append(repo)
+    row = db.execute(f"SELECT COUNT(*), COALESCE(SUM(status IN ('pr','stage')),0), COALESCE(SUM(status='failed'),0), "
+                     f"AVG(CASE WHEN finished IS NOT NULL THEN finished-started END) FROM runs WHERE {where}", args).fetchone()
+    return {"total": row[0], "passed": row[1], "failed": row[2], "avg": row[3]}
+
+
 def get_run(db, run_id: int) -> dict | None:
     rows = _dicts(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)))
     return rows[0] if rows else None
 
 
+ROUTINE_KINDS = ("run:start", "rate-limit", "answers", "startup", "restart")
+
+
 def recent_events(db, limit: int = 100, kind_prefix: str | None = None, before_id: int | None = None) -> list[dict]:
+    """kind_prefix: a kind prefix, or "important" (hide routine kinds and ignored/dry-run decisions) or "alerts" (alert* and error*)."""
     where, args = [], []
-    if kind_prefix:
+    if kind_prefix == "important":
+        where.append(f"kind NOT IN ({','.join('?' * len(ROUTINE_KINDS))})"); args.extend(ROUTINE_KINDS)
+        where.append("NOT (kind LIKE 'decision%' AND (message LIKE 'ignored%' OR message LIKE 'dry-run%'))")
+    elif kind_prefix == "alerts":
+        where.append("(kind LIKE 'alert%' OR kind LIKE 'error%')")
+    elif kind_prefix:
         where.append("kind LIKE ?"); args.append(kind_prefix + "%")
     if before_id:
         where.append("id < ?"); args.append(before_id)
@@ -281,8 +302,10 @@ def latest_decisions(db, limit: int = 100) -> list[dict]:
 
 
 def watched_prs(db, limit: int = 100) -> list[dict]:
-    return _dicts(db.execute("SELECT repo, number, issue_repo, issue_num, status, rounds, watch_started, updated, summary "
-                             "FROM prs ORDER BY updated DESC LIMIT ?", (limit,)))
+    return _dicts(db.execute(
+        "SELECT p.repo, p.number, p.issue_repo, p.issue_num, p.status, p.rounds, p.watch_started, p.updated, p.summary, "
+        "(SELECT r.title FROM runs r WHERE r.repo=p.issue_repo AND r.issue=p.issue_num ORDER BY r.id DESC LIMIT 1) AS title "
+        "FROM prs p ORDER BY p.updated DESC LIMIT ?", (limit,)))
 
 
 def tickets(db, limit: int = 100) -> list[dict]:
