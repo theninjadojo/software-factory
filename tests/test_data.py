@@ -107,7 +107,7 @@ class Instrumentation(unittest.TestCase):
         self.assertEqual((full["kind"], full["stage"], full["status"], full["model"]), ("stage", "designer", "stage", "sonnet"))
         self.assertEqual((full["output"], full["log_tail"]), ("# Design", "agent said: all done"))
         self.assertEqual(json.loads(full["classification"])["stage"], "design")
-        self.assertEqual(dbm.get_status(self.conn)["running"]["value"], "")           # nothing running afterwards
+        self.assertEqual(dbm.recent_runs(self.conn, 20, status="running"), [])           # nothing running afterwards
         kinds = [e["kind"] for e in dbm.recent_events(self.conn)]
         self.assertIn("run:start", kinds)
         self.assertIn("run:stage", kinds)

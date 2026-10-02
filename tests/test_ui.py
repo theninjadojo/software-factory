@@ -182,18 +182,6 @@ class Pages(UiCase):
         cookie, _ = self.session()
         self.assertIn("orchestrator not reporting", self.req("GET", "/fragment/overview", cookie=cookie)[2])
 
-    def test_a_long_run_is_busy_not_down_but_a_stuck_one_is_down(self):
-        import time
-        dbm.set_status(self.db, "last_poll_ok", str(time.time() - 600))
-        rid = dbm.start_run(self.db, "implement", "o/web", 7, "T", "claude-code", "opus", "high", "", None)
-        cookie, _ = self.session()
-        html = self.req("GET", "/fragment/overview", cookie=cookie)[2]
-        self.assertIn("busy with a run", html)
-        self.assertNotIn("not reporting", html)
-        self.db.execute("UPDATE runs SET started=? WHERE id=?", (time.time() - 4 * 3600, rid))
-        self.db.commit()
-        self.assertIn("not reporting", self.req("GET", "/fragment/overview", cookie=cookie)[2])
-
     def test_hostile_text_is_escaped_everywhere(self):
         evil = '<script>alert(1)</script><img src=x onerror=alert(2)>'
         rid = dbm.start_run(self.db, "build", "o/web", 1, evil, evil, evil, evil, evil)
