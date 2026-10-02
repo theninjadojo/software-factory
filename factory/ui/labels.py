@@ -259,7 +259,7 @@ def list_get(h, q: dict, csrf: str) -> None:
                 issue = gh.get_issue(repo, int(text.lstrip("#")))
                 one = [] if "pull_request" in issue else [issue]
                 return one, False, len(one)
-            if text or any_of:
+            if text or any_of or stage == "done":
                 return gh.search_page(repo, text, want_state, page_no, labels=any_of, label=label)
             issues, more = gh.issues(repo, want_state, label or None, page_no)
             return issues, more, gh.count_issues(repo, want_state, label)
