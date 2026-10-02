@@ -39,6 +39,7 @@ def _github_error(e: Exception) -> str:
 def factory_labels(cfg) -> dict[str, tuple[str, str]]:
     """name -> (css kind, hint) for the labels the factory acts on or sets itself."""
     out = {cfg.trigger_label: ("warn", "starts work"), cfg.auto_label: ("warn", "starts work"), cfg.review.label: ("warn", "starts work")}
+    out[cfg.conflicts.label] = ("warn", "starts work")
     for r in cfg.roles:
         out[r.label] = ("warn", "starts work")
         out[r.done_label] = ("good", "stage done")
@@ -84,7 +85,8 @@ def actions_for(cfg, issue: dict, decision: dict | None = None) -> tuple[str, li
         return "closed", []
     if any(n == "factory:working" or n.startswith("factory:working-") for n in names):
         return "running", []
-    triggers = {cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else [])}
+    triggers = {cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else []),
+                *([cfg.conflicts.label] if cfg.conflicts.enabled else [])}
     if names & triggers:
         if decision and decision.get("outcome") == "human":       # the factory asked a person (the Telegram Run / Build anyway / Skip prompt)
             return NEEDS_PERSON, human_actions(cfg, names, decision)
@@ -94,6 +96,8 @@ def actions_for(cfg, issue: dict, decision: dict | None = None) -> tuple[str, li
     acts.append(("build", "Build", cfg.trigger_label))
     if cfg.review.enabled and "factory:pr-open" in names:
         acts.append(("review", "Review", cfg.review.label))
+    if cfg.conflicts.enabled and "factory:pr-open" in names:
+        acts.append(("conflicts", "Resolve conflicts", cfg.conflicts.label))
     status = "failed" if "factory:failed" in names else "pr open" if "factory:pr-open" in names else ""
     return status, acts
 
@@ -334,7 +338,8 @@ def start(h, form, csrf: str) -> None:
             gh.add_labels(repo, n, [chosen])                 # add first: if it fails nothing has changed
         if status == NEEDS_PERSON:                           # answering the prompt covers the whole ticket: clear every trigger label
             held = set(_names(issue))
-            for lab in (cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else [])):
+            for lab in (cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else []),
+                        *([cfg.conflicts.label] if cfg.conflicts.enabled else [])):
                 if lab in held and lab != chosen:
                     gh.remove_label(repo, n, lab)
     except Refused as e:

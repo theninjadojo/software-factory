@@ -11,10 +11,11 @@ EVENT_HELP = {
     "needs_human": "A ticket needs a person (with Run and Skip buttons)", "failure": "A run, stage or CI fix failed",
     "rate_limit": "A plan or API limit was hit", "pr_ready": "A pull request is ready", "stage_done": "An analyst, designer or architect document is on the ticket",
     "ci_result": "CI passed, or finished without a fix", "ci_fix": "CI failed and an agent fix round is starting", "recovery": "An interrupted run was requeued",
+    "conflict": "A factory pull request conflicts with its base branch, or a conflict was resolved",
     "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from Telegram",
     "info": "Anything else",
 }
-TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("runner", "Agent runner"), ("ci", "CI feedback")]
+TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts")]
 
 
 def _fmt(f: S.Field, v) -> str:

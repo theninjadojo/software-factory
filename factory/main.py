@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, pause, runner
+from . import ci, conflicts, pause, runner
 from . import db as dbm
 from .classifier import RuleClassifier
 from .config import Config, Route, load, project_for, project_info
@@ -41,7 +41,8 @@ def working_label(kind: str) -> str:
 def triggers(cfg: Config) -> list[tuple[str, str]]:
     """(kind, label), in the order an issue carrying several of them is handled: stages first, then auto, then build."""
     order = [(r.name, r.label) for r in cfg.roles] + [("auto", cfg.auto_label), ("implement", cfg.trigger_label)]
-    return order + ([("review", cfg.review.label)] if cfg.review.enabled else [])
+    return (order + ([("review", cfg.review.label)] if cfg.review.enabled else [])
+            + ([("conflicts", cfg.conflicts.label)] if cfg.conflicts.enabled else []))
 
 
 def human_comments(gh: GitHub, repo: str, num: int) -> list[str]:
@@ -191,11 +192,13 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     elif res.status == "pr":
         gh.add_labels(repo, num, [DONE])
         gh.comment(repo, num, f"Opened {res.pr_url} for review.")
-        if conn is not None and cfg.ci.enabled:
+        if conn is not None:
             for u in res.pr_url.split():                  # watch each PR's CI; skip anything that is not a PR URL
                 m = PR_URL.match(u)
                 if m:
-                    dbm.watch_pr(conn, m.group(1), int(m.group(2)), repo, num)
+                    dbm.track_pr(conn, m.group(1), int(m.group(2)), repo, num)    # merge conflicts are checked whether or not CI is
+                    if cfg.ci.enabled:
+                        dbm.watch_pr(conn, m.group(1), int(m.group(2)), repo, num)
         alert(f"PR ready: {repo}#{num}\n{res.pr_url}\n{picked(route, c)}", event="pr_ready")
         if cfg.review.enabled and cfg.review.auto:
             prs = [(m.group(1), int(m.group(2))) for m in map(PR_URL.match, res.pr_url.split()) if m]
@@ -248,7 +251,7 @@ def stage_comment(role, route, text: str, hint: str | None, files: list | None =
 
 
 def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, role, c=None,
-                   trigger_label: str | None = None, chain: bool = False) -> runner.RunResult:
+                   trigger_label: str | None = None, chain: bool = False, conn=None) -> runner.RunResult:
     """Run an analyst, designer or architect and put its document on the ticket."""
     num, trigger_label = issue["number"], trigger_label or role.label
     route = Route(role.harness, role.model, role.effort)
@@ -263,6 +266,10 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, role.name)
     elif res.status == "stage":
+        if conn is not None:                            # a designer's draft PR is checked for merge conflicts too
+            for pm in map(PR_URL.match, (res.pr_url or "").split()):
+                if pm:
+                    dbm.track_pr(conn, pm.group(1), int(pm.group(2)), repo, num)
         labels = [lb["name"] for lb in gh.get_issue(repo, num).get("labels", [])] + [role.done_label]
         hint, go_on = None, False
         try:                                            # ask Jev what should happen next, now that this stage is done
@@ -350,7 +357,8 @@ def recover(cfg: Config, gh: GitHub) -> None:
     subprocess.run(f"{eng} ps -aq --filter name=^factory- | xargs -r {eng} rm -f", shell=True,
                    capture_output=True, timeout=60)
     requeue = {WORKING: cfg.trigger_label, **{working_label(r.name): r.label for r in cfg.roles},
-               **({working_label("review"): cfg.review.label} if cfg.review.enabled else {})}
+               **({working_label("review"): cfg.review.label} if cfg.review.enabled else {}),
+               **({working_label("conflicts"): cfg.conflicts.label} if cfg.conflicts.enabled else {})}
     for repo in cfg.repos:
         try:
             for working, trigger in requeue.items():
@@ -386,6 +394,86 @@ def run_fix(cfg: Config, gh: GitHub, repo: str, number: int, issue_repo: str, is
     return res.status == "pr"
 
 
+def fix_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, label: str) -> str:
+    """The conflicts label: merge the base branch into every conflicting factory PR of the ticket. Returns the outcome."""
+    num = issue["number"]
+    gh.remove_label(repo, num, label)               # prevents re-dispatch; factory:pr-open stays, the PRs are still open
+    gh.add_labels(repo, num, [working_label("conflicts")])
+    try:
+        return resolve_conflicts(cfg, gh, conn, repo, issue, label)
+    finally:
+        gh.remove_label(repo, num, working_label("conflicts"))
+
+
+def resolve_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, label: str) -> str:
+    num, limit = issue["number"], cfg.conflicts.max_attempts
+    groups: dict[str, list] = {}                    # PR branch -> [(repo, number, base branch, url, attempts)]; siblings share a branch
+    notes, limited = [], []
+    for row in dbm.conflicts_for_issue(conn, repo, num):
+        r, n = row["repo"], row["number"]
+        url = f"https://github.com/{r}/pull/{n}"
+        try:
+            pr = gh.get_pr(r, n)
+        except Exception:
+            log.exception("could not read %s#%s", r, n)
+            notes.append(f"{url}: could not be read from GitHub; apply `{label}` again later")
+            continue
+        state = conflicts.state_of(pr)
+        if state == "closed":
+            dbm.update_conflict(conn, r, n, state="closed")
+        elif state == "unknown":
+            notes.append(f"{url}: GitHub has not finished checking it for conflicts; apply `{label}` again in a few minutes")
+        elif state == "conflicting":
+            branch = pr["head"]["ref"]
+            if not branch.startswith("factory/") or pr["head"]["repo"]["full_name"] != r:
+                notes.append(f"{url}: not a factory branch in this repository, left alone")     # never touch a branch the factory did not create
+            elif row["attempts"] >= limit:
+                dbm.update_conflict(conn, r, n, state="needs-person", detail="attempt limit reached")
+                limited.append(url)
+                notes.append(f"{url}: all {limit} resolution attempts are used; a person should resolve it")
+            else:
+                groups.setdefault(branch, []).append((r, n, pr["base"]["ref"], url, row["attempts"]))
+    extra = "".join(f"\n- {x}" for x in notes)
+    if not groups:
+        gh.comment(repo, num, sanitize_markdown("No factory pull request of this ticket needs its conflicts resolved, so nothing was merged." + extra))
+        if limited:
+            alert(f"Merge conflicts need a person: {repo}#{num} (attempt limit reached)\n" + "\n".join(limited), event="failure")
+        return "no-conflicts"
+    route, outcomes = cfg.routes["medium"], []
+    for branch, prs in groups.items():
+        alert(f"Resolving merge conflicts: {repo}#{num} on {branch}, {len(prs)} PR(s)\nAgent: {route.model}, effort {route.effort}", event="started")
+        run_id, sink = begin_run("conflicts", repo, issue, route), {}
+        res = runner.run_task(cfg, gh, repo, issue, route, prior=stage_outputs(gh, repo, num), comments=human_comments(gh, repo, num),
+                              fix_branch=branch, merge_base={r: base for r, _, base, _, _ in prs}, sink=sink)
+        end_run(run_id, res, sink)
+        if res.status == "rate-limited":
+            requeue_rate_limited(cfg, gh, repo, num, label, "conflicts")          # the attempt is not counted
+            return "rate-limited"
+        pushed, links = res.status == "pr", "\n".join(u for _, _, _, u, _ in prs)
+        # Our own validation messages are safe to show; an agent's log tail (in failed / no-change) only goes to Telegram and the UI.
+        why = res.detail[:300] if res.status in ("pr", "needs-person", "rejected") else res.status
+        for r, n, base, url, attempts in prs:
+            if pushed:                                   # GitHub re-checks the new head; a conflict that remains is reported again
+                dbm.update_conflict(conn, r, n, attempts=attempts + 1, state="unknown", notified_sha="", detail=why)
+                if cfg.ci.enabled:
+                    dbm.update_pr(conn, r, n, status="watching", watch_started=time.time(), summary="conflicts resolved")
+                msg = f"Merged `{base}` into `{branch}` to resolve the merge conflicts: {why}."
+            else:                                        # this head is not reported or labelled again; a person may re-apply the label
+                dbm.update_conflict(conn, r, n, attempts=attempts + 1, state="needs-person", detail=f"{res.status}: {why}")
+                msg = (f"Could not resolve the merge conflicts with `{base}` on `{branch}` ({why}). A person should take a look "
+                       f"(attempt {attempts + 1} of {limit}).")
+            gh.comment(r, n, sanitize_markdown(msg))
+        gh.comment(repo, num, sanitize_markdown((f"Merge conflicts resolved on `{branch}`: {why}." if pushed else
+                                                 f"Could not resolve the merge conflicts on `{branch}` ({why}). A person should take a look.")
+                                                + "\n" + links + extra))
+        if pushed:
+            alert(f"Merge conflicts resolved: {repo}#{num}\n{links}", event="conflict")
+        else:
+            alert(f"Merge conflicts not resolved: {repo}#{num} ({res.status})\n{res.detail[:300]}\n{links}", event="failure")
+        outcomes.append(res.status)
+    return ",".join(outcomes)
+
+
 def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
     """Run/Skip decisions made by the allowlisted Telegram chat."""
     if pause.paused(Path(cfg.db_path).parent):
@@ -406,7 +494,7 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
             for _, label in triggers(cfg):         # the approval covers the whole ticket: clear EVERY trigger label (factory:auto
                 gh.remove_label(repo, num, label)  # included), or finishing the run re-triages it and asks a person again
             if role:
-                res = dispatch_stage(cfg, gh, classifier, repo, issue, role)
+                res = dispatch_stage(cfg, gh, classifier, repo, issue, role, conn=conn)
             else:
                 res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=conn)
             dbm.record(conn, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved via telegram; {res.detail}; {res.pr_url or ''}")
@@ -444,6 +532,16 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         gh.remove_label(repo, num, working_label("review"))
         dbm.record(conn, repo, num, updated, f"run:{outcome}", f"{why}; review of {len(prs)} PR(s)")
         return None
+    if kind == "conflicts":
+        if cfg.dry_run:
+            n = len(dbm.conflicts_for_issue(conn, repo, num))
+            dbm.record(conn, repo, num, updated, "conflicts", f"{why}; would merge the base branch into conflicting PRs of {n} tracked [dry-run]")
+            emit("decision", f"dry-run: would resolve merge conflicts ({n} tracked PR(s))", repo, num)
+            return None
+        outcome = fix_conflicts(cfg, gh, conn, repo, issue, label)
+        dbm.record(conn, repo, num, updated, f"run:{outcome}", f"{why}; merge conflicts")
+        log.info("%s#%d conflicts: %s", repo, num, outcome)
+        return None
     labels = [lb["name"] for lb in issue.get("labels", [])]
     done = stages_done(cfg, labels)
     seen_by_classifier = human_comments(gh, repo, num)
@@ -480,7 +578,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             emit("decision", f"dry-run: would run {role.name} ({summary})", repo, num)
             log.info("%s#%d -> stage %s [dry-run]", repo, num, role.name)
             return None
-        res = dispatch_stage(cfg, gh, classifier, repo, issue, role, c if kind == "auto" else None, label, chain=(kind == "auto"))
+        res = dispatch_stage(cfg, gh, classifier, repo, issue, role, c if kind == "auto" else None, label, chain=(kind == "auto"), conn=conn)
         dbm.record(conn, repo, num, updated, f"run:{res.status}", f"{detail}; {res.detail}")
         log.info("%s#%d stage %s: %s", repo, num, role.name, res.status)
         return None
@@ -517,6 +615,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     if not cfg.dry_run:
         ci.watch_ci(cfg, gh, conn, lambda text, event="ci_result": alert(text, event=event),
                     lambda *a: run_fix(cfg, gh, *a))
+        conflicts.watch(cfg, gh, conn, lambda text, event="conflict": alert(text, event=event))
 
 
 def main() -> None:

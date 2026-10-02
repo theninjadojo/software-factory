@@ -42,6 +42,7 @@ document), and the orchestrator validates that data before it touches GitHub.
 | `factory:architect` | An **architect** writes the technical plan (data model, API, cross-repo order, tests). Read-only. |
 | `factory:ready` | **Build it.** Agents edit the repos and open one PR per changed repo. Earlier stage documents are given to the builder. |
 | `factory:review` | A **code reviewer** reviews the ticket's open PRs and comments on each one (see below). Needs `[review] enabled = true`. |
+| `factory:fix-conflicts` | **Resolve merge conflicts** in the ticket's open factory PRs: the base branch is merged into each PR branch and an agent resolves what git cannot (see below). The factory applies it itself when it finds a conflict. Needs `[conflicts] enabled = true`. |
 | `factory:auto` | The classifier picks the next stage from the ticket and which stages are already done (`stage:*` labels) and runs it. It then **continues to the next stage by itself while nothing needs a person**, reading the document it just wrote (open questions make it stop and ask you on Telegram). Read-only stages never wait for approval; a build the classifier is unsure about does. |
 
 Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `factory:failed`, `stage:analysed`,
@@ -61,6 +62,10 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   Off by default (it costs a run per PR).
 - **CI feedback.** Watches the repos' own CI on factory PRs, reports pass/fail, and can give the agent a fix round with
   the failing logs.
+- **Merge conflicts.** Notices when a factory PR (build or design) conflicts with its base branch, reports it once on the PR, the ticket
+  and Telegram, and applies `factory:fix-conflicts`. The orchestrator merges the base branch into the PR branch on its own clone; if git
+  cannot finish, an agent edits only the conflicted files, every marker must be gone, and the merge commit is pushed. Never a rebase or a
+  force-push; at most 10 attempts per PR. Off by default.
 - **Telegram.** Alerts with a verbosity setting, `/status /pause /resume`, and Run/Skip buttons for tickets that need a
   person. Only your Telegram user id is obeyed.
 - **Recovery.** If the orchestrator restarts mid-task, leftovers are cleared and the ticket is requeued.

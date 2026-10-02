@@ -43,8 +43,14 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 8. **Review (optional).** After a build opens PRs, or when a person labels the ticket `factory:review`, a read-only reviewer is run with the PR
    branches checked out and its comment is posted on every PR of the change. It is a role like the analyst, so it uses the same sandbox,
    sanitizer and harness selection; it only ever comments.
-9. **CI.** Each PR is watched; the result is posted; on failure the agent may get a fix round that adds a commit to the
-   same branch.
+. **Merge conflicts (optional).** Every PR the factory opens (build and design) is checked for conflicts with its base branch, whether
+    or not CI is watched. GitHub's `mergeable` is read on each poll (`null` means it is still computing and is never treated as a
+    conflict). A conflict is reported once per head commit, and the factory applies `factory:fix-conflicts` to the ticket, which goes
+    through the normal trust gate. The run groups the ticket's conflicting PRs by branch (sibling PRs share one), merges each base
+    branch into the pristine clone with `--no-commit` and stages the files with conflict markers. If git merged cleanly no agent runs;
+    otherwise the agent gets a copy and a list of the conflicted files, and its diff (against that staged state) is validated, applied,
+    and checked for leftover markers. The merge commit is pushed to the same branch, CI is watched again, and the attempt is counted
+    (10 per PR by default).
 
 ## Why the sandbox looks the way it does
 
@@ -58,7 +64,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 ## State
 
 SQLite (WAL) in the state directory: `runs` (one row per agent run, with output and log tail), `events` (the timeline), `status` (heartbeat), `decisions` (one row per issue state seen, so nothing is processed twice), `approvals`
-(Telegram Run/Skip), `prs` (PRs being watched for CI). A lock file ensures one orchestrator at a time.
+(Telegram Run/Skip), `prs` (PRs being watched for CI), `pr_conflicts` (every factory PR, its merge-conflict state and resolution attempts). A lock file ensures one orchestrator at a time.
 
 ## Harnesses
 
