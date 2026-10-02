@@ -118,7 +118,15 @@ def validate_html(text: str) -> None:
 
 
 BLOB_URL = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+)/blob/([0-9a-f]{40}|factory/design-\d+-[\w.-]+)/"
-                      r"([a-z0-9][a-z0-9_/-]*/factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.dc\.html)$")
+                      r"([a-z0-9][a-z0-9_/-]*/(?:factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.dc\.html|previews/factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.png))$")
+
+
+def preview_path(path: str) -> str:
+    """Where the rendered preview of a design file lives: <dir>/previews/<same name>.png, next to the canvases."""
+    head, _, name = path.rpartition("/")
+    if not name.endswith(".dc.html"):
+        raise DesignFileRejected(f"{path}: not a design file")
+    return f"{head}/previews/{name[: -len('.dc.html')]}.png"
 
 
 def link_ok(f) -> bool:

@@ -291,9 +291,11 @@ def design_section(files: list, notes: str, designer: bool = False, enabled: boo
     if files:
         prs = sorted({f["pr"] for f in files if PR_URL.match(f["pr"])})
         out += "\n\n### Design files\n" + (f"Draft PR: {prs[0]}\n\n" if prs else "")
-        out += "\n".join(f"- [`{f['path']}`]({f['url']})" for f in files if designfiles.link_ok(f))
+        out += "\n".join(f"- [`{f['path']}`]({f['url']})" + (" (rendered preview)" if f.get("preview") else "")
+                         for f in files if designfiles.link_ok(f))
         out += ("\n\nStatic Claude Design canvases. Import a file into Claude Design to work on it, or merge the draft PR to keep them "
-                "with the repository.")
+                "with the repository." + ("\n\nThe preview images are screenshots of the canvases, rendered in a sealed container "
+                                         "with no network." if any(f.get("preview") for f in files) else ""))
     if notes:
         out += f"\n\n_Note: {sanitize_markdown(notes)}_"
     elif designer and not files:                        # fixed text, never agent text

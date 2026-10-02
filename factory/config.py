@@ -77,6 +77,11 @@ class RunnerCfg:
     # (a 4 vCPU / 8 GB host fits 2 runs of 3g; 3 is the edge). The orchestrator warns at startup when it does not fit.
     max_parallel: int = 1
     max_turns: int = 40
+    # Rendered previews of the designer's mockups: a sealed container (no network, read-only, no capabilities) turns each validated
+    # canvas into a PNG that is committed to the draft PR. Off the moment the image is missing: the mockup files are still published.
+    render_previews: bool = True
+    render_image: str = "localhost/factory-render:latest"
+    render_timeout_seconds: int = 120
     rate_limit_backoff_seconds: int = 3600
     max_patch_bytes: int = 2_000_000
     max_files: int = 100

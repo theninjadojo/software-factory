@@ -125,7 +125,7 @@ class RunTaskEndToEnd(unittest.TestCase):
         route = Route("claude-code", "haiku", "low")
         cfg = Config("x", 1, False, 0.6, None, "factory:ready", ["o/web", "o/mobile"], frozenset(),
                      {"low": route, "medium": route, "high": route},
-                     runner=RunnerCfg(work_dir=str(t / "work"), claude_env_file=str(t / "claude.env")),
+                     runner=RunnerCfg(work_dir=str(t / "work"), claude_env_file=str(t / "claude.env"), render_previews=False),   # tests never start containers
                      projects=(Project("proj", (ProjectRepo("o/web", "web"), ProjectRepo("o/mobile", "app"))),))
         (t / "work").mkdir()
         (t / "claude.env").write_text("CLAUDE_CODE_OAUTH_TOKEN=test-not-real\n")

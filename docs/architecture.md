@@ -77,3 +77,11 @@ agent. The proxy allows the runner's hosts plus those of enabled harnesses.
 `[runner] engine` is `podman` or `docker`. Podman maps the host user into the container (`--userns=keep-id`); Docker runs
 the container as uid 1000 and relies on the per-task workspace being world-writable. Everything else is identical, and
 both are exercised by tests (`tests/test_runner.py::Engines`) and by the smoke checks described in docs/operations.md.
+
+## Rendered previews of design mockups
+
+The designer writes static `.dc.html` canvases. Once they pass `designfiles.validate_html`, `render.py` runs them through a sealed
+container (`sandbox/render/`: headless Chromium, no network, read-only, no capabilities) and gets a PNG back for each. The orchestrator
+checks the PNG (signature, size limits), commits it as `<design dir>/previews/<name>.png` on the same draft-PR branch, lists it in the PR
+body, and links it in the designer's ticket comment and on the run/pipeline pages (all through `designfiles.link_ok`). A missing renderer
+image, a crash or a timeout only means no preview: the canvases are still published.

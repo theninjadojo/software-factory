@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
 from . import designfiles
+from .render import render as preview_render
 from .roles import QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE, common_for, design_files_rules
 from .github import GitHub
 
@@ -289,6 +290,18 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
             continue
         branch = f"{BRANCH_PREFIX}design-{num}-{stamp}"
         ident = ["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
+        previews = {}                                      # file path -> preview path, for the canvases that rendered
+        if rn.render_previews:
+            by_stem = {x.rpartition("/")[2][: -len(".dc.html")]: x for x in paths}
+            try:
+                for stem, png in preview_render(rn, {st: (base / x).read_text(errors="strict") for st, x in by_stem.items()}).items():
+                    pp = designfiles.preview_path(by_stem[stem])
+                    (base / pp).parent.mkdir(parents=True, exist_ok=True)
+                    (base / pp).write_bytes(png)
+                    git(["add", "-f", pp], base, env)       # -f: a repository may git-ignore its design folder
+                    previews[by_stem[stem]] = pp
+            except Exception:
+                log.exception("rendering previews failed; publishing the design files without them")
         git([*ident, "checkout", "-q", "-b", branch], base, env)
         git([*ident, "commit", "-q", "-m", f"Design mockups for {home_repo}#{num}\n\nStatic canvases written by the designer agent."], base, env)
         sha = git(["rev-parse", "HEAD"], base, env).stdout.strip()
@@ -298,10 +311,12 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
             r, branch, gh.default_branch(r), f"[factory] design mockups for #{num}: {title[:60]}",
             f"Static design canvases (`.dc.html`, the Claude Design canvas format) written by the designer agent for {home_repo}#{num}. "
             "They are new files only; nothing else changes.\n\nOpen them in Claude Design (design-sync), or merge "
-            "this draft to keep them with the repository. Treat them as a first draft.\n\n" + "\n".join(f"- `{x}`" for x in paths),
+            "this draft to keep them with the repository. Treat them as a first draft.\n\n"
+            + "\n".join(f"- `{x}`" + (f" (preview: `{previews[x]}`)" if x in previews else "") for x in paths),
             draft=True)
         urls.append(pr)
         files += [{"repo": r, "path": x, "url": f"https://github.com/{r}/blob/{ref}/{x}", "pr": pr} for x in paths]
+        files += [{"repo": r, "path": pp, "url": f"https://github.com/{r}/blob/{ref}/{pp}", "pr": pr, "preview": True} for pp in previews.values()]
     return files, notes, " ".join(urls)
 
 

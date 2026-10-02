@@ -64,6 +64,12 @@ services:
     profiles: ["build"]
     entrypoint: ["true"]
 
+  render-image:  # build-only: `docker compose --profile build build` also produces factory-render:latest (design previews)
+    build: {context: ./sandbox/render}
+    image: factory-render:latest
+    profiles: ["build"]
+    entrypoint: ["true"]
+
   sandbox-image-codex:   # EXPERIMENTAL: `docker compose --profile codex build` produces factory-agent-codex:latest
     build: {context: ./sandbox, dockerfile: codex/Dockerfile}
     image: factory-agent-codex:latest

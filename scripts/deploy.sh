@@ -31,7 +31,7 @@ cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/deploy state/fd/
 cd app
 if ! python3 -m unittest discover -s tests > /tmp/sf-tests.log 2>&1; then tail -25 /tmp/sf-tests.log; echo 'TESTS FAILED: not restarting (the new code is on disk but the running service is unchanged)'; exit 1; fi
 tail -3 /tmp/sf-tests.log
-if [ "$1" = "--image" ]; then podman build -q -t factory-agent -f sandbox/Dockerfile sandbox; fi
+if [ "$1" = "--image" ]; then podman build -q -t factory-agent -f sandbox/Dockerfile sandbox && podman build -q -t factory-render -f sandbox/render/Dockerfile sandbox/render; fi
 systemctl --user restart factory.service
 # The UI runs no agents, so restarting it is always safe; without this it keeps serving the old code.
 if systemctl --user is-enabled factory-ui.service >/dev/null 2>&1; then systemctl --user restart factory-ui.service; fi
