@@ -293,3 +293,15 @@ class Speed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TicketsPopup(unittest.TestCase):
+    def test_tickets_list_uses_the_floor_popup_not_an_inline_row(self):
+        from factory.ui import labels as L
+        issue = {"number": 7, "title": "T"}
+        html = L.question_popup(REPO, issue, many(1), "tok", "/tickets")
+        self.assertIn('<dialog id="nd-t7" class="nd-dialog"', html)
+        self.assertIn('data-dialog="nd-t7"', html)
+        self.assertIn("q=%237", html)                                              # scripts off: narrow to the ticket
+        self.assertNotIn("<details", html)
+        self.assertIn("<noscript><details open>", L.question_popup(REPO, issue, many(1), "tok", "/tickets", alone=True))

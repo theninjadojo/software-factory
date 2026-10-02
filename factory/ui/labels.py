@@ -445,6 +445,25 @@ def question_form(repo: str, n: int, st, csrf: str, back: str = "/tickets") -> s
             '<span class="muted">Answers are posted on the ticket as the factory\'s account. The next stage starts at the next poll.</span></div></form>')
 
 
+def question_popup(repo: str, i: dict, st, csrf: str, back: str, alone: bool = False) -> str:
+    """The Answer… button and the dialog holding the question form, as on the Floor. Without scripts the button cannot open the
+    dialog, so the link narrows the list to this ticket, where (alone) the form is shown in the page."""
+    n = int(i["number"])
+    ref = f'{esc(repo.split("/")[-1])}#{n}'
+    total = len(st.questions)
+    form = question_form(repo, n, st, csrf, back)
+    meta = f'The {esc(st.stage)} asked {total} question{"s" if total != 1 else ""}'
+    dialog = (f'<dialog id="nd-t{n}" class="nd-dialog" aria-label="Questions for {ref}"><div class="nd-dhead"><div><span class="badge warn">{ref}</span> '
+              f'<span class="nd-t">{esc(i.get("title"))}</span><p class="muted">{meta}</p></div>'
+              f'<button type="button" class="secondary" data-close aria-label="Close">Close</button></div>{form}</dialog>')
+    opener = f'<button type="button" class="secondary" data-dialog="nd-t{n}" aria-label="Answer questions for {ref}">Answer…</button>'
+    if alone:
+        fallback = f'<noscript><details open><summary>Answer questions</summary>{form}</details></noscript>'
+    else:
+        fallback = f'<noscript><a class="btn secondary" href="/tickets?repo={esc(repo)}&amp;q=%23{n}">Answer</a></noscript>'
+    return opener + fallback + dialog
+
+
 def _epoch(iso) -> float:
     try:
         return time.mktime(time.strptime(str(iso), "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
@@ -482,6 +501,8 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
         status, acts = actions_for(cfg, i, decisions.get((repo, i["number"])), (repo, i["number"]) in approved)
         note = f'<span class="muted">{esc(status)}</span> ' if status else ""
         out = note + action_forms(repo, i["number"], acts, csrf, back) + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
+        if i["number"] in asked:
+            out += " " + question_popup(repo, i, asked[i["number"]], csrf, back, alone=len(issues) == 1)
         if status == "closed":
             return out
         if status in BUSY or i["number"] in asked:
@@ -503,7 +524,6 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
         f'<td data-l="Progress">{steps(i)}</td>'
         f'<td data-l="Labels">{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td data-l="Factory">{factory_cell(i["number"])}</td>'
         f'<td class="actions" data-l="Start">{buttons(i)}</td></tr>'
-        + (f'<tr class="questions"><td colspan="6">{question_form(repo, i["number"], asked[i["number"]], csrf, back)}</td></tr>' if i["number"] in asked else "")
         for i in issues)
     return ('<div class="scroll"><table class="tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')

@@ -131,7 +131,6 @@ table.tickets .steps { flex-wrap:nowrap; } table.tickets td:first-child { min-wi
   table.tickets tr { padding:.8rem .9rem; border-bottom:1px solid var(--line); } table.tickets td { border:0; padding:.25rem 0; }
   table.tickets td[data-l]:before { content:attr(data-l); display:block; font:500 11px ui-monospace,Menlo,Consolas,monospace; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
   table.tickets td.actions button, table.tickets td.actions a { min-height:44px; display:inline-flex; align-items:center; }
-  table.tickets tr.questions { padding:0; }
 }
 
 /* ---- Needs you ---- */
