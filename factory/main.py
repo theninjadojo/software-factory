@@ -447,7 +447,11 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
     if kind == "auto":
         st = STAGE_TO_ROLE.get(c.stage or "")
         sure = min(c.confidence, c.stage_confidence if c.stage_confidence is not None else c.confidence) >= cfg.confidence_threshold
-        if c.needs_human or not sure or (st and st in done):
+        # A read-only stage (analyst, designer, architect) only writes a document on the ticket, and low confidence or "needs a person"
+        # is exactly why an analyst is the right next step, so it runs without asking. A person is asked before a BUILD, or when
+        # the classifier named no stage, or a stage that is already done.
+        read_only_pick = bool(st) and st not in done and not cfg.auto_confirm_stages
+        if not read_only_pick and (c.needs_human or not sure or (st and st in done)):
             reason = "needs a person" if c.needs_human else "low confidence" if not sure else "chose a stage already done"
             dbm.record(conn, repo, num, updated, "human", f"{why}; {summary}; {reason}")
             emit("decision", f"needs a person: {reason} ({summary})", repo, num)
