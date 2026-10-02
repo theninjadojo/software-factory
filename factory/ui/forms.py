@@ -90,11 +90,11 @@ def projects_form(base: dict, eff: dict, csrf: str, submitted=None) -> str:
     for i, p in enumerate(projects[:20]):
         repos = list(p.get("repos", [])) + [{"repo": "", "role": ""}, {"repo": "", "role": ""}]
         rows = "".join(
-            f'<tr><td><input name="p{i}_r{j}_repo" placeholder="owner/name" value="{esc(r["repo"])}"></td>'
-            f'<td><input name="p{i}_r{j}_role" placeholder="what this repo is for" value="{esc(r.get("role", ""))}" class="wide"></td></tr>' for j, r in enumerate(repos[:30]))
+            f'<tr><td data-l="Repository"><input name="p{i}_r{j}_repo" placeholder="owner/name" value="{esc(r["repo"])}"></td>'
+            f'<td data-l="Role"><input name="p{i}_r{j}_role" placeholder="what this repo is for" value="{esc(r.get("role", ""))}" class="wide"></td></tr>' for j, r in enumerate(repos[:30]))
         out.append(f'<fieldset><legend>{esc(p["name"] or "New project")}</legend><div class="field"><label>Name</label><input name="p{i}_name" value="{esc(p["name"])}"></div>'
                    f'<div class="field"><label>Description</label><input name="p{i}_desc" value="{esc(p.get("description", ""))}" class="wide"></div>'
-                   f'<table><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table></fieldset>')
+                   f'<table class="stack"><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table></fieldset>')
     out.append('<button>Save projects</button></form><p class="muted">Leave a project\'s name and repositories empty to remove it.</p>')
     return "".join(out)
 
@@ -148,8 +148,8 @@ def telegram_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") ->
     lv = "".join(f'<option{" selected" if v == level else ""}>{v}</option>' for v in ("quiet", "normal", "verbose"))
     found = ""
     if unknown:
-        found = ("<h2>People who messaged the bot</h2><table><thead><tr><th>Name</th><th>Id</th><th></th></tr></thead><tbody>" + "".join(
-            f'<tr><td>{esc(u["name"])} <span class="muted">{esc(u.get("chat", ""))}</span></td><td>{int(u["id"])}</td><td>'
+        found = ("<h2>People who messaged the bot</h2><table class=stack><thead><tr><th>Name</th><th>Id</th><th></th></tr></thead><tbody>" + "".join(
+            f'<tr><td data-l="Name">{esc(u["name"])} <span class="muted">{esc(u.get("chat", ""))}</span></td><td data-l="Id">{int(u["id"])}</td><td data-l="Actions">'
             f'<form method="post" action="/telegram/use" class="inline">{csrf_field(csrf)}<input type="hidden" name="chat_id" value="{int(u["id"])}"><button>Use this id</button></form></td></tr>'
             for u in unknown) + "</tbody></table><p class=muted>Only this account will ever be obeyed. Check the id is yours.</p>")
     return (

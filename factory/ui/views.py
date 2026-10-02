@@ -192,10 +192,10 @@ def runs_list(runs: list[dict]) -> str:
     if not runs:
         return '<p class="muted">No runs yet.</p>'
     rows = "".join(
-        f'<tr><td><a href="/runs/{int(r["id"])}">{esc(r["repo"])}#{esc(r["issue"])}</a><br><span class="muted">{ticket_link(r["repo"], r["issue"])}</span></td>'
-        f'<td>{esc(run_what(r))}<br><span class="muted">{esc(r["title"])}</span></td><td>{badge(r["status"])}</td><td>{esc(r["model"])}</td>'
-        f'<td>{esc(dur(r["started"], r["finished"]))}</td><td title="{esc(ts(r["started"]))}">{esc(ago(r["started"]))}</td></tr>' for r in runs)
-    return ('<div class="scroll"><table><thead><tr><th>Run</th><th>What</th><th>Status</th><th>Model</th><th>Took</th><th>Started</th></tr></thead>'
+        f'<tr><td data-l="Run"><a href="/runs/{int(r["id"])}">{esc(r["repo"])}#{esc(r["issue"])}</a><br><span class="muted">{ticket_link(r["repo"], r["issue"])}</span></td>'
+        f'<td data-l="What">{esc(run_what(r))}<br><span class="muted">{esc(r["title"])}</span></td><td data-l="Status">{badge(r["status"])}</td><td data-l="Model">{esc(r["model"])}</td>'
+        f'<td data-l="Took">{esc(dur(r["started"], r["finished"]))}</td><td data-l="Started" title="{esc(ts(r["started"]))}">{esc(ago(r["started"]))}</td></tr>' for r in runs)
+    return ('<div class="scroll"><table class="stack"><thead><tr><th>Run</th><th>What</th><th>Status</th><th>Model</th><th>Took</th><th>Started</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 
@@ -284,8 +284,8 @@ def run_detail(r: dict, files=()) -> str:
     out = f'<table class="meta">{table}</table>'
     shown = [f for f in files or [] if designfiles.link_ok(f)]
     if shown:
-        rows = "".join(f'<tr><td>{design_links([f])}</td><td>{esc(f["repo"])}</td><td>{pr_links(f.get("pr") or "") or "—"}</td></tr>' for f in shown)
-        out += ("<h2>Design files</h2><table><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
+        rows = "".join(f'<tr><td data-l="File (opens on GitHub)">{design_links([f])}</td><td data-l="Repo">{esc(f["repo"])}</td><td data-l="Draft PR">{pr_links(f.get("pr") or "") or "—"}</td></tr>' for f in shown)
+        out += ("<h2>Design files</h2><table class=stack><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
                 f"<tbody>{rows}</tbody></table>")
     if cls:
         out += f"<h2>Classification</h2><pre>{esc(cls)}</pre>"
