@@ -23,7 +23,10 @@ cd app
 if ! python3 -m unittest discover -s tests > /tmp/sf-tests.log 2>&1; then tail -25 /tmp/sf-tests.log; echo 'TESTS FAILED: not restarting (the new code is on disk but the running service is unchanged)'; exit 1; fi
 tail -3 /tmp/sf-tests.log
 if [ "$1" = "--image" ]; then podman build -q -t factory-agent -f sandbox/Dockerfile sandbox; fi
-systemctl --user restart factory.service; sleep 8
-systemctl --user is-active factory-proxy.service factory.service
+systemctl --user restart factory.service
+# The UI runs no agents, so restarting it is always safe; without this it keeps serving the old code.
+if systemctl --user is-enabled factory-ui.service >/dev/null 2>&1; then systemctl --user restart factory-ui.service; fi
+sleep 8
+systemctl --user is-active factory-proxy.service factory.service factory-ui.service
 journalctl --user -u factory.service --since "-12s" --no-pager | grep -v "systemd\|podman\[" | cut -c1-200
 REMOTE
