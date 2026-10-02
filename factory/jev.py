@@ -43,13 +43,16 @@ QUESTIONS = {
     "stage": {
         "type": "choice",
         "instructions": ("Given the ticket, the project, and which stages are already complete (stages_done), which single stage "
-                         "should happen next? Never choose a stage that is already in stages_done."),
+                         "should happen next? Never choose a stage that is already in stages_done. "
+                         "Skipping stages is normal: choose the furthest-along stage the ticket genuinely needs, so a small, clear "
+                         "ticket goes straight to implement even when stages_done is empty."),
         "criteria": {
             "analyze": "Requirements are unclear, incomplete or have no acceptance criteria; the problem needs analysing first.",
             "design": "Requirements are clear and the work changes what users see or do (UI, UX, flows, copy) and has no design yet.",
             "architect": "Requirements are clear and the work needs a technical plan across components or repositories "
                          "(schema, APIs, migrations, shared packages, release order) before coding.",
-            "implement": "Everything needed is clear and specified, or the needed earlier stages are done: build it.",
+            "implement": "The change is clear enough to build now (a small or well-specified ticket needs no earlier stage), "
+                         "or the needed earlier stages are done: build it.",
         },
     },
     "effort": {
