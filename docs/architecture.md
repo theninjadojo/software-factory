@@ -63,7 +63,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 
 ## State
 
-SQLite (WAL) in the state directory: `runs` (one row per agent run, with output and log tail), `events` (the timeline), `status` (heartbeat), `decisions` (one row per issue state seen, so nothing is processed twice), `approvals`
+SQLite (WAL) in the state directory: `runs` (one row per agent run, with output, log tail and the token counts the harness reported: `NULL` when it reports none; claude-code is run with `--output-format json` for this, see `runner.parse_usage`), `events` (the timeline, including `ci:passed`, `ci:failed` and `ci:timed-out` on the ticket for each CI round; `db.journey` builds a ticket's ordered route from runs, decisions and these), `status` (heartbeat), `decisions` (one row per issue state seen, so nothing is processed twice), `approvals`
 (Telegram Run/Skip), `prs` (PRs being watched for CI), `pr_conflicts` (every factory PR, its merge-conflict state and resolution attempts). A lock file ensures one orchestrator at a time.
 
 ## Harnesses

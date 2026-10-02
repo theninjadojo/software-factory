@@ -15,7 +15,8 @@ class Route:
     effort: str
 
 
-CLAUDE_COMMAND = 'claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions'
+CLAUDE_COMMAND = ('claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions '
+                  '--output-format json')
 CODEX_COMMAND = 'codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -m "$MODEL" "$(cat /task/prompt.txt)"'
 OPENCODE_COMMAND = 'opencode run --model "$MODEL" "$(cat /task/prompt.txt)"'
 OPENCODE_IMAGE = "localhost/factory-agent-opencode:latest"
@@ -40,6 +41,7 @@ class HarnessCfg:
     notes: str = ""
     data_notice: str = ""                # shown on the Harnesses page: where ticket text and code go when this harness runs
     model_hint: str = ""                 # the model-id format this harness expects
+    usage_format: str = ""               # how to read token counts from its output ("" none, "claude-json"); see runner.parse_usage
 
 
 @dataclass(frozen=True)
@@ -184,7 +186,7 @@ def default_harnesses(rn: "RunnerCfg") -> dict:
     secrets = Path(rn.claude_env_file).parent
     return {
         "claude-code": HarnessCfg("claude-code", rn.image, rn.claude_env_file, CLAUDE_COMMAND, ("api.anthropic.com",), True, False,
-                                  "", "Claude Code. The credential is managed on the Credentials page."),
+                                  "", "Claude Code. The credential is managed on the Credentials page.", usage_format="claude-json"),
         "codex": HarnessCfg("codex", "localhost/factory-agent-codex:latest", str(secrets / "codex.env"), CODEX_COMMAND, ("api.openai.com",),
                             False, True, "CODEX_API_KEY", "OpenAI Codex CLI (codex exec). Build the image from sandbox/codex/. Not yet verified end to end."),
         "gemini": HarnessCfg("gemini", "localhost/factory-agent-gemini:latest", str(secrets / "gemini.env"), GEMINI_COMMAND,
@@ -285,6 +287,8 @@ def _harnesses(raw: dict, rn: "RunnerCfg") -> dict:
             raise ValueError(f"harnesses.{h.name}.command is empty or invalid")
         if not all(re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}", x) for x in h.allow_hosts):
             raise ValueError(f"harnesses.{h.name}.allow_hosts has an invalid host name")
+        if h.usage_format not in ("", "claude-json"):
+            raise ValueError(f"harnesses.{h.name}.usage_format must be '' or 'claude-json', got {h.usage_format!r}")
     return out
 
 
