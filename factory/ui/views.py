@@ -3,6 +3,7 @@ import html
 import json
 import re
 import time
+from urllib.parse import urlencode
 
 from .. import designfiles
 from ..sanitize import md_render
@@ -164,16 +165,110 @@ def prs_table(prs: list[dict]) -> str:
     return cards_table(h, rows)
 
 
-def runs_page(runs: list[dict], status: str, repo: str, page_no: int, has_more: bool) -> str:
+STAGE_WHAT = {"analyst": "Analyst", "designer": "Designer", "architect": "Architect"}
+
+
+def run_what(r: dict) -> str:
+    """Plain-language label for a run; unknown kinds fall back to the raw kind."""
+    if r["kind"] == "build":
+        return "Build opened PR" if r["pr_urls"] else "Build"
+    if r["kind"] == "fix":
+        return "CI fix round"
+    if r["kind"] == "stage" and r["stage"] in STAGE_WHAT:
+        return STAGE_WHAT[r["stage"]]
+    return str(r["kind"]) + (" " + str(r["stage"]) if r["stage"] else "")
+
+
+def runs_summary_line(s: dict | None) -> str:
+    if not s or not s["total"]:
+        return ""
+    parts = [f'{int(s["total"])} today', f'{int(s["passed"])} passed', f'{int(s["failed"])} failed']
+    if s["avg"] is not None:
+        parts.append(f'average {dur(0.001, 0.001 + float(s["avg"]))}')
+    return '<p class="summary">' + esc(" · ".join(parts)) + "</p>"
+
+
+def runs_list(runs: list[dict]) -> str:
+    if not runs:
+        return '<p class="muted">No runs yet.</p>'
+    rows = "".join(
+        f'<tr><td><a href="/runs/{int(r["id"])}">{esc(r["repo"])}#{esc(r["issue"])}</a><br><span class="muted">{ticket_link(r["repo"], r["issue"])}</span></td>'
+        f'<td>{esc(run_what(r))}</td><td>{badge(r["status"])}</td><td>{esc(r["model"])}</td>'
+        f'<td>{esc(dur(r["started"], r["finished"]))}</td><td title="{esc(ts(r["started"]))}">{esc(ago(r["started"]))}</td></tr>' for r in runs)
+    return ('<div class="scroll"><table><thead><tr><th>Run</th><th>What</th><th>Status</th><th>Model</th><th>Took</th><th>Started</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table></div>')
+
+
+def chips(options, current: str, href) -> str:
+    """Filter chips as plain links; `href(value)` builds the query string. The current one is marked with aria-current."""
+    def chip(v: str, label: str) -> str:
+        on = v == current
+        return f'<a class="chip{" current" if on else ""}"{" aria-current=true" if on else ""} href="{esc(href(v))}">{esc(label)}</a>'
+
+    return '<p class="chips">' + " ".join(chip(v, label) for v, label in options) + "</p>"
+
+
+def events_list(events: list[dict]) -> str:
+    if not events:
+        return '<p class="muted">Nothing important has happened yet.</p>'
+
+    def row(e: dict) -> str:
+        k = e["kind"]
+        state, cls = ("failed", "bad") if k.startswith(("error", "alert:failure")) else ("needs attention", "warn") if k.startswith("alert") else ("ok", "good")
+        ticket = ticket_link(e["repo"], e["issue"]) if e["repo"] and e["issue"] else ""
+        return (f'<li><span class="nowrap muted" title="{esc(ts(e["ts"]))}">{esc(ago(e["ts"]))}</span>'
+                f'<span class="dot {cls}" role="img" aria-label="{state}" title="{state}"></span>'
+                f'<span class="wrap">{esc(e["message"])}</span><span class="nowrap">{ticket}</span></li>')
+
+    return '<ul class="evlist">' + "".join(row(e) for e in events) + "</ul>"
+
+
+def prs_summary_line(prs: list[dict]) -> str:
+    open_ = [p for p in prs if p["status"] != "closed"]
+    if not open_:
+        return ""
+    return (f'<p class="summary">{len(open_)} open · {sum(p["status"] == "passed" for p in open_)} passing · '
+            f'{sum(p["status"] == "failed" for p in open_)} failing</p>')
+
+
+def pr_round_line(p: dict, limit: int) -> str:
+    n, st = int(p["rounds"] or 0), p["status"]
+    if st == "failed":
+        return f"Fix round {n} of {limit} failed" if n else "CI failed; no fix rounds used"
+    if st == "watching":
+        return f"Fix round {n} of {limit} running" if n else "Waiting for CI"
+    return f"Fix round {n} of {limit} needed" if n else "No fix rounds needed"
+
+
+def prs_cards(prs: list[dict], fix_rounds: int = 1) -> str:
+    if not prs:
+        return '<p class="muted">No pull requests are being tracked yet.</p>'
+
+    def card(p: dict) -> str:
+        cls = "good" if p["status"] in GOOD else "bad" if p["status"] in BAD else "warn"
+        ref = f'{p["repo"]}#{int(p["number"])}'
+        url = f'https://github.com/{p["repo"]}/pull/{int(p["number"])}'
+        button = (f'<a class="button" href="{esc(url)}" rel="noopener noreferrer" target="_blank">Open on GitHub</a>'
+                  if REPO.match(p["repo"]) and GH_URL.match(url) else "")
+        return (f'<li class="prcard {cls}"><h3>{esc(p.get("title") or ref)}</h3>'
+                f'<p class="muted">{esc(ref)} · {esc(ago(p["watch_started"] or p["updated"]))} · ticket {ticket_link(p["issue_repo"], p["issue_num"])}</p>'
+                f'<p>CI: {badge(p["status"], cls)}</p><p>{esc(pr_round_line(p, fix_rounds))}</p>{button}</li>')
+
+    return '<ul class="prcards">' + "".join(card(p) for p in prs) + "</ul>"
+
+
+def runs_page(runs: list[dict], status: str, repo: str, page_no: int, has_more: bool, summary: dict | None = None) -> str:
     opts = "".join(f'<option value="{esc(v)}"{" selected" if v == status else ""}>{esc(v or "any status")}</option>'
-                   for v in ("", "running", "pr", "stage", "failed", "rejected", "no-change", "rate-limited", "interrupted"))
+                   for v in ("", "running", "passed", "pr", "stage", "failed", "rejected", "no-change", "rate-limited", "interrupted"))
+    bar = chips((("", "All"), ("running", "Running"), ("passed", "Passed"), ("failed", "Failed")), status,
+                lambda v: "/runs?" + urlencode({"status": v, "repo": repo}))
     form = (f'<form method="get" class="filters"><select name="status">{opts}</select>'
             f'<input name="repo" placeholder="owner/repo" value="{esc(repo)}"><button>Filter</button></form>')
     def link(label: str, p: int) -> str:
-        return f'<a href="/runs?status={esc(status)}&amp;repo={esc(repo)}&amp;page={p}">{label}</a>'
+        return f'<a href="{esc("/runs?" + urlencode({"status": status, "repo": repo, "page": p}))}">{label}</a>'
 
     nav = '<p class="pager">' + (link("← newer", page_no - 1) if page_no > 0 else "") + " " + (link("older →", page_no + 1) if has_more else "") + "</p>"
-    return form + runs_table(runs) + nav
+    return runs_summary_line(summary) + bar + form + runs_list(runs) + nav
 
 
 def run_detail(r: dict, files=()) -> str:
@@ -217,11 +312,12 @@ def tickets_page(rows: list[dict], counts: dict | None = None) -> str:
 
 
 def events_page(events: list[dict], kind: str, older: int | None) -> str:
-    opts = "".join(f'<option value="{esc(v)}"{" selected" if v == kind else ""}>{esc(l)}</option>'
-                   for v, l in (("", "all events"), ("alert", "alerts"), ("decision", "decisions"), ("run", "runs"), ("error", "errors"), ("startup", "startups"), ("restart", "restarts")))
-    form = f'<form method="get" class="filters"><select name="kind">{opts}</select><button>Filter</button></form>'
-    more = f'<p class="pager"><a href="/events?kind={esc(kind)}&amp;before={int(older)}">older →</a></p>' if older else ""
-    return form + events_table(events) + more
+    kind = kind or "important"
+    bar = chips((("important", "Important"), ("decision", "Decisions"), ("alerts", "Alerts"), ("all", "Everything")), kind,
+                lambda v: "/events?" + urlencode({"kind": v}))
+    more = f'<p class="pager"><a href="{esc("/events?" + urlencode({"kind": kind, "before": int(older)}))}">older →</a></p>' if older else ""
+    body = events_list(events) if kind != "all" else events_table(events)
+    return bar + body + more
 
 
 STEP_TITLES = {"analyze": "Analyze", "design": "Design", "architect": "Architect", "implement": "Implement", "review": "Review", "ci-fix": "CI fix"}

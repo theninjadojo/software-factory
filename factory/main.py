@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, designfiles, pause, runner, subtasks
+from . import ci, conflicts, designfiles, pause, pm, runner, subtasks
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -31,7 +31,9 @@ ev_path: str | None = None                 # set in main(): each thread opens it
 step_gh = None                             # GitHub client used to mirror pipeline steps as sub-issues; None = off
 alert_filter = lambda event: True      # set from config in main(); read-only afterwards, so safe from every thread
 pool = Pool()                              # inline (one job at a time, in the caller's thread); main() starts worker threads
-queued: list[dict] = []                    # tickets the last poll left waiting for a free slot, for the UI
+queued: list[dict] = []                    # tickets the last poll left waiting for a free slot (or, with a reason, blocked), for the UI
+held: dict[tuple[str, int], tuple] = {}    # poll thread only: (repo, ticket) -> its open blockers, to report each change once
+cycles_seen: set = set()                   # poll thread only: (repo, tickets) of each blocker cycle already reported
 
 
 BOILERPLATE = ("Opened https://", "Factory run did not produce", "Rate limited")
@@ -245,7 +247,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, "implement")
     elif res.status == "pr":
         gh.add_labels(repo, num, [DONE])
-        gh.comment(repo, num, f"Opened {res.pr_url} for review.")
+        draft = cfg.review.enabled and cfg.review.auto
+        gh.comment(repo, num, f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else ""))
         if conn is not None:
             for u in res.pr_url.split():                  # watch each PR's CI; skip anything that is not a PR URL
                 m = PR_URL.match(u)
@@ -464,6 +467,12 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
                 links.append(f"https://github.com/{r}/pull/{n}")
             except Exception:
                 log.exception("could not post the review on %s#%s", r, n)
+                continue                                      # not reviewed: it stays a draft
+            try:
+                gh.mark_ready(r, n)
+            except Exception:
+                log.exception("could not mark %s#%s ready for review", r, n)
+                alert(f"Could not mark {r}#{n} ready for review; it is still a draft.", event="failure")
         gh.add_labels(repo, num, [cfg.review.done_label])
         verdict = next((v for v in ("Blocking issues", "Needs changes", "Looks good") if v.lower() in res.output[:600].lower()), "see the PR")
         alert(f"Review done: {repo}#{num}: {verdict}\n" + "\n".join(links), event="review_done")
@@ -782,6 +791,69 @@ def ci_submit(cfg: Config, conn):
     return submit
 
 
+def pm_sweep(cfg: Config, gh: GitHub, conn, repo: str, issues: list) -> str:
+    """The project manager's run over a repository's factory tickets. Read-only in the sandbox; afterwards the orchestrator applies
+    only what pm.parse validated (see pm.py). Returns the outcome."""
+    route = Route(cfg.pm.harness, cfg.pm.model, cfg.pm.effort)
+    stand_in = {"number": 0, "title": f"Project manager: {len(issues)} ticket(s)", "body": "", "updated_at": ""}
+    run_id, sink = begin_run("pm", repo, stand_in, route, None, "pm"), {}
+    res = runner.run_task(cfg, gh, repo, stand_in, route, role="pm", sink=sink, backlog=pm.backlog_items(issues, cfg.pm.body_chars))
+    end_run(run_id, res, sink)
+    found = pm.parse(res.output, {i["number"] for i in issues}) if res.status == "stage" else None
+    if found is None:
+        pm.set_sweep_state(conn, repo, time.time(), "")             # try again after the interval, even if nothing changed
+        if res.status == "rate-limited":
+            if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+                alert(f"Rate limited during the project manager's sweep of {repo}; pausing.", event="rate_limit")
+        elif res.status == "stage":
+            emit("pm", "the project manager's reply had no valid factory-priorities block: nothing changed", repo, None, run_id)
+        else:
+            alert(f"Project manager failed for {repo} ({res.status})\n{res.detail[:300]}", event="failure")
+        return res.status
+    changes = pm.apply(cfg, gh, conn, repo, {i["number"]: i for i in issues}, found, run_id)
+    emit("pm", f"project manager assessed {len(found)} ticket(s), changed {len(changes)}" + "".join(f"; {c}" for c in changes)[:1500],
+         repo, None, run_id)
+    if changes:
+        alert(f"Project manager: {repo}\n" + "\n".join(changes[:20]), event="info")
+    return "stage"
+
+
+def maybe_pm_sweep(cfg: Config, gh: GitHub, conn, repo: str) -> None:
+    """Start a sweep when the PM is on, its interval has passed, the repository's tickets changed since the last one, and no
+    ticket is waiting for a slot (real work comes first). It runs in the pool under ticket number 0, which no issue has."""
+    if not cfg.pm.enabled or cfg.dry_run or any(not q.get("reason") for q in queued):
+        return
+    if not pool.can_take(jobkey(repo, 0)) or pause.paused(Path(cfg.db_path).parent):
+        return
+    last, now = pm.sweep_state(conn, repo), time.time()
+    if now - float(last.get("ts") or 0) < cfg.pm.interval_minutes * 60:
+        return
+    issues = pm.backlog_issues(cfg, gh, repo, [label for _, label in triggers(cfg)] + [r.done_label for r in cfg.roles])
+    dig = pm.digest(issues)
+    if not issues or dig == last.get("digest"):
+        pm.set_sweep_state(conn, repo, now, last.get("digest") or "")
+        return
+    pm.set_sweep_state(conn, repo, now, dig)
+    start(cfg, conn, repo, 0, "pm", lambda db: pm_sweep(cfg, gh, db, repo, issues))
+
+
+def report_blocked(cfg: Config, repo: str, now_held: dict) -> None:
+    """One event when a ticket becomes blocked or its blockers change, and one alert per cycle of tickets waiting for each other."""
+    for k in [k for k in held if k[0] == repo and k[1] not in now_held]:
+        del held[k]
+    for num, b in now_held.items():
+        if held.get((repo, num)) != tuple(b):
+            held[(repo, num)] = tuple(b)
+            emit("decision", "waiting: blocked by " + ", ".join(f"#{n}" for n in b), repo, num)
+    for cyc in pm.cycles(now_held):
+        if (repo, cyc) not in cycles_seen:
+            cycles_seen.add((repo, cyc))
+            text = ", ".join(f"#{n}" for n in cyc)
+            emit("pm:cycle", f"tickets block each other: {text}", repo, cyc[0])
+            alert(f"Blocked in a cycle: {repo} {text} wait for each other, so none of them starts. Remove a 'Blocked by' line, "
+                  f"or apply `{cfg.pm.unblock_label}` to one of them.", event="needs_human")
+
+
 def pool_status() -> str:
     """What the UI shows next to the running runs (which it reads from the runs table)."""
     return json.dumps({"max": pool.max, "draining": pool.draining, "queued": queued})
@@ -801,9 +873,25 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
                 handled.add(issue["number"])
                 todo.append((kind, label, issue))
         todo.sort(key=lambda t: priority_rank(t[2]))       # stable: equal priority keeps trigger order
+        cache, now_held = {}, {}
         for kind, label, issue in todo:
+            num = issue["number"]
+            # A build waits for its open blockers (only while the PM is on). Like a ticket waiting for a slot, it is left untouched,
+            # so a later poll starts it once they are closed. Checked only before a start: a running job is never stopped.
+            if (kind in pm.BUILD_KINDS and cfg.pm.enabled and not dbm.seen(conn, repo, num, issue["updated_at"])
+                    and not pool.busy(jobkey(repo, num)) and (b := pm.blockers(cfg, gh, conn, repo, issue, cache, trusted))):
+                now_held[num] = b
+                queued.append({"repo": repo, "issue": num, "kind": kind, "title": issue.get("title", "")[:120],
+                               "reason": "blocked by " + ", ".join(f"#{n}" for n in b)})
+                continue
             if handle_issue(cfg, gh, conn, classifier, repo, issue, kind, label) == "paused":
                 return
+        report_blocked(cfg, repo, now_held)
+    for repo in cfg.repos:                                  # after every repository's tickets had their chance at a slot
+        try:
+            maybe_pm_sweep(cfg, gh, conn, repo)
+        except Exception:
+            log.exception("project manager sweep of %s failed", repo)        # never stops the poll
     if not cfg.dry_run:
         ci.watch_ci(cfg, gh, conn, lambda text, event="ci_result": alert(text, event=event),
                     lambda *a: run_fix(cfg, gh, *a), ci_submit(cfg, conn))

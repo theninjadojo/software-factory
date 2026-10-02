@@ -161,6 +161,17 @@ class GitHub:
     def create_pr(self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False) -> str:
         return self._req("POST", f"/repos/{repo}/pulls", {"head": head, "base": base, "title": title, "body": body, "draft": draft})["html_url"]
 
+    def mark_ready(self, repo: str, number: int) -> bool:
+        """Take a draft PR out of draft. Only for a PR on a factory/ branch; a PR that is not a draft is left alone."""
+        pr = self.get_pr(repo, number)
+        if not pr.get("draft") or not pr["head"]["ref"].startswith("factory/"):
+            return False
+        out = self._req("POST", "/graphql", {"query": "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) "
+                                                      "{ pullRequest { id } } }", "variables": {"id": pr["node_id"]}})
+        if out.get("errors"):
+            raise RuntimeError(f"markPullRequestReadyForReview failed: {out['errors']}")
+        return True
+
     def create_issue(self, repo: str, title: str, body: str) -> dict:
         """Only for step sub-issues: the title must carry the factory prefix, and labels/assignees cannot be set."""
         if not title.startswith(STEP_TITLE_PREFIX):
