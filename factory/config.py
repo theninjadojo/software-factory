@@ -93,6 +93,12 @@ class ReviewCfg:
 
 
 @dataclass(frozen=True)
+class SubtasksCfg:
+    """Mirror each pipeline step of a ticket as a GitHub sub-issue. Off by default: it adds writes and notifications."""
+    enabled: bool = False
+
+
+@dataclass(frozen=True)
 class CiCfg:
     """Watch the repos' own CI on factory PRs and report it; optionally let the agent fix failures."""
     enabled: bool = True
@@ -154,6 +160,7 @@ class Config:
     ci: CiCfg = field(default_factory=CiCfg)
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
+    subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
@@ -367,6 +374,7 @@ def parse(raw: dict) -> Config:
         ci=CiCfg(**raw.get("ci", {})),
         conflicts=conflicts,
         review=review,
+        subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),

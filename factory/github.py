@@ -5,8 +5,12 @@ import urllib.parse
 import urllib.request
 
 
+STEP_TITLE_PREFIX = "[factory] "
+
+
 class GitHub:
-    """Small GitHub client. Writes are limited to: comments, labels, pull requests."""
+    """Small GitHub client. Writes are limited to: comments, labels, pull requests, and the step sub-issues the
+    factory creates itself (fixed title prefix, no labels or assignees)."""
 
     def __init__(self, token: str | None):
         self.token = token
@@ -156,3 +160,18 @@ class GitHub:
 
     def create_pr(self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False) -> str:
         return self._req("POST", f"/repos/{repo}/pulls", {"head": head, "base": base, "title": title, "body": body, "draft": draft})["html_url"]
+
+    def create_issue(self, repo: str, title: str, body: str) -> dict:
+        """Only for step sub-issues: the title must carry the factory prefix, and labels/assignees cannot be set."""
+        if not title.startswith(STEP_TITLE_PREFIX):
+            raise ValueError("factory issues must carry the step title prefix")
+        return self._req("POST", f"/repos/{repo}/issues", {"title": title, "body": body})
+
+    def update_issue(self, repo: str, number: int, body: str | None = None, state: str | None = None) -> dict:
+        data = {k: v for k, v in (("body", body), ("state", state)) if v is not None}
+        if state == "closed":
+            data["state_reason"] = "completed"
+        return self._req("PATCH", f"/repos/{repo}/issues/{int(number)}", data)
+
+    def add_sub_issue(self, repo: str, parent: int, sub_id: int) -> None:
+        self._req("POST", f"/repos/{repo}/issues/{int(parent)}/sub_issues", {"sub_issue_id": int(sub_id)})

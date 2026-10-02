@@ -16,7 +16,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 | `proxy.py` | The egress proxy: a CONNECT-only tunnel on a unix socket that allows only listed host names on port 443. |
 | `sanitize.py` | Cleans agent-written markdown before it is posted to GitHub. |
 | `telegram.py` / `events.py` | Alerts, commands and buttons; event categories and verbosity levels. |
-| `github.py` | A minimal GitHub client. Writes are limited to comments, labels and PRs (branches are pushed with git). |
+| `github.py` | A minimal GitHub client. Writes are limited to comments, labels, PRs and (when `[subtasks] enabled`) the step sub-issues the factory creates itself (branches are pushed with git). `subtasks.py` mirrors each pipeline step of a ticket as one sub-issue; the database stays the source of truth. |
 | `ui/` | The admin UI: `server.py` (HTTP, auth, headers), `views.py`/`forms.py` (escaped HTML), `settings.py` (validated edits to the overrides file), `integrations.py` (credentials and outbound checks), `admin.py` (routes). See [ui.md](ui.md). |
 | `tomlw.py` | A minimal TOML writer for the overrides file. |
 | `db.py` / `pause.py` / `ctl.py` | SQLite state (decisions, approvals, watched PRs), the pause switch, and a tiny operator CLI. |

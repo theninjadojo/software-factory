@@ -212,7 +212,13 @@ class Handler(BaseHTTPRequestHandler):
                 run = dbm.get_run(db, int(rid)) if rid.isdigit() else None
                 return page(f"Run #{int(rid)}", views.run_detail(run)) if run else self._send(404, "no such run", "text/plain")
             if path == "/tickets":
-                return page("Tickets", views.tickets_page(dbm.tickets(db)))
+                rows = dbm.tickets(db)
+                return page("Tickets", views.tickets_page(rows, dbm.step_counts(db, rows)))
+            if path == "/ticket":
+                n = q.get("n", "")
+                if not views.REPO.match(q.get("repo", "")) or not n.isdigit():
+                    return self._send(404, "no such ticket", "text/plain")
+                return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), dbm.steps_for_ticket(db, q["repo"], int(n))))
             if path == "/prs":
                 return page("PRs & CI", views.prs_table(dbm.watched_prs(db)))
             if path == "/events":

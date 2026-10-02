@@ -53,6 +53,7 @@ def connect(path: str) -> sqlite3.Connection:
     db.execute(
         """CREATE TABLE IF NOT EXISTS status (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated REAL NOT NULL)"""
     )
+    ensure_step_tables(db)
     return db
 
 
@@ -236,3 +237,90 @@ def prs_for_issue(db, issue_repo: str, issue_num: int) -> list[tuple[str, int]]:
     """Open factory PRs raised for a ticket (the ones a review should cover)."""
     return [(r, n) for r, n in db.execute(
         "SELECT repo, number FROM prs WHERE issue_repo=? AND issue_num=? AND status != 'closed' ORDER BY number", (issue_repo, issue_num))]
+
+
+# ---- pipeline steps: one per (ticket, step), derived from runs; optionally mirrored as GitHub sub-issues ----
+STEP_ORDER = ("analyze", "design", "architect", "implement", "review", "ci-fix")
+_STAGE_STEP = {"analyst": "analyze", "designer": "design", "architect": "architect", "reviewer": "review"}
+_DONE = {"stage", "pr"}
+_QUEUED = {"rate-limited", "interrupted"}                  # the run was requeued, nothing is running
+
+
+def step_of(kind: str, stage: str | None) -> str | None:
+    if kind == "build":
+        return "implement"
+    if kind == "fix":
+        return "ci-fix"
+    return _STAGE_STEP.get(stage or "")
+
+
+def step_status(run_status: str) -> str:
+    return "running" if run_status == "running" else "done" if run_status in _DONE else "queued" if run_status in _QUEUED else "failed"
+
+
+def ensure_step_tables(db) -> None:
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS step_issues (
+            repo TEXT NOT NULL, issue INTEGER NOT NULL, step TEXT NOT NULL,
+            sub_number INTEGER, sub_id INTEGER,
+            last_state TEXT NOT NULL DEFAULT 'open',
+            hands_off INTEGER NOT NULL DEFAULT 0,
+            sync_error TEXT NOT NULL DEFAULT '', updated REAL NOT NULL,
+            PRIMARY KEY (repo, issue, step))"""
+    )
+    db.execute("CREATE INDEX IF NOT EXISTS runs_ticket ON runs(repo, issue, id)")
+
+
+def get_step_issue(db, repo: str, issue: int, step: str) -> dict | None:
+    rows = _dicts(db.execute("SELECT * FROM step_issues WHERE repo=? AND issue=? AND step=?", (repo, issue, step)))
+    return rows[0] if rows else None
+
+
+def upsert_step_issue(db, repo: str, issue: int, step: str, **fields) -> None:
+    allowed = {"sub_number", "sub_id", "last_state", "hands_off", "sync_error"}
+    assert set(fields) <= allowed
+    db.execute("INSERT OR IGNORE INTO step_issues (repo, issue, step, updated) VALUES (?,?,?,?)", (repo, issue, step, time.time()))
+    if fields:
+        sets = ", ".join(f"{k}=?" for k in fields) + ", updated=?"
+        db.execute(f"UPDATE step_issues SET {sets} WHERE repo=? AND issue=? AND step=?", (*fields.values(), time.time(), repo, issue, step))
+    db.commit()
+
+
+def steps_for_ticket(db, repo: str, issue: int) -> list[dict]:
+    """The ticket's pipeline, computed from its runs (so tickets worked before step tracking have it too).
+    Retries, review runs and CI-fix rounds are grouped under their step; the latest run decides the status."""
+    try:
+        runs = _dicts(db.execute(
+            "SELECT id, kind, stage, harness, model, effort, started, finished, status, pr_urls FROM runs r "
+            "WHERE (r.repo=? AND r.issue=?) OR (r.kind='fix' AND EXISTS (SELECT 1 FROM prs p WHERE p.repo=r.repo AND p.issue_num=r.issue "
+            "AND p.issue_repo=? AND p.issue_num=?)) ORDER BY r.id", (repo, issue, repo, issue)))
+    except sqlite3.OperationalError:
+        return []
+    by: dict[str, list[dict]] = {}
+    for r in runs:
+        step = step_of(r["kind"], r["stage"])
+        if step:
+            by.setdefault(step, []).append(r)
+    try:
+        subs = {s["step"]: s for s in _dicts(db.execute("SELECT * FROM step_issues WHERE repo=? AND issue=?", (repo, issue)))}
+    except sqlite3.OperationalError:
+        subs = {}
+    out = []
+    for step in STEP_ORDER:
+        rs = by.get(step)
+        if not rs:
+            continue
+        last = rs[-1]
+        urls = " ".join(dict.fromkeys(u for r in rs for u in (r["pr_urls"] or "").split()))
+        sub = subs.get(step)
+        out.append({"step": step, "status": step_status(last["status"]), "attempts": len(rs), "run_id": last["id"],
+                    "run_ids": [r["id"] for r in rs], "role": last["stage"] or last["kind"], "harness": last["harness"],
+                    "model": last["model"], "effort": last["effort"], "started": rs[0]["started"], "finished": last["finished"],
+                    "pr_urls": urls, "sub_number": sub["sub_number"] if sub else None})
+    return out
+
+
+def step_counts(db, rows: list[dict]) -> dict[tuple[str, int], tuple[int, int]]:
+    """(done, total) steps for each ticket row, for the Tickets list."""
+    return {(t["repo"], t["issue"]): (sum(s["status"] == "done" for s in st), len(st))
+            for t in rows for st in [steps_for_ticket(db, t["repo"], t["issue"])]}

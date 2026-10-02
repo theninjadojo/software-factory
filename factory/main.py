@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, pause, runner
+from . import ci, conflicts, pause, runner, subtasks
 from . import db as dbm
 from .classifier import RuleClassifier
 from .config import Config, Route, load, project_for, project_info, resource_warning
@@ -27,6 +27,7 @@ WORKING, DONE, FAILED = "factory:working", "factory:pr-open", "factory:failed"
 tg: Telegram | None = None
 ev = None                                  # sqlite connection for runs/events/status when ev_path is not set (tests)
 ev_path: str | None = None                 # set in main(): each thread opens its own connection to this database
+step_gh = None                             # GitHub client used to mirror pipeline steps as sub-issues; None = off
 alert_filter = lambda event: True      # set from config in main(); read-only afterwards, so safe from every thread
 pool = Pool()                              # inline (one job at a time, in the caller's thread); main() starts worker threads
 queued: list[dict] = []                    # tickets the last poll left waiting for a free slot, for the UI
@@ -130,6 +131,8 @@ def begin_run(kind: str, repo: str, issue: dict, route, c=None, stage: str | Non
                           "needs_human": c.needs_human, "confidence": round(c.confidence, 3), "source": c.source}) if c else ""
         run_id = dbm.start_run(db, kind, repo, issue["number"], issue.get("title", ""), route.harness, route.model, route.effort, cls, stage)
         emit("run:start", f"{kind}{' ' + stage if stage else ''} started with {route.model} ({route.effort})", repo, issue["number"], run_id)
+        if step_gh is not None:
+            subtasks.sync(step_gh, db, repo, issue["number"], dbm.step_of(kind, stage))
         return run_id
     except Exception:
         log.exception("could not record run start")
@@ -140,8 +143,12 @@ def end_run(run_id, res, sink: dict) -> None:
     if run_id is None:
         return
     try:
-        dbm.finish_run(_ev(), run_id, res.status, res.detail, res.pr_url or "", res.output, sink.get("log", ""))
+        db = _ev()
+        dbm.finish_run(db, run_id, res.status, res.detail, res.pr_url or "", res.output, sink.get("log", ""))
         emit(f"run:{res.status}", res.detail[:300], None, None, run_id)
+        if step_gh is not None:
+            r = dbm.get_run(db, run_id)
+            subtasks.sync(step_gh, db, r["repo"], r["issue"], dbm.step_of(r["kind"], r["stage"]))
     except Exception:
         log.exception("could not record run end")
 
@@ -407,7 +414,7 @@ def run_fix(cfg: Config, gh: GitHub, repo: str, number: int, issue_repo: str, is
     if not branch.startswith("factory/") or pr["head"]["repo"]["full_name"] != repo:
         return False                                     # never touch a branch the factory did not create
     issue = gh.get_issue(issue_repo, issue_num)
-    run_id, sink = begin_run("fix", repo, issue, cfg.routes["medium"]), {}
+    run_id, sink = begin_run("fix", issue_repo, issue, cfg.routes["medium"]), {}
     res = runner.run_task(cfg, gh, issue_repo, issue, cfg.routes["medium"], prior=stage_outputs(gh, issue_repo, issue_num),
                           comments=human_comments(gh, issue_repo, issue_num), fix_branch=branch, failures=failures, sink=sink)
     end_run(run_id, res, sink)
@@ -703,12 +710,13 @@ def main() -> None:
     log.info("classifier: %s", type(clf).__name__)
     global alert_filter
     alert_filter = lambda event: event_enabled(cfg.telegram_verbosity, event, cfg.telegram_events)
-    global ev_path, pool
+    global ev_path, pool, step_gh
     ev_path = cfg.db_path
     conn, gh = dbm.local(cfg.db_path), GitHub(token)     # the poll thread's connection; every worker opens its own
     if not args.once:               # --once runs its jobs inline, one after another, and returns when they are done
         pool = Pool(cfg.runner.max_parallel, threaded=True)
     log.info("running up to %d job(s) at once", pool.max)
+    step_gh = gh if cfg.subtasks.enabled and not cfg.dry_run and token else None
     if not args.once:
         stranded = dbm.mark_interrupted(conn)
         emit("startup", f"orchestrator started ({'dry-run' if cfg.dry_run else 'LIVE'}), {len(cfg.repos)} repo(s)"

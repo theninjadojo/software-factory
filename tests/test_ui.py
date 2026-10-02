@@ -67,7 +67,7 @@ class UiCase(unittest.TestCase):
 
 class Auth(UiCase):
     def test_everything_requires_a_session(self):
-        for path in ("/", "/runs", "/tickets", "/prs", "/events", "/runs/1"):
+        for path in ("/", "/runs", "/tickets", "/prs", "/events", "/runs/1", "/ticket?repo=o/r&n=4"):
             s, h, _ = self.req("GET", path)
             self.assertEqual((s, h["Location"]), (303, "/login"), path)
         self.assertEqual(self.req("GET", "/fragment/overview")[0], 401)          # a status code, not a login page to inject

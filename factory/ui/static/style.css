@@ -32,5 +32,12 @@ fieldset { border:1px solid var(--line); border-radius:10px; background:var(--pa
 .cards.one { grid-template-columns: 1fr; } .harness textarea { width:100%; max-width:46rem; } .inline-form { margin:.4rem 0 1.4rem; }
 .chip-row { list-style:none; padding:0; margin:0 0 1rem; display:flex; flex-wrap:wrap; gap:.4rem; } .chip-row form { display:inline; }
 .labels button { min-height:44px; }
+.belt { list-style:none; display:flex; flex-wrap:wrap; gap:1.6rem; padding:0; margin:.5rem 0 1rem; }
+.station { position:relative; background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--line); border-radius:10px; padding:.7rem .9rem; min-width:9rem; min-height:44px; }
+.station:not(:last-child)::after { content:"▶"; position:absolute; right:-1.25rem; top:50%; transform:translateY(-50%); color:var(--line); }
+.station.done { border-left-color:var(--good); } .station.running { border-left-color:var(--warn); } .station.failed { border-left-color:var(--bad); }
+.station-link:focus-visible { outline:2px solid var(--accent); }
+.step-count { font-variant-numeric:tabular-nums; }
+@media (max-width:640px) { .belt { flex-direction:column; } .station:not(:last-child)::after { content:"▼"; right:auto; left:1rem; top:auto; bottom:-1.4rem; transform:none; } }
 
 button.secondary { background:var(--panel); color:var(--text); border-color:var(--line); } td.actions { white-space:nowrap; } td.actions form { margin-right:.25rem; }
