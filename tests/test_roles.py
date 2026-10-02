@@ -105,8 +105,8 @@ class Flows(unittest.TestCase):
         self.assertEqual(fake.call_args.args[4].model, "opus")
         self.assertIn(("add", ("factory:pr-open",)), gh.calls)
 
-    def test_auto_sends_unsure_or_needs_human_or_repeated_stage_to_a_person(self):
-        for kw, labels in ((dict(needs_human=True), []), (dict(stage_confidence=0.3), []),
+    def test_auto_sends_unsure_or_needs_human_or_repeated_stage_to_a_person_once_the_analyst_is_done(self):
+        for kw, labels in ((dict(needs_human=True), ["stage:analysed"]), (dict(stage_confidence=0.3), ["stage:analysed"]),
                            (dict(stage="analyze"), ["stage:analysed"])):
             gh = FakeGH({"factory:auto": [issue(labels=["factory:auto", *labels])]})
             fake, conn = self.run_poll(gh, FakeClf(**kw))
@@ -131,12 +131,32 @@ class Flows(unittest.TestCase):
         fake.assert_not_called()
         self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "human")
 
-    def test_a_build_the_classifier_is_unsure_about_still_asks(self):
+    def test_a_build_the_classifier_is_unsure_about_still_asks_after_the_analyst(self):
         for kw in (dict(stage="implement", needs_human=True), dict(stage="implement", stage_confidence=0.2), dict(stage=None, confidence=0.2)):
-            gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+            gh = FakeGH({"factory:auto": [issue(labels=["factory:auto", "stage:analysed"])]})
             fake, conn = self.run_poll(gh, FakeClf(**kw))
             fake.assert_not_called()
             self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "human", kw)
+
+    def test_unsure_before_any_analysis_runs_the_analyst_first_instead_of_asking(self):
+        """A vague ticket (or a build the classifier is unsure about) gets the cheap read-only analysis first; a person is asked only afterwards."""
+        for kw in (dict(stage="implement", needs_human=True), dict(stage="implement", stage_confidence=0.2),
+                   dict(stage=None, confidence=0.2), dict(stage="implement", confidence=0.3)):
+            gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+            fake, conn = self.run_poll(gh, FakeClf(**kw))
+            self.assertEqual(fake.call_count, 1, kw)
+            self.assertEqual(fake.call_args.kwargs["role"], "analyst", kw)
+            self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "run:stage")
+
+    def test_a_confident_build_is_unaffected_and_confirm_stages_still_asks(self):
+        from dataclasses import replace
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        fake, _ = self.run_poll(gh, FakeClf(stage="implement", complexity="high"), result=RunResult("pr", "ok", "http://pr"))
+        self.assertIsNone(fake.call_args.kwargs.get("role"))
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        fake, conn = self.run_poll(gh, FakeClf(stage="implement", needs_human=True), cfg=replace(CFG, auto_confirm_stages=True))
+        fake.assert_not_called()
+        self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "human")
 
     def test_only_our_own_comments_count_as_stage_outputs(self):
         gh = FakeGH(comments=[

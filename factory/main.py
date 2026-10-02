@@ -684,6 +684,10 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         # is exactly why an analyst is the right next step, so it runs without asking. A person is asked before a BUILD, or when
         # the classifier named no stage, or a stage that is already done.
         read_only_pick = bool(st) and st not in done and not cfg.auto_confirm_stages
+        if (not read_only_pick and (c.needs_human or not sure) and not cfg.auto_confirm_stages and "analyst" not in done
+                and any(r.name == "analyst" for r in cfg.roles)):
+            st, read_only_pick = "analyst", True       # unsure what to do: the cheap read-only analyst is the right first step, not a question
+            emit("decision", f"unsure ({summary}): running the analyst first", repo, num)
         # A question that needs a person is never auto-resolved: until it is answered, auto does not build (whatever the classifier says).
         if not read_only_pick and (c.needs_human or open_questions or not sure or (st and st in done)):
             reason = ("needs a person" if c.needs_human else "open questions need a person" if open_questions
