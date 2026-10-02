@@ -1,4 +1,5 @@
 import dataclasses
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -65,6 +66,9 @@ class RunnerCfg:
     timeout_seconds: int = 1800
     memory: str = "3g"
     cpus: str = "2"
+    # Sandboxes running at once (1-8). Each may use `memory` and `cpus`: keep max_parallel x memory within the host's RAM
+    # (a 4 vCPU / 8 GB host fits 2 runs of 3g; 3 is the edge). The orchestrator warns at startup when it does not fit.
+    max_parallel: int = 1
     max_turns: int = 40
     rate_limit_backoff_seconds: int = 3600
     max_patch_bytes: int = 2_000_000
@@ -200,7 +204,32 @@ def _runner(rn: dict) -> "RunnerCfg":
     r = RunnerCfg(**rn)
     if r.engine not in ("podman", "docker"):
         raise ValueError(f"runner.engine must be 'podman' or 'docker', got {r.engine!r}")
+    if not isinstance(r.max_parallel, int) or isinstance(r.max_parallel, bool) or not 1 <= r.max_parallel <= 8:
+        raise ValueError(f"runner.max_parallel must be a whole number from 1 to 8, got {r.max_parallel!r}")
     return r
+
+
+def resource_warning(rn: "RunnerCfg") -> str | None:
+    """A warning when max_parallel sandboxes at their limits need more memory or CPUs than this host reports, else None.
+    Only what the host reports is compared: if it cannot be read, nothing is guessed and no warning is given."""
+    out = []
+    m = re.fullmatch(r"(\d+)([kKmMgG])", rn.memory.strip())
+    try:
+        host = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):
+        host = None
+    if m and host and host > 0:
+        need = int(m.group(1)) * 1024 ** "kmg".index(m.group(2).lower()) * 1024 * rn.max_parallel
+        if need > host:
+            out.append(f"{rn.max_parallel} x {rn.memory} of sandbox memory is more than the host's {host / 1024 ** 3:.1f} GB")
+    cpus = os.cpu_count()
+    try:
+        want = float(rn.cpus) * rn.max_parallel
+    except ValueError:
+        want = None
+    if cpus and want and want > cpus:
+        out.append(f"{rn.max_parallel} x {rn.cpus} sandbox CPUs is more than the host's {cpus}")
+    return ("runner.max_parallel: " + "; ".join(out) + ". Lower max_parallel or the per-sandbox limits.") if out else None
 
 
 def _aliases(v) -> dict:
