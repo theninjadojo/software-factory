@@ -370,6 +370,34 @@ class Labels(AdminCase):
         self.assertEqual(self.req("POST", "/tickets/start", urlencode(self.fields(action="auto")), cookie=cookie)[0], 403)
         self.gh.add_labels.assert_not_called()
 
+    def test_needs_a_person_offers_the_telegram_choices_and_clears_trigger_labels(self):
+        dbm.record(self.db, self.REPO, 7, "T", "human", "x; cls=feature/high/human=True/conf=0.80/stage=architect; needs a person")
+        issue = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:auto"}]}
+        self.gh.get_issue.return_value = issue
+        self.gh.issues.return_value = ([issue], False)
+        self.gh.repo_labels.return_value = [{"name": n} for n in ("factory:auto", "factory:ready", "factory:architect")]
+        cookie, csrf = self.session()
+        _, _, html = self.req("GET", "/tickets", cookie=cookie)
+        self.assertIn("needs a person", html)
+        self.assertLess(html.index('value="stage:architect"'), html.index('value="build"'))
+        self.assertIn('value="skip"', html)
+        self.assertNotIn('value="auto"', html)
+        self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="stage:architect"))[0], 303)
+        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:architect"])
+        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "factory:auto")
+        self.gh.add_labels.reset_mock(); self.gh.remove_label.reset_mock()
+        self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="skip"))[0], 303)
+        self.gh.add_labels.assert_not_called()
+        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "factory:auto")
+
+    def test_skip_and_stage_actions_are_refused_when_nothing_is_waiting(self):
+        cookie, csrf = self.session()
+        self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:auto"}]}   # queued, no "human" decision
+        for action in ("skip", "stage:architect", "build"):
+            self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action=action))[0], 400)
+        self.gh.remove_label.assert_not_called()
+        self.gh.add_labels.assert_not_called()
+
     def test_done_stages_are_not_offered_again(self):
         self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "stage:analysed"}]}
         self.gh.issues.return_value = ([self.gh.get_issue.return_value], False)

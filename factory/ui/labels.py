@@ -6,14 +6,16 @@ import urllib.error
 
 from .. import db as dbm
 from ..github import GitHub
+from ..roles import STAGE_TO_ROLE
 from . import integrations as I, views
 from .views import badge, csrf_field, esc
 
 log = logging.getLogger("factory.ui")
 NUM = re.compile(r"^\d{1,9}$")
 STATES = ("open", "closed", "all")
-FLASH = {"started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced."}
+FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it is labelled again.", "started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced."}
 VERBS = {"analyst": "Analyze", "designer": "Design", "architect": "Architect"}
+NEEDS_PERSON = "needs a person"
 NO_TOKEN = "Save a GitHub token on the Credentials page first."
 
 
@@ -74,7 +76,7 @@ def _existing(gh: GitHub, repo: str, *names: str) -> None:
             raise Refused(f"That label does not exist in {repo}.")
 
 
-def actions_for(cfg, issue: dict) -> tuple[str, list[tuple[str, str, str]]]:
+def actions_for(cfg, issue: dict, decision: dict | None = None) -> tuple[str, list[tuple[str, str, str | None]]]:
     """What can be started on a ticket right now: (status text, [(action, button text, label to apply)]).
     The mapping is fixed here and built from config; the browser only ever names an action, never a label."""
     names = set(_names(issue))
@@ -84,6 +86,8 @@ def actions_for(cfg, issue: dict) -> tuple[str, list[tuple[str, str, str]]]:
         return "running", []
     triggers = {cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else [])}
     if names & triggers:
+        if decision and decision.get("outcome") == "human":       # the factory asked a person (the Telegram Run / Build anyway / Skip prompt)
+            return NEEDS_PERSON, human_actions(cfg, names, decision)
         return "queued", []
     acts = [("auto", "Auto", cfg.auto_label)]
     acts += [(r.name, VERBS.get(r.name, r.name.capitalize()), r.label) for r in cfg.roles if r.done_label not in names]
@@ -92,6 +96,14 @@ def actions_for(cfg, issue: dict) -> tuple[str, list[tuple[str, str, str]]]:
         acts.append(("review", "Review", cfg.review.label))
     status = "failed" if "factory:failed" in names else "pr open" if "factory:pr-open" in names else ""
     return status, acts
+
+
+def human_actions(cfg, names: set, decision: dict) -> list[tuple[str, str, str | None]]:
+    """The same choices the Telegram prompt offers: the recommended stage first, then build, then skip (a None label)."""
+    m = re.search(r"stage=(\w+)", decision.get("detail") or "")
+    pick = next((r for r in cfg.roles if r.name == STAGE_TO_ROLE.get(m.group(1) if m else "") and r.done_label not in names), None)
+    acts = [(f"stage:{pick.name}", f"Run {pick.name}", pick.label)] if pick else []
+    return acts + [("build", "Build anyway" if pick else "Build", cfg.trigger_label), ("skip", "Skip", None)]
 
 
 def _gh(h):
@@ -165,12 +177,12 @@ def table(cfg, repo, issues, decisions, csrf) -> str:
         return f'{badge(d["outcome"])}{run}<br><span class="muted">{esc(views.ago(d["decided_at"]))}</span>'
 
     def buttons(i) -> str:
-        status, acts = actions_for(cfg, i)
+        status, acts = actions_for(cfg, i, decisions.get((repo, i["number"])))
         hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(i["number"])}">'
         out = "".join(
             f'<form method="post" action="/tickets/start" class="inline">{hidden}'
-            f'<button name="action" value="{esc(a)}" class="{"" if a == "auto" else "secondary"}" title="Applies {esc(lab)}" '
-            f'aria-label="{esc(text)} #{int(i["number"])}">{esc(text)}</button></form> ' for a, text, lab in acts)
+            f'<button name="action" value="{esc(a)}" class="{"" if k == 0 else "secondary"}" title="{esc("Removes the trigger labels" if lab is None else "Applies " + lab)}" '
+            f'aria-label="{esc(text)} #{int(i["number"])}">{esc(text)}</button></form> ' for k, (a, text, lab) in enumerate(acts))
         note = f'<span class="muted">{esc(status)}</span> ' if status else ""
         return note + out + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
 
@@ -312,16 +324,23 @@ def start(h, form, csrf: str) -> None:
         issue = gh.get_issue(repo, n)
         if "pull_request" in issue:
             return h._send(404, "no such issue", "text/plain")
-        status, acts = actions_for(cfg, issue)
-        chosen = next((lab for a, _, lab in acts if a == action), None)
-        if chosen is None:
+        status, acts = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)))
+        found = next(((a, lab) for a, _, lab in acts if a == action), None)
+        if found is None:
             raise Refused(f"That cannot be started now ({status or 'not available'}).")
-        _existing(gh, repo, chosen)
-        gh.add_labels(repo, n, [chosen])
+        chosen = found[1]
+        if chosen:
+            _existing(gh, repo, chosen)
+            gh.add_labels(repo, n, [chosen])                 # add first: if it fails nothing has changed
+        if status == NEEDS_PERSON:                           # answering the prompt covers the whole ticket: clear every trigger label
+            held = set(_names(issue))
+            for lab in (cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else [])):
+                if lab in held and lab != chosen:
+                    gh.remove_label(repo, n, lab)
     except Refused as e:
         return _render_issue(h, csrf, repo, n, str(e), "bad", 400)
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: start %s on %s#%d failed", action, repo, n)
         return _render_issue(h, csrf, repo, n, _github_error(e), "bad", 502)
     log.info("tickets: started %s on %s#%d from the UI", action, repo, n)
-    h._redirect(f"/tickets?repo={repo}&ok=started")
+    h._redirect(f"/tickets?repo={repo}&ok={'skipped' if action == 'skip' else 'started'}")

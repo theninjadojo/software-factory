@@ -71,3 +71,8 @@ buttons for what can be started right now: **Auto**, the stages not yet done (**
 and **Review** (when enabled and a PR is open). A button applies the matching trigger label as the factory's account, and the
 orchestrator starts the work at its next poll. A ticket that is running or queued shows its status instead of buttons. The browser
 only names an action; the label comes from config, and the ticket is re-read before the label is applied.
+
+**Needs a person.** When the factory has asked a person (the Telegram prompt), the same choices appear on the ticket row: the
+recommended stage, **Build anyway**, and **Skip**. They work from the labels, not the database, so they behave the same whichever
+place you answer: a stage or build applies its label and clears the trigger labels; Skip clears them and the factory leaves the
+ticket alone.
