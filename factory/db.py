@@ -3,7 +3,9 @@ import time
 
 
 def connect(path: str) -> sqlite3.Connection:
-    db = sqlite3.connect(path)
+    db = sqlite3.connect(path, timeout=10)
+    db.execute("PRAGMA journal_mode=WAL")           # the UI reads while the orchestrator writes
+    db.execute("PRAGMA busy_timeout=10000")
     db.execute(
         """CREATE TABLE IF NOT EXISTS decisions (
             repo TEXT NOT NULL, issue INTEGER NOT NULL, updated_at TEXT NOT NULL,
@@ -21,6 +23,23 @@ def connect(path: str) -> sqlite3.Connection:
             status TEXT NOT NULL, rounds INTEGER NOT NULL DEFAULT 0, watch_started REAL NOT NULL,
             updated REAL NOT NULL, summary TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (repo, number))"""
+    )
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, stage TEXT, repo TEXT NOT NULL,
+            issue INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', harness TEXT, model TEXT, effort TEXT,
+            classification TEXT NOT NULL DEFAULT '', started REAL NOT NULL, finished REAL,
+            status TEXT NOT NULL DEFAULT 'running', detail TEXT NOT NULL DEFAULT '',
+            pr_urls TEXT NOT NULL DEFAULT '', output TEXT NOT NULL DEFAULT '', log_tail TEXT NOT NULL DEFAULT '')"""
+    )
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, kind TEXT NOT NULL, repo TEXT, issue INTEGER,
+            run_id INTEGER, message TEXT NOT NULL)"""
+    )
+    db.execute("CREATE INDEX IF NOT EXISTS events_kind ON events(kind, id)")
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS status (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated REAL NOT NULL)"""
     )
     return db
 
@@ -65,3 +84,87 @@ def update_pr(db, repo: str, number: int, **fields) -> None:
     sets = ", ".join(f"{k}=?" for k in fields) + ", updated=?"
     db.execute(f"UPDATE prs SET {sets} WHERE repo=? AND number=?", (*fields.values(), time.time(), repo, number))
     db.commit()
+
+
+# ---- observability: runs, events, heartbeat (read by the UI) ----
+MAX_OUTPUT, MAX_LOG, KEEP_EVENTS = 60000, 8000, 20000
+
+
+def _dicts(cur) -> list[dict]:
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def start_run(db, kind: str, repo: str, issue: int, title: str, harness: str | None, model: str | None,
+              effort: str | None, classification: str = "", stage: str | None = None) -> int:
+    cur = db.execute(
+        "INSERT INTO runs (kind, stage, repo, issue, title, harness, model, effort, classification, started) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)", (kind, stage, repo, issue, title[:300], harness, model, effort, classification, time.time()))
+    db.commit()
+    return cur.lastrowid
+
+
+def finish_run(db, run_id: int, status: str, detail: str = "", pr_urls: str = "", output: str = "", log_tail: str = "") -> None:
+    db.execute("UPDATE runs SET finished=?, status=?, detail=?, pr_urls=?, output=?, log_tail=? WHERE id=?",
+               (time.time(), status, detail[:1000], pr_urls, output[:MAX_OUTPUT], log_tail[-MAX_LOG:], run_id))
+    db.commit()
+
+
+def mark_interrupted(db) -> int:
+    """Runs still marked running when a new orchestrator starts were killed with the old one."""
+    cur = db.execute("UPDATE runs SET status='interrupted', finished=?, detail='orchestrator restarted' WHERE status='running'", (time.time(),))
+    db.commit()
+    return cur.rowcount
+
+
+def add_event(db, kind: str, message: str, repo: str | None = None, issue: int | None = None, run_id: int | None = None) -> None:
+    cur = db.execute("INSERT INTO events (ts, kind, repo, issue, run_id, message) VALUES (?,?,?,?,?,?)",
+                     (time.time(), kind, repo, issue, run_id, message[:2000]))
+    if cur.lastrowid % 500 == 0:                      # keep the timeline bounded
+        db.execute("DELETE FROM events WHERE id < ?", (cur.lastrowid - KEEP_EVENTS,))
+    db.commit()
+
+
+def set_status(db, key: str, value: str) -> None:
+    db.execute("INSERT INTO status (key, value, updated) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated=excluded.updated",
+               (key, value, time.time()))
+    db.commit()
+
+
+def get_status(db) -> dict:
+    return {k: {"value": v, "updated": u} for k, v, u in db.execute("SELECT key, value, updated FROM status")}
+
+
+def recent_runs(db, limit: int = 50, offset: int = 0, status: str | None = None, repo: str | None = None) -> list[dict]:
+    where, args = [], []
+    if status:
+        where.append("status=?"); args.append(status)
+    if repo:
+        where.append("repo=?"); args.append(repo)
+    sql = ("SELECT id, kind, stage, repo, issue, title, harness, model, effort, started, finished, status, detail, pr_urls "
+           "FROM runs" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ? OFFSET ?")
+    return _dicts(db.execute(sql, (*args, limit, offset)))
+
+
+def get_run(db, run_id: int) -> dict | None:
+    rows = _dicts(db.execute("SELECT * FROM runs WHERE id=?", (run_id,)))
+    return rows[0] if rows else None
+
+
+def recent_events(db, limit: int = 100, kind_prefix: str | None = None, before_id: int | None = None) -> list[dict]:
+    where, args = [], []
+    if kind_prefix:
+        where.append("kind LIKE ?"); args.append(kind_prefix + "%")
+    if before_id:
+        where.append("id < ?"); args.append(before_id)
+    sql = "SELECT id, ts, kind, repo, issue, run_id, message FROM events" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ?"
+    return _dicts(db.execute(sql, (*args, limit)))
+
+
+def latest_decisions(db, limit: int = 100) -> list[dict]:
+    return _dicts(db.execute("SELECT repo, issue, outcome, detail, decided_at FROM decisions ORDER BY decided_at DESC LIMIT ?", (limit,)))
+
+
+def watched_prs(db, limit: int = 100) -> list[dict]:
+    return _dicts(db.execute("SELECT repo, number, issue_repo, issue_num, status, rounds, watch_started, updated, summary "
+                             "FROM prs ORDER BY updated DESC LIMIT ?", (limit,)))

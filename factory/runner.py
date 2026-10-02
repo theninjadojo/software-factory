@@ -196,7 +196,7 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path) -> list[str]:
 
 def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role: str | None = None,
              prior: dict | None = None, comments: list | None = None, fix_branch: str | None = None,
-             failures: str | None = None) -> RunResult:
+             failures: str | None = None, sink: dict | None = None) -> RunResult:
     """Implementation (role=None): edit the workspace, validate the patches, push branches, open PRs.
     Role (analyst/designer/architect): read-only; any edits are discarded and the agent's document is returned."""
     if fix_branch and not fix_branch.startswith(BRANCH_PREFIX):
@@ -236,6 +236,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             return RunResult("failed", f"agent timed out after {rn.timeout_seconds}s")
         logf = d / "out" / "agent.log"
         text = logf.read_text(errors="replace") if logf.exists() else ""
+        if sink is not None:
+            sink["log"] = text[-8000:]               # the caller records it (the workspace is deleted afterwards)
         codef = d / "out" / "exit_code"
         code = codef.read_text().strip() if codef.exists() else "?"
         if role:

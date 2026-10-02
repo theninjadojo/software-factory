@@ -9,6 +9,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+from . import db as dbm
 from . import pause
 
 log = logging.getLogger("factory.telegram")
@@ -60,8 +61,27 @@ class Telegram:
         p = pause.paused(self.state_dir)
         return f"paused: {p or 'no'}\n" + "\n".join(f"{t} {r}#{i} {o}" for r, i, o, t in rows)
 
+    def _note_unknown(self, update: dict) -> None:
+        """Remember (id, first name, chat type) of someone else messaging the bot, never their text, so the UI can offer
+        'use this id'. Nothing is acted on."""
+        try:
+            src = update.get("message") or update.get("callback_query") or {}
+            who = src.get("from") or {}
+            if not who.get("id"):
+                return
+            chat = (src.get("message") or src).get("chat", {})
+            db = dbm.connect(self.db_path)
+            known = json.loads((dbm.get_status(db).get("telegram_unknown_senders") or {}).get("value", "[]"))
+            known = [k for k in known if k["id"] != who["id"]] + [
+                {"id": who["id"], "name": str(who.get("first_name", ""))[:40], "chat": chat.get("type", ""), "ts": time.time()}]
+            dbm.set_status(db, "telegram_unknown_senders", json.dumps(known[-5:]))
+            db.close()
+        except Exception:
+            log.exception("could not record unknown sender")
+
     def handle(self, update: dict) -> None:
         if not authorized(update, self.chat_id):
+            self._note_unknown(update)
             return
         if (cb := update.get("callback_query")):
             parsed = parse_callback(cb.get("data", ""))

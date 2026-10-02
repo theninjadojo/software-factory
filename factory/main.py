@@ -1,8 +1,11 @@
 import argparse
+import json
 import logging
+import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -21,6 +24,7 @@ from .telegram import Telegram
 log = logging.getLogger("factory")
 WORKING, DONE, FAILED = "factory:working", "factory:pr-open", "factory:failed"
 tg: Telegram | None = None
+ev = None                                  # sqlite connection for runs/events/status; set in main()
 alert_filter = lambda event: True      # set from config in main()
 
 
@@ -77,8 +81,56 @@ def picked(route, c) -> str:
 
 def alert(text: str, buttons=None, event: str = "info") -> None:
     """Send a Telegram message if this event category is enabled by the configured verbosity."""
-    if tg and alert_filter(event):
+    sent = bool(tg and alert_filter(event))
+    if sent:
         tg.send(text, buttons)
+    emit(f"alert:{event}", text + ("" if sent else "  [not sent to Telegram]"))
+
+
+def emit(kind: str, message: str, repo: str | None = None, issue: int | None = None, run_id: int | None = None) -> None:
+    """Append to the timeline the UI shows. Observability must never break the orchestrator."""
+    if ev is None:
+        return
+    try:
+        dbm.add_event(ev, kind, message, repo, issue, run_id)
+    except Exception:
+        log.exception("could not record event")
+
+
+def begin_run(kind: str, repo: str, issue: dict, route, c=None, stage: str | None = None):
+    if ev is None:
+        return None
+    try:
+        cls = json.dumps({"kind": c.kind, "complexity": c.complexity, "stage": c.stage, "effort": c.effort,
+                          "needs_human": c.needs_human, "confidence": round(c.confidence, 3), "source": c.source}) if c else ""
+        run_id = dbm.start_run(ev, kind, repo, issue["number"], issue.get("title", ""), route.harness, route.model, route.effort, cls, stage)
+        dbm.set_status(ev, "running", str(run_id))
+        emit("run:start", f"{kind}{' ' + stage if stage else ''} started with {route.model} ({route.effort})", repo, issue["number"], run_id)
+        return run_id
+    except Exception:
+        log.exception("could not record run start")
+        return None
+
+
+def end_run(run_id, res, sink: dict) -> None:
+    if ev is None or run_id is None:
+        return
+    try:
+        dbm.finish_run(ev, run_id, res.status, res.detail, res.pr_url or "", res.output, sink.get("log", ""))
+        dbm.set_status(ev, "running", "")
+        emit(f"run:{res.status}", res.detail[:300], None, None, run_id)
+    except Exception:
+        log.exception("could not record run end")
+
+
+def maybe_restart(state_dir: Path) -> None:
+    """Settings saved in the UI take effect by re-executing at an idle moment, never in the middle of a task."""
+    marker = state_dir / "RESTART"
+    if marker.exists():
+        marker.unlink(missing_ok=True)
+        emit("restart", "settings changed: restarting to apply them")
+        log.warning("RESTART marker found: re-executing to apply new settings")
+        os.execv(sys.executable, [sys.executable, "-m", "factory.main", *sys.argv[1:]])
 
 
 def trusted(cfg: Config, gh: GitHub, repo: str, num: int, label: str | None = None) -> tuple[bool, str]:
@@ -115,8 +167,10 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     num, trigger_label = issue["number"], trigger_label or cfg.trigger_label
     alert(f"Starting {repo}#{num}: {issue['title'][:80]}\n{picked(route, c)}", event="started")
     claim(gh, repo, num, trigger_label, "implement")
+    run_id, sink = begin_run("build", repo, issue, route, c), {}
     res = runner.run_task(cfg, gh, repo, issue, route, prior=stage_outputs(gh, repo, num),
-                          comments=human_comments(gh, repo, num))
+                          comments=human_comments(gh, repo, num), sink=sink)
+    end_run(run_id, res, sink)
     gh.remove_label(repo, num, WORKING)
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, "implement")
@@ -168,7 +222,9 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
           + (f"\nchosen by {c.source} (stage {c.stage}, confidence {c.stage_confidence:.2f})" if c and c.stage_confidence else ""), event="started")
     claim(gh, repo, num, trigger_label, role.name)
     comments = human_comments(gh, repo, num)
-    res = runner.run_task(cfg, gh, repo, issue, route, role=role.name, prior=stage_outputs(gh, repo, num), comments=comments)
+    run_id, sink = begin_run("stage", repo, issue, route, c, role.name), {}
+    res = runner.run_task(cfg, gh, repo, issue, route, role=role.name, prior=stage_outputs(gh, repo, num), comments=comments, sink=sink)
+    end_run(run_id, res, sink)
     gh.remove_label(repo, num, working_label(role.name))
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, role.name)
@@ -227,8 +283,10 @@ def run_fix(cfg: Config, gh: GitHub, repo: str, number: int, issue_repo: str, is
     if not branch.startswith("factory/") or pr["head"]["repo"]["full_name"] != repo:
         return False                                     # never touch a branch the factory did not create
     issue = gh.get_issue(issue_repo, issue_num)
+    run_id, sink = begin_run("fix", repo, issue, cfg.routes["medium"]), {}
     res = runner.run_task(cfg, gh, issue_repo, issue, cfg.routes["medium"], prior=stage_outputs(gh, issue_repo, issue_num),
-                          comments=human_comments(gh, issue_repo, issue_num), fix_branch=branch, failures=failures)
+                          comments=human_comments(gh, issue_repo, issue_num), fix_branch=branch, failures=failures, sink=sink)
+    end_run(run_id, res, sink)
     if res.status == "rate-limited":
         pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds)
         alert(f"Rate limited during a CI fix for {repo}#{number}; pausing.", event="rate_limit")
@@ -266,6 +324,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
     ok, why = trusted(cfg, gh, repo, num, label)
     if not ok:
         dbm.record(conn, repo, num, updated, "ignored", why)
+        emit("decision", f"ignored: {why}", repo, num)
         log.info("%s#%d ignored: %s", repo, num, why)
         return None
     if not cfg.dry_run and (why_paused := pause.paused(Path(cfg.db_path).parent)):
@@ -284,6 +343,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         if c.needs_human or not sure or (st and st in done):
             reason = "needs a person" if c.needs_human else "low confidence" if not sure else "chose a stage already done"
             dbm.record(conn, repo, num, updated, "human", f"{why}; {summary}; {reason}")
+            emit("decision", f"needs a person: {reason} ({summary})", repo, num)
             log.info("%s#%d auto -> human (%s)", repo, num, reason)
             if not cfg.dry_run:
                 alert(f"Needs a person: {repo}#{num}\n{issue['title'][:120]}\nReason: {reason}\n"
@@ -296,6 +356,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         detail = f"{why}; {summary}; stage={role.name}"
         if cfg.dry_run:
             dbm.record(conn, repo, num, updated, "stage", detail)
+            emit("decision", f"dry-run: would run {role.name} ({summary})", repo, num)
             log.info("%s#%d -> stage %s [dry-run]", repo, num, role.name)
             return None
         res = dispatch_stage(cfg, gh, classifier, repo, issue, role, c if kind == "auto" else None, label)
@@ -311,6 +372,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         log.info("%s#%d run %s: %s %s", repo, num, res.status, res.detail, res.pr_url or "")
     else:
         dbm.record(conn, repo, num, updated, d.action, detail)
+        emit("decision", f"{d.action}: {d.reason} ({summary}){' [dry-run]' if cfg.dry_run else ''}", repo, num)
         log.info("%s#%d -> %s (%s)%s", repo, num, d.action, detail, " [dry-run]" if cfg.dry_run else "")
         if d.action == "human" and not cfg.dry_run:
             alert(f"Needs a person: {repo}#{num}\n{issue['title'][:120]}\nReason: {d.reason}\n"
@@ -359,6 +421,12 @@ def main() -> None:
     global alert_filter
     alert_filter = lambda event: event_enabled(cfg.telegram_verbosity, event, cfg.telegram_events)
     conn, gh = dbm.connect(cfg.db_path), GitHub(token)
+    global ev
+    ev = conn
+    if not args.once:
+        stranded = dbm.mark_interrupted(conn)
+        emit("startup", f"orchestrator started ({'dry-run' if cfg.dry_run else 'LIVE'}), {len(cfg.repos)} repo(s)"
+                        + (f"; {stranded} run(s) were interrupted by the restart" if stranded else ""))
     global tg
     tf = cfg.telegram_token_file
     if tf and cfg.telegram_chat_id and Path(tf).exists() and not args.once:
@@ -369,10 +437,22 @@ def main() -> None:
     if not args.once and not cfg.dry_run:
         recover(cfg, gh)
     while True:
+        if not args.once:
+            maybe_restart(Path(cfg.db_path).parent)
         try:
+            dbm.set_status(conn, "mode", "dry-run" if cfg.dry_run else "LIVE")
+            dbm.set_status(conn, "paused", pause.paused(Path(cfg.db_path).parent) or "")
+            dbm.set_status(conn, "poll_started", str(time.time()))
             poll_once(cfg, gh, conn, clf)
-        except Exception:
+            dbm.set_status(conn, "last_poll_ok", str(time.time()))
+            dbm.set_status(conn, "last_error", "")
+        except Exception as e:
             log.exception("poll failed")
+            try:
+                dbm.set_status(conn, "last_error", f"{type(e).__name__}: {str(e)[:300]}")
+                emit("error", f"poll failed: {type(e).__name__}: {str(e)[:300]}")
+            except Exception:
+                pass
         if args.once:
             return
         time.sleep(cfg.poll_seconds)

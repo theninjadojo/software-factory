@@ -236,6 +236,16 @@ class RunTaskEndToEnd(unittest.TestCase):
             for repo in ("o/web", "o/mobile"):
                 self.assertNotIn("factory/", g("--git-dir", str(bare[repo]), "branch", "--list", cwd=t).stdout)
 
+    def test_sink_receives_the_agent_log_for_the_ui(self):
+        import tempfile
+        from factory import runner
+        with tempfile.TemporaryDirectory() as t:
+            cfg, gh, bare, p1, p2, g = self._setup(t, lambda w: (w / "web" / "a.txt").write_text("two\n"))
+            sink = {}
+            with p1, p2:
+                runner.run_task(cfg, gh, "o/web", {"number": 4, "title": "t", "body": ""}, cfg.routes["low"], sink=sink)
+            self.assertIn("did the thing", sink["log"])
+
     def test_sandbox_command_is_locked_down(self):
         from pathlib import Path
         from factory.config import Route

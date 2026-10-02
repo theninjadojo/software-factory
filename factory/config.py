@@ -135,8 +135,30 @@ def _events(v):
     return tuple(v)
 
 
-def load(path: str) -> Config:
+def overrides_path(path: str) -> Path:
+    """The file the UI writes. Deep-merged over the hand-edited config, which is never rewritten."""
+    p = Path(path)
+    return p.with_name(p.stem + ".overrides.toml")
+
+
+def deep_merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def load_raw(path: str) -> dict:
     raw = tomllib.loads(Path(path).read_text())
+    op = overrides_path(path)
+    return deep_merge(raw, tomllib.loads(op.read_text())) if op.exists() else raw
+
+
+def load(path: str) -> Config:
+    return parse(load_raw(path))
+
+
+def parse(raw: dict) -> Config:
     g, gh = raw["general"], raw["github"]
     routes = {k: Route(**v) for k, v in raw["routing"].items()}
     for level in ("low", "medium", "high"):
