@@ -102,7 +102,7 @@ class Render(unittest.TestCase):
         html = floor.render(d, "t", None, [NEED, ASK, dict(ASK, issue=20)], lambda n, c, b="/": "")
         for gone in ("<table", "Timeline", "Unique run title", "Unique event", "Unique pr", "nd-bulk", "nd-seg"):
             self.assertNotIn(gone, html)
-        self.assertEqual(html.count('class="badge warn">'), 3)
+        self.assertEqual(html.count('class="badge warn">'), 4)
 
     def test_nodes_show_only_a_state_word_and_list_view_works(self):
         d = data(running=[run(1, "stage", "architect", 18, model="secret-model")], cfg={**data()["cfg"], "review": False})
@@ -299,7 +299,7 @@ class Needs(UiCase):
         from factory.ui import labels as L
         for ok in ("/needs", "/needs?need=questions", "/?need=decisions", "/?station=build&need=questions"):
             self.assertTrue(L.BACK.fullmatch(ok), ok)
-        for bad in ("/needs?x=1", "/?need=<b>", "//evil", "/needs/../settings", "/?station=a&station=b&need=c"):
+        for bad in ("/needs?x=1", "/?need=<b>", "//evil", "/needs/../settings", "/?station=a&need=b&view=c&need=d"):
             self.assertFalse(L.BACK.fullmatch(bad), bad)
 
 
