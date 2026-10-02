@@ -76,3 +76,17 @@ only names an action; the label comes from config, and the ticket is re-read bef
 recommended stage, **Build anyway**, and **Skip**. They work from the labels, not the database, so they behave the same whichever
 place you answer: a stage or build applies its label and clears the trigger labels; Skip clears them and the factory leaves the
 ticket alone.
+
+## Reaching the UI from your LAN
+
+By default the UI listens on loopback only. To open it from other machines on a trusted home network, add a systemd drop-in
+(`~/.config/systemd/user/factory-ui.service.d/lan.conf` for the factory user) that replaces `ExecStart`:
+
+    [Service]
+    ExecStart=
+    ExecStart=/usr/bin/python3 -m factory.ui --config /srv/factory/config.toml --listen 0.0.0.0:8787 --allowed-host <ip> --allowed-host <hostname>
+
+Then `systemctl --user daemon-reload && systemctl --user restart factory-ui`. Requests whose `Host` header is not on the list get a
+421, and failed logins are rate-limited per client address. The connection is plain HTTP, so on the LAN the password and session
+cookie are readable by anyone who can sniff that network. Use it only on a network you trust, or put TLS in front (and start the UI
+with `--secure-cookie`). Do not forward the port to the internet.
