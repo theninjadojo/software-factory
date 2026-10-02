@@ -7,7 +7,7 @@ import time
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
-NAV = [("/", "Overview"), ("/runs", "Runs"), ("/tickets", "Tickets"), ("/prs", "PRs & CI"), ("/events", "Events"),
+NAV = [("/", "Overview"), ("/runs", "Runs"), ("/tickets", "Tickets"), ("/labels", "Labels"),("/prs", "PRs & CI"), ("/events", "Events"),
        ("/settings", "Settings"), ("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram")]
 
 GOOD = {"pr", "stage", "passed", "success", "closed", "ok"}
@@ -63,7 +63,7 @@ def csrf_field(csrf: str) -> str:
 
 def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok") -> str:
     links = "".join(f'<a href="{p}"{" class=active" if p == active else ""}>{esc(n)}</a>' for p, n in (nav or NAV))
-    note = f'<div class="flash {esc(flash_kind)}">{esc(flash)}</div>' if flash else ""
+    note = f'<div class="flash {esc(flash_kind)}" role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{esc(title)} · software-factory</title><link rel="stylesheet" href="/static/style.css"></head><body>'
             f'<header><strong class="brand">software-factory</strong><nav>{links}</nav>'

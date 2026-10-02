@@ -30,6 +30,26 @@ class GitHub:
         q = urllib.parse.urlencode({"labels": label, "state": "open", "per_page": 50})
         return [i for i in self._get(f"/repos/{repo}/issues?{q}") if "pull_request" not in i]
 
+    def issues(self, repo: str, state: str = "open", label: str | None = None, page: int = 1, per_page: int = 50) -> tuple[list[dict], bool]:
+        """One page of issues (pull requests dropped) and whether GitHub may have more."""
+        q = {"state": state, "per_page": per_page, "page": page, **({"labels": label} if label else {})}
+        raw = self._get(f"/repos/{repo}/issues?{urllib.parse.urlencode(q)}")
+        return [i for i in raw if "pull_request" not in i], len(raw) == per_page
+
+    def search_issues(self, repo: str, text: str, state: str = "open", page: int = 1, per_page: int = 50) -> tuple[list[dict], bool]:
+        term = f"repo:{repo} is:issue in:title {text}" + ("" if state == "all" else f" is:{state}")
+        raw = self._get("/search/issues?" + urllib.parse.urlencode({"q": term, "per_page": per_page, "page": page}))["items"]
+        return raw, len(raw) == per_page
+
+    def repo_labels(self, repo: str, max_pages: int = 5) -> list[dict]:
+        out: list[dict] = []
+        for page in range(1, max_pages + 1):
+            got = self._get(f"/repos/{repo}/labels?per_page=100&page={page}")
+            out += got
+            if len(got) < 100:
+                break
+        return out
+
     def label_actor(self, repo: str, issue: int, label: str) -> str | None:
         events = self._get(f"/repos/{repo}/issues/{issue}/events?per_page=100")
         actors = [
