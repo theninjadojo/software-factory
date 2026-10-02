@@ -245,7 +245,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, "implement")
     elif res.status == "pr":
         gh.add_labels(repo, num, [DONE])
-        gh.comment(repo, num, f"Opened {res.pr_url} for review.")
+        draft = cfg.review.enabled and cfg.review.auto
+        gh.comment(repo, num, f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else ""))
         if conn is not None:
             for u in res.pr_url.split():                  # watch each PR's CI; skip anything that is not a PR URL
                 m = PR_URL.match(u)
@@ -464,6 +465,12 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
                 links.append(f"https://github.com/{r}/pull/{n}")
             except Exception:
                 log.exception("could not post the review on %s#%s", r, n)
+                continue                                      # not reviewed: it stays a draft
+            try:
+                gh.mark_ready(r, n)
+            except Exception:
+                log.exception("could not mark %s#%s ready for review", r, n)
+                alert(f"Could not mark {r}#{n} ready for review; it is still a draft.", event="failure")
         gh.add_labels(repo, num, [cfg.review.done_label])
         verdict = next((v for v in ("Blocking issues", "Needs changes", "Looks good") if v.lower() in res.output[:600].lower()), "see the PR")
         alert(f"Review done: {repo}#{num}: {verdict}\n" + "\n".join(links), event="review_done")
