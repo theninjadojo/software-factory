@@ -85,6 +85,41 @@ class Render(unittest.TestCase):
         self.assertIn("3 more in Tickets", many)
 
 
+class Ordering(unittest.TestCase):
+    """Tickets: what needs a person first, then what is ready, then work in progress; newest first within each group."""
+
+    def setUp(self):
+        from factory.config import load
+        from factory.ui import labels as L
+        self.L, self.cfg = L, load("config.example.toml")
+
+    def issue(self, n, labels=(), state="open", updated="2026-10-02T10:00:00Z"):
+        return {"number": n, "title": f"T{n}", "state": state, "updated_at": updated, "labels": [{"name": x} for x in labels]}
+
+    def test_order(self):
+        iss = [self.issue(1, updated="2026-10-01T10:00:00Z"),                                          # ready, older
+               self.issue(2, updated="2026-10-02T09:00:00Z"),                                          # ready, newer
+               self.issue(3, ["factory:working"], updated="2026-10-02T11:00:00Z"),                    # running
+               self.issue(4, ["factory:pr-open"], updated="2026-10-02T12:00:00Z"),                    # PR open
+               self.issue(5, ["factory:auto"], updated="2026-09-30T10:00:00Z"),                       # waiting for a person (oldest)
+               self.issue(6, ["factory:failed"], updated="2026-09-29T10:00:00Z"),                     # failed
+               self.issue(7, state="closed", updated="2026-10-02T13:00:00Z"),
+               self.issue(8, ["factory:auto"], updated="2026-10-02T08:00:00Z")]                       # queued: auto label, no "human" decision
+        dec = {("o/r", 5): {"outcome": "human", "detail": "x; needs a person", "decided_at": 1.0}}
+        got = [i["number"] for i in self.L.order(self.cfg, "o/r", iss, dec, {}, set())]
+        self.assertEqual(got, [5, 6, 2, 1, 3, 8, 4, 7])
+
+    def test_questions_waiting_and_a_queued_decision(self):
+        iss = [self.issue(1), self.issue(2, updated="2026-09-01T10:00:00Z"), self.issue(3, updated="2026-09-02T10:00:00Z")]
+        got = [i["number"] for i in self.L.order(self.cfg, "o/r", iss, {}, {2: object()}, {(("o/r"), 3)})]
+        self.assertEqual(got, [2, 1, 3])             # questions first; the ticket with a queued approval moves to in-progress
+
+    def test_a_recent_factory_decision_counts_as_activity(self):
+        iss = [self.issue(1, updated="2026-10-01T10:00:00Z"), self.issue(2, updated="2026-10-01T11:00:00Z")]
+        dec = {("o/r", 1): {"outcome": "run:pr", "detail": "", "decided_at": time.time()}}
+        self.assertEqual([i["number"] for i in self.L.order(self.cfg, "o/r", iss, dec, {}, set())], [1, 2])
+
+
 class Pages(UiCase):
     def test_floor_is_the_default_page_and_the_nav_has_a_phone_menu(self):
         cookie, _ = self.session()

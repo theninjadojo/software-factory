@@ -272,7 +272,7 @@ def filters(cfg, repo, state, label, text, names) -> str:
     def opts(values, cur, blank=None):
         return "".join(f'<option value="{esc(v)}"{" selected" if v == cur else ""}>{esc(v or blank)}</option>' for v in values)
 
-    return ('<p class="muted">Changes are made as the factory\'s GitHub account. Trigger labels start work at the next poll.</p>'
+    return ('<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
             f'<form method="get" class="filters"><select name="repo" aria-label="Repository">{opts(cfg.repos, repo)}</select>'
             f'<select name="state" aria-label="State">{opts(STATES, state)}</select>'
             f'<select name="label" aria-label="Label">{opts(["", *names], label, "any label")}</select>'
@@ -400,10 +400,32 @@ def question_cards(repo: str, n: int, st, csrf: str, back: str = "/tickets") -> 
             f'the next stage starts.</p><div class="cards one">{"".join(cards)}</div><p>{accept}</p></details>')
 
 
+def _epoch(iso) -> float:
+    try:
+        return time.mktime(time.strptime(str(iso), "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+    except ValueError:
+        return 0.0
+
+
+def order(cfg, repo, issues, decisions, asked, approved) -> list:
+    """Tickets worth acting on first: those waiting for a person, then failed ones, then ones ready for a next step, then work in
+    progress, then open pull requests, then closed. Within each group the most recent activity (the ticket's last update or the
+    factory's last decision) comes first."""
+    def key(i):
+        d = decisions.get((repo, i["number"]))
+        status, _ = actions_for(cfg, i, d, (repo, i["number"]) in approved)
+        rank = (0 if status == NEEDS_PERSON or i["number"] in asked else 1 if status == "failed" else 5 if status == "closed"
+                else 3 if status in ("running", "queued", "starting") else 4 if status == "pr open" else 2)
+        return rank, -max(_epoch(i.get("updated_at")), float((d or {}).get("decided_at") or 0))
+    return sorted(issues, key=key)
+
+
 def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approved: frozenset | set = frozenset(), back: str = "/tickets") -> str:
     asked = asked or {}
     if not issues:
         return '<p class="muted">No issues match this filter.</p>'
+    issues = order(cfg, repo, issues, decisions, asked, approved)
+
     def factory_cell(n) -> str:
         d = decisions.get((repo, n))
         if not d:
