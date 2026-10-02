@@ -167,6 +167,10 @@ class GitHub:
             raise ValueError("factory issues must carry the step title prefix")
         return self._req("POST", f"/repos/{repo}/issues", {"title": title, "body": body})
 
+    def create_ticket(self, repo: str, title: str, body: str) -> dict:
+        """A person's new ticket (from the UI). Sends no labels or assignees, so it can never start work by itself."""
+        return self._req("POST", f"/repos/{repo}/issues", {"title": title, "body": body})
+
     def update_issue(self, repo: str, number: int, body: str | None = None, state: str | None = None) -> dict:
         data = {k: v for k, v in (("body", body), ("state", state)) if v is not None}
         if state == "closed":
