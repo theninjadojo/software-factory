@@ -100,10 +100,10 @@ def login_page(error: str | None = None, setup_hint: bool = False) -> str:
 
 
 
-def overview_fragment(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None, flt: str = "") -> str:
+def overview_fragment(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None, flt: str = "", view: str = "") -> str:
     """The Floor page body (see floor.py)."""
     from . import floor
-    return floor.render(d, csrf, selected, needs, forms, flt)
+    return floor.render(d, csrf, selected, needs, forms, flt, view)
 
 
 CARD = "stack"     # tables with this class turn into stacked cards on phones (each cell shows its column from data-l)

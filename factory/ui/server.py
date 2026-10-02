@@ -79,7 +79,7 @@ class App:
                 d["status"] = dbm.get_status(db)
                 d["runs"] = dbm.recent_runs(db, 10)
                 d["events"] = dbm.recent_events(db, 15)
-                d["prs"] = [p for p in dbm.watched_prs(db, 20) if p["status"] == "watching"]
+                d["prs"] = [p for p in dbm.watched_prs(db, 20) if p["status"] != "closed"]
                 d["running"] = dbm.recent_runs(db, 20, status="running")      # every job in flight, newest first
                 d["recent"] = dbm.recent_runs(db, 200)                        # for each station's numbers today
                 d["decided"] = dict(db.execute("SELECT outcome, COUNT(*) FROM decisions WHERE decided_at > ? GROUP BY outcome", (time.time() - 86400,)))
@@ -229,7 +229,8 @@ class Handler(BaseHTTPRequestHandler):
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))
         flt = q.get("need", "") if q.get("need") in ("questions", "decisions") else ""
         if path in ("/", "/fragment/overview"):
-            body = views.overview_fragment(self.app.overview(), csrf, q.get("station"), L.needs_you(self), L.action_forms_for, flt)
+            body = views.overview_fragment(self.app.overview(), csrf, q.get("station"), L.needs_you(self), L.action_forms_for, flt,
+                                           "list" if q.get("view") == "list" else "")
             if path == "/":
                 shown = L.flash_pop(csrf)                  # the result of the button that sent you back here (the refresh fragment never takes it)
                 return self._send(200, views.page("Factory floor", f'<div id="live">{body}</div>', path, csrf, wide=True, badges=badges,

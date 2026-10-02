@@ -163,9 +163,11 @@ class Pages(UiCase):
         dbm.set_status(self.db, "last_poll_ok", str(__import__("time").time()))
         cookie, _ = self.session()
         _, _, home = self.req("GET", "/", cookie=cookie)
-        self.assertIn("orchestrator healthy", home)
-        self.assertIn("Add the thing", home)
-        self.assertIn("PR ready", home)
+        self.assertIn("Healthy, last poll", home)
+        for gone in ("Add the thing", "PR ready", "<table", "<h2>Timeline</h2>"):       # the tables live on their own pages
+            self.assertNotIn(gone, home)
+        self.assertIn("Add the thing", self.req("GET", "/runs", cookie=cookie)[2])
+        self.assertIn("PR ready", self.req("GET", "/events", cookie=cookie)[2])
         _, _, runs = self.req("GET", "/runs?status=stage", cookie=cookie)
         self.assertIn("sonnet", runs)
         _, _, detail = self.req("GET", f"/runs/{rid}", cookie=cookie)
@@ -180,7 +182,7 @@ class Pages(UiCase):
     def test_health_goes_red_when_the_orchestrator_stops_reporting(self):
         dbm.set_status(self.db, "last_poll_ok", "1")
         cookie, _ = self.session()
-        self.assertIn("orchestrator not reporting", self.req("GET", "/fragment/overview", cookie=cookie)[2])
+        self.assertIn("Not reporting", self.req("GET", "/fragment/overview", cookie=cookie)[2])
 
     def test_hostile_text_is_escaped_everywhere(self):
         evil = '<script>alert(1)</script><img src=x onerror=alert(2)>'

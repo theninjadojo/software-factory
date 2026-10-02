@@ -57,11 +57,12 @@ class Stations(unittest.TestCase):
 
 class Render(unittest.TestCase):
     def test_no_inline_styles_anywhere_because_the_csp_forbids_them(self):
-        d = data(running=[run(1, "stage", "architect", 18, "A <b>title</b>")], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}])
-        html = floor.render(d, "tok", "architect", [NEED, ASK], lambda n, c, b="/": "<form></form>")
+        d = data(running=[run(1, "stage", "architect", 18)], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}])
+        need = {**NEED, "title": "A <b>title</b>"}
+        html = floor.render(d, "tok", "architect", [need, ASK], lambda n, c, b="/": "<form></form>")
         self.assertNotIn("style=", html)
         self.assertNotIn("<b>title</b>", html)
-        self.assertIn("&lt;b&gt;title&lt;/b&gt;", html)
+        self.assertIn("A &lt;b&gt;title&lt;/b&gt;", html)
 
     def test_hostile_text_is_escaped_in_every_part(self):
         evil = '<img src=x onerror=alert(1)>'
@@ -76,6 +77,44 @@ class Render(unittest.TestCase):
         self.assertIn('aria-current=true', floor.render(d, "t", "analyst", [], None))
         self.assertIn("<h2>Analyst</h2>", floor.render(d, "t", "analyst", [], None))
         self.assertIn("<h2>Architect</h2>", floor.render(d, "t", "<script>", [], None))
+
+    def test_summary_bar_counts_and_links(self):
+        d = data(running=[run(1, "stage", "architect", 18)], prs=[{"status": "passed", "repo": REPO, "number": 1}, {"status": "failed", "repo": REPO, "number": 2},
+                 {"status": "watching", "repo": REPO, "number": 3}])
+        html = floor.render(d, "t", None, [NEED, ASK], lambda n, c, b="/": "")
+        for needle in ("Healthy, last poll 5s ago", "<b>1</b> working", "<b>2</b> need you", "<b>3</b> PRs open", 'href="/needs"', 'href="/prs"', "LIVE",
+                       "Poll 60s · CI on · Telegram on · Edit", "Architect is working on #18. 2 tickets need you.", "3 PRs · 1 passing · 1 CI failing",
+                       "Show as list", "See all 2"):
+            self.assertIn(needle, html)
+        self.assertIn("DRY RUN", floor.render(data(cfg={**data()["cfg"], "live": False}), "t", None, [], None))
+        self.assertIn("Not reporting", floor.render(data(status={}), "t", None, [], None))
+
+    def test_today_line_and_last_four_runs(self):
+        now = time.time()
+        recent = [run(i, "implement", None, i, status=s, started=now - 60) for i, s in enumerate(["pr", "pr", "failed", "stage"], 1)]
+        html = floor.render(data(recent=recent, runs=recent + [run(9, "fix", None, 9, status="pr")]), "t", None, [], None)
+        self.assertIn("4 runs · 3 passed · 1 failed", html)
+        self.assertEqual(html.count('href="/runs/'), 4)
+
+    def test_the_tables_and_bulk_panel_are_gone_from_home(self):
+        d = data(cfg={**data()["cfg"], "live": False}, runs=[run(1, "implement", None, 5, "Unique run title", status="pr")], events=[{"id": 1, "ts": 1, "kind": "x", "message": "Unique event", "repo": REPO, "issue": 1, "run_id": 1}],
+                 prs=[{"status": "watching", "repo": REPO, "number": 3, "issue_repo": REPO, "issue_num": 1, "rounds": 0, "summary": "Unique pr", "updated": 1}])
+        html = floor.render(d, "t", None, [NEED, ASK, dict(ASK, issue=20)], lambda n, c, b="/": "")
+        for gone in ("<table", "Timeline", "Unique run title", "Unique event", "Unique pr", "nd-bulk", "nd-seg"):
+            self.assertNotIn(gone, html)
+        self.assertEqual(html.count('class="badge warn">'), 3)
+
+    def test_nodes_show_only_a_state_word_and_list_view_works(self):
+        d = data(running=[run(1, "stage", "architect", 18, model="secret-model")], cfg={**data()["cfg"], "review": False})
+        html = floor.render(d, "t", "architect", [], None)
+        self.assertIn('<span class="fl-ns">Working</span>', html)
+        self.assertIn('<span class="fl-ns">Off</span>', html)
+        self.assertNotIn("secret-model", html.split('class="fl-insp"')[0])
+        self.assertIn("secret-model", html.split('class="fl-insp"')[1])       # the model moved to the inspector
+        self.assertNotIn("fl-listview", html)
+        self.assertIn("fl-listview", floor.render(d, "t", "architect", [], None, view="list"))
+        failing = data(recent=[run(2, "implement", None, 4, status="failed", started=time.time() - 10)])
+        self.assertEqual(floor.gather(failing, [], time.time())["build"]["label"], "Failing")
 
     def test_the_tray_has_every_state(self):
         forms = lambda n, c, b="/": f"[{n['issue']}]"
@@ -179,9 +218,9 @@ class Inline(UiCase):
         cookie, _ = self.session()
         with mock.patch("factory.ui.server.L.needs_you", return_value=[ASK, NEED]):
             html = self.req("GET", "/?station=build", cookie=cookie)[2]
-        for needle in ('name="a_q1" value="a"', 'name="a_q1" value="b"', 'name="x_q1"', 'name="accept" value="1"', 'name="send" value="1"',
-                       'name="stage" value="architect"', 'name="back" value="/?station=build"', "Run analyst", "nd-body"):
+        for needle in ('name="accept" value="1"', 'name="back" value="/?station=build"', "Run analyst", "See all 2"):
             self.assertIn(needle, html)
+        self.assertNotIn("nd-tog", html)                      # the question forms are on /needs now
 
     def test_needs_you_attaches_the_questions_and_drops_stale_rows(self):
         from factory.ui import labels as L

@@ -192,6 +192,26 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .doc-tabs a[aria-current] { font-weight: bold; }
 .nd-doc { margin: 0 0 .5rem; }
 
+/* ---- home: summary bar, calmer floor, two columns ---- */
+.fl-title { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; margin:0 0 .8rem; } .fl-title p { margin:0; } .fl-title form { margin:0; }
+.fl-summary { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1.1rem; margin:0 0 1rem; padding:.6rem 1rem; }
+.fl-summary a { color:var(--text); text-decoration:none; } .fl-summary a:hover { text-decoration:underline; } .fl-summary a.muted { color:var(--muted); font-size:.85rem; }
+.fl-dot { width:10px; height:10px; border-radius:50%; background:var(--muted); } .fl-dot.good { background:var(--good); } .fl-dot.bad { background:var(--bad); }
+.fl-n.fail { border-color:var(--bad); } .fl-n.fail > .fl-ico { color:var(--bad); border-color:#6a2f28; background:#2a1613; }
+.fl-legend { margin:.6rem 0 1rem; font-size:.85rem; }
+.fl-insp { margin:0 0 1rem; } .fl-insp p { margin:.4rem 0; }
+.fl-cols { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; align-items:start; } .fl-cols h2 { margin-top:0; }
+.fl-list li form { margin:0; } .fl-list li .fl-grow { min-width:8rem; }
+@media (max-width:900px) { .fl-cols { grid-template-columns:1fr; } }
+.fl-listview .fl-wrap { display:none; }
+.fl-listview .fl-rail { display:flex; flex-direction:column; gap:.5rem; list-style:none; margin:0; padding:0 0 0 1.3rem; position:relative; }
+.fl-listview .fl-rail:before { content:""; position:absolute; left:5px; top:10px; bottom:10px; width:3px; border-radius:2px; background:repeating-linear-gradient(180deg,var(--line2) 0 8px,transparent 8px 14px); animation:fl-bmv 1.2s linear infinite; }
+.fl-listview .fl-s { position:relative; display:flex; flex-wrap:wrap; align-items:center; gap:.7rem; min-height:56px; padding:.5rem .8rem; border-radius:10px; background:var(--panel); border:1px solid var(--line2); color:var(--text); text-decoration:none; }
+.fl-listview .fl-s:before { content:""; position:absolute; left:-1.3rem; top:50%; width:7px; height:7px; margin-top:-3px; border-radius:50%; background:var(--line2); }
+.fl-listview .fl-s.run { border-color:var(--accent); } .fl-listview .fl-s.run:before { background:var(--accent); }
+.fl-listview .fl-s progress.fl-bar { position:static; width:100%; margin-top:.2rem; }
+@media (prefers-reduced-motion:reduce) { .fl-listview .fl-rail:before { animation:none; } }
+
 /* ---- Needs you: calmer cards; Tickets: title bar, chips, progress ---- */
 .nd-top { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; padding:1rem 1.2rem .4rem; } .nd-tag { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:.3rem; }
 .nd-low { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; padding:.4rem 1.2rem 1rem; }

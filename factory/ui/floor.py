@@ -42,6 +42,7 @@ STATIONS = {
 }
 ORDER = tuple(STATIONS)
 ROLE_STATIONS = {"analyst", "designer", "architect"}
+RUN_STATIONS = ("analyst", "designer", "architect", "build", "review", "ci", "conflicts")
 KIND_STATION = {"implement": "build", "auto": "classify", "build": "build", "fix": "ci", "review": "review", "conflicts": "conflicts"}
 RAIL = (("poll", "Intake"), ("analyst", None), ("designer", None), ("architect", None), ("build", None), ("pr", "PRs and CI"))
 DAY = 86400
@@ -68,7 +69,7 @@ def station_of(kind, stage) -> str | None:
 def gather(d: dict, needs, now: float) -> dict:
     """id -> {ns, count, count_kind, running, queued, state}: the live picture, from the database the orchestrator writes."""
     cfg, st = d["cfg"], d["status"]
-    out = {sid: {"ns": "", "count": 0, "count_kind": "mute", "running": [], "queued": [], "state": ""} for sid in ORDER}
+    out = {sid: {"ns": "", "count": 0, "count_kind": "mute", "running": [], "queued": [], "state": "", "label": "Idle"} for sid in ORDER}
     for r in d["running"]:
         if (sid := station_of(r["kind"], r["stage"])):
             out[sid]["running"].append(r)
@@ -105,6 +106,17 @@ def gather(d: dict, needs, now: float) -> dict:
         out["conflicts"].update(ns="off", state="off")
     else:
         out["conflicts"]["ns"] = out["conflicts"]["ns"] if out["conflicts"]["running"] else f'{d.get("conflicting", 0)} now'
+    seen = set()
+    for r in d.get("recent", []):                     # newest first: a station whose latest run today failed is failing until it runs again
+        sid = station_of(r["kind"], r["stage"])
+        if sid and sid not in seen:
+            seen.add(sid)
+            if r["status"] in views.BAD and not out[sid]["state"] and r["started"] and now - r["started"] < DAY:
+                out[sid]["state"] = "fail"
+    if any(p["status"] == "failed" for p in prs) and not out["ci"]["state"]:
+        out["ci"]["state"] = "fail"
+    for o in out.values():
+        o["label"] = {"run": "Working", "warn": "Needs you", "fail": "Failing", "off": "Off"}.get(o["state"], "Idle")
     return out
 
 
@@ -120,14 +132,12 @@ def icon(sid: str) -> str:
 def node(sid: str, o: dict, sel: str) -> str:
     name = STATIONS[sid][0]
     cls = " ".join(x for x in ("fl-n", f"fl-{sid}", o["state"], "sel" if sid == sel else "") if x)
-    cnt = f'<span class="fl-cnt {o["count_kind"]}">{int(o["count"])}</span>' if o["count"] else ""
     bar = ""
     if o["running"]:
-        r = o["running"][0]
-        bar = f'<progress class="fl-bar" max="100" value="{progress(r, None)}" aria-label="Progress of the run"></progress>'
-    label = f'{name}, {o["ns"]}' + (", selected" if sid == sel else "")
-    return (f'<a class="{cls}" href="/?station={sid}" aria-label="{esc(label)}"{" aria-current=true" if sid == sel else ""}>{cnt}'
-            f'<span class="fl-ico">{icon(sid)}</span><span><span class="fl-nt">{esc(name)}</span><span class="fl-ns">{esc(o["ns"])}</span></span>{bar}</a>')
+        bar = f'<progress class="fl-bar" max="100" value="{progress(o["running"][0], None)}" aria-label="Progress of the run"></progress>'
+    label = f'{name}, {o["label"]}' + (", selected" if sid == sel else "")
+    return (f'<a class="{cls}" href="/?station={sid}" aria-label="{esc(label)}"{" aria-current=true" if sid == sel else ""}>'
+            f'<span class="fl-ico">{icon(sid)}</span><span><span class="fl-nt">{esc(name)}</span><span class="fl-ns">{esc(o["label"])}</span></span>{bar}</a>')
 
 
 def progress(run: dict, avg) -> int:
@@ -215,70 +225,113 @@ def phone_home(d: dict, live: dict, needs, now: float) -> str:
     return f'<div class="ph-home">{health}<h2 class="ph-title">{title}</h2><p class="muted">{sentence}</p>{tiles}{now_card}{pipe}{top}</div>'
 
 
+def rail(live: dict, sel: str) -> str:
+    """The stations as a vertical list, for the text list view."""
+    items = []
+    for sid, label in RAIL:
+        o = live[sid]
+        name = label or STATIONS[sid][0]
+        cls = "fl-s run" if o["state"] == "run" else "fl-s"
+        bar = ""
+        if o["running"]:
+            bar = f'<progress class="fl-bar" max="100" value="{progress(o["running"][0], None)}" aria-label="Progress of the run"></progress>'
+        chip = badge("running") if o["state"] == "run" else (f'<span class="badge">{int(o["count"])}</span>' if o["count"] else "")
+        items.append(f'<li><a class="{cls}" href="/?station={sid}"><span class="fl-ico">{icon(sid)}</span>'
+                     f'<span class="fl-grow"><span class="fl-nt">{esc(name)}</span><span class="fl-ns">{esc(o["label"])}</span></span>{chip}{bar}</a></li>')
+    return f'<ol class="fl-rail" aria-label="Factory stations">{"".join(items)}</ol>'
+
+
 def inspector(sid: str, o: dict, d: dict, now: float) -> str:
     name, desc, link, link_text = STATIONS[sid]
-    mine = [r for r in d.get("recent", []) if station_of(r["kind"], r["stage"]) == sid]
-    today = [r for r in mine if r["started"] and now - r["started"] < DAY]
-    done = sum(1 for r in today if r["status"] in views.GOOD)
-    failed = sum(1 for r in today if r["status"] in views.BAD)
+    today = [r for r in d.get("recent", []) if station_of(r["kind"], r["stage"]) == sid and r["started"] and now - r["started"] < DAY]
     spans = [r["finished"] - r["started"] for r in today if r["finished"] and r["started"]]
     avg = sum(spans) / len(spans) if spans else None
-    head = (f'<div class="fl-ihead"><span class="fl-ico big{" run" if o["state"] == "run" else ""}">{icon(sid)}</span>'
-            f'<h2>{esc(name)}</h2>{badge("running") if o["state"] == "run" else ""}</div><p class="muted">{esc(desc)}</p>')
-    working = ""
-    for r in o["running"]:
-        working += ('<div class="card fl-work"><h3>Working on</h3>'
-                    f'<p><a href="/runs/{int(r["id"])}">{esc(r["kind"])}{" " + esc(r["stage"]) if r["stage"] else ""} #{int(r["id"])}</a> · '
-                    f'{short(r["repo"], r["issue"])}</p><p class="fl-t">{esc(r["title"])}</p>'
-                    f'<p><span class="badge">{esc(r["model"])}</span> <span class="badge">{esc(r["effort"])} effort</span></p>'
-                    f'<progress class="fl-bar wide" max="100" value="{progress(r, avg)}" aria-label="Progress of the run"></progress>'
-                    f'<p class="muted fl-mono">running for {esc(dur(r["started"]))}{" · usually about " + esc(span(avg)) if avg else ""}</p></div>')
-    for q in o["queued"]:
-        working += (f'<div class="card fl-work"><h3>{"Blocked" if q.get("reason") else "Waiting for a slot"}</h3>'
-                    f'<p>{short(q.get("repo", ""), q["issue"])}</p><p class="fl-t">{esc(q.get("title", ""))}</p>'
-                    + (f'<p class="muted">{esc(q["reason"])}</p>' if q.get("reason") else "") + '</div>')
-    stats = ""
-    if sid in ("analyst", "designer", "architect", "build", "review", "ci", "conflicts"):
-        stats = ('<div class="fl-stats">'
-                 f'<div class="fl-kpi"><span class="lab">Done today</span><b>{done}</b></div>'
-                 f'<div class="fl-kpi"><span class="lab">Failed</span><b>{failed}</b></div>'
-                 f'<div class="fl-kpi"><span class="lab">Average</span><b>{esc(span(avg, True)) if avg else "—"}</b></div></div>')
-    recent = ""
-    if mine:
-        recent = ('<h3>Recent</h3><ul class="fl-list">' + "".join(
-            f'<li>{badge(r["status"])} <a href="/runs/{int(r["id"])}">{esc(r["repo"].split("/")[-1])}#{int(r["issue"])}</a> '
-            f'<span class="muted">{esc(ago(r["started"]))}</span></li>' for r in mine[:3]) + "</ul>")
-    status = "" if (mine or o["running"]) else f'<p class="fl-mono">{esc(o["ns"])}</p>'
-    return (f'<aside class="fl-insp" aria-label="Selected station">{head}{working}{stats}{status}{recent}'
-            f'<p class="fl-links"><a class="btn secondary" href="{esc(link)}">{esc(link_text)}</a> '
-            '<a class="btn secondary" href="/settings">Settings</a></p>'
-            '<p class="muted fl-fine">Stations are read-only for now. Pause and reroute controls may appear here later.</p></aside>')
+    facts = [esc(o["running"][0]["model"])] if o["running"] else []
+    if sid in RUN_STATIONS:
+        facts += [f'{sum(1 for r in today if r["status"] in views.GOOD)} done today', f'average {esc(span(avg, True)) if avg else "—"}']
+    else:
+        facts.append(esc(o["ns"]))
+    return (f'<aside class="fl-insp" aria-label="Selected station"><div class="fl-ihead"><span class="fl-ico big{" run" if o["state"] == "run" else ""}">{icon(sid)}</span>'
+            f'<h2>{esc(name)}</h2><span class="muted">{esc(o["label"])}</span></div><p>{esc(desc)}</p>'
+            f'<p class="muted fl-mono">{" · ".join(facts)}</p>'
+            f'<p class="fl-links"><a class="btn secondary" href="{esc(link)}">Recent runs</a> <a class="btn secondary" href="/settings">Settings</a> '
+            '<a class="btn secondary" href="/">Close</a></p></aside>')
 
 
-def kpis(d: dict, needs) -> str:
-    cfg = d["cfg"]
-    cell = lambda label, value, extra="": f'<div class="fl-kpi"><span class="lab">{label}</span><b>{value}{extra}</b></div>'
-    return ('<div class="fl-kpis">'
-            + cell("Working now", len(d["running"]), f' <span class="muted">of {int(cfg["max_parallel"])} slots</span>')
-            + cell("Needs you", "—" if needs is None else f'<span class="{"bad-text" if needs else ""}">{len(needs)}</span>')
-            + cell("Queued", len(d["queued"]))
-            + cell("Open PRs", len(d["prs"]), ' <span class="muted">watched</span>') + "</div>")
+def sentence(live: dict, needs) -> str:
+    working = [(sid, o["running"][0]) for sid, o in live.items() if o["running"]]
+    n = len(needs) if needs else 0
+    if working:
+        sid, r = working[0]
+        more = f" and {len(working) - 1} more" if len(working) > 1 else ""
+        parts = [f'{STATIONS[sid][0]} is working on #{int(r["issue"])}{more}.']
+    else:
+        parts = ["Nothing is running right now."]
+    if n:
+        parts.append(f'{n} ticket{"s" if n != 1 else ""} need{"" if n != 1 else "s"} you.')
+    return " ".join(parts)
 
 
-def status_row(d: dict, csrf: str, now: float) -> str:
+def summary_bar(d: dict, needs, now: float) -> str:
     cfg, st = d["cfg"], d["status"]
     last_ok = float(st["last_poll_ok"]["value"]) if "last_poll_ok" in st else None
     stale = _stale(d, now)
-    paused, err = d["paused"], (st.get("last_error") or {}).get("value", "")
+    err = (st.get("last_error") or {}).get("value", "")
     # Runs happen on worker threads and polling goes on during them, so a missed poll means trouble even while a run is going.
-    health = badge("orchestrator not reporting" if stale else "orchestrator healthy", "bad" if stale else "good")
-    mode = badge("LIVE" if cfg["live"] else "dry-run", "warn" if cfg["live"] else "")
-    queue = badge("paused: " + paused, "warn") if paused else badge("running", "good")
+    health = ("Not reporting" + (f", last poll {ago(last_ok, now)}" if last_ok else "")) if stale else f"Healthy, last poll {ago(last_ok, now)}"
+    mode = badge("LIVE" if cfg["live"] else "DRY RUN", "warn" if cfg["live"] else "")
+    tele = "off" if cfg["telegram"] in ("not set up", "off") else "on"
+    return (f'<div class="fl-summary card"><span class="fl-dot {"bad" if stale else "good"}" aria-hidden="true"></span><span>{esc(health)}</span>'
+            f'<a href="/runs?status=running"><b>{len(d["running"])}</b> working</a>'
+            f'<a href="/needs"><b>{"?" if needs is None else len(needs)}</b> need you</a>'
+            f'<a href="/prs"><b>{len(d["prs"])}</b> PRs open</a>{mode}<span class="fl-grow"></span>'
+            f'<a class="muted" href="/settings">Poll {esc(cfg["poll_seconds"])}s · CI {esc(cfg["ci"])} · Telegram {tele} · Edit</a></div>'
+            + (f'<p class="bad-text">last error: {esc(err)}</p>' if err else ""))
+
+
+def title_row(live: dict, needs, d: dict, csrf: str, view: str) -> str:
+    paused = d["paused"]
     btn = (f'<form method="post" action="/action/{"resume" if paused else "pause"}" class="inline">{csrf_field(csrf)}'
            f'<button class="secondary">{"Resume" if paused else "Pause"}</button></form>')
-    return (f'<div class="fl-status">{health}<span class="muted">last poll {esc(ago(last_ok))}</span>{mode}'
-            f'<span class="muted">every {esc(cfg["poll_seconds"])}s · classifier {esc(cfg["classifier"])} · Telegram {esc(cfg["telegram"])} · CI {esc(cfg["ci"])}</span>'
-            f'<span class="fl-grow"></span>{queue}{btn}</div>' + (f'<p class="bad-text">last error: {esc(err)}</p>' if err else ""))
+    toggle = '<a class="btn secondary" href="/">Show as floor</a>' if view == "list" else '<a class="btn secondary" href="/?view=list">Show as list</a>'
+    line = sentence(live, needs) + (f" Paused: {paused}." if paused else "")
+    return f'<div class="fl-title"><p class="muted">{esc(line)}</p><span class="fl-grow"></span>{toggle}{btn}</div>'
+
+
+def today_card(d: dict, now: float) -> str:
+    recent = [r for r in d.get("recent", []) if r["started"] and now - r["started"] < DAY]
+    passed = sum(1 for r in recent if r["status"] in views.GOOD)
+    failed = sum(1 for r in recent if r["status"] in views.BAD)
+    runs = "".join(f'<li>{badge(r["status"])} <a href="/runs/{int(r["id"])}">{esc(r["repo"].split("/")[-1])}#{int(r["issue"])}</a> '
+                   f'<span class="muted">{esc(r["kind"])} · {esc(ago(r["started"], now))}</span></li>' for r in d["runs"][:4])
+    prs = d["prs"]
+    ok, bad = sum(1 for p in prs if p["status"] == "passed"), sum(1 for p in prs if p["status"] == "failed")
+    return ('<section class="fl-today" aria-labelledby="today"><h2 id="today">Today</h2>'
+            f'<p>{len(recent)} runs · {passed} passed · {failed} failed</p>'
+            f'<ul class="fl-list">{runs or "<li class=muted>No runs yet.</li>"}</ul>'
+            f'<p><a href="/prs">{len(prs)} PRs · {ok} passing · {bad} CI failing →</a></p></section>')
+
+
+def needs_summary(needs, csrf: str, back: str) -> str:
+    """The top few tickets waiting for a person, one primary action each; the rest are on /needs."""
+    from . import labels as L
+    head = '<h2 id="needs">Needs you</h2>'
+    if needs is None:
+        return f'<section class="fl-needs" aria-labelledby="needs">{head}<p class="muted">Save a GitHub token on the Credentials page to see the tickets waiting for you.</p></section>'
+    if not needs:
+        return f'<section class="fl-needs" aria-labelledby="needs">{head}<p class="muted">Nothing needs you. The factory will ask here, and on Telegram, when it does.</p></section>'
+    rows = []
+    for n in needs[:3]:
+        ref = f'{esc(n["repo"].split("/")[-1])}#{int(n["issue"])}'
+        if n.get("st"):
+            act = (f'<form method="post" action="/tickets/answer" class="inline">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(n["repo"])}">'
+                   f'<input type="hidden" name="n" value="{int(n["issue"])}"><input type="hidden" name="back" value="{esc(back)}">'
+                   f'<button name="accept" value="1" aria-label="Accept recommendations for {ref}">Accept recommendations</button></form>')
+        else:
+            act = L.action_forms(n["repo"], n["issue"], (n.get("acts") or [])[:1], csrf, back)
+        rows.append(f'<li><span class="badge warn">{ref}</span> <span class="fl-grow">{esc(n["title"])}<br><span class="muted">{esc(n["reason"])}</span></span>{act}</li>')
+    return (f'<section class="fl-needs" aria-labelledby="needs">{head}<ul class="fl-list">{"".join(rows)}</ul>'
+            f'<p><a href="/needs">See all {len(needs)} →</a></p></section>')
 
 
 def _meter(conf: float) -> str:
@@ -352,16 +405,16 @@ def tray(needs, csrf: str, forms=None, back: str = "/", flt: str = "", heading: 
     return f'<section class="fl-tray" aria-labelledby="needs">{top}{bulk}<div class="nd-list">{rows or "<p class=muted>Nothing in this filter.</p>"}</div>{more}</section>'
 
 
-def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None, flt: str = "") -> str:
+def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None, flt: str = "", view: str = "") -> str:
     now = time.time()
     live = gather(d, needs, now)
     sel = selected if selected in STATIONS else default_station(live)
     nodes = "".join(node(sid, live[sid], sel) for sid in ORDER)
-    floor = (f'<div class="fl-grid"><div><div class="fl-wrap"><div class="fl-map" role="group" aria-label="Factory floor, live">'
-             f'{belts(live)}{crates(live)}{nodes}</div></div></div>{inspector(sel, live[sel], d, now)}</div>')
-    out = status_row(d, csrf, now) + kpis(d, needs) + floor + tray(needs, csrf, forms, f"/?station={sel}" + (f"&need={flt}" if flt else ""), flt)
-    out += f"<h2>Recent runs</h2>{views.runs_table(d['runs'])}"
-    if d["prs"]:
-        out += f"<h2>PRs being watched</h2>{views.prs_table(d['prs'])}"
-    out += f'<h2>Timeline</h2>{views.events_table(d["events"])}<p><a href="/events">All events →</a></p>'
-    return f'<div class="fl-desk">{out}</div>' + phone_home(d, live, needs, now)
+    listing = " fl-listview" if view == "list" else ""
+    floor = (f'<div class="fl-board{listing}"><div class="fl-wrap"><div class="fl-map" role="group" aria-label="Factory floor, live">'
+             f'{belts(live)}{crates(live)}{nodes}</div></div>{rail(live, sel)}</div>')
+    legend = '<p class="muted fl-legend">Working · Idle · Needs you · Failing · Off. Select a station for details.</p>'
+    back = f"/?station={sel}" + ("&view=list" if view == "list" else "")
+    desk = (title_row(live, needs, d, csrf, view) + summary_bar(d, needs, now) + floor + legend + inspector(sel, live[sel], d, now)
+            + f'<div class="fl-cols">{needs_summary(needs, csrf, back)}{today_card(d, now)}</div>')
+    return f'<div class="fl-desk">{desk}</div>' + phone_home(d, live, needs, now)
