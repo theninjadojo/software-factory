@@ -79,6 +79,19 @@ def picked(route, c) -> str:
     return f"Agent: {route.model}, effort {route.effort} ({route.harness})\n{how}"
 
 
+def human_buttons(cfg: Config, repo: str, num: int, c, done=()) -> list:
+    """What a person can do with a ticket the classifier is unsure about. If it recommended a stage (analyst, designer or
+    architect) that is the first button: 'Run' used to mean only 'build', which skipped the recommendation."""
+    role = next((r for r in cfg.roles if r.name == STAGE_TO_ROLE.get(c.stage or "") and r.name not in done), None)
+    out = ([(f"Run {role.name}", f"stage:{role.name}|{repo}|{num}")] if role else [])
+    out += [("Build anyway (medium)" if role else "Run (medium)", f"run|{repo}|{num}"), ("Skip", f"skip|{repo}|{num}")]
+    return [b for b in out if len(b[1].encode()) <= 64]          # Telegram rejects callback data over 64 bytes
+
+
+def suggestion(c) -> str:
+    return f"\nJev suggests: {c.stage} first" if c and c.stage else ""
+
+
 def alert(text: str, buttons=None, event: str = "info") -> None:
     """Send a Telegram message if this event category is enabled by the configured verbosity."""
     sent = bool(tg and alert_filter(event))
@@ -296,7 +309,7 @@ def run_fix(cfg: Config, gh: GitHub, repo: str, number: int, issue_repo: str, is
     return res.status == "pr"
 
 
-def process_approvals(cfg: Config, gh: GitHub, conn) -> None:
+def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
     """Run/Skip decisions made by the allowlisted Telegram chat."""
     if pause.paused(Path(cfg.db_path).parent):
         return
@@ -310,9 +323,15 @@ def process_approvals(cfg: Config, gh: GitHub, conn) -> None:
             issue = gh.get_issue(repo, num)
             if issue["state"] != "open" or "pull_request" in issue:
                 continue
+            role = next((r for r in cfg.roles if action == f"stage:{r.name}"), None)
+            if action != "run" and role is None:
+                continue                            # an unknown action is ignored, never guessed at
             for _, label in triggers(cfg):         # the approval covers the whole ticket: clear EVERY trigger label (factory:auto
                 gh.remove_label(repo, num, label)  # included), or finishing the run re-triages it and asks a person again
-            res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=conn)
+            if role:
+                res = dispatch_stage(cfg, gh, classifier, repo, issue, role)
+            else:
+                res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=conn)
             dbm.record(conn, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved via telegram; {res.detail}; {res.pr_url or ''}")
         except Exception:
             log.exception("approval failed for %s#%s", repo, num)
@@ -349,8 +368,8 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             log.info("%s#%d auto -> human (%s)", repo, num, reason)
             if not cfg.dry_run:
                 alert(f"Needs a person: {repo}#{num}\n{issue['title'][:120]}\nReason: {reason}\n"
-                      f"Classified {c.kind}/{c.complexity}, stage {c.stage}, confidence {c.confidence:.2f}, by {c.source}",
-                      [("Run (medium)", f"run|{repo}|{num}"), ("Skip", f"skip|{repo}|{num}")], event="needs_human")
+                      f"Classified {c.kind}/{c.complexity}, stage {c.stage}, confidence {c.confidence:.2f}, by {c.source}" + suggestion(c),
+                      human_buttons(cfg, repo, num, c, done), event="needs_human")
             return None
         role = next((r for r in cfg.roles if r.name == st), None)
 
@@ -378,14 +397,14 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         log.info("%s#%d -> %s (%s)%s", repo, num, d.action, detail, " [dry-run]" if cfg.dry_run else "")
         if d.action == "human" and not cfg.dry_run:
             alert(f"Needs a person: {repo}#{num}\n{issue['title'][:120]}\nReason: {d.reason}\n"
-                  f"Classified {c.kind}/{c.complexity}, human={c.needs_human}, confidence {c.confidence:.2f}, by {c.source}",
-                  [("Run (medium)", f"run|{repo}|{num}"), ("Skip", f"skip|{repo}|{num}")], event="needs_human")
+                  f"Classified {c.kind}/{c.complexity}, human={c.needs_human}, confidence {c.confidence:.2f}, by {c.source}" + suggestion(c),
+                  human_buttons(cfg, repo, num, c, done), event="needs_human")
     return None
 
 
 def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     if not cfg.dry_run:
-        process_approvals(cfg, gh, conn)
+        process_approvals(cfg, gh, conn, classifier)
     for repo in cfg.repos:
         handled: set[int] = set()
         for kind, label in triggers(cfg):

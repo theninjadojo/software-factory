@@ -3,6 +3,7 @@ Trust model: only updates from the configured chat id are acted on; everything e
 Free text is never executed or forwarded to an agent. Messages go out as plain text (no parse_mode)."""
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -23,10 +24,10 @@ def authorized(update: dict, chat_id: int) -> bool:
 
 
 def parse_callback(data: str) -> tuple[str, str, int] | None:
-    """'run|owner/repo|12' -> ('run','owner/repo',12). Anything else -> None."""
+    """'run|owner/repo|12' -> ('run','owner/repo',12); 'stage:architect|owner/repo|12' likewise. Anything else -> None."""
     try:
         action, repo, num = data.split("|")
-        if action in ("run", "skip") and repo.count("/") == 1:
+        if (action in ("run", "skip") or re.fullmatch(r"stage:[a-z]{1,20}", action)) and repo.count("/") == 1:
             return action, repo, int(num)
     except ValueError:
         pass

@@ -27,6 +27,9 @@ class T(unittest.TestCase):
     def test_callback_parsing(self):
         self.assertEqual(parse_callback("run|owner/repo|12"), ("run", "owner/repo", 12))
         self.assertEqual(parse_callback("skip|o/r|3"), ("skip", "o/r", 3))
+        self.assertEqual(parse_callback("stage:architect|o/r|3"), ("stage:architect", "o/r", 3))
+        for bad_stage in ("stage:|o/r|1", "stage:Arch|o/r|1", "stage:a b|o/r|1", "stage:architect;rm|o/r|1", "stage|o/r|1"):
+            self.assertIsNone(parse_callback(bad_stage), bad_stage)
         for bad in ("rm|o/r|1", "run|o/r|x", "run|o|1", "run|o/r/z|1", "run|o/r", "", "run|o/r|1|2"):
             self.assertIsNone(parse_callback(bad), bad)
 

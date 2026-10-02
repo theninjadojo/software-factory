@@ -190,6 +190,41 @@ class Approvals(unittest.TestCase):
             self.assertIn(label, removed, label)
 
 
+class HumanPrompt(unittest.TestCase):
+    def test_the_prompt_offers_the_recommended_stage_first(self):
+        c = Classification("feature", "high", True, 0.44, "jev", stage="architect", stage_confidence=0.8)
+        b = m.human_buttons(CFG, "o/r", 5, c)
+        self.assertEqual([x[0] for x in b], ["Run architect", "Build anyway (medium)", "Skip"])
+        self.assertEqual(b[0][1], "stage:architect|o/r|5")
+        c2 = Classification("bug", "low", True, 0.4, "jev", stage="implement")
+        self.assertEqual([x[0] for x in m.human_buttons(CFG, "o/r", 5, c2)], ["Run (medium)", "Skip"])            # nothing else to recommend
+        self.assertEqual([x[0] for x in m.human_buttons(CFG, "o/r", 5, c, done=["architect"])], ["Run (medium)", "Skip"])
+        long_repo = "o" * 40 + "/" + "r" * 40
+        self.assertTrue(all(len(x[1].encode()) <= 64 for x in m.human_buttons(CFG, long_repo, 12345, c)))
+        self.assertIn("Jev suggests: architect first", m.suggestion(c))
+
+    def test_run_architect_from_telegram_runs_the_stage_not_a_build(self):
+        import time
+        from dataclasses import replace
+
+        class GH(FakeGH):
+            def get_issue(self, repo, num):
+                return {"number": num, "title": "Add thing", "body": "", "state": "open", "updated_at": "t9", "labels": [{"name": "factory:auto"}]}
+
+        gh, conn = GH(), dbm.connect(":memory:")
+        for action in ("stage:architect", "stage:nonsense"):
+            conn.execute("INSERT OR REPLACE INTO approvals VALUES (?,?,?,?)", ("o/r", 5, action, time.time()))
+            conn.commit()
+            with mock.patch.object(m.runner, "run_task", return_value=RunResult("stage", "ok", output="# Plan")) as rt, tempfile.TemporaryDirectory() as d:
+                m.process_approvals(replace(CFG, db_path=d + "/f.db"), gh, conn, FakeClf())
+            if action == "stage:architect":
+                self.assertEqual(rt.call_args.kwargs["role"], "architect")
+                self.assertEqual(rt.call_args.args[4].model, "opus")                     # the architect's route, not the medium build route
+                self.assertIn("factory:auto", {c[1] for c in gh.calls if c[0] == "rm"})
+            else:
+                rt.assert_not_called()                                                     # unknown stages are ignored
+
+
 class ConfigAndJev(unittest.TestCase):
     def test_default_roles_and_override(self):
         self.assertEqual([r.name for r in CFG.roles], ["analyst", "designer", "architect"])
