@@ -86,7 +86,8 @@ class HarnessPage(AdminCase):
                                               ("designer", "factory:design", "stage:designed", "sonnet", "medium"),
                                               ("architect", "factory:architect", "stage:architected", "opus", "high")):
             form.update({f"roles.{name}.label": label, f"roles.{name}.done_label": done, f"roles.{name}.model": model,
-                         f"roles.{name}.effort": eff, f"roles.{name}.harness": "codex" if name == "architect" else "claude-code"})
+                         f"roles.{name}.effort": eff, f"roles.{name}.harness": "codex" if name == "architect" else "claude-code",
+                         "roles.designer.design_dir": "docs/design"})
         self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)
         self.assertEqual({r.name: r.harness for r in self.cfg().roles}["architect"], "codex")
 
@@ -99,7 +100,7 @@ class HarnessPage(AdminCase):
                                               ("designer", "factory:design", "stage:designed", "sonnet", "medium"),
                                               ("architect", "factory:architect", "stage:architected", "opus", "high")):
             form.update({f"roles.{name}.label": label, f"roles.{name}.done_label": done, f"roles.{name}.model": model,
-                         f"roles.{name}.effort": eff, f"roles.{name}.harness": "claude-code"})
+                         f"roles.{name}.effort": eff, f"roles.{name}.harness": "claude-code", "roles.designer.design_dir": "docs/design"})
         self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)                           # checkbox not ticked
         self.assertFalse(next(r for r in self.cfg().roles if r.name == "designer").design_files)
         self.assertEqual(self.post(cookie, csrf, "/settings/save", {**form, "roles.designer.design_files": "1"})[0], 303)

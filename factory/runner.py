@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
 from . import designfiles
-from .roles import DESIGN_FILES, ROLE_PROMPTS, common_for
+from .roles import ROLE_PROMPTS, common_for, design_files_rules
 from .github import GitHub
 
 log = logging.getLogger("factory.runner")
@@ -138,7 +138,7 @@ def looks_rate_limited(text: str, code: str) -> bool:
 
 def build_prompt(title: str, body: str, project: Project, issue_repo: str, role: str | None = None,
                  prior: dict | None = None, comments: list | None = None, failures: str | None = None,
-                 ticket: tuple | None = None, design_files: bool = False) -> str:
+                 ticket: tuple | None = None, design_files: bool = False, design_dir: str = designfiles.DEFAULT_DIR) -> str:
     repos = "\n".join(f"- {r.repo.split('/')[1]}/ : {r.role or 'part of the project'}" for r in project.repos)
     head = (
         f"You are working in a multi-repository workspace for the project '{project.name}'. {project.description}\n"
@@ -149,7 +149,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
     if role:
         task = ROLE_PROMPTS[role] + "\n" + common_for(role, design_files)
         if role == "designer" and design_files:
-            task += DESIGN_FILES
+            task += design_files_rules(design_dir)
     else:
         task = (
             "Resolve it by editing whichever repositories need changes, "
@@ -184,7 +184,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
             f"<issue>\n<title>{_neutral(title[:300])}</title>\n<body>\n{_neutral(body[:20000])}\n</body>\n</issue>\n")
 
 
-def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: HarnessCfg | None = None) -> list[str]:
+def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: HarnessCfg | None = None,
+                design_dir: str | None = None) -> list[str]:
     harness = harness or default_harnesses(rn)["claude-code"]
     # Podman maps the host user onto the container user (keep-id). Docker has no such flag: run as uid 1000 and rely on
     # the workspace being world-writable, which run_task arranges.
@@ -197,6 +198,7 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: Harnes
         "-v", f"{rn.proxy_socket}:/run/proxy.sock",
         "--env-file", harness.env_file,
         "-e", f"AGENT_COMMAND={harness.command}",
+        *(["-e", f"DESIGN_DIR={design_dir}"] if design_dir and designfiles.valid_dir(design_dir) else []),
         "-e", f"MODEL={route.model}", "-e", f"MAX_TURNS={rn.max_turns}",
         "-e", f"MAX_THINKING_TOKENS={rn.thinking_tokens.get(route.effort, 8000)}",
         harness.image,
@@ -204,7 +206,7 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: Harnes
 
 
 def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, title: str, d: Path, names: dict, patches: dict,
-                         env: dict, stamp: str) -> tuple[list, list, str]:
+                         env: dict, stamp: str, design_dir: str = designfiles.DEFAULT_DIR) -> tuple[list, list, str]:
     """Turn the designer's new design/*.dc.html files into a draft PR. Every file is validated twice (the patch may only ADD
     files with the right names, then each file's content is checked); anything that fails is dropped and reported, never
     published. Returns (files, notes, pr_urls)."""
@@ -213,7 +215,7 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
         base, short = d / "base" / names[r], names[r]
         try:
             text = patch.read_text(errors="strict")
-            paths = designfiles.check_patch_adds_only(text, num)
+            paths = designfiles.check_patch_adds_only(text, num, design_dir)
             check_patch_text(text, rn)                                    # the generic patch rules too (size, protected paths, symlinks)
             git(["apply", "--index", "--whitespace=nowarn", str(patch)], base, env)
             staged = [x for x in git(["diff", "--cached", "--name-status", "--no-renames", "-z"], base, env).stdout.split("\0") if x]
@@ -233,8 +235,8 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
         push_factory_branch(base, branch, env)
         pr = gh.create_pr(
             r, branch, gh.default_branch(r), f"[factory] design mockups for #{num}: {title[:60]}",
-            f"Static design canvases (`.dc.html`) written by the designer agent for {home_repo}#{num}, in the same format as the other "
-            "files in `design/`. They are new files only; nothing else changes.\n\nOpen them in Claude Design (design-sync), or merge "
+            f"Static design canvases (`.dc.html`, the Claude Design canvas format) written by the designer agent for {home_repo}#{num}. "
+            "They are new files only; nothing else changes.\n\nOpen them in Claude Design (design-sync), or merge "
             "this draft to keep them with the repository. Treat them as a first draft.\n\n" + "\n".join(f"- `{x}`" for x in paths),
             draft=True)
         urls.append(pr)
@@ -256,7 +258,9 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
     if not Path(harness.env_file).is_file():
         return RunResult("failed", f"no credential file for {harness.name} at {harness.env_file}")
     project = project_for(cfg, repo)
-    want_design = role == "designer" and any(r.name == "designer" and r.design_files for r in cfg.roles)
+    role_cfg = next((r for r in cfg.roles if r.name == role), None)
+    want_design = role == "designer" and bool(role_cfg and role_cfg.design_files)
+    design_dir = role_cfg.design_dir if role_cfg else designfiles.DEFAULT_DIR
     names = {r.repo: r.repo.split("/")[1] for r in project.repos}
     stamp = time.strftime("%Y%m%d-%H%M%S")
     d = Path(rn.work_dir) / f"{project.name}-{num}-{stamp}"
@@ -279,12 +283,12 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             shutil.copytree(d / "base" / names[r.repo], d / "work" / names[r.repo], symlinks=True)   # base stays pristine
         (d / "task" / "prompt.txt").write_text(
             build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
-                         (repo, num), want_design))
+                         (repo, num), want_design, design_dir))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
         try:
-            proc = subprocess.run(sandbox_cmd(rn, route, name, d, harness), timeout=rn.timeout_seconds, check=False,
+            proc = subprocess.run(sandbox_cmd(rn, route, name, d, harness, design_dir if want_design else None), timeout=rn.timeout_seconds, check=False,
                                   capture_output=True, text=True)
         except subprocess.TimeoutExpired:
             subprocess.run([rn.engine, "kill", name], check=False, capture_output=True)
@@ -308,7 +312,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                         if (d / "out" / f"{names[r.repo]}.diff").exists() and (d / "out" / f"{names[r.repo]}.diff").stat().st_size > 0}
                 if made:
                     try:
-                        files, notes, urls = publish_design_files(rn, gh, repo, num, issue["title"], d, names, made, env, stamp)
+                        files, notes, urls = publish_design_files(rn, gh, repo, num, issue["title"], d, names, made, env, stamp, design_dir)
                         result.files, result.notes, result.pr_url = files, "; ".join(notes), urls or None
                     except Exception as e:             # publishing is a bonus: the written document is never lost to it
                         log.exception("design files could not be published")

@@ -152,9 +152,12 @@ class RunTaskEndToEnd(unittest.TestCase):
                 if x == "-v":
                     host, rest = cmd[i + 1].split(":", 1); mounts[rest.split(":")[0]] = Path(host)
             work, out = mounts["/work"], mounts["/out"]
+            design_dir = next((cmd[i + 1].split("=", 1)[1] for i, x in enumerate(cmd) if x == "-e" and cmd[i + 1].startswith("DESIGN_DIR=")), None)
             agent_edits(work)
             for r in sorted(p.name for p in work.iterdir()):
                 g("add", "-A", "-N", cwd=work / r)
+                if design_dir:                                   # the real entrypoint force-adds the design files (see sandbox/entrypoint.sh)
+                    subprocess.run(["git", "add", "-f", "-N", "--", f"{design_dir}/factory-*.dc.html"], cwd=work / r, env=env, capture_output=True)
                 (out / f"{r}.diff").write_text(g("diff", "--binary", cwd=work / r).stdout)
             (out / "exit_code").write_text("0")
             (out / "agent.log").write_text("Summary: did the thing " + "`" * 3 + "x" + "`" * 3 + " @someone Follow-ups: publish then bump")

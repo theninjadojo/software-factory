@@ -1,6 +1,7 @@
 #!/bin/sh
 # A stand-in agent CLI for testing the harness mechanism: no model, no vendor credentials.
 repo=$(ls /work | head -1)
+if [ -z "$DESIGN_DIR" ]; then
 {
   echo "prompt-bytes: $(wc -c < /task/prompt.txt)"
   echo "uid: $(id -u)"
@@ -8,4 +9,10 @@ repo=$(ls /work | head -1)
   echo "model: $MODEL"
   echo "credential-present: $([ -n "$FAKE_AGENT_KEY" ] && echo yes || echo no)"
 } > "/work/$repo/agent-report.txt"
+fi
 echo "fake agent finished"
+
+# A designer run: write a mockup into $DESIGN_DIR (the folder may be git-ignored by the repository).
+if [ -n "$DESIGN_DIR" ]; then
+  mkdir -p "/work/$repo/$DESIGN_DIR" && cp /usr/local/share/mockup.html "/work/$repo/$DESIGN_DIR/factory-1-demo.dc.html"
+fi

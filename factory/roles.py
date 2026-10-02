@@ -66,25 +66,27 @@ ROLE_PROMPTS = {
 }
 
 
-DESIGN_FILES = (
-    "\n\nDESIGN FILES (required when it applies). If the ticket changes what users see or do AND a repository has a `design/` folder "
-    "containing `*.dc.html` files, you MUST also create one to three static mockups of the screens you designed in that repository. "
-    "Do this BEFORE you write your final answer, using your file-writing tools: create the files first, then reply with the document. "
-    "Name each one `design/factory-<ticket number>-<short-slug>.dc.html` (lower-case letters, digits and dashes in the slug; the "
-    "ticket number is given in the ticket header). Open two or three of the existing `design/*.dc.html` files first and copy their "
-    "structure and visual style (the <head>, fonts, colours, spacing, corner radii, the way cards and buttons look), so yours sit "
-    "naturally beside them. A mockup is a COMPLETE static page: `<!doctype html>`, `<html>`, a `<head>` containing "
-    "`<meta charset=\"utf-8\">` and `<script src=\"./support.js\"></script>`, then `<body><x-dc>` with an optional `<helmet>` "
-    "holding the Google Fonts `<link rel=\"stylesheet\" ...>` and a `<style>` block, then your markup with INLINE styles, then "
-    "`</x-dc></body></html>`. These rules are enforced mechanically, and a file that breaks any of them is discarded (your document "
-    "is still posted): static HTML only; the ONLY script allowed is that `support.js` include; no event handlers, forms, iframes, "
-    "objects, <img>, video, or `url(...)` / `@import` / backslashes in CSS; links are `#` only; the only external resource is the "
-    "Google Fonts stylesheet the existing files already use (draw icons and shapes with CSS or inline <svg>); at most three files of "
-    "150 KB each. Show the realistic states that matter (for example default, empty, error) as separate frames in one file or as "
-    "separate files. Do not modify, rename or delete any existing file, and do not touch `design/canvas.json`. Your final answer is "
-    "still only the document; end it with one line `Design files: <the paths you created>` (or `Design files: none` if the ticket "
-    "has no user-facing screens)."
-)
+def design_files_rules(design_dir: str) -> str:
+    return (
+        "\n\nDESIGN FILES (required when it applies). If the ticket changes what users see or do AND a repository contains Claude Design "
+        "canvas files (`*.dc.html`, usually in a `design/` folder), you MUST also create one to three static mockups of the screens you "
+        f"designed, in that repository. Write them to `{design_dir}/` (create the folder if it does not exist; do NOT write into `design/`, "
+        "which is often git-ignored). Do this BEFORE you write your final answer, using your file-writing tools: create the files "
+        f"first, then reply with the document. Name each one `{design_dir}/factory-<ticket number>-<short-slug>.dc.html` (lower-case "
+        "letters, digits and dashes in the slug; the ticket number is given in the ticket header). Open two or three of the existing "
+        "`*.dc.html` files first and copy their structure and visual style (the <head>, fonts, colours, spacing, corner radii, the way "
+        "cards and buttons look), so yours sit naturally beside them. A mockup is a COMPLETE static page: `<!doctype html>`, `<html>`, "
+        "a `<head>` containing `<meta charset=\"utf-8\">` and `<script src=\"./support.js\"></script>`, then `<body><x-dc>` with an "
+        "optional `<helmet>` holding the Google Fonts `<link rel=\"stylesheet\" ...>` and a `<style>` block, then your markup with "
+        "INLINE styles, then `</x-dc></body></html>`. These rules are enforced mechanically, and a file that breaks any of them is "
+        "discarded (your document is still posted): static HTML only; the ONLY script allowed is that `support.js` include; no event "
+        "handlers, forms, iframes, objects, <img>, video, or `url(...)` / `@import` / backslashes in CSS; links are `#` only; the only "
+        "external resource is the Google Fonts stylesheet the existing files already use (draw icons and shapes with CSS or inline "
+        "<svg>); at most three files of 150 KB each. Show the realistic states that matter (for example default, empty, error) as "
+        "separate frames in one file or as separate files. Do not modify, rename or delete any existing file. Your final answer is still "
+        "only the document; end it with one line `Design files: <the paths you created>` (or `Design files: none` if the ticket has no "
+        "user-facing screens)."
+    )
 
 
 def common_for(role: str, design_files: bool) -> str:

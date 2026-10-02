@@ -43,7 +43,8 @@ class Role:
     model: str
     effort: str
     harness: str = "claude-code"
-    design_files: bool = False           # designer only: also write static design mockups into the repo's design/ folder
+    design_files: bool = False           # designer only: also write static design mockups into the repo
+    design_dir: str = "docs/design"      # where they go (design/ is often git-ignored: it holds local pulls of the design project)
 
 
 DEFAULT_ROLES = (
@@ -288,6 +289,10 @@ def parse(raw: dict) -> Config:
     runner_cfg = _runner(rn)
     harnesses = _harnesses(raw, runner_cfg)
     roles = tuple(dataclasses.replace(r, **raw.get("roles", {}).get(r.name, {})) for r in DEFAULT_ROLES)
+    from .designfiles import valid_dir
+    for r in roles:
+        if not valid_dir(r.design_dir):
+            raise ValueError(f"roles.{r.name}.design_dir must be a relative folder such as docs/design")
     review = ReviewCfg(**raw.get("review", {}))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")

@@ -29,21 +29,21 @@ class DesignerFlow(unittest.TestCase):
 
     @staticmethod
     def write(work, name, text):
-        (work / "web" / "design").mkdir(exist_ok=True)
-        (work / "web" / "design" / name).write_text(text)
+        (work / "web" / "docs" / "design").mkdir(parents=True, exist_ok=True)
+        (work / "web" / "docs" / "design" / name).write_text(text)
 
     def test_a_valid_mockup_becomes_a_draft_pr_with_only_that_file(self):
         res, gh, bare, g, t = self.go(lambda w: self.write(w, "factory-3-reorder.dc.html", VALID))
         self.assertEqual(res.status, "stage")
         self.assertIn("did the thing", res.output)                                     # the written document is still returned
-        self.assertEqual([f["path"] for f in res.files], ["design/factory-3-reorder.dc.html"])
+        self.assertEqual([f["path"] for f in res.files], ["docs/design/factory-3-reorder.dc.html"])
         self.assertEqual((len(gh.prs), gh.drafts), (1, [True]))                        # a DRAFT pull request
         branch = gh.prs[0][1]
         self.assertTrue(branch.startswith("factory/design-3-"))
         shown = g("--git-dir", str(bare["o/web"]), "ls-tree", "-r", "--name-only", branch, cwd=t).stdout.split()
-        self.assertEqual(sorted(shown), ["a.txt", "design/factory-3-reorder.dc.html"])  # the base file plus exactly one new file
+        self.assertEqual(sorted(shown), ["a.txt", "docs/design/factory-3-reorder.dc.html"])  # the base file plus exactly one new file
         self.assertEqual(g("--git-dir", str(bare["o/web"]), "rev-list", "--count", "main", cwd=t).stdout.strip(), "1")
-        self.assertEqual(res.files[0]["url"], f"https://github.com/o/web/blob/{branch}/design/factory-3-reorder.dc.html")
+        self.assertEqual(res.files[0]["url"], f"https://github.com/o/web/blob/{branch}/docs/design/factory-3-reorder.dc.html")
 
     def test_a_hostile_mockup_is_dropped_but_the_document_is_still_posted(self):
         bad = VALID.replace("<h1", '<script>alert(1)</script><h1', 1)
@@ -66,6 +66,37 @@ class DesignerFlow(unittest.TestCase):
             res, gh, *_ = self.go(lambda w, n=name: self.write(w, n, VALID))
             self.assertEqual((res.files, gh.prs), ([], []), name)
 
+    def test_files_are_collected_even_when_gitignore_covers_the_folder(self):
+        """Regression from a live run: little-ninjas ignores `design/` (a pattern that also matches docs/design). The agent created its
+        file, git did not see it, and nothing was published. The sandbox now force-adds exactly <design_dir>/factory-*.dc.html."""
+        def edits(w):
+            (w / "web" / ".git" / "info").mkdir(parents=True, exist_ok=True)
+            with open(w / "web" / ".git" / "info" / "exclude", "a") as f:
+                f.write("design/\n")                                   # matches docs/design/ too, at any depth
+            self.write(w, "factory-3-kept.dc.html", VALID)
+            (w / "web" / "docs" / "design" / "notes.txt").write_text("not a design file: must stay ignored\n")
+        res, gh, bare, g, t = self.go(edits)
+        self.assertEqual([f["path"] for f in res.files], ["docs/design/factory-3-kept.dc.html"])
+        shown = g("--git-dir", str(bare["o/web"]), "ls-tree", "-r", "--name-only", gh.prs[0][1], cwd=t).stdout.split()
+        self.assertNotIn("docs/design/notes.txt", shown)                    # only the exact factory-*.dc.html pattern is forced
+
+    def test_the_folder_setting_is_honoured_and_validated(self):
+        custom = tuple(replace(r, design_dir="mockups") if r.name == "designer" else r for r in DEFAULT_ROLES)
+        def edits(w):
+            (w / "web" / "mockups").mkdir(exist_ok=True)
+            (w / "web" / "mockups" / "factory-3-x.dc.html").write_text(VALID)
+        res, gh, *_ = self.go(edits, cfg_roles=custom)
+        self.assertEqual([f["path"] for f in res.files], ["mockups/factory-3-x.dc.html"])
+        res, gh, *_ = self.go(lambda w: self.write(w, "factory-3-x.dc.html", VALID), cfg_roles=custom)       # wrong folder for that setting
+        self.assertEqual((res.files, gh.prs), ([], []))
+        base = open("config.example.toml").read()
+        for bad in ("../etc", ".github/x", "/abs", "Has Caps"):
+            with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+                f.write(base + f'\n[roles.designer]\ndesign_dir = "{bad}"\n')
+            from factory.config import load
+            with self.assertRaises(ValueError, msg=bad):
+                load(f.name)
+
     def test_the_feature_can_be_switched_off_and_other_roles_never_publish(self):
         off = tuple(replace(r, design_files=False) if r.name == "designer" else r for r in DEFAULT_ROLES)
         res, gh, *_ = self.go(lambda w: self.write(w, "factory-3-x.dc.html", VALID), cfg_roles=off)
@@ -79,7 +110,8 @@ class DesignerFlow(unittest.TestCase):
         pr = Project("p", (ProjectRepo("o/web", "web"),), "")
         on = build_prompt("t", "b", pr, "o/web", "designer", None, None, None, ("o/web", 3), True)
         self.assertIn("DESIGN FILES", on)
-        self.assertIn("design/factory-<ticket number>-<short-slug>.dc.html", on)
+        self.assertIn("docs/design/factory-<ticket number>-<short-slug>.dc.html", on)
+        self.assertIn("do NOT write into `design/`", on)
         self.assertIn("Its number is 3", on)
         self.assertIn("the only files you may create are the design files", on)
         self.assertNotIn("DESIGN FILES", build_prompt("t", "b", pr, "o/web", "designer", None, None, None, ("o/web", 3), False))

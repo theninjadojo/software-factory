@@ -1,6 +1,6 @@
 import unittest
 
-from factory.designfiles import (DesignFileRejected, MAX_BYTES, check_name, check_patch_adds_only, validate_html)
+from factory.designfiles import (DesignFileRejected, MAX_BYTES, check_name, check_patch_adds_only, valid_dir, validate_html)
 
 VALID = '''<!doctype html>
 <html>
@@ -81,10 +81,10 @@ class Validator(unittest.TestCase):
 
 class Names(unittest.TestCase):
     def test_name_pattern_and_ticket_number(self):
-        check_name("design/factory-975-proration-basis.dc.html", 975)
-        for bad in ("design/factory-976-x.dc.html", "design/x.dc.html", "design/factory-975-.dc.html", "design/factory-975-X.dc.html",
-                    "design/sub/factory-975-x.dc.html", "../design/factory-975-x.dc.html", "design/factory-975-x.html",
-                    "design/factory-975-" + "a" * 60 + ".dc.html", "web/design/factory-975-x.dc.html"):
+        check_name("docs/design/factory-975-proration-basis.dc.html", 975)
+        for bad in ("docs/design/factory-976-x.dc.html", "design/x.dc.html", "docs/design/factory-975-.dc.html", "docs/design/factory-975-X.dc.html",
+                    "design/sub/factory-975-x.dc.html", "../docs/design/factory-975-x.dc.html", "docs/design/factory-975-x.html",
+                    "docs/design/factory-975-" + "a" * 60 + ".dc.html", "web/docs/design/factory-975-x.dc.html"):
             with self.assertRaises(DesignFileRejected, msg=bad):
                 check_name(bad, 975)
 
@@ -93,24 +93,39 @@ def added(path, extra=""):
     return f"diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1 @@\n+x\n{extra}"
 
 
+class Directory(unittest.TestCase):
+    def test_the_folder_is_configurable_and_safe(self):
+        check_name("mockups/factory-5-a.dc.html", 5, "mockups")
+        check_name("docs/ux/mocks/factory-5-a.dc.html", 5, "docs/ux/mocks")
+        with self.assertRaises(DesignFileRejected):
+            check_name("docs/design/factory-5-a.dc.html", 5, "mockups")                # the folder must match the setting
+        for ok in ("docs/design", "mockups", "a/b/c"):
+            self.assertTrue(valid_dir(ok), ok)
+        for bad in ("", "/abs", "../x", "a/../b", ".github/x", ".git", "Docs", "a b", "a//b", "a/b/c/d/e", "x" * 40):
+            self.assertFalse(valid_dir(bad), bad)
+        for bad in ("../etc", ".github/workflows", "/tmp"):
+            with self.assertRaises(DesignFileRejected):
+                check_name(bad + "/factory-5-a.dc.html", 5, bad)
+
+
 class PatchRules(unittest.TestCase):
     def test_only_brand_new_regular_files_with_good_names_are_accepted(self):
-        ok = added("design/factory-5-a.dc.html") + added("design/factory-5-b.dc.html")
-        self.assertEqual(check_patch_adds_only(ok, 5), ["design/factory-5-a.dc.html", "design/factory-5-b.dc.html"])
+        ok = added("docs/design/factory-5-a.dc.html") + added("docs/design/factory-5-b.dc.html")
+        self.assertEqual(check_patch_adds_only(ok, 5), ["docs/design/factory-5-a.dc.html", "docs/design/factory-5-b.dc.html"])
 
     def test_edits_deletes_renames_modes_and_extra_files_are_rejected(self):
-        modify = "diff --git a/design/factory-5-a.dc.html b/design/factory-5-a.dc.html\nindex 1..2 100644\n--- a/design/factory-5-a.dc.html\n+++ b/design/factory-5-a.dc.html\n@@ -1 +1 @@\n-a\n+b\n"
-        delete = "diff --git a/design/factory-5-a.dc.html b/design/factory-5-a.dc.html\ndeleted file mode 100644\nindex 1..0\n"
-        rename = "diff --git a/design/factory-5-a.dc.html b/design/factory-5-b.dc.html\nsimilarity index 100%\nrename from design/factory-5-a.dc.html\nrename to design/factory-5-b.dc.html\n"
-        exe = added("design/factory-5-a.dc.html").replace("100644", "100755")
+        modify = "diff --git a/docs/design/factory-5-a.dc.html b/docs/design/factory-5-a.dc.html\nindex 1..2 100644\n--- a/docs/design/factory-5-a.dc.html\n+++ b/docs/design/factory-5-a.dc.html\n@@ -1 +1 @@\n-a\n+b\n"
+        delete = "diff --git a/docs/design/factory-5-a.dc.html b/docs/design/factory-5-a.dc.html\ndeleted file mode 100644\nindex 1..0\n"
+        rename = "diff --git a/docs/design/factory-5-a.dc.html b/docs/design/factory-5-b.dc.html\nsimilarity index 100%\nrename from docs/design/factory-5-a.dc.html\nrename to docs/design/factory-5-b.dc.html\n"
+        exe = added("docs/design/factory-5-a.dc.html").replace("100644", "100755")
         for name, bad in (("modify", modify), ("delete", delete), ("rename", rename), ("exec", exe), ("canvas.json", added("design/canvas.json")),
                           ("existing-style name", added("design/Main.dc.html")), ("other dir", added("web/src/x.ts")),
-                          ("empty", ""), ("too many", "".join(added(f"design/factory-5-{c}.dc.html") for c in "abcd")),
-                          ("symlink", added("design/factory-5-a.dc.html").replace("100644", "120000"))):
+                          ("empty", ""), ("too many", "".join(added(f"docs/design/factory-5-{c}.dc.html") for c in "abcd")),
+                          ("symlink", added("docs/design/factory-5-a.dc.html").replace("100644", "120000"))):
             with self.assertRaises(DesignFileRejected, msg=name):
                 check_patch_adds_only(bad, 5)
         with self.assertRaises(DesignFileRejected):
-            check_patch_adds_only(added("design/factory-5-a.dc.html"), 6)             # a different ticket's number
+            check_patch_adds_only(added("docs/design/factory-5-a.dc.html"), 6)             # a different ticket's number
 
 
 if __name__ == "__main__":

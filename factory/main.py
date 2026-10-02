@@ -230,8 +230,8 @@ def design_section(files: list, notes: str) -> str:
         prs = sorted({f["pr"] for f in files if PR_URL.match(f["pr"])})
         out += "\n\n### Design files\n" + (f"Draft PR: {prs[0]}\n\n" if prs else "")
         out += "\n".join(f"- [`{f['path']}`]({f['url']})" for f in files if f["url"].startswith("https://github.com/"))
-        out += ("\n\nStatic canvases in the format of the other files in `design/`. Open them in Claude Design (design-sync), or merge the "
-                "draft PR to keep them with the repository.")
+        out += ("\n\nStatic Claude Design canvases. Import a file into Claude Design to work on it, or merge the draft PR to keep them "
+                "with the repository.")
     if notes:
         out += f"\n\n_Note: {sanitize_markdown(notes)}_"
     return out

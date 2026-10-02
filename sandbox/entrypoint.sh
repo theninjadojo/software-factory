@@ -15,6 +15,10 @@ sh -c "$AGENT_COMMAND" > /out/agent.log 2>&1
 echo $? > /out/exit_code
 for d in /work/*/; do
   n=$(basename "$d")
-  (cd "$d" && git add -A -N 2>/dev/null; git diff --binary > "/out/$n.diff" 2>/dev/null)
+  (cd "$d" && git add -A -N 2>/dev/null
+   # A designer's mockups: collect them even if a .gitignore rule (for example `design/`, which matches at any depth) covers the
+   # folder. Only this exact pattern is forced; the orchestrator validates every file before anything is published.
+   if [ -n "$DESIGN_DIR" ]; then git add -f -N -- "$DESIGN_DIR"/factory-*.dc.html 2>/dev/null; fi
+   git diff --binary > "/out/$n.diff" 2>/dev/null)
 done
 exit 0

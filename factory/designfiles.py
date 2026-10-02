@@ -11,7 +11,8 @@ from html.parser import HTMLParser
 
 MAX_FILES = 3
 MAX_BYTES = 150_000
-NAME_RE = re.compile(r"^design/factory-(\d+)-[a-z0-9][a-z0-9-]{0,40}\.dc\.html$")
+DEFAULT_DIR = "docs/design"
+DIR_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}(/[a-z0-9][a-z0-9_-]{0,30}){0,3}$")
 
 TAGS = {
     "html", "head", "meta", "title", "link", "style", "body", "x-dc", "helmet", "script",
@@ -116,13 +117,17 @@ def validate_html(text: str) -> None:
         raise DesignFileRejected("must wrap its content in <x-dc>, like the other canvases")
 
 
-def check_name(path: str, ticket_number: int) -> None:
-    m = NAME_RE.match(path)
-    if not m or int(m.group(1)) != ticket_number:
-        raise DesignFileRejected(f"{path}: design files must be named design/factory-{ticket_number}-<slug>.dc.html")
+def valid_dir(design_dir: str) -> bool:
+    return bool(DIR_RE.match(design_dir)) and ".." not in design_dir.split("/") and design_dir.split("/")[0] not in (".git", ".github")
 
 
-def check_patch_adds_only(patch: str, ticket_number: int) -> list[str]:
+def check_name(path: str, ticket_number: int, design_dir: str = DEFAULT_DIR) -> None:
+    m = re.match(r"^" + re.escape(design_dir) + r"/factory-(\d+)-[a-z0-9][a-z0-9-]{0,40}\.dc\.html$", path)
+    if not valid_dir(design_dir) or not m or int(m.group(1)) != ticket_number:
+        raise DesignFileRejected(f"{path}: design files must be named {design_dir}/factory-{ticket_number}-<slug>.dc.html")
+
+
+def check_patch_adds_only(patch: str, ticket_number: int, design_dir: str = DEFAULT_DIR) -> list[str]:
     """The patch may ADD (never modify, delete, rename or change the mode of) at most MAX_FILES files with allowed names."""
     sections = re.split(r"(?m)^diff --git ", patch)[1:]
     if not sections:
@@ -135,7 +140,7 @@ def check_patch_adds_only(patch: str, ticket_number: int) -> list[str]:
             raise DesignFileRejected("renames and odd paths are not allowed")
         if not re.search(r"(?m)^new file mode 100644$", sec) or re.search(r"(?m)^(deleted file mode|old mode|new mode|rename |copy |similarity )", sec):
             raise DesignFileRejected(f"{m.group(1)}: only brand-new regular files may be added")
-        check_name(m.group(1), ticket_number)
+        check_name(m.group(1), ticket_number, design_dir)
         paths.append(m.group(1))
     if len(paths) > MAX_FILES:
         raise DesignFileRejected(f"at most {MAX_FILES} design files")
