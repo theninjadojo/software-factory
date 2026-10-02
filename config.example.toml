@@ -99,6 +99,23 @@ auto = true
 label = "factory:fix-conflicts"
 max_attempts = 10            # resolution runs per PR; then a person is asked
 
+# Standing instructions of your own for the agents (house style, domain rules, language). Each is put at the top of that
+# agent's prompt, `all` first; the factory's built-in rules (read-only, untrusted ticket text, protected paths, no commit,
+# the open-questions block) still apply and win if they conflict. Up to 4000 characters each, line breaks and tabs only.
+# Also editable on Settings → Agent prompts. Every key is optional; empty means nothing is added.
+# [prompts]
+# all = "Write in British English."
+# analyst = ""
+# designer = ""
+# architect = ""
+# reviewer = ""
+# implementer = """
+# Prefer small functions.
+# Add a test for every bug fix.
+# """
+# ci_fix = ""                 # CI-fix runs get `all` + this, not the implementer text
+# conflicts = ""              # merge-conflict runs likewise
+
 # The project manager: every interval_minutes (and only when the tickets changed) an agent reads each repository's tickets
 # that carry a factory trigger or stage label, and ranks them with `priority: high` / `priority: low` labels (the poller already
 # starts higher priority first). A priority label a person set, changed or removed always wins. It also records which tickets

@@ -29,7 +29,7 @@ A dashboard and settings editor, in the same standard-library-only style as the 
 
 | Page | Changes |
 |---|---|
-| Settings | Poll interval, dry run (go live), confidence threshold, labels, who may apply them, repositories, projects, routing (tier → harness/model/effort), role agents, classifier (Jev or labels, label → kind aliases, with a **Try it** box), the code reviewer (on/off, automatic or by label, model, harness), sandbox limits and allowed hosts, CI feedback. |
+| Settings | Poll interval, dry run (go live), confidence threshold, labels, who may apply them, repositories, projects, routing (tier → harness/model/effort), role agents, classifier (Jev or labels, label → kind aliases, with a **Try it** box), the code reviewer (on/off, automatic or by label, model, harness), sandbox limits and allowed hosts, CI feedback, merge conflicts, agent prompts (your own instructions per agent, with the built-in prompt shown read-only). |
 | Harnesses | Enable or disable an agent harness; edit its image, command and hosts; set its key. Routes and roles choose among the enabled ones. |
 | Credentials | GitHub token, Claude credential (subscription token or API key), OpenRouter key, Telegram bot token. Write-only. GitHub and OpenRouter have a Test button. |
 | Telegram | Your chat id (with *Find my chat id*), a test message, and how chatty it is: a level, or an explicit list of events. |

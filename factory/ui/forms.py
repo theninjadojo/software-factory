@@ -3,6 +3,7 @@ import json
 import time
 
 from ..events import ALL_EVENTS, LEVELS
+from ..roles import PROMPT_AGENTS, builtin_prompt
 from . import settings as S
 from .integrations import SECRETS, secret_status
 from .views import badge, csrf_field, ago, esc, ts
@@ -15,7 +16,7 @@ EVENT_HELP = {
     "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from Telegram",
     "info": "Anything else",
 }
-TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("pm", "Project manager"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts")]
+TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("pm", "Project manager"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts"), ("prompts", "Agent prompts")]
 
 
 def _fmt(f: S.Field, v) -> str:
@@ -48,12 +49,20 @@ def field_row(f: S.Field, eff: dict, base: dict, submitted=None) -> str:
             control = " ".join(f'<label class="check"><input type="checkbox" name="{name}" value="{esc(c)}"{" checked" if c in have else ""}> {esc(c)}</label>' for c in f.choices)
         elif f.kind in ("repos", "hosts", "kv"):
             control = f'<textarea id="{name}" name="{name}" rows="{max(3, min(8, len((value or "").splitlines()) + 1))}">{esc(value)}</textarea>'
+        elif f.kind == "prompt":           # the newline after the tag is dropped by the browser, so a leading one in the value survives
+            control = f'<textarea id="{name}" name="{name}" rows="6" maxlength="{S.PROMPT_MAX}">\n{esc(value)}</textarea>'
+            agent = f.key.partition(".")[2]
+            if agent in PROMPT_AGENTS:
+                control += (f'<details><summary class="muted">Built-in instructions (always included, and they win)</summary>'
+                            f'<pre>{esc(builtin_prompt(agent))}</pre></details>')
         else:
             control = f'<input id="{name}" name="{name}" value="{esc(value)}" autocomplete="off">'
     pinned = S.get_in(base, f.key)
     note = ""
     if S.get_in(eff, f.key) is not None and S.get_in(eff, f.key) != pinned and pinned is not None:
-        note = f'<span class="muted"> · changed here (config.toml says: {esc(_fmt(f, pinned))})</span>'
+        said = _fmt(f, pinned)
+        said = said[:200] + "…" if f.kind == "prompt" and len(said) > 200 else said
+        note = f'<span class="muted"> · changed here (config.toml says: {esc(said)})</span>'
     help_ = f'<div class="muted">{esc(f.help)}{note}</div>' if (f.help or note) else ""
     confirm = (f'<label class="check danger"><input type="checkbox" name="confirm__{name}" value="1"> I understand: {esc(f.danger)}</label>' if f.danger else "")
     return f'<div class="field">{head}{control}{help_}{confirm}</div>'
