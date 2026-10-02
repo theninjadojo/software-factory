@@ -9,7 +9,7 @@ export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 HOME=/ho
 cd /work || exit 1
 git config --global --add safe.directory '*'
 if [ -z "$AGENT_COMMAND" ]; then
-  AGENT_COMMAND='claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions'
+  AGENT_COMMAND='claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions --output-format json'
 fi
 sh -c "$AGENT_COMMAND" > /out/agent.log 2>&1
 echo $? > /out/exit_code

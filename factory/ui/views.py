@@ -3,6 +3,7 @@ import html
 import json
 import re
 import time
+from urllib.parse import urlencode
 
 from .. import designfiles
 from ..sanitize import md_render
@@ -10,9 +11,9 @@ from ..sanitize import md_render
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
-NAV = [("/", "Floor"), ("/needs", "Needs you"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
+NAV = [("/", "Factory"), ("/needs", "Needs you"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
        ("/settings", "Settings"), ("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram")]
-PRIMARY = 4         # the first four stay on the phone tab bar; the rest sit behind "More"
+PRIMARY = 3         # the first three stay on the phone tab bar; the rest sit behind "More"
 
 GOOD = {"pr", "stage", "passed", "success", "closed", "ok"}
 WARN = {"running", "watching", "rate-limited", "human", "dry-run", "no-ci", "timed-out", "no-change", "paused"}
@@ -105,54 +106,169 @@ def overview_fragment(d: dict, csrf: str, selected: str | None = None, needs=Non
     return floor.render(d, csrf, selected, needs, forms, flt)
 
 
+CARD = "stack"     # tables with this class turn into stacked cards on phones (each cell shows its column from data-l)
+RUN_HEADS = ["Run", "Started", "Kind", "Ticket", "Model", "Status", "Took", "PRs"]
+EVENT_HEADS = ["When", "Kind", "Ticket", "Message"]
+PR_HEADS = ["PR", "Ticket", "CI", "Fix rounds", "Summary", "Updated"]
+TICKET_HEADS = ["Ticket", "Decision", "Why", "Runs", "When", "Steps", "Labels"]
+STEP_HEADS = ["Step", "Status", "Agent", "Attempts", "Runs", "PRs"]
+
+
+def cards_table(heads: list[str], rows: str) -> str:
+    return (f'<div class="scroll"><table class="{CARD}"><thead><tr>{"".join(f"<th>{esc(h)}</th>" for h in heads)}</tr></thead>'
+            f'<tbody>{rows}</tbody></table></div>')
+
+
+def trow(heads: list[str], cells: list, attrs: str = "") -> str:
+    """One row for cards_table. A cell is escaped HTML or an (html, attributes) pair; the column name goes in data-l for the phone layout."""
+    out = ""
+    for h, c in zip(heads, cells):
+        c, extra = c if isinstance(c, tuple) else (c, "")
+        out += f'<td data-l="{esc(h)}"{extra}>{c}</td>'
+    return f"<tr{attrs}>{out}</tr>"
+
+
 def runs_table(runs: list[dict]) -> str:
     if not runs:
         return '<p class="muted">No runs yet.</p>'
-    rows = "".join(
-        f'<tr><td><a href="/runs/{int(r["id"])}">#{int(r["id"])}</a></td><td title="{esc(ts(r["started"]))}">{esc(ago(r["started"]))}</td>'
-        f'<td>{esc(r["kind"])}{" · " + esc(r["stage"]) if r["stage"] else ""}</td><td>{ticket_link(r["repo"], r["issue"])}<br><span class="muted">{esc(r["title"])}</span></td>'
-        f'<td>{esc(r["model"])} <span class="muted">{esc(r["effort"])}</span></td><td>{badge(r["status"])}</td>'
-        f'<td>{esc(dur(r["started"], r["finished"]))}</td><td>{pr_links(r["pr_urls"])}</td></tr>' for r in runs)
-    return ('<div class="scroll"><table><thead><tr><th>Run</th><th>Started</th><th>Kind</th><th>Ticket</th><th>Model</th><th>Status</th>'
-            f'<th>Took</th><th>PRs</th></tr></thead><tbody>{rows}</tbody></table></div>')
+    h = RUN_HEADS
+    rows = "".join(trow(h, [
+        f'<a href="/runs/{int(r["id"])}">#{int(r["id"])}</a>', (esc(ago(r["started"])), f' title="{esc(ts(r["started"]))}"'),
+        esc(r["kind"]) + (" · " + esc(r["stage"]) if r["stage"] else ""), f'{ticket_link(r["repo"], r["issue"])}<br><span class="muted">{esc(r["title"])}</span>',
+        f'{esc(r["model"])} <span class="muted">{esc(r["effort"])}</span>', badge(r["status"]), esc(dur(r["started"], r["finished"])), pr_links(r["pr_urls"])]) for r in runs)
+    return cards_table(h, rows)
 
 
 def events_table(events: list[dict]) -> str:
     if not events:
         return '<p class="muted">No events yet.</p>'
+    h = EVENT_HEADS
 
     def row(e: dict) -> str:
         bad = e["kind"].startswith(("error", "alert:failure"))
         ticket = ticket_link(e["repo"], e["issue"]) if e["repo"] and e["issue"] else ""
         run = " " + f'<a href="/runs/{int(e["run_id"])}">run</a>' if e["run_id"] else ""
-        return (f'<tr><td class="nowrap" title="{esc(ts(e["ts"]))}">{esc(ago(e["ts"]))}</td>'
-                f'<td>{badge(e["kind"], "bad" if bad else "")}</td><td>{ticket}{run}</td><td class="wrap">{esc(e["message"])}</td></tr>')
+        return trow(h, [(esc(ago(e["ts"])), f' class="nowrap" title="{esc(ts(e["ts"]))}"'), badge(e["kind"], "bad" if bad else ""), ticket + run,
+                        (esc(e["message"]), ' class="wrap"')])
 
-    rows = "".join(row(e) for e in events)
-    return f'<div class="scroll"><table><thead><tr><th>When</th><th>Kind</th><th>Ticket</th><th>Message</th></tr></thead><tbody>{rows}</tbody></table></div>'
+    return cards_table(h, "".join(row(e) for e in events))
 
 
 def prs_table(prs: list[dict]) -> str:
     if not prs:
         return '<p class="muted">No pull requests are being tracked yet.</p>'
+    h = PR_HEADS
+    rows = "".join(trow(h, [
+        gh_link(f"https://github.com/{p['repo']}/pull/{int(p['number'])}", p["repo"] + "#" + str(int(p["number"]))) if REPO.match(p["repo"]) else esc(p["repo"]),
+        ticket_link(p["issue_repo"], p["issue_num"]), badge(p["status"]), esc(p["rounds"]), (esc(p["summary"]), ' class="wrap"'),
+        (esc(ago(p["updated"])), f' title="{esc(ts(p["updated"]))}"')]) for p in prs)
+    return cards_table(h, rows)
+
+
+STAGE_WHAT = {"analyst": "Analyst", "designer": "Designer", "architect": "Architect"}
+
+
+def run_what(r: dict) -> str:
+    """Plain-language label for a run; unknown kinds fall back to the raw kind."""
+    if r["kind"] == "build":
+        return "Build opened PR" if r["pr_urls"] else "Build"
+    if r["kind"] == "fix":
+        return "CI fix round"
+    if r["kind"] == "stage" and r["stage"] in STAGE_WHAT:
+        return STAGE_WHAT[r["stage"]]
+    return str(r["kind"]) + (" " + str(r["stage"]) if r["stage"] else "")
+
+
+def runs_summary_line(s: dict | None) -> str:
+    if not s or not s["total"]:
+        return ""
+    parts = [f'{int(s["total"])} today', f'{int(s["passed"])} passed', f'{int(s["failed"])} failed']
+    if s["avg"] is not None:
+        parts.append(f'average {dur(0.001, 0.001 + float(s["avg"]))}')
+    return '<p class="summary">' + esc(" · ".join(parts)) + "</p>"
+
+
+def runs_list(runs: list[dict]) -> str:
+    if not runs:
+        return '<p class="muted">No runs yet.</p>'
     rows = "".join(
-        f'<tr><td>{gh_link(f"https://github.com/{p["repo"]}/pull/{int(p["number"])}", p["repo"] + "#" + str(int(p["number"]))) if REPO.match(p["repo"]) else esc(p["repo"])}</td>'
-        f'<td>{ticket_link(p["issue_repo"], p["issue_num"])}</td><td>{badge(p["status"])}</td><td>{esc(p["rounds"])}</td>'
-        f'<td class="wrap">{esc(p["summary"])}</td><td title="{esc(ts(p["updated"]))}">{esc(ago(p["updated"]))}</td></tr>' for p in prs)
-    return ('<div class="scroll"><table><thead><tr><th>PR</th><th>Ticket</th><th>CI</th><th>Fix rounds</th><th>Summary</th><th>Updated</th></tr></thead>'
+        f'<tr><td><a href="/runs/{int(r["id"])}">{esc(r["repo"])}#{esc(r["issue"])}</a><br><span class="muted">{ticket_link(r["repo"], r["issue"])}</span></td>'
+        f'<td>{esc(run_what(r))}</td><td>{badge(r["status"])}</td><td>{esc(r["model"])}</td>'
+        f'<td>{esc(dur(r["started"], r["finished"]))}</td><td title="{esc(ts(r["started"]))}">{esc(ago(r["started"]))}</td></tr>' for r in runs)
+    return ('<div class="scroll"><table><thead><tr><th>Run</th><th>What</th><th>Status</th><th>Model</th><th>Took</th><th>Started</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 
-def runs_page(runs: list[dict], status: str, repo: str, page_no: int, has_more: bool) -> str:
+def chips(options, current: str, href) -> str:
+    """Filter chips as plain links; `href(value)` builds the query string. The current one is marked with aria-current."""
+    def chip(v: str, label: str) -> str:
+        on = v == current
+        return f'<a class="chip{" current" if on else ""}"{" aria-current=true" if on else ""} href="{esc(href(v))}">{esc(label)}</a>'
+
+    return '<p class="chips">' + " ".join(chip(v, label) for v, label in options) + "</p>"
+
+
+def events_list(events: list[dict]) -> str:
+    if not events:
+        return '<p class="muted">Nothing important has happened yet.</p>'
+
+    def row(e: dict) -> str:
+        k = e["kind"]
+        state, cls = ("failed", "bad") if k.startswith(("error", "alert:failure")) else ("needs attention", "warn") if k.startswith("alert") else ("ok", "good")
+        ticket = ticket_link(e["repo"], e["issue"]) if e["repo"] and e["issue"] else ""
+        return (f'<li><span class="nowrap muted" title="{esc(ts(e["ts"]))}">{esc(ago(e["ts"]))}</span>'
+                f'<span class="dot {cls}" role="img" aria-label="{state}" title="{state}"></span>'
+                f'<span class="wrap">{esc(e["message"])}</span><span class="nowrap">{ticket}</span></li>')
+
+    return '<ul class="evlist">' + "".join(row(e) for e in events) + "</ul>"
+
+
+def prs_summary_line(prs: list[dict]) -> str:
+    open_ = [p for p in prs if p["status"] != "closed"]
+    if not open_:
+        return ""
+    return (f'<p class="summary">{len(open_)} open · {sum(p["status"] == "passed" for p in open_)} passing · '
+            f'{sum(p["status"] == "failed" for p in open_)} failing</p>')
+
+
+def pr_round_line(p: dict, limit: int) -> str:
+    n, st = int(p["rounds"] or 0), p["status"]
+    if st == "failed":
+        return f"Fix round {n} of {limit} failed" if n else "CI failed; no fix rounds used"
+    if st == "watching":
+        return f"Fix round {n} of {limit} running" if n else "Waiting for CI"
+    return f"Fix round {n} of {limit} needed" if n else "No fix rounds needed"
+
+
+def prs_cards(prs: list[dict], fix_rounds: int = 1) -> str:
+    if not prs:
+        return '<p class="muted">No pull requests are being tracked yet.</p>'
+
+    def card(p: dict) -> str:
+        cls = "good" if p["status"] in GOOD else "bad" if p["status"] in BAD else "warn"
+        ref = f'{p["repo"]}#{int(p["number"])}'
+        url = f'https://github.com/{p["repo"]}/pull/{int(p["number"])}'
+        button = (f'<a class="button" href="{esc(url)}" rel="noopener noreferrer" target="_blank">Open on GitHub</a>'
+                  if REPO.match(p["repo"]) and GH_URL.match(url) else "")
+        return (f'<li class="prcard {cls}"><h3>{esc(p.get("title") or ref)}</h3>'
+                f'<p class="muted">{esc(ref)} · {esc(ago(p["watch_started"] or p["updated"]))} · ticket {ticket_link(p["issue_repo"], p["issue_num"])}</p>'
+                f'<p>CI: {badge(p["status"], cls)}</p><p>{esc(pr_round_line(p, fix_rounds))}</p>{button}</li>')
+
+    return '<ul class="prcards">' + "".join(card(p) for p in prs) + "</ul>"
+
+
+def runs_page(runs: list[dict], status: str, repo: str, page_no: int, has_more: bool, summary: dict | None = None) -> str:
     opts = "".join(f'<option value="{esc(v)}"{" selected" if v == status else ""}>{esc(v or "any status")}</option>'
-                   for v in ("", "running", "pr", "stage", "failed", "rejected", "no-change", "rate-limited", "interrupted"))
+                   for v in ("", "running", "passed", "pr", "stage", "failed", "rejected", "no-change", "rate-limited", "interrupted"))
+    bar = chips((("", "All"), ("running", "Running"), ("passed", "Passed"), ("failed", "Failed")), status,
+                lambda v: "/runs?" + urlencode({"status": v, "repo": repo}))
     form = (f'<form method="get" class="filters"><select name="status">{opts}</select>'
             f'<input name="repo" placeholder="owner/repo" value="{esc(repo)}"><button>Filter</button></form>')
     def link(label: str, p: int) -> str:
-        return f'<a href="/runs?status={esc(status)}&amp;repo={esc(repo)}&amp;page={p}">{label}</a>'
+        return f'<a href="{esc("/runs?" + urlencode({"status": status, "repo": repo, "page": p}))}">{label}</a>'
 
     nav = '<p class="pager">' + (link("← newer", page_no - 1) if page_no > 0 else "") + " " + (link("older →", page_no + 1) if has_more else "") + "</p>"
-    return form + runs_table(runs) + nav
+    return runs_summary_line(summary) + bar + form + runs_list(runs) + nav
 
 
 def run_detail(r: dict, files=()) -> str:
@@ -186,23 +302,22 @@ def tickets_page(rows: list[dict], counts: dict | None = None) -> str:
     counts = counts or {}
     if not rows:
         return '<p class="muted">The factory has not looked at any ticket yet.</p>'
-    body = "".join(
-        f'<tr><td>{ticket_link(t["repo"], t["issue"])}<br><span class="muted">{esc(t["title"])}</span></td><td>{badge(t["outcome"])}</td>'
-        f'<td class="wrap">{esc(t["detail"])}</td><td>{esc(t["runs"])}{" · " + badge(t["last_run"]) if t["last_run"] else ""}</td>'
-        f'<td title="{esc(ts(t["decided_at"]))}">{esc(ago(t["decided_at"]))}</td>'
-        f'<td>{steps_cell(t, counts)}</td>'
-        f'<td><a href="/labels/issue?repo={esc(t["repo"])}&amp;n={int(t["issue"])}">Edit labels</a></td></tr>' for t in rows)
+    h = TICKET_HEADS
+    body = "".join(trow(h, [
+        f'{ticket_link(t["repo"], t["issue"])}<br><span class="muted">{esc(t["title"])}</span>', badge(t["outcome"]), (esc(t["detail"]), ' class="wrap"'),
+        f'{esc(t["runs"])}{" · " + badge(t["last_run"]) if t["last_run"] else ""}', (esc(ago(t["decided_at"])), f' title="{esc(ts(t["decided_at"]))}"'),
+        steps_cell(t, counts), f'<a href="/labels/issue?repo={esc(t["repo"])}&amp;n={int(t["issue"])}">Edit labels</a>']) for t in rows)
     return ('<p class="muted">The latest decision for each ticket. <em>ignored</em> means the label was not applied by someone with write access.</p>'
-            '<div class="scroll"><table><thead><tr><th>Ticket</th><th>Decision</th><th>Why</th><th>Runs</th><th>When</th><th>Steps</th><th>Labels</th></tr></thead>'
-            f'<tbody>{body}</tbody></table></div>')
+            + cards_table(h, body))
 
 
 def events_page(events: list[dict], kind: str, older: int | None) -> str:
-    opts = "".join(f'<option value="{esc(v)}"{" selected" if v == kind else ""}>{esc(l)}</option>'
-                   for v, l in (("", "all events"), ("alert", "alerts"), ("decision", "decisions"), ("run", "runs"), ("error", "errors"), ("startup", "startups"), ("restart", "restarts")))
-    form = f'<form method="get" class="filters"><select name="kind">{opts}</select><button>Filter</button></form>'
-    more = f'<p class="pager"><a href="/events?kind={esc(kind)}&amp;before={int(older)}">older →</a></p>' if older else ""
-    return form + events_table(events) + more
+    kind = kind or "important"
+    bar = chips((("important", "Important"), ("decision", "Decisions"), ("alerts", "Alerts"), ("all", "Everything")), kind,
+                lambda v: "/events?" + urlencode({"kind": v}))
+    more = f'<p class="pager"><a href="{esc("/events?" + urlencode({"kind": kind, "before": int(older)}))}">older →</a></p>' if older else ""
+    body = events_list(events) if kind != "all" else events_table(events)
+    return bar + body + more
 
 
 STEP_TITLES = {"analyze": "Analyze", "design": "Design", "architect": "Architect", "implement": "Implement", "review": "Review", "ci-fix": "CI fix"}
@@ -251,13 +366,12 @@ def pipeline(steps: list[dict], files_by_run: dict | None = None, repo: str = ""
                   f'<p class="muted">{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])}<br>{int(s["attempts"])} attempt(s)</p></li>')
     run_links = lambda s: " ".join(f'<a href="/runs/{int(i)}">#{int(i)}</a>' for i in s["run_ids"])
     doc_of = lambda s: (" " + doc_link(repo, issue, STEP_STAGE[s["step"]], "Read document")) if STEP_STAGE.get(s["step"]) in docs else ""
-    rows = "".join(
-        f'<tr id="step-{esc(s["step"])}"><th>{esc(STEP_TITLES.get(s["step"], s["step"]))}</th><td>{badge(s["status"].capitalize(), STEP_BADGE.get(s["status"], ""))}</td>'
-        f'<td>{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])} <span class="muted">effort {esc(s["effort"])}</span></td>'
-        f'<td>{int(s["attempts"])}</td><td>{run_links(s)}{doc_of(s)}</td>'
-        f'<td>{pr_links(s["pr_urls"]) or "—"}{step_files(s, files_by_run)}</td></tr>' for s in steps)
-    return (f'<ol class="belt">{items}</ol><div class="scroll"><table><thead><tr><th>Step</th><th>Status</th><th>Agent</th><th>Attempts</th>'
-            f'<th>Runs</th><th>PRs</th></tr></thead><tbody>{rows}</tbody></table></div>')
+    h = STEP_HEADS
+    rows = "".join(trow(h, [
+        f'<strong>{esc(STEP_TITLES.get(s["step"], s["step"]))}</strong>', badge(s["status"].capitalize(), STEP_BADGE.get(s["status"], "")),
+        f'{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])} <span class="muted">effort {esc(s["effort"])}</span>', str(int(s["attempts"])),
+        run_links(s) + doc_of(s), (pr_links(s["pr_urls"]) or "—") + step_files(s, files_by_run)], f' id="step-{esc(s["step"])}"') for s in steps)
+    return f'<ol class="belt">{items}</ol>' + cards_table(h, rows)
 
 
 def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=()) -> str:

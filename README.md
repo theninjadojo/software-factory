@@ -43,6 +43,7 @@ document), and the orchestrator validates that data before it touches GitHub.
 | `factory:ready` | **Build it.** Agents edit the repos and open one PR per changed repo. Earlier stage documents are given to the builder. |
 | `factory:review` | A **code reviewer** reviews the ticket's open PRs and comments on each one (see below). Needs `[review] enabled = true`. |
 | `factory:fix-conflicts` | **Resolve merge conflicts** in the ticket's open factory PRs: the base branch is merged into each PR branch and an agent resolves what git cannot (see below). The factory applies it itself when it finds a conflict. Needs `[conflicts] enabled = true`. |
+| `factory:unblocked` | The factory ignores the **project manager's** blockers on this ticket (see below). |
 | `factory:auto` | The classifier picks the next stage from the ticket and which stages are already done (`stage:*` labels) and runs it. It then **continues to the next stage by itself while nothing needs a person**, reading the document it just wrote (open questions make it stop and ask you on Telegram). Read-only stages never wait for approval. Stages are skipped when not needed: a small, clear ticket goes straight to a build. A high-complexity ticket (or a medium one spanning several repositories) gets the architect first, and a classification with no stage runs the analyst first. An explicit stage or `factory:ready` label is always obeyed. The skipped stages are recorded in the admin UI. When the classifier is unsure (low confidence, or it says a person is needed) and no analysis exists yet, it runs the analyst first instead of asking; a person is asked only after that, or before a build it is still unsure about. |
 
 Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `factory:failed`, `factory:needs-answers` (open questions wait for a person; cleared when they are answered or a later job starts), `stage:analysed`,
@@ -57,9 +58,14 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   picks tier, effort and stage as *typed answers*, never free text. Falls back to your labels if it errors.
 - **Code review.** An independent reviewer agent reads the PR branches of every repo in the change, with full history, and posts a
   structured review (verdict, blocking / should-fix / nits with file and line, what is missing, what it could not verify) on each PR.
-  It runs automatically after the factory opens a PR, or when a person labels the ticket `factory:review`. It never approves, requests
+  It runs automatically after the factory opens a PR (which stays a draft until the review is posted), or when a person labels the ticket `factory:review`. It never approves, requests
   changes, merges or edits code. Give it a different harness and model family from the builder for a genuinely independent opinion.
   Off by default (it costs a run per PR).
+- **Project manager.** On a periodic sweep an agent ranks each repository's factory tickets with `priority: high` / `priority: low`
+  labels (the poller starts higher priority first) and records which tickets are blocked by others. While it is on, a build waits until
+  its blockers are closed: the ones the project manager found, and any `Blocked by #N` line in the ticket's body. A priority label a
+  person set always wins, `factory:unblocked` (applied by someone with write access) overrides its blockers, and it comments on a ticket
+  only when it changed something. It never starts, stops or approves work. Off by default (`[pm] enabled`).
 - **CI feedback.** Watches the repos' own CI on factory PRs, reports pass/fail, and can give the agent a fix round with
   the failing logs.
 - **Merge conflicts.** Notices when a factory PR (build or design) conflicts with its base branch, reports it once on the PR, the ticket

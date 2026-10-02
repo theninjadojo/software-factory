@@ -12,6 +12,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 | `router.py` | Turns a classification into a route (model + effort) from a fixed table, or sends it to a person. |
 | `runner.py` | Runs one task: clones every repo of the project, starts the sandbox, then either validates and applies patches and opens PRs, or returns a role's document. Also contains the patch validator and the push guard. |
 | `roles.py` | Prompts for the analyst, designer and architect, and the stage names. |
+| `pm.py` | The project manager: validates its `factory-priorities` block, applies only the priority labels it owns, records blockers (`pm_assessments`), and answers "which open tickets hold this one back" for the poll loop. |
 | `ci.py` | Watches CI on factory PRs; reports; drives the optional fix round. |
 | `proxy.py` | The egress proxy: a CONNECT-only tunnel on a unix socket that allows only listed host names on port 443. |
 | `sanitize.py` | Cleans agent-written markdown before it is posted to GitHub. |
@@ -63,7 +64,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 
 ## State
 
-SQLite (WAL) in the state directory: `runs` (one row per agent run, with output and log tail), `events` (the timeline), `status` (heartbeat), `decisions` (one row per issue state seen, so nothing is processed twice), `approvals`
+SQLite (WAL) in the state directory: `runs` (one row per agent run, with output, log tail and the token counts the harness reported: `NULL` when it reports none; claude-code is run with `--output-format json` for this, see `runner.parse_usage`), `events` (the timeline, including `ci:passed`, `ci:failed` and `ci:timed-out` on the ticket for each CI round; `db.journey` builds a ticket's ordered route from runs, decisions and these), `status` (heartbeat), `decisions` (one row per issue state seen, so nothing is processed twice), `approvals`
 (Telegram Run/Skip), `prs` (PRs being watched for CI), `pr_conflicts` (every factory PR, its merge-conflict state and resolution attempts). A lock file ensures one orchestrator at a time.
 
 ## Harnesses

@@ -16,7 +16,8 @@ class Route:
     fallback_models: tuple[str, ...] = ()   # admin-set; tried in order on the same harness and effort when a model is unavailable
 
 
-CLAUDE_COMMAND = 'claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions'
+CLAUDE_COMMAND = ('claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions '
+                  '--output-format json')
 CODEX_COMMAND = 'codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -m "$MODEL" "$(cat /task/prompt.txt)"'
 OPENCODE_COMMAND = 'opencode run --model "$MODEL" "$(cat /task/prompt.txt)"'
 OPENCODE_IMAGE = "localhost/factory-agent-opencode:latest"
@@ -41,6 +42,7 @@ class HarnessCfg:
     notes: str = ""
     data_notice: str = ""                # shown on the Harnesses page: where ticket text and code go when this harness runs
     model_hint: str = ""                 # the model-id format this harness expects
+    usage_format: str = ""               # how to read token counts from its output ("" none, "claude-json"); see runner.parse_usage
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,22 @@ class ReviewCfg:
     effort: str = "high"
     harness: str = "claude-code"
     fallback_models: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PmCfg:
+    """The project manager: a read-only agent that, on a periodic sweep, ranks a repository's factory tickets and says which
+    are blocked by others. It may only add or remove the `priority: high` / `priority: low` labels it applied itself (a person's
+    priority label always wins) and comment when it changes something. While it is on, a build ticket with an open blocker
+    waits. Off by default (a sweep costs a run per repository)."""
+    enabled: bool = False
+    interval_minutes: int = 360           # at most one sweep per repository this often, and only when its tickets changed
+    max_tickets: int = 40                 # tickets sent to the agent per sweep
+    body_chars: int = 1500                # of each ticket's body
+    unblock_label: str = "factory:unblocked"   # applied by a person with write access: ignore the PM's blockers on that ticket
+    model: str = "sonnet"
+    effort: str = "medium"
+    harness: str = "claude-code"
 
 
 @dataclass(frozen=True)
@@ -175,6 +193,7 @@ class Config:
     ci: CiCfg = field(default_factory=CiCfg)
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
+    pm: PmCfg = field(default_factory=PmCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
@@ -187,7 +206,7 @@ def default_harnesses(rn: "RunnerCfg") -> dict:
     secrets = Path(rn.claude_env_file).parent
     return {
         "claude-code": HarnessCfg("claude-code", rn.image, rn.claude_env_file, CLAUDE_COMMAND, ("api.anthropic.com",), True, False,
-                                  "", "Claude Code. The credential is managed on the Credentials page."),
+                                  "", "Claude Code. The credential is managed on the Credentials page.", usage_format="claude-json"),
         "codex": HarnessCfg("codex", "localhost/factory-agent-codex:latest", str(secrets / "codex.env"), CODEX_COMMAND, ("api.openai.com",),
                             False, True, "CODEX_API_KEY", "OpenAI Codex CLI (codex exec). Build the image from sandbox/codex/. Not yet verified end to end."),
         "gemini": HarnessCfg("gemini", "localhost/factory-agent-gemini:latest", str(secrets / "gemini.env"), GEMINI_COMMAND,
@@ -288,13 +307,17 @@ def _harnesses(raw: dict, rn: "RunnerCfg") -> dict:
             raise ValueError(f"harnesses.{h.name}.command is empty or invalid")
         if not all(re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}", x) for x in h.allow_hosts):
             raise ValueError(f"harnesses.{h.name}.allow_hosts has an invalid host name")
+        if h.usage_format not in ("", "claude-json"):
+            raise ValueError(f"harnesses.{h.name}.usage_format must be '' or 'claude-json', got {h.usage_format!r}")
     return out
 
 
-def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None) -> None:
+def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None, pm: "PmCfg | None" = None) -> None:
     models = [(f"routing.{k}.model", r.model) for k, r in routes.items()] + [(f"roles.{r.name}.model", r.model) for r in roles]
     if review is not None:
         models.append(("review.model", review.model))
+    if pm is not None:
+        models.append(("pm.model", pm.model))
     for where, m in models:
         if not isinstance(m, str) or not MODEL_RE.fullmatch(m):
             raise ValueError(f"{where} is not a valid model id (letters, digits and . _ : / @ + [ ] - only, up to 200 characters)")
@@ -326,10 +349,13 @@ def chain(route) -> list:
     return [route] + [dataclasses.replace(route, model=m, fallback_models=()) for m in route.fallback_models]
 
 
-def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "ReviewCfg | None" = None) -> None:
+def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "ReviewCfg | None" = None,
+                       pm: "PmCfg | None" = None) -> None:
     uses = [(f"routing.{k}", r.harness) for k, r in routes.items()] + [(f"roles.{r.name}", r.harness) for r in roles]
     if review is not None and review.enabled:
         uses.append(("review", review.harness))
+    if pm is not None and pm.enabled:
+        uses.append(("pm", pm.harness))
     for where, harness in uses:
         if harness not in harnesses or not harnesses[harness].enabled:
             raise ValueError(f"{where} uses the harness {harness!r}, which does not exist or is not enabled")
@@ -416,9 +442,18 @@ def parse(raw: dict) -> Config:
     review = ReviewCfg(**_tuples(raw.get("review", {})))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
-    _check_models(routes, roles, review)
+    pm = PmCfg(**raw.get("pm", {}))
+    if pm.effort not in ("low", "medium", "high"):
+        raise ValueError("pm.effort must be low, medium or high")
+    for name in ("interval_minutes", "max_tickets", "body_chars"):
+        v = getattr(pm, name)
+        if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 100000:
+            raise ValueError(f"pm.{name} must be a whole number from 1 to 100000")
+    if not isinstance(pm.unblock_label, str) or not pm.unblock_label.strip():
+        raise ValueError("pm.unblock_label must not be empty")
+    _check_models(routes, roles, review, pm)
     _check_fallbacks(routes, roles, review)
-    _check_harness_use(routes, roles, harnesses, review)
+    _check_harness_use(routes, roles, harnesses, review, pm)
     return Config(
         db_path=g["db_path"],
         poll_seconds=int(g["poll_seconds"]),
@@ -443,6 +478,7 @@ def parse(raw: dict) -> Config:
         ci=CiCfg(**raw.get("ci", {})),
         conflicts=conflicts,
         review=review,
+        pm=pm,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
