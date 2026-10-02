@@ -57,11 +57,12 @@ class Stations(unittest.TestCase):
 
 class Render(unittest.TestCase):
     def test_no_inline_styles_anywhere_because_the_csp_forbids_them(self):
-        d = data(running=[run(1, "stage", "architect", 18, "A <b>title</b>")], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}])
-        html = floor.render(d, "tok", "architect", [NEED, ASK], lambda n, c, b="/": "<form></form>")
+        d = data(running=[run(1, "stage", "architect", 18)], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}])
+        need = {**NEED, "title": "A <b>title</b>"}
+        html = floor.render(d, "tok", "architect", [need, ASK], lambda n, c, b="/": "<form></form>")
         self.assertNotIn("style=", html)
         self.assertNotIn("<b>title</b>", html)
-        self.assertIn("&lt;b&gt;title&lt;/b&gt;", html)
+        self.assertIn("A &lt;b&gt;title&lt;/b&gt;", html)
 
     def test_hostile_text_is_escaped_in_every_part(self):
         evil = '<img src=x onerror=alert(1)>'
