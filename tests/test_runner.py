@@ -179,6 +179,7 @@ class RunTaskEndToEnd(unittest.TestCase):
             self.assertEqual(res.status, "pr", res.detail)
             self.assertEqual(len(res.pr_url.split()), 2)
             self.assertEqual(sorted(r for r, _, _ in gh.prs), ["o/mobile", "o/web"])
+            self.assertEqual(gh.drafts, [False, False])                  # review disabled: not drafts
             self.assertTrue(all(h.startswith("factory/issue-5-") for _, h, _ in gh.prs))
             self.assertTrue(all("Refs o/web#5" in body for _, _, body in gh.prs))
             for _, _, body in gh.prs:                                    # agent summary included, fence-safe

@@ -520,12 +520,12 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
         return f'<div class="steps">{"".join(out)}</div>'
 
     rows = "".join(
-        f'<tr><td data-l="Issue">{views.ticket_link(repo, i["number"])}<br><span class="muted">{esc(i.get("title"))}</span></td><td data-l="State">{badge(i.get("state"), "")}</td>'
+        f'<tr data-row="{esc(repo)}#{int(i["number"])}"><td data-l="Issue">{views.ticket_link(repo, i["number"])}<br><span class="muted">{esc(i.get("title"))}</span></td><td data-l="State">{badge(i.get("state"), "")}</td>'
         f'<td data-l="Progress">{steps(i)}</td>'
         f'<td data-l="Labels">{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td data-l="Factory">{factory_cell(i["number"])}</td>'
         f'<td class="actions" data-l="Start">{buttons(i)}</td></tr>'
         for i in issues)
-    return ('<div class="scroll"><table class="tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
+    return ('<div class="scroll"><table class="stack tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 
