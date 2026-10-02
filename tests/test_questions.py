@@ -65,7 +65,7 @@ class Block(unittest.TestCase):
             self.assertIsNone(Q.parse(raw), raw[:80])
 
     def test_every_role_prompt_asks_for_the_block_and_the_builder_gets_the_answers(self):
-        pr = Project("p", "d", (ProjectRepo("o/web", "web"),))
+        pr = Project("p", (ProjectRepo("o/web", "web"),), "d")
         for role in ("analyst", "designer", "architect"):
             self.assertIn("factory-questions", build_prompt("t", "b", pr, "o/web", role))
         self.assertNotIn("factory-questions", build_prompt("t", "b", pr, "o/web", "reviewer"))
