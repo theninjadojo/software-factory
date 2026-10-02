@@ -173,7 +173,7 @@ class Pages(UiCase):
             self.assertIn(needle, detail)
         self.assertIn("watching", self.req("GET", "/prs", cookie=cookie)[2])
         self.assertIn("run:stage", self.req("GET", "/tickets", cookie=cookie)[2])
-        self.assertIn("alert:pr_ready", self.req("GET", "/events?kind=alert", cookie=cookie)[2])
+        self.assertIn("PR ready", self.req("GET", "/events?kind=alert", cookie=cookie)[2])
         self.assertEqual(self.req("GET", "/runs/999", cookie=cookie)[0], 404)
         self.assertEqual(self.req("GET", "/runs/abc", cookie=cookie)[0], 404)
 
