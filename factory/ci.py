@@ -58,11 +58,21 @@ def report(repo: str, number: int, url: str, state: str, items: list[dict], logs
     return sanitize_markdown(body)
 
 
-def watch_ci(cfg, gh, conn, notify, fix) -> None:
+def _inline(conn):
+    def submit(issue_repo, issue_num, job) -> bool:
+        job(conn)
+        return True
+    return submit
+
+
+def watch_ci(cfg, gh, conn, notify, fix, submit=None) -> None:
     """One pass over every PR being watched. `fix(repo, number, issue_repo, issue_num, failures)` runs a fix round and
-    returns True if it pushed a change (CI will restart), False otherwise."""
+    returns True if it pushed a change (CI will restart), False otherwise. `submit(issue_repo, issue_num, job)` runs
+    job(db) for the round (on a worker, with that thread's connection) and returns False when the ticket is busy or no
+    slot is free: then nothing is posted and the next pass tries again. By default the round runs here, on conn."""
     if not cfg.ci.enabled:
         return
+    submit = submit or _inline(conn)
     for repo, number, issue_repo, issue_num, rounds, started, last in dbm.watching(conn):
         try:
             pr = gh.get_pr(repo, number)
@@ -114,16 +124,19 @@ def watch_ci(cfg, gh, conn, notify, fix) -> None:
             logs = failing_logs(gh, repo, items, cfg.ci.log_tail_chars)
             names = ", ".join(i["name"] for i in items if i["state"] == "failure")
             if rounds < cfg.ci.fix_rounds:
-                gh.comment(repo, number, report(repo, number, url, "failed", items, logs,
-                                                f"Giving the agent a fix round ({rounds + 1} of {cfg.ci.fix_rounds})."))
-                notify(f"CI failed: {repo}#{number} ({names}). Starting fix round {rounds + 1} of {cfg.ci.fix_rounds}.\n{url}", "ci_fix")
-                pushed = fix(repo, number, issue_repo, issue_num, f"Failing checks: {names}\n\n{logs}")
-                if pushed is None:                      # rate limited: try again next time, round not used
-                    continue
-                dbm.update_pr(conn, repo, number, rounds=rounds + 1, watch_started=time.time(),
-                              status="watching" if pushed else "failed", summary="fix pushed" if pushed else "fix produced no change")
-                if not pushed:
-                    notify(f"The fix round produced no change for {repo}#{number}. A person should take a look.", "failure")
+                def fix_round(db, repo=repo, number=number, issue_repo=issue_repo, issue_num=issue_num, rounds=rounds,
+                              url=url, items=items, logs=logs, names=names):
+                    gh.comment(repo, number, report(repo, number, url, "failed", items, logs,
+                                                    f"Giving the agent a fix round ({rounds + 1} of {cfg.ci.fix_rounds})."))
+                    notify(f"CI failed: {repo}#{number} ({names}). Starting fix round {rounds + 1} of {cfg.ci.fix_rounds}.\n{url}", "ci_fix")
+                    pushed = fix(repo, number, issue_repo, issue_num, f"Failing checks: {names}\n\n{logs}")
+                    if pushed is None:                  # rate limited: try again next time, round not used
+                        return
+                    dbm.update_pr(db, repo, number, rounds=rounds + 1, watch_started=time.time(),
+                                  status="watching" if pushed else "failed", summary="fix pushed" if pushed else "fix produced no change")
+                    if not pushed:
+                        notify(f"The fix round produced no change for {repo}#{number}. A person should take a look.", "failure")
+                submit(issue_repo, issue_num, fix_round)    # busy: left as it is, so the next pass offers the round again
                 continue
             dbm.update_pr(conn, repo, number, status="failed", summary=f"failing: {names}")
             gh.comment(repo, number, report(repo, number, url, "failed", items, logs, "No automatic fix rounds left."))

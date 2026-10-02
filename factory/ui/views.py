@@ -81,8 +81,6 @@ def login_page(error: str | None = None, setup_hint: bool = False) -> str:
             '<button>Sign in</button></form></main></body></html>')
 
 
-BUSY_LIMIT = 3 * 3600      # a run older than this with no poll is treated as a stuck orchestrator
-
 
 def overview_fragment(d: dict, csrf: str) -> str:
     st, now = d["status"], time.time()
@@ -91,10 +89,8 @@ def overview_fragment(d: dict, csrf: str) -> str:
     stale = last_ok is None or now - last_ok > max(120, 3 * cfg["poll_seconds"])
     paused = d["paused"]
     err = (st.get("last_error") or {}).get("value", "")
-    run = d["running"]
-    busy = stale and bool(run) and now - float(run["started"]) < BUSY_LIMIT      # one job at a time: no poll happens during a run
-    health = (badge("orchestrator busy with a run", "warn") if busy else
-              badge("orchestrator not reporting" if stale else "orchestrator healthy", "bad" if stale else "good"))
+    # Runs happen on worker threads and polling goes on during them, so a missed poll means trouble even while a run is going.
+    health = badge("orchestrator not reporting" if stale else "orchestrator healthy", "bad" if stale else "good")
     mode = badge("LIVE" if cfg["live"] else "dry-run", "warn" if cfg["live"] else "")
     pause_btn = ('<form method="post" action="/action/resume" class="inline">' + csrf_field(csrf) + '<button>Resume</button></form>'
                  if paused else '<form method="post" action="/action/pause" class="inline">' + csrf_field(csrf) + '<button>Pause</button></form>')
@@ -104,10 +100,17 @@ def overview_fragment(d: dict, csrf: str) -> str:
         f'<div class="card"><h3>Mode</h3>{mode} <span class="muted">every {esc(cfg["poll_seconds"])}s</span></div>'
         f'<div class="card"><h3>Queue control</h3>{badge("paused: " + paused, "warn") if paused else badge("running", "good")} {pause_btn}</div>'
         f'<div class="card"><h3>Classifier</h3>{esc(cfg["classifier"])}<p class="muted">Telegram: {esc(cfg["telegram"])} · CI watch: {esc(cfg["ci"])}</p></div></div>')
-    now_html = ("<p class=muted>Nothing is running.</p>" if not run else
-                f'<p>{badge("running")} <a href="/runs/{int(run["id"])}">{esc(run["kind"])}{" " + esc(run["stage"]) if run["stage"] else ""}</a> on '
-                f'{ticket_link(run["repo"], run["issue"])} — {esc(run["title"])}<br><span class="muted">{esc(run["model"])} ({esc(run["effort"])}) · '
-                f'started {esc(ago(run["started"]))} · running for {esc(dur(run["started"]))}</span></p>')
+    running, queued = d["running"], d["queued"]
+    now_html = f'<p class="muted">{len(running)} of {esc(cfg["max_parallel"])} slot(s) in use · {len(queued)} queued</p>'
+    now_html += "".join(
+        f'<p>{badge("running")} <a href="/runs/{int(run["id"])}">{esc(run["kind"])}{" " + esc(run["stage"]) if run["stage"] else ""}</a> on '
+        f'{ticket_link(run["repo"], run["issue"])} — {esc(run["title"])}<br><span class="muted">{esc(run["model"])} ({esc(run["effort"])}) · '
+        f'started {esc(ago(run["started"]))} · running for {esc(dur(run["started"]))}</span></p>' for run in running)
+    now_html += "".join(
+        f'<p>{badge("queued")} {esc(q.get("kind", ""))} on {ticket_link(q.get("repo", ""), q["issue"])} — {esc(q.get("title", ""))}'
+        '<br><span class="muted">waiting for a free slot</span></p>' for q in queued)
+    if not running and not queued:
+        now_html += "<p class=muted>Nothing is running.</p>"
     out = cards + f"<h2>Now</h2>{now_html}<h2>Recent runs</h2>{runs_table(d['runs'])}"
     if d["prs"]:
         out += f"<h2>PRs being watched</h2>{prs_table(d['prs'])}"

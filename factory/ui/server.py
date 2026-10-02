@@ -2,6 +2,7 @@
 import argparse
 import getpass
 import hmac
+import json
 import logging
 import os
 import sqlite3
@@ -57,15 +58,20 @@ class App:
         cfg, db = self.cfg(), self.ro_db()
         summary = {"poll_seconds": cfg.poll_seconds, "live": not cfg.dry_run, "classifier": cfg.classifier_backend,
                    "telegram": f"{cfg.telegram_verbosity}" if cfg.telegram_chat_id else "not set up", "ci": "on" if cfg.ci.enabled else "off"}
-        d = {"cfg": summary, "paused": pause.paused(self.state_dir()) or "", "status": {}, "running": None, "runs": [], "events": [], "prs": []}
+        summary["max_parallel"] = cfg.runner.max_parallel
+        d = {"cfg": summary, "paused": pause.paused(self.state_dir()) or "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": []}
         if db is not None:
             try:
                 d["status"] = dbm.get_status(db)
                 d["runs"] = dbm.recent_runs(db, 10)
                 d["events"] = dbm.recent_events(db, 15)
                 d["prs"] = [p for p in dbm.watched_prs(db, 20) if p["status"] == "watching"]
-                running = dbm.recent_runs(db, 1, status="running")
-                d["running"] = running[0] if running else None
+                d["running"] = dbm.recent_runs(db, 20, status="running")      # every job in flight, newest first
+                try:
+                    queued = json.loads(d["status"]["pool"]["value"])["queued"] if "pool" in d["status"] else []
+                    d["queued"] = [q for q in queued if isinstance(q, dict) and isinstance(q.get("issue"), int)][:50]
+                except (ValueError, KeyError, TypeError):
+                    d["queued"] = []
             finally:
                 db.close()
         return d

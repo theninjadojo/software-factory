@@ -11,6 +11,7 @@ import base64
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import time
@@ -317,16 +318,22 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
     want_design = role == "designer" and bool(role_cfg and role_cfg.design_files)
     design_dir = role_cfg.design_dir if role_cfg else designfiles.DEFAULT_DIR
     names = {r.repo: r.repo.split("/")[1] for r in project.repos}
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    # Unique per run, not per second: with parallel runs, two tickets with the same number (in two repos of a project, or in two
+    # projects) must never share a workspace, a container name or a branch. The token keeps them apart.
+    stamp = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
     d = Path(rn.work_dir) / f"{project.name}-{num}-{stamp}"
+    made = False                     # only a directory this run created is deleted afterwards
     env = git_env(gh.token)
     pushed: list[str] = []
     on_branch: set[str] = set()      # repos whose clone is on fix_branch (they already have a PR)
     merged: dict[str, list | None] = {}   # merge mode: repo -> conflicted files (None: already contains its base)
     trees: dict[str, str] = {}             # merge mode: the staged tree before the agent ran, per repo with conflicts
     try:
+        Path(rn.work_dir).mkdir(parents=True, exist_ok=True)
+        d.mkdir()                    # fails if it exists: never reuse (or later delete) another run's workspace
+        made = True
         for sub in ("task", "out", "base", "work"):
-            (d / sub).mkdir(parents=True)
+            (d / sub).mkdir()
         for r in project.repos:
             url, dest = f"https://github.com/{r.repo}.git", str(d / "base" / names[r.repo])
             try:
@@ -472,4 +479,5 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
         extra = f" (branches already pushed in: {', '.join(pushed)})" if pushed else ""
         return RunResult("failed", f"{type(e).__name__}: {str(e)[:300]}{extra}")
     finally:
-        shutil.rmtree(d, ignore_errors=True)
+        if made:
+            shutil.rmtree(d, ignore_errors=True)
