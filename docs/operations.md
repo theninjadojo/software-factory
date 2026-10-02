@@ -42,6 +42,9 @@ the orchestrator and the proxy, and the UI must be able to write the overrides, 
 - Restarts: on startup the orchestrator clears leftover work directories and sandbox containers and requeues any ticket
   stuck in a `factory:working*` state.
 - Settings changed in the UI apply when the orchestrator is next idle (it re-executes itself). `ls state/RESTART` shows one is pending.
+- Agent prompts (`[prompts]`, or Settings → Agent prompts): your own standing instructions per agent, plus `all` for
+  every agent. They go at the top of the prompt file and the built-in rules still win if they conflict. They are sent on
+  every run of that agent, so keep them short: they cost tokens each time. Changing one needs the confirmation box ticked.
 - Adding a repo: add it to `[github] repos` (standalone) or to a project in `[[projects]]`, create the factory labels in
   it, and make sure the bot account has write access and the token covers it. Restart.
 - Rotating a secret: replace the file, restart the orchestrator.

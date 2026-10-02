@@ -180,7 +180,7 @@ class Inline(UiCase):
         with mock.patch("factory.ui.server.L.needs_you", return_value=[ASK, NEED]):
             html = self.req("GET", "/?station=build", cookie=cookie)[2]
         for needle in ('name="a_q1" value="a"', 'name="a_q1" value="b"', 'name="x_q1"', 'name="accept" value="1"', 'name="send" value="1"',
-                       'name="stage" value="architect"', 'name="back" value="/?station=build"', "Run analyst", "nd-tog"):
+                       'name="stage" value="architect"', 'name="back" value="/?station=build"', "Run analyst", "nd-body"):
             self.assertIn(needle, html)
 
     def test_needs_you_attaches_the_questions_and_drops_stale_rows(self):
@@ -220,7 +220,7 @@ class Needs(UiCase):
     def test_rows_filters_popup_and_bulk(self):
         rows = [ASK, dict(ASK, issue=20, st=many(1)), dict(ASK, issue=21, st=many(3)), NEED]
         html = floor.tray(rows, "tok", None, "/?station=build")
-        self.assertIn("nd-tog", html)                                              # one or two questions: inline
+        self.assertIn("nd-body", html)                                             # one or two questions: inline, no toggle
         self.assertIn('<dialog id="nd-d2"', html)                                  # three questions: a popup
         self.assertIn('data-dialog="nd-d2"', html)
         self.assertIn("<noscript>", html)                                          # and a link when scripts are off
@@ -232,7 +232,7 @@ class Needs(UiCase):
         self.assertIn('class="on" href="/?station=build&amp;need=questions"', q)
         d = floor.tray(rows, "tok", None, "/?station=build", "decisions")
         self.assertIn("Run analyst", d)
-        self.assertNotIn("nd-tog", d)
+        self.assertNotIn("nd-body", d)
         self.assertNotIn("answer-all", d)                                          # fewer than two tickets with questions: no bulk button
 
     def test_the_confidence_meter_and_meta_come_from_the_decision(self):
@@ -240,6 +240,7 @@ class Needs(UiCase):
         html = floor.tray([row], "t", None)
         self.assertIn('<meter class="nd-meter" min="0" max="1" value="0.50"', html)
         self.assertIn("feature · high complexity", html)
+        self.assertIn("shop-web#13 · feature", html)                                # repo#n · kind · complexity · age
         self.assertNotIn("style=", html)
 
     def test_needs_page_nav_count_and_fragment(self):

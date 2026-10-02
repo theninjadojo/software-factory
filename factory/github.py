@@ -42,11 +42,25 @@ class GitHub:
         return [i for i in raw if "pull_request" not in i], len(raw) == per_page
 
     def search_issues(self, repo: str, text: str, state: str = "open", page: int = 1, per_page: int = 50) -> tuple[list[dict], bool]:
-        # Free text only: a ':' would let the caller add search qualifiers (repo:, user:, org:...) and read other repositories.
+        items, more, _ = self.search_page(repo, text, state, page, per_page)
+        return items, more
+
+    def search_page(self, repo: str, text: str = "", state: str = "open", page: int = 1, per_page: int = 50, labels: tuple = (), label: str = "") -> tuple[list[dict], bool, int]:
+        """One page of a search, with GitHub's total match count. Free text only: a ':' would let the caller add search qualifiers
+        (repo:, user:, org:...) and read other repositories. `labels` (any of) and `label` come from the caller's code or are cleaned here."""
         text = re.sub(r"[^\w\s#.-]", " ", text)[:100].strip()
-        term = f"repo:{repo} is:issue in:title {text}" + ("" if state == "all" else f" is:{state}")
-        raw = self._get("/search/issues?" + urllib.parse.urlencode({"q": term, "per_page": per_page, "page": page}))["items"]
-        return raw, len(raw) == per_page
+        term = f"repo:{repo} is:issue" + (f" in:title {text}" if text else "") + ("" if state == "all" else f" is:{state}")
+        clean = lambda v: re.sub(r'[^\w .:/-]', "", v)[:50]
+        if label:
+            term += f' label:"{clean(label)}"'
+        if labels:
+            term += " label:" + ",".join(f'"{clean(v)}"' for v in labels)
+        got = self._get("/search/issues?" + urllib.parse.urlencode({"q": term, "per_page": per_page, "page": page, "sort": "updated", "order": "desc"}))
+        raw = got["items"]
+        return raw, len(raw) == per_page, int(got.get("total_count", len(raw)))
+
+    def count_issues(self, repo: str, state: str = "open", label: str = "") -> int:
+        return self.search_page(repo, "", state, 1, 1, label=label)[2]
 
     def repo_labels(self, repo: str, max_pages: int = 5) -> list[dict]:
         out: list[dict] = []

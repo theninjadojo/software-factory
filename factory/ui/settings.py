@@ -9,7 +9,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import DEFAULT_ROLES, MAX_FALLBACKS, MODEL_RE, CiCfg, ConflictsCfg, PmCfg, ReviewCfg, RunnerCfg, deep_merge, default_harnesses, load_raw, overrides_path, parse
+from ..config import (DEFAULT_ROLES, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, deep_merge,
+                      default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..tomlw import dumps
 
@@ -28,7 +29,7 @@ class SettingsError(Exception):
 class Field:
     key: str                 # dotted path in the config
     label: str
-    kind: str                # int float bool text select checks repos hosts kv models
+    kind: str                # int float bool text select checks repos hosts kv models prompt
     help: str = ""
     choices: tuple = ()
     lo: float | None = None
@@ -69,6 +70,18 @@ def _routing_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
                 Field(f"routing.{tier}.effort", f"{tier.title()} tier: effort", "select", choices=EFFORTS),
                 Field(f"routing.{tier}.fallback_models", f"{tier.title()} tier: fallback models", "models", FALLBACK_HELP)]
     return out
+
+
+PROMPT_DANGER = "Agents follow this text on every run, with write access to their sandbox workspace."
+PROMPT_LABELS = {"all": "All agents", "analyst": "Analyst", "designer": "Designer", "architect": "Architect", "reviewer": "Code reviewer",
+                 "implementer": "Implementer (builds)", "ci_fix": "CI fix runs", "conflicts": "Merge-conflict runs"}
+
+
+def _prompt_fields() -> list[Field]:
+    return [Field(f"prompts.{k}", label, "prompt",
+                  "Added to every agent, before its own text below." if k == "all" else
+                  "Put before this agent's built-in instructions, which always apply and win if they conflict.", danger=PROMPT_DANGER)
+            for k, label in PROMPT_LABELS.items()]
 
 
 SECTIONS: dict[str, tuple[str, list[Field]]] = {
@@ -136,6 +149,7 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("conflicts.label", "Conflicts label", "text", "Apply it to a ticket to resolve the conflicts in its open factory PRs."),
         Field("conflicts.max_attempts", "Resolution attempts per PR", "int", "Then a person is asked.", lo=0, hi=50),
     ]),
+    "prompts": ("Agent prompts", _prompt_fields()),
 }
 
 
@@ -206,6 +220,8 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     if section == "conflicts":
         return getattr(ConflictsCfg(), name, None)
+    if section == "prompts":
+        return getattr(PromptsCfg(), name, None)
     if section == "pm":
         return getattr(PmCfg(), name, None)
     if section == "roles":
@@ -285,6 +301,11 @@ def parse_value(f: Field, form: Form):
             if f.key == "runner.cpus" and not re.fullmatch(r"\d+(\.\d+)?", v):
                 raise ValueError
             return v
+        if f.kind == "prompt":
+            v = raw.replace("\r\n", "\n")       # may be empty; kept as typed so an unchanged value from config.toml compares equal
+            if prompt_problem(v):
+                raise ValueError
+            return v
         if f.kind == "select":
             if raw not in f.choices:
                 raise ValueError
@@ -323,7 +344,9 @@ def parse_value(f: Field, form: Form):
     hint = {"int": f"a whole number between {f.lo} and {f.hi}", "float": f"a number between {f.lo} and {f.hi}",
             "select": "one of " + ", ".join(f.choices), "checks": "at least one choice", "repos": "owner/name per line",
             "hosts": "valid host names, one per line, at least one", "kv": "label=kind per line, kind one of " + ", ".join(sorted(KINDS)),
-            "models": f"up to {MAX_FALLBACKS} distinct model ids, one per line (may be empty)", "text": "a short single-line value"}.get(f.kind, "a valid value")
+            "models": f"up to {MAX_FALLBACKS} distinct model ids, one per line (may be empty)",
+            "text": "a short single-line value",
+            "prompt": f"at most {PROMPT_MAX} characters, with no control characters other than line breaks and tabs"}.get(f.kind, "a valid value")
     raise ValueError(f"{f.label}: must be {hint}")
 
 

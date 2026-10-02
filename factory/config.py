@@ -109,6 +109,49 @@ class ReviewCfg:
     fallback_models: tuple[str, ...] = ()
 
 
+PROMPT_MAX = 4000
+
+
+@dataclass(frozen=True)
+class PromptsCfg:
+    """Standing instructions from the operator, added before the built-in prompt of each agent. Trusted configuration
+    (config.toml or the admin UI), never ticket or repository text; the built-in rules win if they conflict."""
+    all: str = ""                        # every agent, before its own text
+    analyst: str = ""
+    designer: str = ""
+    architect: str = ""
+    reviewer: str = ""
+    implementer: str = ""                # build runs
+    ci_fix: str = ""                     # CI-fix runs (not the implementer text)
+    conflicts: str = ""                  # merge-conflict runs (not the implementer text)
+
+
+def prompt_problem(text) -> str | None:
+    """Why an operator prompt is not acceptable, or None. Line breaks and tabs are the only control characters allowed."""
+    if not isinstance(text, str):
+        return "must be text"
+    if len(text) > PROMPT_MAX:
+        return f"must be at most {PROMPT_MAX} characters"
+    if any((ord(c) < 32 and c not in "\n\t") or c == "\x7f" or 0xD800 <= ord(c) <= 0xDFFF for c in text):
+        return "must not contain control characters other than line breaks and tabs"
+    return None
+
+
+def _prompts(v) -> "PromptsCfg":
+    if not isinstance(v, dict):
+        raise ValueError("[prompts] must be a table")
+    known = {f.name for f in dataclasses.fields(PromptsCfg)}
+    if (unknown := sorted(set(v) - known)):
+        raise ValueError(f"unknown prompts keys {unknown}; use {sorted(known)}")
+    out = {}
+    for k, x in v.items():
+        x = x.replace("\r\n", "\n") if isinstance(x, str) else x
+        if (why := prompt_problem(x)):
+            raise ValueError(f"prompts.{k} {why}")
+        out[k] = x.strip()
+    return PromptsCfg(**out)
+
+
 @dataclass(frozen=True)
 class PmCfg:
     """The project manager: a read-only agent that, on a periodic sweep, ranks a repository's factory tickets and says which
@@ -195,6 +238,7 @@ class Config:
     review: ReviewCfg = field(default_factory=ReviewCfg)
     pm: PmCfg = field(default_factory=PmCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
+    prompts: PromptsCfg = field(default_factory=PromptsCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
@@ -480,6 +524,7 @@ def parse(raw: dict) -> Config:
         review=review,
         pm=pm,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
+        prompts=_prompts(raw.get("prompts", {})),
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),
