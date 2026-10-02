@@ -1,4 +1,5 @@
 import unittest
+from factory import designfiles
 
 from factory.designfiles import (DesignFileRejected, MAX_BYTES, check_name, check_patch_adds_only, valid_dir, validate_html)
 
@@ -130,3 +131,24 @@ class PatchRules(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinkOk(unittest.TestCase):
+    SHA = "a" * 40
+    P = "docs/design/factory-3-x.dc.html"
+
+    def f(self, **kw):
+        d = {"repo": "o/web", "path": self.P, "url": f"https://github.com/o/web/blob/{self.SHA}/{self.P}", "pr": "https://github.com/o/web/pull/9"}
+        return {**d, **kw}
+
+    def test_accepts_the_sha_and_branch_forms(self):
+        self.assertTrue(designfiles.link_ok(self.f()))
+        self.assertTrue(designfiles.link_ok(self.f(url=f"https://github.com/o/web/blob/factory/design-3-t1/{self.P}", pr="")))
+
+    def test_rejects_hostile_or_mismatched_values(self):
+        for bad in (self.f(url="javascript:alert(1)"), self.f(url=f"http://github.com/o/web/blob/{self.SHA}/{self.P}"),
+                    self.f(url=f"https://evil.example/o/web/blob/{self.SHA}/{self.P}"), self.f(repo="o/other"),
+                    self.f(path="docs/design/../x/factory-3-x.dc.html"), self.f(pr="https://evil.example/pull/1"),
+                    self.f(pr="https://github.com/o/other/pull/9"), self.f(url=f'https://github.com/o/web/blob/{self.SHA}/x"/{self.P}'),
+                    {"repo": "o/web"}, None):
+            self.assertFalse(designfiles.link_ok(bad), bad)

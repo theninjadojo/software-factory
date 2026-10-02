@@ -117,6 +117,25 @@ def validate_html(text: str) -> None:
         raise DesignFileRejected("must wrap its content in <x-dc>, like the other canvases")
 
 
+BLOB_URL = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+)/blob/([0-9a-f]{40}|factory/design-\d+-[\w.-]+)/"
+                      r"([a-z0-9][a-z0-9_/-]*/factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.dc\.html)$")
+
+
+def link_ok(f) -> bool:
+    """True when a recorded design file (repo, path, url, pr) is safe to link: a github.com blob URL (commit SHA or the factory's
+    design branch) of this repo and path with a design-file name, and a pull URL of the same repo or none. Checked before any
+    link is built, so nothing from the agent or the database is linked unchecked."""
+    try:
+        repo, path, url, pr = f["repo"], f["path"], f["url"], f.get("pr") or ""
+    except (KeyError, TypeError, AttributeError):
+        return False
+    if not all(isinstance(x, str) for x in (repo, path, url, pr)):
+        return False
+    m = BLOB_URL.match(url)
+    return bool(m and m.group(1) == repo and m.group(3) == path and ".." not in path.split("/")
+                and (not pr or re.fullmatch(r"https://github\.com/" + re.escape(repo) + r"/pull/\d+", pr)))
+
+
 def valid_dir(design_dir: str) -> bool:
     return bool(DIR_RE.match(design_dir)) and ".." not in design_dir.split("/") and design_dir.split("/")[0] not in (".git", ".github")
 

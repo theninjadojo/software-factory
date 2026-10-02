@@ -39,7 +39,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
      it; the classifier is asked what should happen next.
 7. **Design files (designer only).** The designer's workspace may contain new `design/*.dc.html` files. They are collected as a patch, which
    may only ADD files with the allowed name; each file is validated (see SECURITY.md), then committed to a `factory/design-*` branch and opened as a
-   draft PR, and the ticket comment links them.
+   draft PR, and the ticket comment links them by commit SHA (a designer run with none gets a fixed explanatory line). The files are also recorded per run in the `design_files` table, and the admin UI links them on the run and ticket pages.
 8. **Review (optional).** After a build opens PRs, or when a person labels the ticket `factory:review`, a read-only reviewer is run with the PR
    branches checked out and its comment is posted on every PR of the change. It is a role like the analyst, so it uses the same sandbox,
    sanitizer and harness selection; it only ever comments.

@@ -2,6 +2,8 @@ import sqlite3
 import threading
 import time
 
+from . import designfiles
+
 _local = threading.local()
 
 
@@ -57,6 +59,11 @@ def connect(path: str) -> sqlite3.Connection:
         """CREATE TABLE IF NOT EXISTS open_questions (
             repo TEXT NOT NULL, issue INTEGER NOT NULL, stage TEXT NOT NULL, pending INTEGER NOT NULL, updated REAL NOT NULL,
             PRIMARY KEY (repo, issue))"""
+    )
+    db.execute(                                     # the design files each run published, for the UI to link
+        """CREATE TABLE IF NOT EXISTS design_files (
+            run_id INTEGER NOT NULL, repo TEXT NOT NULL, path TEXT NOT NULL, url TEXT NOT NULL, pr TEXT NOT NULL DEFAULT '',
+            created REAL NOT NULL, PRIMARY KEY (run_id, repo, path))"""
     )
     ensure_step_tables(db)
     return db
@@ -180,6 +187,31 @@ def finish_run(db, run_id: int, status: str, detail: str = "", pr_urls: str = ""
     db.execute("UPDATE runs SET finished=?, status=?, detail=?, pr_urls=?, output=?, log_tail=? WHERE id=?",
                (time.time(), status, detail[:1000], pr_urls, output[:MAX_OUTPUT], log_tail[-MAX_LOG:], run_id))
     db.commit()
+
+
+def add_design_files(db, run_id: int, files: list) -> None:
+    """Record a run's published design files; entries that fail designfiles.link_ok are dropped."""
+    for f in files:
+        if designfiles.link_ok(f):
+            db.execute("INSERT OR IGNORE INTO design_files (run_id, repo, path, url, pr, created) VALUES (?,?,?,?,?,?)",
+                       (run_id, f["repo"], f["path"], f["url"], f.get("pr") or "", time.time()))
+    db.commit()
+
+
+def design_files_for_runs(db, run_ids: list) -> dict[int, list[dict]]:
+    """Design files by run id. Empty when the table does not exist yet (the read-only UI may start before the orchestrator)."""
+    out: dict[int, list[dict]] = {}
+    ids = [int(i) for i in run_ids]
+    if not ids:
+        return out
+    try:
+        rows = _dicts(db.execute("SELECT run_id, repo, path, url, pr FROM design_files WHERE run_id IN (%s) ORDER BY rowid"
+                                 % ",".join("?" * len(ids)), ids))
+    except sqlite3.OperationalError:
+        return out
+    for r in rows:
+        out.setdefault(r["run_id"], []).append(r)
+    return out
 
 
 def mark_interrupted(db) -> int:

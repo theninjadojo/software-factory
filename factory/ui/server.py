@@ -244,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/runs/"):
                 rid = path[len("/runs/"):]
                 run = dbm.get_run(db, int(rid)) if rid.isdigit() else None
-                return page(f"Run #{int(rid)}", views.run_detail(run)) if run else self._send(404, "no such run", "text/plain")
+                return page(f"Run #{int(rid)}", views.run_detail(run, dbm.design_files_for_runs(db, [int(rid)]).get(int(rid), []))) if run else self._send(404, "no such run", "text/plain")
             if path == "/tickets":
                 rows = dbm.tickets(db)
                 return page("Tickets", views.tickets_page(rows, dbm.step_counts(db, rows)))
@@ -252,7 +252,9 @@ class Handler(BaseHTTPRequestHandler):
                 n = q.get("n", "")
                 if not views.REPO.match(q.get("repo", "")) or not n.isdigit():
                     return self._send(404, "no such ticket", "text/plain")
-                return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), dbm.steps_for_ticket(db, q["repo"], int(n))))
+                steps = dbm.steps_for_ticket(db, q["repo"], int(n))
+                files = dbm.design_files_for_runs(db, [i for s in steps if s["step"] == "design" for i in s["run_ids"]])
+                return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), steps, files))
             if path == "/prs":
                 return page("PRs & CI", views.prs_table(dbm.watched_prs(db)))
             if path == "/events":

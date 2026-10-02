@@ -4,6 +4,8 @@ import json
 import re
 import time
 
+from .. import designfiles
+
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
@@ -47,6 +49,12 @@ def badge(text, kind: str | None = None) -> str:
 def gh_link(url: str, label: str | None = None) -> str:
     u = str(url or "")
     return f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">{esc(label or u)}</a>' if GH_URL.match(u) else esc(label or u)
+
+
+def design_links(files) -> str:
+    """One new-tab link per design file, only for files that pass designfiles.link_ok (the rows come from the database)."""
+    return "<br>".join(f'<a href="{esc(f["url"])}" rel="noopener noreferrer" target="_blank">{esc(f["path"])}</a>'
+                       for f in files or [] if designfiles.link_ok(f))
 
 
 def ticket_link(repo: str, issue) -> str:
@@ -146,7 +154,7 @@ def runs_page(runs: list[dict], status: str, repo: str, page_no: int, has_more: 
     return form + runs_table(runs) + nav
 
 
-def run_detail(r: dict) -> str:
+def run_detail(r: dict, files=()) -> str:
     try:
         cls = json.dumps(json.loads(r["classification"]), indent=2) if r["classification"] else ""
     except ValueError:
@@ -157,6 +165,11 @@ def run_detail(r: dict) -> str:
             ("Pull requests", pr_links(r["pr_urls"]) or "—")]
     table = "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in meta)
     out = f'<table class="meta">{table}</table>'
+    shown = [f for f in files or [] if designfiles.link_ok(f)]
+    if shown:
+        rows = "".join(f'<tr><td>{design_links([f])}</td><td>{esc(f["repo"])}</td><td>{pr_links(f.get("pr") or "") or "—"}</td></tr>' for f in shown)
+        out += ("<h2>Design files</h2><table><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
+                f"<tbody>{rows}</tbody></table>")
     if cls:
         out += f"<h2>Classification</h2><pre>{esc(cls)}</pre>"
     if r["output"]:
@@ -199,7 +212,12 @@ def step_summary(counts) -> str:
     return f"{int(done)} of {int(total)} steps done"
 
 
-def pipeline(steps: list[dict]) -> str:
+def step_files(s: dict, files_by_run: dict | None) -> str:
+    links = design_links([f for i in s["run_ids"] for f in (files_by_run or {}).get(i, [])])
+    return f'<br><span class="muted">Design files:</span><br>{links}' if links else ""
+
+
+def pipeline(steps: list[dict], files_by_run: dict | None = None) -> str:
     """Read-only belt of stations, one per pipeline step. Every value is escaped; links are checked against GH_URL."""
     if not steps:
         return '<p class="muted">No pipeline steps yet. They appear when the factory starts working on this ticket.</p>'
@@ -216,15 +234,15 @@ def pipeline(steps: list[dict]) -> str:
         f'<tr id="step-{esc(s["step"])}"><th>{esc(STEP_TITLES.get(s["step"], s["step"]))}</th><td>{badge(s["status"].capitalize(), STEP_BADGE.get(s["status"], ""))}</td>'
         f'<td>{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])} <span class="muted">effort {esc(s["effort"])}</span></td>'
         f'<td>{int(s["attempts"])}</td><td>{run_links(s)}</td>'
-        f'<td>{pr_links(s["pr_urls"]) or "—"}</td></tr>' for s in steps)
+        f'<td>{pr_links(s["pr_urls"]) or "—"}{step_files(s, files_by_run)}</td></tr>' for s in steps)
     return (f'<ol class="belt">{items}</ol><div class="scroll"><table><thead><tr><th>Step</th><th>Status</th><th>Agent</th><th>Attempts</th>'
             f'<th>Runs</th><th>PRs</th></tr></thead><tbody>{rows}</tbody></table></div>')
 
 
-def ticket_detail(repo: str, issue: int, steps: list[dict]) -> str:
+def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None) -> str:
     done = sum(s["status"] == "done" for s in steps)
     head = f'<p>{ticket_link(repo, issue)} <span class="step-count" role="status">{esc(step_summary((done, len(steps))))}</span></p>'
-    return head + "<h2>Pipeline</h2>" + pipeline(steps) + '<p><a href="/tickets">← all tickets</a></p>'
+    return head + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run) + '<p><a href="/tickets">← all tickets</a></p>'
 
 
 def steps_cell(t: dict, counts: dict) -> str:

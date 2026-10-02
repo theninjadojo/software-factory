@@ -28,6 +28,20 @@ class Storage(unittest.TestCase):
         self.assertEqual((len(run["output"]), len(run["log_tail"])), (dbm.MAX_OUTPUT, dbm.MAX_LOG))   # bounded
         self.assertIsNotNone(run["finished"])
 
+    def test_design_files_are_recorded_validated_and_listed_per_run(self):
+        rid = dbm.start_run(self.db, "stage", "o/r", 5, "T", "claude-code", "haiku", "low", "")
+        good = {"repo": "o/r", "path": "docs/design/factory-5-a.dc.html", "pr": "https://github.com/o/r/pull/2",
+                "url": "https://github.com/o/r/blob/" + "b" * 40 + "/docs/design/factory-5-a.dc.html"}
+        bad = {**good, "path": "docs/design/factory-5-b.dc.html", "url": "javascript:alert(1)"}
+        for _ in range(2):                                                    # idempotent
+            dbm.add_design_files(self.db, rid, [good, bad])
+        self.assertEqual(dbm.design_files_for_runs(self.db, [rid, 99]), {rid: [{"run_id": rid, **good}]})
+
+    def test_design_files_read_tolerates_a_missing_table(self):
+        import sqlite3
+        old = sqlite3.connect(":memory:")
+        self.assertEqual(dbm.design_files_for_runs(old, [1]), {})
+
     def test_interrupted_runs_are_marked_on_restart(self):
         a = dbm.start_run(self.db, "build", "o/r", 1, "t", None, None, None)
         b = dbm.start_run(self.db, "stage", "o/r", 2, "t", None, None, None)

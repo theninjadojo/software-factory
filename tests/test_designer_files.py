@@ -43,7 +43,8 @@ class DesignerFlow(unittest.TestCase):
         shown = g("--git-dir", str(bare["o/web"]), "ls-tree", "-r", "--name-only", branch, cwd=t).stdout.split()
         self.assertEqual(sorted(shown), ["a.txt", "docs/design/factory-3-reorder.dc.html"])  # the base file plus exactly one new file
         self.assertEqual(g("--git-dir", str(bare["o/web"]), "rev-list", "--count", "main", cwd=t).stdout.strip(), "1")
-        self.assertEqual(res.files[0]["url"], f"https://github.com/o/web/blob/{branch}/docs/design/factory-3-reorder.dc.html")
+        sha = g("--git-dir", str(bare["o/web"]), "rev-parse", branch, cwd=t).stdout.strip()
+        self.assertEqual(res.files[0]["url"], f"https://github.com/o/web/blob/{sha}/docs/design/factory-3-reorder.dc.html")   # a commit link
 
     def test_a_hostile_mockup_is_dropped_but_the_document_is_still_posted(self):
         bad = VALID.replace("<h1", '<script>alert(1)</script><h1', 1)
@@ -134,6 +135,13 @@ class TicketComment(unittest.TestCase):
         self.assertNotIn("evil.example", body)
         self.assertNotIn("@mallory", body)                                            # notes are sanitized like any agent text
         self.assertNotIn("evil/p.png", body)
+
+    def test_a_designer_with_no_mockups_gets_a_fixed_line_and_other_roles_do_not(self):
+        body = m.stage_comment(self.ROLE, ROUTE, "# Design", None)
+        self.assertIn(m.NO_MOCKUPS, body)
+        self.assertIn(m.MOCKUPS_OFF, m.stage_comment(self.ROLE, ROUTE, "# Design", None, enabled=False))
+        self.assertNotIn(m.NO_MOCKUPS, m.stage_comment(DEFAULT_ROLES[0], ROUTE, "# A", None))
+        self.assertNotIn(m.NO_MOCKUPS, m.stage_comment(self.ROLE, ROUTE, "# Design", None, notes="dropped"))
 
     def test_no_files_means_no_section(self):
         self.assertNotIn("Design files", m.stage_comment(self.ROLE, ROUTE, "# Design", None))

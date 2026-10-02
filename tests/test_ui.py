@@ -215,3 +215,25 @@ class Pages(UiCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DesignFileLinks(unittest.TestCase):
+    RUN = {"classification": "", "status": "stage", "kind": "stage", "stage": "designer", "repo": "o/web", "issue": 3, "title": "t",
+           "harness": "h", "model": "m", "effort": "e", "started": 1.0, "finished": 2.0, "detail": "", "pr_urls": "", "output": "", "log_tail": ""}
+    GOOD = {"repo": "o/web", "path": "docs/design/factory-3-x.dc.html", "pr": "https://github.com/o/web/pull/9",
+            "url": "https://github.com/o/web/blob/" + "c" * 40 + "/docs/design/factory-3-x.dc.html"}
+
+    def test_run_page_links_validated_files_only(self):
+        hostile = {**self.GOOD, "path": "docs/design/factory-3-<script>.dc.html", "url": "javascript:alert(1)"}
+        html = views.run_detail(self.RUN, [self.GOOD, hostile])
+        self.assertIn("Design files", html)
+        self.assertIn(f'href="{self.GOOD["url"]}" rel="noopener noreferrer" target="_blank"', html)
+        self.assertNotIn("javascript:", html)
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("Design files", views.run_detail(self.RUN, []))
+
+    def test_pipeline_shows_the_files_on_the_design_step(self):
+        step = {"step": "design", "status": "done", "attempts": 1, "run_id": 7, "run_ids": [7], "role": "designer", "harness": "h",
+                "model": "m", "effort": "e", "pr_urls": "", "sub_number": None}
+        self.assertIn(self.GOOD["url"], views.pipeline([step], {7: [self.GOOD]}))
+        self.assertNotIn("Design files", views.pipeline([step], {}))
