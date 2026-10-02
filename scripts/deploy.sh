@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Deploy this checkout to a native (systemd + rootless Podman) install over SSH.
+#   scripts/deploy.sh user@host            # code only
+#   scripts/deploy.sh user@host --image    # also rebuild the sandbox image (needed when sandbox/ changed)
+# Assumes the install layout from docs/operations.md: app in /srv/factory/app owned by the "factory" user, and that
+# you can run `sudo -n -u factory`. Refuses to restart while an agent run is in flight (a restart would kill it).
+set -euo pipefail
+TARGET="${1:?usage: deploy.sh user@host [--image]}"; REBUILD="${2:-}"
+cd "$(dirname "$0")/.."
+tar -czf /tmp/sf-deploy.tgz factory tests sandbox config.example.toml
+scp -q /tmp/sf-deploy.tgz "$TARGET:/tmp/sf-deploy.tgz"; rm -f /tmp/sf-deploy.tgz
+ssh "$TARGET" "cat > /tmp/sf-deploy.sh && chmod 755 /tmp/sf-deploy.sh && sudo -n -u factory /tmp/sf-deploy.sh $REBUILD; rm -f /tmp/sf-deploy.sh /tmp/sf-deploy.tgz" <<'REMOTE'
+#!/bin/bash
+set -e
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+cd /srv/factory
+RUNNING=$(podman ps -q --filter 'name=^factory-' | wc -l); echo "running sandboxes: $RUNNING"
+[ "$RUNNING" = "0" ] || { echo "ABORT: an agent run is in flight; try again when it finishes"; exit 1; }
+mkdir state/fd && tar -C state/fd -xzf /tmp/sf-deploy.tgz
+rm -rf app/factory app/tests app/sandbox
+cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/config.example.toml app/ && rm -rf state/fd
+cd app && python3 -m unittest discover -s tests 2>&1 | tail -3
+if [ "$1" = "--image" ]; then podman build -q -t factory-agent -f sandbox/Dockerfile sandbox; fi
+systemctl --user restart factory.service; sleep 8
+systemctl --user is-active factory-proxy.service factory.service
+journalctl --user -u factory.service --since "-12s" --no-pager | grep -v "systemd\|podman\[" | cut -c1-200
+REMOTE

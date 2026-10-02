@@ -1,0 +1,15 @@
+[Unit]
+Description=Software factory egress proxy
+
+[Service]
+ExecStart=/usr/bin/python3 -m factory.proxy /srv/factory/config.toml
+WorkingDirectory=/srv/factory/app
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/factory/run
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,77 @@
+# software-factory example configuration. Copy to config.toml and edit. Paths assume the native install
+# under /srv/factory; the docker-compose stack maps the same paths (see README).
+
+[general]
+db_path = "/srv/factory/state/factory.db"
+poll_seconds = 60
+dry_run = true            # true: only log decisions, never run agents or write to GitHub. Set false to go live.
+confidence_threshold = 0.6   # below this the classifier's call goes to a person on Telegram
+
+[github]
+token_file = "/srv/factory/secrets/github_token"   # without a token every trust check fails closed
+trigger_label = "factory:ready"                    # "build it": agents edit the repos and open PRs
+repos = ["your-org/standalone-service"]            # repos handled on their own; project members below are added automatically
+trusted_permissions = ["admin", "maintain", "write"]   # who may apply a trigger label
+
+# Classification tier -> agent settings. A fixed table: the classifier can only select a row, never write one.
+[routing.low]
+harness = "claude-code"
+model = "haiku"
+effort = "low"
+
+[routing.medium]
+harness = "claude-code"
+model = "sonnet"
+effort = "medium"
+
+[routing.high]
+harness = "claude-code"
+model = "opus"
+effort = "high"
+
+[runner]
+engine = "podman"                      # "podman" or "docker": the engine that runs sandboxes
+image = "localhost/factory-agent:latest"
+work_dir = "/srv/factory/work"                      # per-task workspaces (must be the same path on the host in docker mode)
+proxy_socket = "/srv/factory/run/proxy.sock"        # the egress proxy socket sandboxes connect to
+allow_hosts = ["api.anthropic.com"]    # the only hosts the sandbox can reach. Add package registries only if tasks need installs.
+timeout_seconds = 1800
+max_turns = 40
+claude_env_file = "/srv/factory/secrets/claude.env"   # CLAUDE_CODE_OAUTH_TOKEN=... or ANTHROPIC_API_KEY=...
+
+# Role agents (read-only; their document is posted on the ticket). Defaults shown; override any field.
+# [roles.analyst]   label = "factory:analyze"   done_label = "stage:analysed"    model = "sonnet"  effort = "medium"
+# [roles.designer]  label = "factory:design"    done_label = "stage:designed"    model = "sonnet"  effort = "medium"
+# [roles.architect] label = "factory:architect" done_label = "stage:architected" model = "opus"    effort = "high"
+# [auto]  label = "factory:auto"   # a person applies it and the classifier picks the next stage
+
+[telegram]
+token_file = "/srv/factory/secrets/telegram_token"
+chat_id = 0   # your numeric Telegram user id; the only account the bot will obey
+verbosity = "normal"   # quiet: needs-a-person, failures, rate limits | normal: + PR ready, stage done, CI results | verbose: everything
+# events = ["needs_human", "failure", "pr_ready"]   # optional explicit list; overrides verbosity.
+# All events: needs_human failure rate_limit pr_ready stage_done ci_result ci_fix recovery started startup skipped info
+
+[classifier]
+backend = "rules"   # "jev" classifies with TypeSafe Jev via OpenRouter; falls back to labels on any error
+key_file = "/srv/factory/secrets/openrouter_key"
+model = "typesafe/jev-1.13"
+
+# Repos that work together are ONE project: agents get all of them checked out side by side and may change several
+# in one task (one PR per changed repo, cross-linked). Each role line tells the agents what the repo is for.
+[[projects]]
+name = "shop"
+description = "An online shop: a web app with a database backend, native mobile apps and shared UI packages."
+repos = [
+  { repo = "your-org/shop-web", role = "Web app and database backend (migrations, functions, schema)." },
+  { repo = "your-org/shop-mobile", role = "Native iOS and Android apps. Models are generated in shop-web and synced here." },
+  { repo = "your-org/shop-packages", role = "Shared UI packages used by the web app." },
+]
+
+# Watch the repos' own CI on factory PRs and report it. Needs the GitHub token to have Checks, Actions and
+# Commit statuses: read. fix_rounds = extra agent attempts after a failed run (0 = report only).
+[ci]
+enabled = true
+fix_rounds = 1
+wait_for_checks_minutes = 10
+timeout_minutes = 90

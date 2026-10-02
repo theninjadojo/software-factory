@@ -1,0 +1,15 @@
+[Unit]
+Description=Software factory orchestrator
+Requires=factory-proxy.service
+After=factory-proxy.service network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -m factory.main --config /srv/factory/config.toml
+WorkingDirectory=/srv/factory/app
+Restart=on-failure
+RestartSec=15
+# No sandboxing options here: in a systemd *user* manager, PrivateTmp/ProtectSystem etc. put the
+# service in its own user namespace, and rootless podman then fails with "cannot clone".
+
+[Install]
+WantedBy=default.target
