@@ -89,6 +89,54 @@ class Render(unittest.TestCase):
         self.assertIn("3 more in Tickets", many)
 
 
+class Phone(unittest.TestCase):
+    """The phone layout: markup that CSS shows below 760px (it needs no JavaScript) and the stacked-card tables."""
+
+    def test_the_factory_screen_has_its_parts(self):
+        d = data(running=[run(1, "stage", "architect", 18, "Build it")])
+        html = floor.render(d, "t", None, [NEED, ASK], None)
+        for needle in ('class="ph-home"', "ph-health", "ph-tiles", "working</span>", "need you</span>", "PRs open</span>", "Running now", 'class="ph-pipe"',
+                       "Intake", "Analyst", "Designer", "Architect", "Build", "PRs and CI", "Running</span>", "Idle</span>", "Review →", 'href="/needs"'):
+            self.assertIn(needle, html)
+        self.assertEqual(html.count("ph-step "), 6)
+        self.assertIn("<progress", html.split('class="ph-home"')[1])
+        self.assertIn("shop-web#13", html.split("ph-need")[1])
+        self.assertNotIn("style=", html)
+
+    def test_phone_markup_escapes_untrusted_text(self):
+        evil = "<img src=x onerror=alert(1)>"
+        d = data(running=[run(1, "stage", "architect", 18, evil)], paused=evil)
+        html = floor.phone_home(d, floor.gather(d, [], time.time()), [{**NEED, "title": evil, "reason": evil}], time.time())
+        self.assertNotIn("<img", html)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
+
+    def test_phone_states_without_work_or_a_token(self):
+        d = data()
+        live = floor.gather(d, None, time.time())
+        self.assertIn("Save a GitHub token", floor.phone_home(d, live, None, time.time()))
+        html = floor.phone_home(d, live, [], time.time())
+        self.assertIn("Nothing is running", html)
+        self.assertIn("Nothing needs you", html)
+        self.assertNotIn("Review →", html)
+
+    def test_tables_carry_column_names_for_stacked_cards_and_stay_escaped(self):
+        evil = "<script>x</script>"
+        html = views.runs_table([run(1, "stage", "architect", 18, evil)]) + views.events_table(
+            [dict(ts=1, kind="error", repo=REPO, issue=1, run_id=None, message=evil)])
+        self.assertIn('class="stack"', html)
+        for col in ('data-l="Status"', 'data-l="Ticket"', 'data-l="Message"'):
+            self.assertIn(col, html)
+        self.assertNotIn("<script>", html)
+
+    def test_the_tab_bar_keeps_the_four_destinations(self):
+        html = views.page("T", "", "/", "c", badges={"/needs": 3})
+        nav = html.split('<nav aria-label="Main">')[1].split("</nav>")[0]
+        self.assertIn('<span class="navbadge">3</span>', nav)
+        self.assertEqual([p for p, _ in views.NAV[:views.PRIMARY]], ["/", "/needs", "/tickets"])
+        for label in ("Factory", "Needs you", "Tickets", "More", "Runs", "PRs &amp; CI", "Events", "Settings"):
+            self.assertIn(label, nav)
+
+
 class Ordering(unittest.TestCase):
     """Tickets: what needs a person first, then what is ready, then work in progress; newest first within each group."""
 
@@ -221,7 +269,7 @@ class Pages(UiCase):
         with mock.patch("factory.ui.server.L.needs_you", return_value=[NEED, ASK]):
             s, h, html = self.req("GET", "/", cookie=cookie)
         self.assertEqual(s, 200)
-        for needle in ("Factory floor", 'class="fl-map"', "Needs you", "/tickets/start", "/tickets/answer", 'class="more"', "Floor</a>"):
+        for needle in ("Factory floor", 'class="fl-map"', "Needs you", "/tickets/start", "/tickets/answer", 'class="more"', "Factory</a>"):
             self.assertIn(needle, html)
         self.assertNotIn("style=", html)
         self.assertIn("Run analyst", html)

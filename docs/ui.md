@@ -99,9 +99,14 @@ what it does, what it is working on, its numbers for the last day and its recent
 survives the page's 5-second refresh). Under the map, **Needs you** lists the tickets waiting for a person with the same buttons as
 Telegram (Run <stage>, Build anyway, Skip, or Accept recommendations for stage questions).
 
-The map is read-only: stations are links, not controls, so pause and reroute can be added later without redrawing it. On a phone the
-map becomes a vertical list of stations, the navigation becomes a bottom tab bar (the rest sits behind **More**), and the Tickets
-table becomes cards. The theme is dark only, using system fonts and no inline styles (the page's CSP forbids them).
+The map is read-only: stations are links, not controls, so pause and reroute can be added later without redrawing it. On a phone (under 760px, tested at 360-430px) the
+navigation becomes a bottom tab bar (Factory, Needs you with a count badge, Tickets, and **More** for Runs, PRs & CI, Events, Settings and the
+rest; every target is at least 44px) and the Factory page shows a phone screen instead of the map: health dot, a title and sentence, three
+tiles (working, need you, PRs open), a card for what is running with a progress bar, the pipeline as a vertical list (Intake, Analyst,
+Designer, Architect, Build, PRs and CI, each with a state dot and word) and the top Needs-you ticket with *Review →*. The belt diagram,
+the pause button and the long tables are desktop-only. On the Needs you screen each ticket is a card with full-width buttons (the primary
+action first, then two side by side) and a back link. Tables on the other pages become stacked cards. It is all CSS media queries over
+server-rendered markup, so it works without JavaScript, and animation is switched off under `prefers-reduced-motion`. The theme is dark only, using system fonts and no inline styles (the page's CSP forbids them).
 
 **What the buttons do.** *Auto* and *Review* apply their trigger label (the classifier decides). *Build*, *Build anyway* and the stage
 buttons queue a person's approval in the factory's database, the same row the Telegram buttons write, and the factory runs the ticket
