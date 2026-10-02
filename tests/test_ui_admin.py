@@ -417,6 +417,37 @@ class Labels(AdminCase):
         self.assertEqual(self.req("POST", "/tickets/start", urlencode(self.fields(action="auto")), cookie=cookie)[0], 403)
         self.gh.add_labels.assert_not_called()
 
+    def test_create_ticket_validates_sends_no_labels_and_ignores_repeats(self):
+        self.gh.create_ticket.return_value = {"number": 42}
+        cookie, csrf = self.session()
+        self.assertEqual(self.req("POST", "/tickets/create", urlencode(self.fields(title="x")), cookie=cookie)[0], 403)
+        for f in ({"repo": "evil/repo", "title": "x"}, {"repo": self.REPO, "title": "  "}, {"repo": self.REPO, "title": "t" * 201},
+                  {"repo": self.REPO, "title": "t", "body": "b" * 5001}):
+            self.post(cookie, csrf, "/tickets/create", f)
+        self.gh.create_ticket.assert_not_called()
+        self.assertEqual(self.post(cookie, csrf, "/tickets/create", {"repo": self.REPO, "title": "A <b>", "body": "d"})[0], 303)
+        self.gh.create_ticket.assert_called_once_with(self.REPO, "A <b>", "d")
+        self.post(cookie, csrf, "/tickets/create", {"repo": self.REPO, "title": "A <b>"})
+        self.gh.create_ticket.assert_called_once()
+        self.gh.add_labels.assert_not_called()
+
+    def test_close_comments_then_closes_and_refuses_busy_tickets(self):
+        cookie, csrf = self.session()
+        busy = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:working"}]}
+        closed = {"number": 7, "title": "T", "state": "closed", "labels": []}
+        for issue in (busy, closed):
+            self.gh.get_issue.return_value = issue
+            self.post(cookie, csrf, "/tickets/close", self.fields())
+        self.gh.update_issue.assert_not_called()
+        for f in ({"repo": "evil/repo", "n": "7"}, self.fields(n="x")):
+            self.assertEqual(self.post(cookie, csrf, "/tickets/close", f)[0], 400)
+        self.assertEqual(self.req("POST", "/tickets/close", urlencode(self.fields()), cookie=cookie)[0], 403)
+        self.gh.update_issue.assert_not_called()
+        self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": []}
+        self.assertEqual(self.post(cookie, csrf, "/tickets/close", self.fields())[0], 303)
+        self.gh.comment.assert_called_once()
+        self.gh.update_issue.assert_called_once_with(self.REPO, 7, state="closed")
+
     def test_needs_a_person_offers_the_telegram_choices_and_clears_trigger_labels(self):
         dbm.record(self.db, self.REPO, 7, "T", "human", "x; cls=feature/high/human=True/conf=0.80/stage=architect; needs a person")
         issue = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:auto"}]}

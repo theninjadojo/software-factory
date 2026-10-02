@@ -20,8 +20,12 @@ STATES = ("open", "closed", "all")
 FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it is labelled again.", "started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced.",
          "answered": "Answer recorded on the ticket. Other questions still need an answer.",
          "continued": "Answers recorded on the ticket. The factory starts the next stage at its next poll."}
+MAX_TITLE, MAX_BODY = 200, 5000
+DUP_SECONDS = 10
+CLOSE_COMMENT = "Closed from the factory admin UI. It can be reopened if this was a mistake."
 VERBS = {"analyst": "Analyze", "designer": "Design", "architect": "Architect"}
 NEEDS_PERSON = "needs a person"
+BUSY = ("closed", "running", "queued", "starting", NEEDS_PERSON)     # statuses in which a ticket cannot be closed from the UI
 NO_TOKEN = "Save a GitHub token on the Credentials page first."
 
 
@@ -263,20 +267,43 @@ def list_get(h, q: dict, csrf: str) -> None:
     if not BACK.fullmatch(back):
         back = "/tickets"
     shown = flash_pop(csrf) or (FLASH.get(q.get("ok", "")), "ok")
-    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names)
+    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names, csrf)
           + table(cfg, repo, issues, decisions, csrf, _asked(h, gh, cfg, repo, issues, decisions), _approved(h), back)
           + pager(repo, state, label, text, page_no, more), csrf, shown[0], shown[1])
 
 
-def filters(cfg, repo, state, label, text, names) -> str:
+def filters(cfg, repo, state, label, text, names, csrf: str = "") -> str:
     def opts(values, cur, blank=None):
         return "".join(f'<option value="{esc(v)}"{" selected" if v == cur else ""}>{esc(v or blank)}</option>' for v in values)
 
-    return ('<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
+    return (new_ticket_form(cfg, repo, csrf) + '<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
             f'<form method="get" class="filters"><select name="repo" aria-label="Repository">{opts(cfg.repos, repo)}</select>'
             f'<select name="state" aria-label="State">{opts(STATES, state)}</select>'
             f'<select name="label" aria-label="Label">{opts(["", *names], label, "any label")}</select>'
             f'<input name="q" placeholder="search title or #number" value="{esc(text)}"><button>Filter</button></form>')
+
+
+def new_ticket_form(cfg, repo: str, csrf: str) -> str:
+    if not csrf or not cfg.repos:
+        return ""
+    opts = "".join(f'<option value="{esc(r)}"{" selected" if r == repo else ""}>{esc(r)}</option>' for r in cfg.repos)
+    return ('<details class="disclose"><summary>New ticket</summary>'
+            f'<form method="post" action="/tickets/create" class="field">{csrf_field(csrf)}'
+            f'<label>Repository<select name="repo">{opts}</select></label>'
+            f'<label>Title<input name="title" required maxlength="{MAX_TITLE}"></label>'
+            f'<label>Description (optional)<textarea name="body" rows="5" maxlength="{MAX_BODY}"></textarea></label>'
+            '<p class="muted">Creating a ticket does not start work. Use the buttons on its row when you are ready.</p>'
+            '<button>Create ticket</button></form></details>')
+
+
+def close_form(repo: str, i: dict, csrf: str, back: str) -> str:
+    n = int(i["number"])
+    title = (i.get("title") or "")[:60]
+    return (f'<details class="disclose"><summary aria-label="Close ticket #{n}">Close</summary>'
+            f'<form method="post" action="/tickets/close" class="inline">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}">'
+            f'<input type="hidden" name="n" value="{n}"><input type="hidden" name="back" value="{esc(back)}">'
+            f'<p>Close #{n} “{esc(title)}”? This closes the issue on GitHub and adds a comment. You can reopen it there.</p>'
+            '<button class="secondary">Close ticket</button></form></details>')
 
 
 def action_forms(repo: str, n: int, acts, csrf: str, back: str = "/tickets") -> str:
@@ -452,7 +479,12 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
     def buttons(i) -> str:
         status, acts = actions_for(cfg, i, decisions.get((repo, i["number"])), (repo, i["number"]) in approved)
         note = f'<span class="muted">{esc(status)}</span> ' if status else ""
-        return note + action_forms(repo, i["number"], acts, csrf, back) + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
+        out = note + action_forms(repo, i["number"], acts, csrf, back) + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
+        if status == "closed":
+            return out
+        if status in BUSY or i["number"] in asked:
+            return out + ' <span class="muted">Can\'t close while work is running or waiting for an answer.</span>'
+        return out + " " + close_form(repo, i, csrf, back)
 
     def steps(i) -> str:
         names = set(_names(i))
@@ -631,6 +663,79 @@ def start(h, form, csrf: str) -> None:
         return _done(h, form, csrf, _github_error(e), "bad")
     log.info("tickets: %s on %s#%d from the UI", "approved " + action if approval_for(cfg, action) else "started " + action, repo, n)
     _done(h, form, csrf, FLASH["skipped" if action == "skip" else "started"])
+
+
+_recent: dict = {}          # (repo, title) -> time of the last create, so a double click makes one issue
+_recent_lock = threading.Lock()
+
+
+def create(h, form, csrf: str) -> None:
+    """A person's new ticket: title and body only, no labels, so it never starts work. Validated before GitHub is called."""
+    cfg = h.app.cfg()
+    title, body = " ".join((form.get("title") or "").split()), (form.get("body") or "").strip()
+    try:
+        repo = _repo(cfg, form.get("repo", ""))
+        if not title:
+            raise Refused("Enter a title.")
+        if len(title) > MAX_TITLE:
+            raise Refused(f"The title is too long ({MAX_TITLE} characters at most).")
+        if len(body) > MAX_BODY:
+            raise Refused(f"The description is too long ({MAX_BODY:,} characters at most).")
+    except Refused as e:
+        return _done(h, form, csrf, str(e), "bad")
+    gh = _gh(h)
+    if gh is None:
+        return _done(h, form, csrf, NO_TOKEN, "bad")
+    now = time.time()
+    with _recent_lock:
+        if now - _recent.get((repo, title), 0) < DUP_SECONDS:
+            return _done(h, form, csrf, "That ticket was just created.", "bad")
+        if len(_recent) > 100:
+            _recent.clear()
+        _recent[(repo, title)] = now
+    try:
+        n = gh.create_ticket(repo, title, body)["number"]
+    except (urllib.error.URLError, OSError, KeyError, TypeError) as e:
+        with _recent_lock:
+            _recent.pop((repo, title), None)
+        log.warning("tickets: create on %s failed", repo)
+        return _done(h, form, csrf, _github_error(e) if isinstance(e, urllib.error.HTTPError)
+                     else "GitHub did not accept the ticket. Nothing was created. Try again, or check the token under Credentials.", "bad")
+    log.info("tickets: created %s#%s from the UI", repo, n)
+    _done(h, form, csrf, f"Created {repo}#{int(n)}.")
+
+
+def close(h, form, csrf: str) -> None:
+    """Close an open ticket with no active work, after a fixed comment. The ticket is re-read first, so a stale page cannot close
+    something that is running, queued or waiting for a person."""
+    cfg = h.app.cfg()
+    try:
+        repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
+    except Refused as e:
+        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
+    gh = _gh(h)
+    if gh is None:
+        return _done(h, form, csrf, NO_TOKEN, "bad")
+    try:
+        issue = gh.get_issue(repo, n)
+        if "pull_request" in issue:
+            return h._send(404, "no such issue", "text/plain")
+        status, _ = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)), (repo, n) in _approved(h))
+        if status == "closed":
+            raise Refused("This ticket is already closed.")
+        if status in BUSY:
+            raise Refused("This ticket is busy. Wait for the run to finish, or answer its question first.")
+        gh.comment(repo, n, CLOSE_COMMENT)
+        gh.update_issue(repo, n, state="closed")
+    except Refused as e:
+        return _done(h, form, csrf, str(e), "bad")
+    except (urllib.error.URLError, OSError) as e:
+        log.warning("tickets: close %s#%d failed", repo, n)
+        return _done(h, form, csrf, _github_error(e), "bad")
+    with _needs_lock:
+        _needs_cache["rows"] = None
+    log.info("tickets: closed %s#%d from the UI", repo, n)
+    _done(h, form, csrf, f"Closed {repo}#{n}.")
 
 
 def _record(gh, cfg, h, repo: str, n: int, stage, picks, accept_all: bool) -> bool:
