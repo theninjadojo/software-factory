@@ -200,8 +200,9 @@ def inspector(sid: str, o: dict, d: dict, now: float) -> str:
                     f'<progress class="fl-bar wide" max="100" value="{progress(r, avg)}" aria-label="Progress of the run"></progress>'
                     f'<p class="muted fl-mono">running for {esc(dur(r["started"]))}{" · usually about " + esc(span(avg)) if avg else ""}</p></div>')
     for q in o["queued"]:
-        working += (f'<div class="card fl-work"><h3>Waiting for a slot</h3><p>{short(q.get("repo", ""), q["issue"])}</p>'
-                    f'<p class="fl-t">{esc(q.get("title", ""))}</p></div>')
+        working += (f'<div class="card fl-work"><h3>{"Blocked" if q.get("reason") else "Waiting for a slot"}</h3>'
+                    f'<p>{short(q.get("repo", ""), q["issue"])}</p><p class="fl-t">{esc(q.get("title", ""))}</p>'
+                    + (f'<p class="muted">{esc(q["reason"])}</p>' if q.get("reason") else "") + '</div>')
     stats = ""
     if sid in ("analyst", "designer", "architect", "build", "review", "ci", "conflicts"):
         stats = ('<div class="fl-stats">'
