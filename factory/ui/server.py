@@ -17,6 +17,7 @@ from .. import db as dbm
 from .. import pause
 from ..config import load
 from . import admin, views
+from . import labels as L
 from .auth import AuthStore, Sessions, Throttle
 from .settings import Form
 
@@ -59,7 +60,9 @@ class App:
         summary = {"poll_seconds": cfg.poll_seconds, "live": not cfg.dry_run, "classifier": cfg.classifier_backend,
                    "telegram": f"{cfg.telegram_verbosity}" if cfg.telegram_chat_id else "not set up", "ci": "on" if cfg.ci.enabled else "off"}
         summary["max_parallel"] = cfg.runner.max_parallel
-        d = {"cfg": summary, "paused": pause.paused(self.state_dir()) or "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": []}
+        summary["review"], summary["conflicts"] = cfg.review.enabled, cfg.conflicts.enabled
+        d = {"cfg": summary, "paused": pause.paused(self.state_dir()) or "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": [],
+             "recent": [], "decided": {}, "conflicting": 0}
         if db is not None:
             try:
                 d["status"] = dbm.get_status(db)
@@ -67,6 +70,12 @@ class App:
                 d["events"] = dbm.recent_events(db, 15)
                 d["prs"] = [p for p in dbm.watched_prs(db, 20) if p["status"] == "watching"]
                 d["running"] = dbm.recent_runs(db, 20, status="running")      # every job in flight, newest first
+                d["recent"] = dbm.recent_runs(db, 200)                        # for each station's numbers today
+                d["decided"] = dict(db.execute("SELECT outcome, COUNT(*) FROM decisions WHERE decided_at > ? GROUP BY outcome", (time.time() - 86400,)))
+                try:
+                    d["conflicting"] = sum(1 for p in dbm.tracked_prs(db) if p["state"] == "conflicting")
+                except sqlite3.Error:
+                    pass                                                       # an older database without the table
                 try:
                     queued = json.loads(d["status"]["pool"]["value"])["queued"] if "pool" in d["status"] else []
                     d["queued"] = [q for q in queued if isinstance(q, dict) and isinstance(q.get("issue"), int)][:50]
@@ -192,10 +201,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, **kw))
-        if path == "/fragment/overview":
-            return self._send(200, views.overview_fragment(self.app.overview(), csrf))
-        if path == "/":
-            return page("Overview", f'<div id="live">{views.overview_fragment(self.app.overview(), csrf)}</div>')
+        if path in ("/", "/fragment/overview"):
+            body = views.overview_fragment(self.app.overview(), csrf, q.get("station"), L.needs_you(self), L.action_forms_for)
+            if path == "/":
+                return self._send(200, views.page("Factory floor", f'<div id="live">{body}</div>', path, csrf, wide=True))
+            return self._send(200, body)
         route = admin.GET.get(path)
         if route:
             return route(self, q, csrf)

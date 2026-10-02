@@ -2,6 +2,8 @@
 Only labels that already exist in the repository are accepted: GitHub's add-labels call would otherwise create them."""
 import logging
 import re
+import threading
+import time
 import urllib.error
 
 from .. import db as dbm
@@ -119,7 +121,7 @@ def _gh(h):
 
 
 def _page(h, status: int, title: str, body: str, csrf: str, flash=None, kind="ok") -> None:
-    h._send(status, views.page(title, body, "/tickets", csrf, flash=flash, flash_kind=kind))
+    h._send(status, views.page(title, body, "/tickets", csrf, flash=flash, flash_kind=kind, wide=True))
 
 
 # ------------------------------------------------------------------ pages
@@ -173,6 +175,69 @@ def filters(cfg, repo, state, label, text, names) -> str:
             f'<select name="state" aria-label="State">{opts(STATES, state)}</select>'
             f'<select name="label" aria-label="Label">{opts(["", *names], label, "any label")}</select>'
             f'<input name="q" placeholder="search title or #number" value="{esc(text)}"><button>Filter</button></form>')
+
+
+def action_forms(repo: str, n: int, acts, csrf: str) -> str:
+    """One POST form per available action; the first is the primary button. The browser only names an action."""
+    hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
+    return "".join(
+        f'<form method="post" action="/tickets/start" class="inline">{hidden}'
+        f'<button name="action" value="{esc(a)}" class="{"" if k == 0 else "secondary"}" title="{esc("Removes the trigger labels" if lab is None else "Applies " + lab)}" '
+        f'aria-label="{esc(text)} #{int(n)}">{esc(text)}</button></form> ' for k, (a, text, lab) in enumerate(acts))
+
+
+def action_forms_for(need: dict, csrf: str) -> str:
+    """The buttons for one row of the Floor's "Needs you" tray."""
+    if need.get("questions"):
+        hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(need["repo"])}"><input type="hidden" name="n" value="{int(need["issue"])}">'
+        return (f'<form method="post" action="/tickets/answer" class="inline">{hidden}<button name="accept" value="1" '
+                f'aria-label="Accept recommendations for #{int(need["issue"])}">Accept recommendations</button></form> ')
+    return action_forms(need["repo"], need["issue"], need["acts"], csrf)
+
+
+_needs_cache: dict = {"at": 0.0, "rows": None}
+_needs_lock = threading.Lock()
+NEEDS_TTL = 20      # seconds: the Floor refreshes every 5s, GitHub is asked at most this often
+
+
+def needs_you(h) -> list | None:
+    """The tickets waiting for a person, for the Floor: either the factory asked (the Telegram prompt), or a stage left questions.
+    Read from GitHub (labels decide, as on the Tickets page) and cached briefly. None when there is no token or GitHub fails."""
+    cfg = h.app.cfg()
+    gh = _gh(h)
+    if gh is None or not cfg.repos:
+        return None
+    with _needs_lock:
+        if _needs_cache["rows"] is not None and time.time() - _needs_cache["at"] < NEEDS_TTL:
+            return _needs_cache["rows"]
+    db = h.app.ro_db()
+    if db is None:
+        return None
+    try:
+        decisions = {(t["repo"], t["issue"]): t for t in dbm.tickets(db, 500)}
+        waiting = {repo: dbm.questions_waiting(db, repo) for repo in cfg.repos}
+    finally:
+        db.close()
+    rows = []
+    try:
+        for repo in cfg.repos:
+            issues, _ = gh.issues(repo, "open", None, 1)
+            for i in issues:
+                d = decisions.get((repo, i["number"]))
+                status, acts = actions_for(cfg, i, d)
+                if status == NEEDS_PERSON:
+                    rows.append({"repo": repo, "issue": i["number"], "title": i.get("title", "")[:120], "acts": acts, "at": (d or {}).get("decided_at", 0),
+                                 "reason": ((d or {}).get("detail", "").rsplit(";", 1)[-1].strip() or "needs a person")[:80]})
+                elif i["number"] in waiting.get(repo, ()) and status not in ("closed", "running", "queued"):
+                    rows.append({"repo": repo, "issue": i["number"], "title": i.get("title", "")[:120], "acts": [], "questions": True,
+                                 "at": (decisions.get((repo, i["number"])) or {}).get("decided_at", 0), "reason": "questions waiting for you"})
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+        log.warning("floor: could not read the tickets that need you")
+        return None
+    rows.sort(key=lambda r: r["at"], reverse=True)
+    with _needs_lock:
+        _needs_cache.update(at=time.time(), rows=rows)
+    return rows
 
 
 def _asked(h, gh, cfg, repo, issues, decisions) -> dict:
@@ -238,21 +303,27 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None) -> str:
 
     def buttons(i) -> str:
         status, acts = actions_for(cfg, i, decisions.get((repo, i["number"])))
-        hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(i["number"])}">'
-        out = "".join(
-            f'<form method="post" action="/tickets/start" class="inline">{hidden}'
-            f'<button name="action" value="{esc(a)}" class="{"" if k == 0 else "secondary"}" title="{esc("Removes the trigger labels" if lab is None else "Applies " + lab)}" '
-            f'aria-label="{esc(text)} #{int(i["number"])}">{esc(text)}</button></form> ' for k, (a, text, lab) in enumerate(acts))
         note = f'<span class="muted">{esc(status)}</span> ' if status else ""
-        return note + out + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
+        return note + action_forms(repo, i["number"], acts, csrf) + f'<a href="/labels/issue?repo={esc(repo)}&amp;n={int(i["number"])}">Labels</a>'
+
+    def steps(i) -> str:
+        names = set(_names(i))
+        out = []
+        for r in cfg.roles:
+            cls = "done" if r.done_label in names else "now" if f"factory:working-{r.name}" in names else ""
+            out.append(f'<span class="st {cls}">{esc(VERBS.get(r.name, r.name.capitalize()))}</span>')
+        build = "done" if "factory:pr-open" in names else "now" if "factory:working" in names else ""
+        out.append(f'<span class="st {build}">Build</span>')
+        return f'<div class="steps">{"".join(out)}</div>'
 
     rows = "".join(
-        f'<tr><td>{views.ticket_link(repo, i["number"])}<br><span class="muted">{esc(i.get("title"))}</span></td><td>{badge(i.get("state"), "")}</td>'
-        f'<td>{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td>{factory_cell(i["number"])}</td>'
-        f'<td class="actions">{buttons(i)}</td></tr>'
-        + (f'<tr class="questions"><td colspan="5">{question_cards(repo, i["number"], asked[i["number"]], csrf)}</td></tr>' if i["number"] in asked else "")
+        f'<tr><td data-l="Issue">{views.ticket_link(repo, i["number"])}<br><span class="muted">{esc(i.get("title"))}</span></td><td data-l="State">{badge(i.get("state"), "")}</td>'
+        f'<td data-l="Progress">{steps(i)}</td>'
+        f'<td data-l="Labels">{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td data-l="Factory">{factory_cell(i["number"])}</td>'
+        f'<td class="actions" data-l="Start">{buttons(i)}</td></tr>'
+        + (f'<tr class="questions"><td colspan="6">{question_cards(repo, i["number"], asked[i["number"]], csrf)}</td></tr>' if i["number"] in asked else "")
         for i in issues)
-    return ('<div class="scroll"><table><thead><tr><th>Issue</th><th>State</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
+    return ('<div class="scroll"><table class="tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 

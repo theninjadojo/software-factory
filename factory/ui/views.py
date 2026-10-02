@@ -7,8 +7,9 @@ import time
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
-NAV = [("/", "Overview"), ("/runs", "Runs"), ("/tickets", "Tickets"), ("/prs", "PRs & CI"), ("/events", "Events"),
+NAV = [("/", "Floor"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
        ("/settings", "Settings"), ("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram")]
+PRIMARY = 4         # the first four stay on the phone tab bar; the rest sit behind "More"
 
 GOOD = {"pr", "stage", "passed", "success", "closed", "ok"}
 WARN = {"running", "watching", "rate-limited", "human", "dry-run", "no-ci", "timed-out", "no-change", "paused"}
@@ -61,14 +62,20 @@ def csrf_field(csrf: str) -> str:
     return f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
 
 
-def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok") -> str:
-    links = "".join(f'<a href="{p}"{" class=active" if p == active else ""}>{esc(n)}</a>' for p, n in (nav or NAV))
+def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False) -> str:
+    items = list(nav or NAV)
+    link = lambda p, n, extra="": f'<a href="{p}"{" class=\"" + ("active " if p == active else "") + extra + "\"" if (p == active or extra) else ""}>{esc(n)}</a>'
+    links = "".join(link(p, n, "sec" if i >= PRIMARY else "") for i, (p, n) in enumerate(items))
+    more = ("".join(link(p, n) for p, n in items[PRIMARY:]))
+    more_on = " active" if any(p == active for p, _ in items[PRIMARY:]) else ""
+    nav_html = (f'<nav aria-label="Main">{links}<details class="more{more_on}"><summary>More</summary><div class="more-list">{more}</div></details></nav>'
+                if len(items) > PRIMARY else f"<nav aria-label=Main>{links}</nav>")
     note = f'<div class="flash {esc(flash_kind)}" role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>{esc(title)} · software-factory</title><link rel="stylesheet" href="/static/style.css"></head><body>'
-            f'<header><strong class="brand">software-factory</strong><nav>{links}</nav>'
+            f'<meta name="color-scheme" content="dark"><title>{esc(title)} · software-factory</title><link rel="stylesheet" href="/static/style.css"></head><body>'
+            f'<header><strong class="brand"><i></i>software-factory</strong>{nav_html}'
             f'<form method="post" action="/logout" class="signout">{csrf_field(csrf)}<button class="link">Sign out</button></form></header>'
-            f'<main>{note}<h1>{esc(title)}</h1>{body}</main><script src="/static/app.js" defer></script></body></html>')
+            f'<main{" class=wide" if wide else ""}>{note}<h1>{esc(title)}</h1>{body}</main><script src="/static/app.js" defer></script></body></html>')
 
 
 def login_page(error: str | None = None, setup_hint: bool = False) -> str:
@@ -82,40 +89,10 @@ def login_page(error: str | None = None, setup_hint: bool = False) -> str:
 
 
 
-def overview_fragment(d: dict, csrf: str) -> str:
-    st, now = d["status"], time.time()
-    cfg = d["cfg"]
-    last_ok = float(st["last_poll_ok"]["value"]) if "last_poll_ok" in st else None
-    stale = last_ok is None or now - last_ok > max(120, 3 * cfg["poll_seconds"])
-    paused = d["paused"]
-    err = (st.get("last_error") or {}).get("value", "")
-    # Runs happen on worker threads and polling goes on during them, so a missed poll means trouble even while a run is going.
-    health = badge("orchestrator not reporting" if stale else "orchestrator healthy", "bad" if stale else "good")
-    mode = badge("LIVE" if cfg["live"] else "dry-run", "warn" if cfg["live"] else "")
-    pause_btn = ('<form method="post" action="/action/resume" class="inline">' + csrf_field(csrf) + '<button>Resume</button></form>'
-                 if paused else '<form method="post" action="/action/pause" class="inline">' + csrf_field(csrf) + '<button>Pause</button></form>')
-    cards = (
-        f'<div class="cards"><div class="card"><h3>Health</h3>{health}<p class="muted">last poll {esc(ago(last_ok))}</p>'
-        f'{f"<p class=bad-text>last error: {esc(err)}</p>" if err else ""}</div>'
-        f'<div class="card"><h3>Mode</h3>{mode} <span class="muted">every {esc(cfg["poll_seconds"])}s</span></div>'
-        f'<div class="card"><h3>Queue control</h3>{badge("paused: " + paused, "warn") if paused else badge("running", "good")} {pause_btn}</div>'
-        f'<div class="card"><h3>Classifier</h3>{esc(cfg["classifier"])}<p class="muted">Telegram: {esc(cfg["telegram"])} · CI watch: {esc(cfg["ci"])}</p></div></div>')
-    running, queued = d["running"], d["queued"]
-    now_html = f'<p class="muted">{len(running)} of {esc(cfg["max_parallel"])} slot(s) in use · {len(queued)} queued</p>'
-    now_html += "".join(
-        f'<p>{badge("running")} <a href="/runs/{int(run["id"])}">{esc(run["kind"])}{" " + esc(run["stage"]) if run["stage"] else ""}</a> on '
-        f'{ticket_link(run["repo"], run["issue"])} — {esc(run["title"])}<br><span class="muted">{esc(run["model"])} ({esc(run["effort"])}) · '
-        f'started {esc(ago(run["started"]))} · running for {esc(dur(run["started"]))}</span></p>' for run in running)
-    now_html += "".join(
-        f'<p>{badge("queued")} {esc(q.get("kind", ""))} on {ticket_link(q.get("repo", ""), q["issue"])} — {esc(q.get("title", ""))}'
-        '<br><span class="muted">waiting for a free slot</span></p>' for q in queued)
-    if not running and not queued:
-        now_html += "<p class=muted>Nothing is running.</p>"
-    out = cards + f"<h2>Now</h2>{now_html}<h2>Recent runs</h2>{runs_table(d['runs'])}"
-    if d["prs"]:
-        out += f"<h2>PRs being watched</h2>{prs_table(d['prs'])}"
-    out += f'<h2>Timeline</h2>{events_table(d["events"])}<p><a href="/events">All events →</a></p>'
-    return out
+def overview_fragment(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None) -> str:
+    """The Floor page body (see floor.py)."""
+    from . import floor
+    return floor.render(d, csrf, selected, needs, forms)
 
 
 def runs_table(runs: list[dict]) -> str:

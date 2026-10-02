@@ -90,3 +90,15 @@ Then `systemctl --user daemon-reload && systemctl --user restart factory-ui`. Re
 421, and failed logins are rate-limited per client address. The connection is plain HTTP, so on the LAN the password and session
 cookie are readable by anyone who can sniff that network. Use it only on a network you trust, or put TLS in front (and start the UI
 with `--secure-cookie`). Do not forward the port to the internet.
+
+## The Floor (default page)
+
+`/` is a live picture of the factory: tickets travel along belts through poll, trust gate, classify and the stages to pull requests,
+CI and conflict handling. Running stations glow and show a progress bar; a crate carries the ticket number. Click a station to see
+what it does, what it is working on, its numbers for the last day and its recent runs (`/?station=architect`; the selection
+survives the page's 5-second refresh). Under the map, **Needs you** lists the tickets waiting for a person with the same buttons as
+Telegram (Run <stage>, Build anyway, Skip, or Accept recommendations for stage questions).
+
+The map is read-only: stations are links, not controls, so pause and reroute can be added later without redrawing it. On a phone the
+map becomes a vertical list of stations, the navigation becomes a bottom tab bar (the rest sits behind **More**), and the Tickets
+table becomes cards. The theme is dark only, using system fonts and no inline styles (the page's CSP forbids them).

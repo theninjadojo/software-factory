@@ -4,7 +4,7 @@
   if (!live) return;
   function tick() {
     if (document.hidden) return;
-    fetch("/fragment/overview", { credentials: "same-origin", cache: "no-store" })
+    fetch("/fragment/overview" + location.search, { credentials: "same-origin", cache: "no-store" })
       .then(function (r) {
         if (r.status === 401) { location.href = "/login"; return null; }
         return r.ok ? r.text() : null;
