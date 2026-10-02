@@ -203,7 +203,7 @@ def trusted(cfg: Config, gh: GitHub, repo: str, num: int, label: str | None = No
 
 def claim(gh: GitHub, repo: str, num: int, trigger_label: str, kind: str) -> None:
     gh.remove_label(repo, num, trigger_label)       # prevents re-dispatch
-    for stale in (DONE, FAILED):                    # clear state left by an earlier attempt
+    for stale in (DONE, FAILED, Q.NEEDS_ANSWERS):                    # clear state left by an earlier attempt
         gh.remove_label(repo, num, stale)
     gh.add_labels(repo, num, [working_label(kind)])
 
@@ -344,6 +344,12 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             hint = "a person's answer to the open questions " + ", ".join(q.id for q in pending + earlier)
         url = gh.comment(repo, num, stage_comment(role, route, doc, hint, res.files, res.notes, qs))
         gh.add_labels(repo, num, [role.done_label])
+        if pending or earlier:                          # a visible "waiting for you" mark on the issue itself
+            try:
+                gh.create_label(repo, Q.NEEDS_ANSWERS, "fbca04", "Open questions are waiting for a person's answers")
+            except Exception:
+                log.warning("could not create the label %s in %s", Q.NEEDS_ANSWERS, repo)      # adding it still works
+            gh.add_labels(repo, num, [Q.NEEDS_ANSWERS])
         if conn is not None:
             dbm.set_questions(conn, repo, num, role.name, len(pending) + len(earlier))
         if go_on:
