@@ -164,6 +164,7 @@ class Config:
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
+    telegram_ui_url: str | None = None          # the admin UI's address, for an "Open in UI" button on open-question messages
     kind_aliases: dict = field(default_factory=lambda: dict(KIND_ALIASES))   # label -> kind (bug/feature/docs/chore/question)
 
 
@@ -293,6 +294,14 @@ def _events(v):
     return tuple(v)
 
 
+def _ui_url(v):
+    if not v:
+        return None
+    if not isinstance(v, str) or not re.fullmatch(r"https?://[^\s\"'<>|]{1,200}", v):
+        raise ValueError("telegram.ui_url must be an http(s) URL")
+    return v.rstrip("/")
+
+
 def overrides_path(path: str) -> Path:
     """The file the UI writes. Deep-merged over the hand-edited config, which is never rewritten."""
     p = Path(path)
@@ -378,5 +387,6 @@ def parse(raw: dict) -> Config:
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),
+        telegram_ui_url=_ui_url(raw.get("telegram", {}).get("ui_url")),
         kind_aliases=_aliases(raw.get("classifier", {}).get("kind_aliases")),
     )

@@ -66,6 +66,21 @@ ROLE_PROMPTS = {
 }
 
 
+QUESTIONS_RULES = (
+    "\n\nOPEN QUESTIONS BLOCK (required). After everything else in your reply (after the 'Recommended next stage' line and any "
+    "'Design files' line), end with exactly one fenced code block whose info string is `factory-questions`, holding JSON like "
+    '{"questions": [{"id": "q1", "question": "Which label should the save button have?", "options": [{"id": "a", "label": "Save"}, '
+    '{"id": "b", "label": "Save changes"}], "recommended": "a", "reason": "Matches the other forms.", "class": "safe-default"}]}. '
+    "One entry per open question in your document, in the same order, with ids q1, q2, ...; each has 2 to 4 options with ids a, "
+    "b, c, d, a one-line question, short option labels, the id of the option you recommend and a one-line reason. Use class "
+    "`safe-default` only when the choice is easy to reverse and low impact (naming, wording, equivalent approaches): the factory "
+    "may accept your recommendation without asking anyone. Use `needs-person` for anything about security, trust boundaries, "
+    "credentials, permissions, deleting data, migrations, cost or product direction, and for anything you are unsure about. If "
+    'there are no open questions, end with the block {"questions": []}. The block is machine-read: valid JSON, plain text, no '
+    "Markdown inside it."
+)
+
+
 def design_files_rules(design_dir: str) -> str:
     return (
         "\n\nDESIGN FILES (required when it applies). If the ticket changes what users see or do AND a repository contains Claude Design "
