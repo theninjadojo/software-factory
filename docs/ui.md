@@ -33,6 +33,7 @@ A dashboard and settings editor, in the same standard-library-only style as the 
 | Harnesses | Enable or disable an agent harness; edit its image, command and hosts; set its key. Routes and roles choose among the enabled ones. |
 | Credentials | GitHub token, Claude credential (subscription token or API key), OpenRouter key, Telegram bot token. Write-only. GitHub and OpenRouter have a Test button. |
 | Telegram | Your chat id (with *Find my chat id*), a test message, and how chatty it is: a level, or an explicit list of events. |
+| Labels | Add, remove or swap labels on issues, one repository at a time (filter by state, label, title or `#number`). Only labels that already exist in the repository can be applied. Writes happen on the server with the stored GitHub token, so GitHub shows them as the factory's account; the factory trusts that account for triggers when it has write access. The write is applied directly (not via the read-only database), and logged to the UI log. |
 
 ### How a change is applied
 

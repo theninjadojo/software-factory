@@ -274,3 +274,72 @@ class Telegram(AdminCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Labels(AdminCase):
+    REPO = "your-org/standalone-service"
+
+    def setUp(self):
+        super().setUp()
+        I.save_secret(load(str(self.root / "config.toml")), "github", TOKEN, "subscription")
+        self.gh = mock.MagicMock()
+        self.gh.repo_labels.return_value = [{"name": "bug"}, {"name": "<script>"}, {"name": "factory:ready"}]
+        self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "bug"}]}
+        self.gh.issues.return_value = ([self.gh.get_issue.return_value], False)
+        p = mock.patch("factory.ui.labels.GitHub", return_value=self.gh)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def fields(self, **over):
+        return {"repo": self.REPO, "n": "7", **over}
+
+    def test_requires_a_session_and_csrf_and_makes_no_github_call(self):
+        self.assertEqual(self.req("GET", "/labels")[0], 303)
+        self.assertEqual(self.req("POST", "/labels/add", urlencode(self.fields(label="bug")))[0], 303)
+        cookie, _ = self.session()
+        s, _, _ = self.req("POST", "/labels/add", urlencode(self.fields(label="bug")), cookie=cookie)
+        self.assertEqual(s, 403)
+        self.gh.add_labels.assert_not_called()
+
+    def test_add_sends_one_call_and_redirects(self):
+        cookie, csrf = self.session()
+        s, h, _ = self.post(cookie, csrf, "/labels/add", self.fields(label="factory:ready"))
+        self.assertEqual(s, 303)
+        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:ready"])
+
+    def test_unknown_label_repo_or_number_is_rejected_before_any_write(self):
+        cookie, csrf = self.session()
+        for path, f in (("/labels/add", self.fields(label="nope")), ("/labels/add", {"repo": "evil/repo", "n": "7", "label": "bug"}),
+                        ("/labels/add", self.fields(n="x", label="bug")), ("/labels/replace", self.fields(old="bug", new="nope")),
+                        ("/labels/remove", self.fields(n="7; DROP", label="bug"))):
+            self.assertEqual(self.post(cookie, csrf, path, f)[0], 400, f)
+        self.gh.add_labels.assert_not_called()
+        self.gh.remove_label.assert_not_called()
+
+    def test_replace_adds_then_removes_and_remove_works(self):
+        cookie, csrf = self.session()
+        self.assertEqual(self.post(cookie, csrf, "/labels/replace", self.fields(old="bug", new="factory:ready"))[0], 303)
+        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:ready"])
+        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "bug")
+        self.gh.remove_label.reset_mock()
+        self.assertEqual(self.post(cookie, csrf, "/labels/remove", self.fields(label="bug"))[0], 303)
+        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "bug")
+
+    def test_github_error_is_reported_not_claimed_as_success(self):
+        import urllib.error
+        self.gh.add_labels.side_effect = urllib.error.HTTPError("u", 403, "x", {}, None)
+        cookie, csrf = self.session()
+        s, _, html = self.post(cookie, csrf, "/labels/add", self.fields(label="bug"))
+        self.assertEqual(s, 502)
+        self.assertIn("GitHub refused", html)
+        self.assertNotIn("Label added", html)
+
+    def test_label_names_are_escaped_and_token_never_rendered(self):
+        self.gh.get_issue.return_value["labels"] = [{"name": "<script>"}]
+        cookie, _ = self.session()
+        for path in ("/labels", f"/labels/issue?repo={quote(self.REPO)}&n=7"):
+            s, _, html = self.req("GET", path, cookie=cookie)
+            self.assertEqual(s, 200)
+            self.assertNotIn("<script>", html.replace('<script src="/static/app.js" defer></script>', ""))
+            self.assertIn("&lt;script&gt;", html)
+            self.assertNotIn(TOKEN, html)

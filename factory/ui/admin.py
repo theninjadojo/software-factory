@@ -4,7 +4,7 @@ import json
 from .. import db as dbm
 from ..config import deep_merge
 from ..router import decide
-from . import forms, integrations as I, settings as S, views
+from . import forms, integrations as I, labels as L, settings as S, views
 from .views import esc
 
 FLASH = {
@@ -183,7 +183,9 @@ def telegram_test(h, form, csrf: str) -> None:
     _telegram(h, csrf, r["message"], "ok" if r["ok"] else "bad")
 
 
-GET = {"/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get}
+GET = {"/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
+       "/labels": L.list_get, "/labels/issue": L.issue_get}
 POST = {"/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
-        "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test}
+        "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
+        "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace}
