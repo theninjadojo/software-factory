@@ -240,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             body = floor.tray(rows, csrf, None, "/needs" + (f"?need={flt}" if flt else ""), flt, heading=False)
             if path == "/needs":
                 shown = L.flash_pop(csrf)
-                return self._send(200, views.page("Needs you", f'<div id="live" data-src="/fragment/needs">{body}</div>', path, csrf, wide=True,
+                return self._send(200, views.page("Needs you", f'<p class="ph-only"><a href="/">← Factory</a></p><div id="live" data-src="/fragment/needs">{body}</div>', path, csrf, wide=True,
                                                   badges={"/needs": len(rows)} if rows else None,
                                                   flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
@@ -254,7 +254,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/runs":
                 n = max(0, int(q.get("page", "0") or 0)) if q.get("page", "0").isdigit() else 0
                 rows = dbm.recent_runs(db, PAGE + 1, n * PAGE, q.get("status") or None, q.get("repo") or None)
-                return page("Runs", views.runs_page(rows[:PAGE], q.get("status", ""), q.get("repo", ""), n, len(rows) > PAGE))
+                today = time.time() // 86400 * 86400
+                summary = dbm.runs_summary(db, today, q.get("repo") or None)
+                return page("Runs", views.runs_page(rows[:PAGE], q.get("status", ""), q.get("repo", ""), n, len(rows) > PAGE, summary))
             if path.startswith("/runs/"):
                 rid = path[len("/runs/"):]
                 run = dbm.get_run(db, int(rid)) if rid.isdigit() else None
@@ -277,11 +279,13 @@ class Handler(BaseHTTPRequestHandler):
                 files = dbm.design_files_for_runs(db, [i for s in steps if s["step"] == "design" for i in s["run_ids"]])
                 return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), steps, files, dbm.doc_stages(db, q["repo"], int(n))))
             if path == "/prs":
-                return page("PRs & CI", views.prs_table(dbm.watched_prs(db)))
+                prs = dbm.watched_prs(db)
+                return page("PRs & CI", views.prs_summary_line(prs) + views.prs_cards(prs, self.app.cfg().ci.fix_rounds))
             if path == "/events":
                 before = int(q["before"]) if q.get("before", "").isdigit() else None
-                rows = dbm.recent_events(db, 101, q.get("kind") or None, before)
-                return page("Events", views.events_page(rows[:100], q.get("kind", ""), rows[99]["id"] if len(rows) > 100 else None))
+                kind = q.get("kind") or "important"
+                rows = dbm.recent_events(db, 101, None if kind == "all" else kind, before)
+                return page("Events", views.events_page(rows[:100], kind, rows[99]["id"] if len(rows) > 100 else None))
         finally:
             db.close()
         self._send(404, "not found", "text/plain")

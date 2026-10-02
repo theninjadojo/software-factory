@@ -164,21 +164,55 @@ def crates(live: dict) -> str:
     return "".join(out)
 
 
-def rail(live: dict, sel: str) -> str:
-    """The same stations as a vertical list, for phones."""
-    items = []
-    for sid, title in RAIL:
+def _stale(d: dict, now: float) -> bool:
+    cfg, st = d["cfg"], d["status"]
+    last_ok = float(st["last_poll_ok"]["value"]) if "last_poll_ok" in st else None
+    return last_ok is None or now - last_ok > max(120, 3 * cfg["poll_seconds"])
+
+
+def phone_home(d: dict, live: dict, needs, now: float) -> str:
+    """The Factory screen for phones (CSS shows it instead of the map and tables below 760px): health, three tiles, what is running,
+    the pipeline as a vertical list and the top ticket that needs a person. Built from the same escaped data as the desktop page."""
+    stale = _stale(d, now)
+    last_ok = d["status"].get("last_poll_ok", {}).get("value")
+    running = d["running"]
+    health = (f'<p class="ph-health"><span class="ph-dot {"bad" if stale else "good"}" aria-hidden="true"></span>'
+              f'<span>{"Orchestrator not reporting" if stale else "Orchestrator healthy"}</span>'
+              f'<span class="muted">last poll {esc(ago(float(last_ok)) if last_ok else "never")}</span></p>')
+    title = f'{len(running)} ticket{"" if len(running) == 1 else "s"} in progress' if running else "The factory is idle"
+    sentence = ("Agents are working through the queue." if running else "Nothing is running right now; it picks up the next ticket at its next poll.")
+    if d["paused"]:
+        sentence = f'The queue is paused: {esc(d["paused"])}.'
+    tile = lambda label, value: f'<div class="ph-tile"><b>{value}</b><span>{label}</span></div>'
+    tiles = ('<div class="ph-tiles">' + tile("working", len(running)) + tile("need you", "—" if needs is None else len(needs))
+             + tile("PRs open", len(d["prs"])) + "</div>")
+    if running:
+        r = running[0]
+        extra = f'<p class="muted">+{len(running) - 1} more running</p>' if len(running) > 1 else ""
+        now_card = (f'<section class="card ph-now" aria-label="Running now"><h3>Running now</h3>'
+                    f'<p><a href="/runs/{int(r["id"])}">{esc(r["kind"])}{" " + esc(r["stage"]) if r["stage"] else ""} #{int(r["id"])}</a> · {short(r["repo"], r["issue"])}</p>'
+                    f'<p class="fl-t">{esc(r["title"])}</p><progress class="fl-bar wide" max="100" value="{progress(r, None)}" aria-label="Progress of the run"></progress>'
+                    f'<p class="muted">{esc(r["model"])} · running for {esc(dur(r["started"]))}</p>{extra}</section>')
+    else:
+        now_card = '<section class="card ph-now" aria-label="Running now"><h3>Running now</h3><p class="muted">Nothing is running.</p></section>'
+    items = ""
+    for sid, label in RAIL:
         o = live[sid]
-        name = title or STATIONS[sid][0]
-        ns = o["ns"]
-        cls = "fl-s run" if o["state"] == "run" else "fl-s"
-        bar = ""
-        if o["running"]:
-            bar = f'<progress class="fl-bar" max="100" value="{progress(o["running"][0], None)}" aria-label="Progress of the run"></progress>'
-        chip = badge("running") if o["state"] == "run" else (f'<span class="badge">{int(o["count"])}</span>' if o["count"] else "")
-        items.append(f'<li><a class="{cls}" href="/?station={sid}"><span class="fl-ico">{icon(sid)}</span>'
-                     f'<span class="fl-grow"><span class="fl-nt">{esc(name)}</span><span class="fl-ns">{esc(ns)}</span></span>{chip}{bar}</a></li>')
-    return f'<ol class="fl-rail" aria-label="Factory stations">{"".join(items)}</ol>'
+        word, kind = ("Running", "run") if o["state"] == "run" else ("Queued", "queued") if o["count"] else ("Off", "off") if o["state"] == "off" else ("Idle", "idle")
+        name = label or STATIONS[sid][0]
+        items += (f'<li><a class="ph-step {kind}" href="{esc(STATIONS[sid][2])}"><span class="ph-dot {kind}" aria-hidden="true"></span>'
+                  f'<span class="ph-name">{esc(name)}</span><span class="ph-word">{word}</span></a></li>')
+    pipe = f'<h3 class="ph-h">Pipeline</h3><ol class="ph-pipe" aria-label="Pipeline">{items}</ol>'
+    if needs:
+        n = needs[0]
+        why = f'{len(n["st"].pending())} question(s) need a person' if n.get("st") else n.get("reason", "")
+        top = (f'<section class="card ph-need" aria-label="Needs you"><h3>Needs you</h3><p><span class="badge warn">{esc(n["repo"].split("/")[-1])}#{int(n["issue"])}</span></p>'
+               f'<p class="fl-t">{esc(n["title"])}</p><p class="muted">{esc(why)}</p><a class="btn" href="/needs">Review →</a></section>')
+    elif needs is None:
+        top = '<section class="card ph-need" aria-label="Needs you"><h3>Needs you</h3><p class="muted">Save a GitHub token on the Credentials page to see these.</p></section>'
+    else:
+        top = '<section class="card ph-need" aria-label="Needs you"><h3>Needs you</h3><p class="muted">Nothing needs you.</p></section>'
+    return f'<div class="ph-home">{health}<h2 class="ph-title">{title}</h2><p class="muted">{sentence}</p>{tiles}{now_card}{pipe}{top}</div>'
 
 
 def inspector(sid: str, o: dict, d: dict, now: float) -> str:
@@ -200,8 +234,9 @@ def inspector(sid: str, o: dict, d: dict, now: float) -> str:
                     f'<progress class="fl-bar wide" max="100" value="{progress(r, avg)}" aria-label="Progress of the run"></progress>'
                     f'<p class="muted fl-mono">running for {esc(dur(r["started"]))}{" · usually about " + esc(span(avg)) if avg else ""}</p></div>')
     for q in o["queued"]:
-        working += (f'<div class="card fl-work"><h3>Waiting for a slot</h3><p>{short(q.get("repo", ""), q["issue"])}</p>'
-                    f'<p class="fl-t">{esc(q.get("title", ""))}</p></div>')
+        working += (f'<div class="card fl-work"><h3>{"Blocked" if q.get("reason") else "Waiting for a slot"}</h3>'
+                    f'<p>{short(q.get("repo", ""), q["issue"])}</p><p class="fl-t">{esc(q.get("title", ""))}</p>'
+                    + (f'<p class="muted">{esc(q["reason"])}</p>' if q.get("reason") else "") + '</div>')
     stats = ""
     if sid in ("analyst", "designer", "architect", "build", "review", "ci", "conflicts"):
         stats = ('<div class="fl-stats">'
@@ -233,7 +268,7 @@ def kpis(d: dict, needs) -> str:
 def status_row(d: dict, csrf: str, now: float) -> str:
     cfg, st = d["cfg"], d["status"]
     last_ok = float(st["last_poll_ok"]["value"]) if "last_poll_ok" in st else None
-    stale = last_ok is None or now - last_ok > max(120, 3 * cfg["poll_seconds"])
+    stale = _stale(d, now)
     paused, err = d["paused"], (st.get("last_error") or {}).get("value", "")
     # Runs happen on worker threads and polling goes on during them, so a missed poll means trouble even while a run is going.
     health = badge("orchestrator not reporting" if stale else "orchestrator healthy", "bad" if stale else "good")
@@ -323,9 +358,10 @@ def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=No
     sel = selected if selected in STATIONS else default_station(live)
     nodes = "".join(node(sid, live[sid], sel) for sid in ORDER)
     floor = (f'<div class="fl-grid"><div><div class="fl-wrap"><div class="fl-map" role="group" aria-label="Factory floor, live">'
-             f'{belts(live)}{crates(live)}{nodes}</div></div>{rail(live, sel)}</div>{inspector(sel, live[sel], d, now)}</div>')
+             f'{belts(live)}{crates(live)}{nodes}</div></div></div>{inspector(sel, live[sel], d, now)}</div>')
     out = status_row(d, csrf, now) + kpis(d, needs) + floor + tray(needs, csrf, forms, f"/?station={sel}" + (f"&need={flt}" if flt else ""), flt)
     out += f"<h2>Recent runs</h2>{views.runs_table(d['runs'])}"
     if d["prs"]:
         out += f"<h2>PRs being watched</h2>{views.prs_table(d['prs'])}"
-    return out + f'<h2>Timeline</h2>{views.events_table(d["events"])}<p><a href="/events">All events →</a></p>'
+    out += f'<h2>Timeline</h2>{views.events_table(d["events"])}<p><a href="/events">All events →</a></p>'
+    return f'<div class="fl-desk">{out}</div>' + phone_home(d, live, needs, now)

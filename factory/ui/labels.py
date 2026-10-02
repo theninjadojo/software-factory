@@ -558,7 +558,7 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
         return (f'{esc(views.ago(when))}' if when else '<span class="muted">—</span>') + (f'<br>{factory_cell(i["number"])}' if d else "")
 
     rows = "".join(
-        f'<tr><td data-l="Ticket">{views.ticket_link(repo, i["number"])}<br><span>{esc(i.get("title"))}</span><br>'
+        f'<tr data-row="{esc(repo)}#{int(i["number"])}"><td data-l="Ticket">{views.ticket_link(repo, i["number"])}<br><span>{esc(i.get("title"))}</span><br>'
         f'{" ".join(chip(n, cfg) for n in _names(i))}</td><td data-l="Stage">{esc(stage_of(i))}</td>'
         f'<td data-l="Progress">{progress(i)}</td><td data-l="Updated">{updated(i)}</td>'
         f'<td class="actions" data-l="Actions">{buttons(i)}</td></tr>'

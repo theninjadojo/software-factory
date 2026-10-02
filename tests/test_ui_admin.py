@@ -369,6 +369,12 @@ class Labels(AdminCase):
         self.req("GET", "/tickets?stage=%3Cb%3E", cookie=cookie)                   # an unknown stage is ignored, never passed on
         self.assertEqual(self.gh.search_page.call_count, 2)
 
+    def test_ticket_rows_are_addressable_for_in_place_updates(self):
+        """app.js swaps a row by data-row after a background POST; the POST itself is the unchanged, CSRF-checked form."""
+        cookie, _ = self.session()
+        html = self.req("GET", "/tickets", cookie=cookie)[2]
+        self.assertIn(f'<tr data-row="{self.REPO}#7">', html)
+
     def refused(self, cookie, csrf, fields, back="/"):
         """A refusal sends the person back to the page they were on, with the reason shown there once (never a different page)."""
         s, h, _ = self.post(cookie, csrf, "/tickets/start", {**fields, "back": back})
