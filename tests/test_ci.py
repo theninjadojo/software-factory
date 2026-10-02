@@ -62,6 +62,63 @@ class Evaluate(unittest.TestCase):
         self.assertIn("@insidefence", text)                           # mentions in code fences never ping, left as-is
 
 
+class GitHubFallback(unittest.TestCase):
+    """The Checks API is not offered to every token; Actions-only tokens must still give CI results."""
+
+    def client(self, responses):
+        from factory.github import GitHub
+        gh = GitHub("tok")
+
+        def fake_get(path):
+            for prefix, val in responses:
+                if path.startswith(prefix):
+                    if isinstance(val, Exception):
+                        raise val
+                    return val
+            raise AssertionError("unexpected call " + path)
+        gh._get = fake_get
+        return gh
+
+    def test_falls_back_to_actions_jobs_when_checks_is_not_readable(self):
+        forbidden = urllib.error.HTTPError("u", 403, "forbidden", {}, None)
+        gh = self.client([
+            ("/repos/o/r/commits/abc/check-runs", forbidden),
+            ("/repos/o/r/actions/runs?head_sha=abc", {"workflow_runs": [{"id": 7, "name": "ci", "status": "completed", "html_url": "http://run"}]}),
+            ("/repos/o/r/actions/runs/7/jobs", {"jobs": [
+                {"id": 70, "name": "unit", "status": "completed", "conclusion": "failure", "html_url": "http://job70"},
+                {"id": 71, "name": "lint", "status": "completed", "conclusion": "success", "html_url": "http://job71"}]})])
+        items = ci.normalize(gh.check_runs("o/r", "abc"), [])
+        self.assertEqual([(i["name"], i["state"], i["id"]) for i in items], [("ci / unit", "failure", 70), ("ci / lint", "success", 71)])
+        self.assertEqual(ci.evaluate(items), "failed")
+        self.assertTrue(all(i["actions"] for i in items))                      # so failing logs can be fetched by job id
+
+    def test_a_queued_run_without_jobs_is_pending_and_no_runs_means_nothing_yet(self):
+        forbidden = urllib.error.HTTPError("u", 404, "nf", {}, None)
+        queued = self.client([("/repos/o/r/commits/abc/check-runs", forbidden),
+                              ("/repos/o/r/actions/runs?head_sha=abc", {"workflow_runs": [{"id": 8, "name": "ci", "status": "queued"}]}),
+                              ("/repos/o/r/actions/runs/8/jobs", {"jobs": []})])
+        self.assertEqual(ci.evaluate(ci.normalize(queued.check_runs("o/r", "abc"), [])), "pending")
+        empty = self.client([("/repos/o/r/commits/abc/check-runs", forbidden), ("/repos/o/r/actions/runs?head_sha=abc", {"workflow_runs": []})])
+        self.assertEqual(ci.evaluate(ci.normalize(empty.check_runs("o/r", "abc"), [])), "none")
+
+    def test_checks_api_is_preferred_when_available(self):
+        gh = self.client([("/repos/o/r/commits/abc/check-runs", {"check_runs": [run("a")]})])
+        self.assertEqual([c["name"] for c in gh.check_runs("o/r", "abc")], ["a"])
+
+    def test_commit_statuses_are_optional_but_other_errors_are_not_swallowed(self):
+        denied = self.client([("/repos/o/r/commits/abc/status", urllib.error.HTTPError("u", 403, "x", {}, None))])
+        self.assertEqual(denied.commit_statuses("o/r", "abc"), [])
+        broken = self.client([("/repos/o/r/commits/abc/status", urllib.error.HTTPError("u", 500, "x", {}, None))])
+        with self.assertRaises(urllib.error.HTTPError):
+            broken.commit_statuses("o/r", "abc")
+
+    def test_no_access_at_all_still_reports_the_permission_gap(self):
+        denied = urllib.error.HTTPError("u", 403, "forbidden", {}, None)
+        gh = self.client([("/repos/o/r/commits/abc/check-runs", denied), ("/repos/o/r/actions/runs?head_sha=abc", denied)])
+        with self.assertRaises(urllib.error.HTTPError):
+            gh.check_runs("o/r", "abc")                                          # watch_ci turns this into the 'no access' note
+
+
 class Watch(unittest.TestCase):
     def setUp(self):
         self.conn = dbm.connect(":memory:")

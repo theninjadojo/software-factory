@@ -1,5 +1,5 @@
 """Watch the repos' own CI on factory PRs. Report the result on the PR, the ticket and Telegram, and (optionally) give
-the agent a fix round with the failing logs. Needs the bot token to have Checks, Actions and Commit statuses: read."""
+the agent a fix round with the failing logs. Needs the bot token to have Actions: read (Commit statuses: read is optional)."""
 import logging
 import re
 import time
@@ -76,8 +76,8 @@ def watch_ci(cfg, gh, conn, notify, fix) -> None:
                 if e.code in (401, 403, 404):
                     if last != "no-access":
                         dbm.update_pr(conn, repo, number, summary="no-access")
-                        notify(f"CI status is not available for {repo}#{number}: the GitHub token needs read access to Checks, Actions and "
-                               "Commit statuses. The pull request itself is fine. I'll keep trying quietly.", "ci_result")
+                        notify(f"CI status is not available for {repo}#{number}: the GitHub token needs read access to Actions "
+                               "(and optionally Commit statuses). The pull request itself is fine. I'll keep trying quietly.", "ci_result")
                     continue
                 raise
             state = evaluate(items)

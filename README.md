@@ -75,7 +75,7 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 
 - A **GitHub account for the factory** (a bot account is best, so PRs aren't authored as you) with write access to your
   repos, and a **fine-grained token** for it: Contents, Issues and Pull requests *read and write*, Metadata *read*; add
-  Checks, Actions and Commit statuses *read* for the CI feedback. No Workflows, no Administration.
+  **Actions** *read* for the CI feedback (Commit statuses *read* is optional; the Checks permission is not needed). No Workflows, no Administration.
 - **Model credentials** for the agent: `ANTHROPIC_API_KEY` (the supported route for unattended use) or a Claude
   subscription token from `claude setup-token` (see [caveats](#limits-and-honest-caveats)).
 - Optional: a **Telegram bot** (BotFather) and your numeric Telegram id; an **OpenRouter key** for Jev.

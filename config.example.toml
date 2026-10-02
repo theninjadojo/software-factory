@@ -68,8 +68,8 @@ repos = [
   { repo = "your-org/shop-packages", role = "Shared UI packages used by the web app." },
 ]
 
-# Watch the repos' own CI on factory PRs and report it. Needs the GitHub token to have Checks, Actions and
-# Commit statuses: read. fix_rounds = extra agent attempts after a failed run (0 = report only).
+# Watch the repos' own CI on factory PRs and report it. Needs the GitHub token to have Actions: read
+# (Commit statuses: read is optional). fix_rounds = extra agent attempts after a failed run (0 = report only).
 [ci]
 enabled = true
 fix_rounds = 1

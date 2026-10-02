@@ -55,10 +55,35 @@ class GitHub:
         return self._get(f"/repos/{repo}/pulls/{number}")
 
     def check_runs(self, repo: str, sha: str) -> list[dict]:
-        return self._get(f"/repos/{repo}/commits/{sha}/check-runs?per_page=100")["check_runs"]
+        """CI results for a commit. Uses the Checks API when the token may read it; otherwise falls back to the GitHub Actions
+        API (workflow jobs), which needs only 'Actions: read' and carries the same status, conclusion and job id."""
+        try:
+            return self._get(f"/repos/{repo}/commits/{sha}/check-runs?per_page=100")["check_runs"]
+        except urllib.error.HTTPError as e:
+            if e.code not in (403, 404):
+                raise
+        return self._actions_jobs(repo, sha)
+
+    def _actions_jobs(self, repo: str, sha: str) -> list[dict]:
+        items = []
+        for run in self._get(f"/repos/{repo}/actions/runs?head_sha={sha}&per_page=30")["workflow_runs"]:
+            jobs = self._get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
+            for j in jobs:
+                items.append({"id": j["id"], "name": f"{run['name']} / {j['name']}", "status": j["status"],
+                              "conclusion": j.get("conclusion"), "html_url": j.get("html_url"), "output": {"title": ""}})
+            if not jobs:                                  # a run that has queued but not produced jobs yet is still pending
+                items.append({"id": run["id"], "name": run["name"], "status": run["status"], "conclusion": run.get("conclusion"),
+                              "html_url": run.get("html_url"), "output": {"title": ""}})
+        return items
 
     def commit_statuses(self, repo: str, sha: str) -> list[dict]:
-        return self._get(f"/repos/{repo}/commits/{sha}/status")["statuses"]
+        """External (non-Actions) commit statuses. Optional: a token without 'Commit statuses: read' simply sees none."""
+        try:
+            return self._get(f"/repos/{repo}/commits/{sha}/status")["statuses"]
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404):
+                return []
+            raise
 
     def job_log_tail(self, repo: str, job_id: int, chars: int = 6000) -> str | None:
         """Tail of an Actions job log. GitHub answers with a redirect to a signed URL; follow it WITHOUT our credentials."""
