@@ -9,7 +9,10 @@ from test_ui import UiCase
 REPO = "your-org/shop-web"
 NEED = {"repo": REPO, "issue": 13, "title": "Per-repo budget limits", "reason": "low confidence", "at": 1,
         "acts": [("stage:analyst", "Run analyst", "factory:analyze"), ("build", "Build anyway", "factory:ready"), ("skip", "Skip", None)]}
-ASK = {"repo": REPO, "issue": 19, "title": "Retry failed CI fixes", "reason": "questions waiting for you", "at": 2, "acts": [], "questions": True}
+from factory import questions as Q
+_Q1 = Q.Question("q1", "How should a retry be applied?", (("a", "Another fix commit"), ("b", "Re-run the CI only")), "a", "keeps one history", Q.PERSON)
+ASK = {"repo": REPO, "issue": 19, "title": "Retry failed CI fixes", "reason": "questions waiting for you", "at": 2, "acts": [], "questions": True,
+       "st": Q.StageQuestions("architect", [_Q1])}
 
 
 def run(i, kind, stage, issue, title="T", status="running", started=None, finished=None, model="opus"):
@@ -80,7 +83,8 @@ class Render(unittest.TestCase):
         self.assertIn("Nothing needs you", floor.tray([], "t", forms))
         html = floor.tray([NEED, ASK], "t", forms)
         self.assertIn("[13]", html) and self.assertIn("[19]", html)
-        self.assertIn("%2313", html)
+        self.assertIn("https://github.com/your-org/shop-web/issues/13", html)         # the ticket on GitHub, not another page of this UI
+        self.assertIn("fl-need wide", html)                                           # a ticket with questions gets the full row
         many = floor.tray([dict(NEED, issue=i) for i in range(9)], "t", forms)
         self.assertIn("3 more in Tickets", many)
 
@@ -118,6 +122,45 @@ class Ordering(unittest.TestCase):
         iss = [self.issue(1, updated="2026-10-01T10:00:00Z"), self.issue(2, updated="2026-10-01T11:00:00Z")]
         dec = {("o/r", 1): {"outcome": "run:pr", "detail": "", "decided_at": time.time()}}
         self.assertEqual([i["number"] for i in self.L.order(self.cfg, "o/r", iss, dec, {}, set())], [1, 2])
+
+
+class Inline(UiCase):
+    """The Floor's tray lets a person finish an interaction without leaving the page."""
+
+    def test_questions_are_answerable_on_the_floor(self):
+        cookie, _ = self.session()
+        with mock.patch("factory.ui.server.L.needs_you", return_value=[ASK, NEED]):
+            html = self.req("GET", "/?station=build", cookie=cookie)[2]
+        self.assertIn("<details open>", html)
+        for needle in ('name="o" value="a"', 'name="o" value="b"', 'name="other"', 'name="accept" value="1"', 'name="stage" value="architect"',
+                       'name="back" value="/?station=build"', "Run analyst"):
+            self.assertIn(needle, html)
+
+    def test_needs_you_attaches_the_questions_and_drops_stale_rows(self):
+        from factory.ui import labels as L
+        L._needs_cache.update(at=0.0, rows=None)
+        L._logins.clear()
+        gh = mock.MagicMock()
+        gh.token = "t"
+        gh.login.return_value = "bot"
+        gh.issues.return_value = ([{"number": 19, "title": "A", "state": "open", "labels": [], "updated_at": "2026-10-02T10:00:00Z"},
+                                   {"number": 20, "title": "B", "state": "open", "labels": [], "updated_at": "2026-10-02T10:00:00Z"}], False)
+        answered = Q.StageQuestions("architect", [_Q1], {"q1": ("option", "a")})
+        cur = {19: Q.StageQuestions("architect", [_Q1]), 20: answered}
+        h = mock.MagicMock()
+        h.app.cfg.return_value = mock.MagicMock(repos=[REPO])
+        h.app.ro_db.return_value = self.app.ro_db()
+        self.db.execute("INSERT INTO status VALUES ('x','y',0)") if False else None
+        with mock.patch("factory.ui.labels._gh", return_value=gh), \
+             mock.patch("factory.ui.labels.dbm.questions_waiting", return_value={19, 20}), \
+             mock.patch("factory.ui.labels.actions_for", return_value=("", [])), \
+             mock.patch("factory.ui.labels.Q.from_comments", side_effect=lambda c, me: c), \
+             mock.patch("factory.ui.labels.Q.latest", side_effect=lambda c: cur[c]), \
+             mock.patch.object(gh, "issue_comments", side_effect=lambda repo, n: n):
+            rows = L.needs_you(h)
+        self.assertEqual([r["issue"] for r in rows], [19])                         # #20 is already answered: no longer waiting
+        self.assertEqual(rows[0]["st"].stage, "architect")
+        L._needs_cache.update(at=0.0, rows=None)
 
 
 class Pages(UiCase):

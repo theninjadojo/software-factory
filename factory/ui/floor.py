@@ -253,9 +253,9 @@ def tray(needs, csrf: str, forms, back: str = "/") -> str:
     if not needs:
         return f'<section class="fl-tray" aria-labelledby="needs">{head}<p class="muted">Nothing needs you right now.</p></section>'
     cards = "".join(
-        f'<div class="card fl-need"><p><span class="badge warn">{esc(n["repo"].split("/")[-1])}#{int(n["issue"])}</span> '
+        f'<div class="card fl-need{" wide" if n.get("questions") else ""}"><p><span class="badge warn">{esc(n["repo"].split("/")[-1])}#{int(n["issue"])}</span> '
         f'<span class="muted">{esc(n["reason"])}</span></p><p class="fl-t">{esc(n["title"])}</p>'
-        f'<div class="fl-acts">{forms(n, csrf, back)}<a class="btn secondary" href="/tickets?repo={esc(n["repo"])}&amp;q=%23{int(n["issue"])}">Open</a></div></div>'
+        f'<div class="fl-acts">{forms(n, csrf, back)}<span class="fl-ref">{short(n["repo"], n["issue"])} on GitHub</span></div></div>'
         for n in needs[:6])
     more = f'<p class="muted"><a href="/tickets">{len(needs) - 6} more in Tickets →</a></p>' if len(needs) > 6 else ""
     return f'<section class="fl-tray" aria-labelledby="needs">{head}<div class="fl-cards">{cards}</div>{more}</section>'

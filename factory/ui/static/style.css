@@ -100,6 +100,7 @@ a.btn { display:inline-flex; align-items:center; justify-content:center; min-hei
 a.btn.secondary { background:var(--panel); color:var(--text); border-color:var(--line2); font-weight:500; }
 .fl-tray { margin:1.4rem 0 0; } .fl-tray h2 { margin:0 0 .6rem; font-size:1.1rem; }
 .fl-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:.8rem; } .fl-need { display:flex; flex-direction:column; gap:.55rem; } .fl-need p { margin:0; }
+.fl-need.wide { grid-column:1/-1; } .fl-need .cards.one { margin-top:.4rem; } .fl-need details { width:100%; } .fl-need summary { cursor:pointer; font-weight:600; margin-bottom:.5rem; } .fl-ref { font-size:.85rem; color:var(--muted); }
 .fl-acts { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin-top:auto; }
 .fl-rail { display:none; }
 

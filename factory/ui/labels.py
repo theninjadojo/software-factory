@@ -290,11 +290,10 @@ def action_forms(repo: str, n: int, acts, csrf: str, back: str = "/tickets") -> 
 
 
 def action_forms_for(need: dict, csrf: str, back: str = "/") -> str:
-    """The buttons for one row of the Floor's "Needs you" tray."""
+    """Everything needed to finish a "Needs you" row on the Floor: the buttons for a ticket the factory asked about, or the question
+    cards (an option per question, a free-text answer, and Accept recommendations) for one with questions."""
     if need.get("questions"):
-        hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(need["repo"])}"><input type="hidden" name="n" value="{int(need["issue"])}">'
-        return (f'<form method="post" action="/tickets/answer" class="inline">{hidden}<button name="accept" value="1" '
-                f'aria-label="Accept recommendations for #{int(need["issue"])}">Accept recommendations</button></form> ')
+        return question_cards(need["repo"], need["issue"], need["st"], csrf, back, True)
     return action_forms(need["repo"], need["issue"], need["acts"], csrf, back)
 
 
@@ -334,6 +333,13 @@ def needs_you(h) -> list | None:
                 elif i["number"] in waiting.get(repo, ()) and status not in ("closed", "running", "queued"):
                     rows.append({"repo": repo, "issue": i["number"], "title": i.get("title", "")[:120], "acts": [], "questions": True,
                                  "at": (decisions.get((repo, i["number"])) or {}).get("decided_at", 0), "reason": "questions waiting for you"})
+        asking = [r for r in rows if r.get("questions")]
+        if asking:                       # the questions themselves, so they can be answered on the Floor (read from the factory's own comments)
+            me = _login(gh)
+            found = _par(*[(lambda r=r: Q.latest(Q.from_comments(gh.issue_comments(r["repo"], r["issue"]), me))) for r in asking])
+            for r, cur in zip(asking, found):
+                r["st"] = cur
+            rows = [r for r in rows if not r.get("questions") or (r.get("st") and r["st"].pending())]
     except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
         log.warning("floor: could not read the tickets that need you")
         return None
@@ -373,7 +379,7 @@ def _asked(h, gh, cfg, repo, issues, decisions) -> dict:
     return {n: cur for n, cur in results if cur and cur.pending()}
 
 
-def question_cards(repo: str, n: int, st, csrf: str, back: str = "/tickets") -> str:
+def question_cards(repo: str, n: int, st, csrf: str, back: str = "/tickets", is_open: bool = False) -> str:
     """One card per question: a button per option, a free-text 'other', and Accept all recommendations. The browser only
     names a question and an option id; both are checked against the ticket's questions on GitHub when the answer arrives."""
     hidden = (f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
@@ -395,7 +401,7 @@ def question_cards(repo: str, n: int, st, csrf: str, back: str = "/tickets") -> 
             f'placeholder="Other: your own answer" aria-label="Other answer to {esc(q.id)}"><button class="secondary">Answer</button></form></div>')
     accept = (f'<form method="post" action="/tickets/answer" class="inline">{hidden}<button name="accept" value="1" '
               f'title="Records the recommended option for every question not answered yet, then starts the next stage">Accept all recommendations</button></form>')
-    return (f'<details><summary>{len(st.pending())} question(s) from the {esc(st.stage)} need an answer</summary>'
+    return (f'<details{" open" if is_open else ""}><summary>{len(st.pending())} question(s) from the {esc(st.stage)} need an answer</summary>'
             f'<p class="muted">Answers are posted on the ticket as the factory\'s account. When no question needing a person is left, '
             f'the next stage starts.</p><div class="cards one">{"".join(cards)}</div><p>{accept}</p></details>')
 

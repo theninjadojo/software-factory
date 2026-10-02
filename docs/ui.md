@@ -111,3 +111,7 @@ at its next poll without asking the classifier again (a label would send it back
 **Where you land.** An action returns you to the page you clicked from (the Floor, with the same station selected, or the Tickets page
 with the same filters) and the result is shown there once. The message is kept on the server for your session; nothing in the URL can
 make a page say something. The return address is checked against the Floor and Tickets pages only.
+
+**Finishing on the Floor.** A ticket with open questions shows its question cards right in the *Needs you* tray: one button per option, a
+free-text answer, and *Accept recommendations*. A ticket the factory asked about shows Run <stage> / Build anyway / Skip there too. Nothing
+sends you to another page, and the live refresh pauses while you are typing or a field has focus, so an answer in progress is never lost.
