@@ -73,6 +73,24 @@ def _inline(conn):
     return submit
 
 
+def recheck_failed(gh, conn, notify) -> None:
+    """A PR marked failed is no longer watched for fixes, but it must not stay failed for good: a person may push a fix,
+    re-run CI, merge or close it. Resolve it quietly to closed or passed; a still-failing one stays as it is."""
+    for repo, number, issue_repo, issue_num in dbm.failed_prs(conn):
+        try:
+            pr = gh.get_pr(repo, number)
+            if pr["state"] != "open":
+                dbm.update_pr(conn, repo, number, status="closed", summary="merged" if pr.get("merged") else "closed")
+                continue
+            items = normalize(gh.check_runs(repo, pr["head"]["sha"]), gh.commit_statuses(repo, pr["head"]["sha"]))
+            if evaluate(items) == "passed":
+                dbm.update_pr(conn, repo, number, status="passed", summary=f"{len(items)} checks passed")
+                record(conn, "passed", repo, number, issue_repo, issue_num, f"{len(items)} checks passed")
+                notify(f"CI now passes: {repo}#{number} ({len(items)} checks)\n{pr['html_url']}", "ci_result")
+        except Exception:
+            log.exception("ci recheck failed for %s#%s", repo, number)
+
+
 def watch_ci(cfg, gh, conn, notify, fix, submit=None) -> None:
     """One pass over every PR being watched. `fix(repo, number, issue_repo, issue_num, failures)` runs a fix round and
     returns True if it pushed a change (CI will restart), False otherwise. `submit(issue_repo, issue_num, job)` runs
@@ -81,6 +99,7 @@ def watch_ci(cfg, gh, conn, notify, fix, submit=None) -> None:
     if not cfg.ci.enabled:
         return
     submit = submit or _inline(conn)
+    recheck_failed(gh, conn, notify)
     for repo, number, issue_repo, issue_num, rounds, started, last in dbm.watching(conn):
         try:
             pr = gh.get_pr(repo, number)

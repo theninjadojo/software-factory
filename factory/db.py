@@ -177,6 +177,11 @@ def watching(db) -> list[tuple]:
                       "WHERE status='watching' ORDER BY watch_started").fetchall()
 
 
+def failed_prs(db) -> list[tuple]:
+    """PRs whose CI gave up (no fix rounds left, or a fix round changed nothing). Still re-checked, so a person's fix or merge clears them."""
+    return db.execute("SELECT repo, number, issue_repo, issue_num FROM prs WHERE status='failed' ORDER BY updated").fetchall()
+
+
 def update_pr(db, repo: str, number: int, **fields) -> None:
     allowed = {"status", "rounds", "watch_started", "summary"}
     assert set(fields) <= allowed

@@ -27,6 +27,8 @@ A dashboard and settings editor, in the same standard-library-only style as the 
 
 ## What you can change
 
+The top bar has seven tabs: Factory, Needs you (with a count badge), Tickets, Runs, PRs & CI, Events and Settings. Settings has a side list (General, Routing, Role agents, Projects, Harnesses, Credentials, Telegram, Labels, then the remaining sections); the Harnesses, Credentials and Telegram pages keep their URLs and forms and render inside it, with the Settings tab highlighted.
+
 | Page | Changes |
 |---|---|
 | Settings | Poll interval, dry run (go live), confidence threshold, labels, who may apply them, repositories, projects, routing (tier → harness/model/effort), role agents, classifier (Jev or labels, label → kind aliases, with a **Try it** box), the code reviewer (on/off, automatic or by label, model, harness), sandbox limits and allowed hosts, CI feedback, merge conflicts, agent prompts (your own instructions per agent, with the built-in prompt shown read-only). |
