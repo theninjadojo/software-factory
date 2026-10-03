@@ -1,15 +1,15 @@
 # Android build and test image for verification workers (docs/workers.md). Built by the operator once; used by worker/recipes/android-test.sh.
 #
-#   docker build -t factory-android \
-#     --build-arg CMDLINE_TOOLS_SHA256=<sha256 shown on https://developer.android.com/studio#command-line-tools-only for the zip below> \
-#     sandbox/android
-#   add --build-arg WITH_EMULATOR=1 for emulator tests (adds a system image: about 1.5 GB more)
+#   docker build -t factory-android sandbox/android          (add --build-arg WITH_EMULATOR=1 for emulator tests: about 1.5 GB more)
 #
-# The checksum is a REQUIRED argument on purpose: the build fails rather than trusting an unverified download.
+# Release installs pull a prebuilt ghcr.io/<owner>/shikumi-android instead (scripts/setup-worker.sh does it). The command-line tools zip
+# is pinned by version AND checksum. The checksum below is the one Google publishes at https://developer.android.com/studio for
+# commandlinetools-linux-15859902_latest.zip (checked against a fresh download). To move to a newer version, change BOTH arguments:
+# the build fails rather than trusting an unverified download.
 FROM eclipse-temurin:17.0.13_11-jdk-jammy
 
-ARG CMDLINE_TOOLS_VERSION=11076708
-ARG CMDLINE_TOOLS_SHA256
+ARG CMDLINE_TOOLS_VERSION=15859902
+ARG CMDLINE_TOOLS_SHA256=4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583
 ARG PLATFORM=android-34
 ARG BUILD_TOOLS=34.0.0
 ARG WITH_EMULATOR=0

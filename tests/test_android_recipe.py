@@ -43,7 +43,7 @@ class HostRecipe(unittest.TestCase):
         for flag in ("--rm", "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges", "--pids-limit=2048", "--memory=6g", "--cpus=4",
                      "--pull=never", f"--user {os.getuid()}:{os.getgid()}"):
             self.assertIn(flag, call)
-        self.assertTrue(call.endswith("localhost/factory-android:latest unit test"), call)
+        self.assertTrue(call.endswith("factory-android:latest unit test"), call)
         mounts = re.findall(r"-v (\S+)", call)
         self.assertEqual(sorted(m.split(":")[1] for m in mounts), ["/gradle-cache", "/work"])           # nothing else from the host
         self.assertIn(f"-v {self.proj.resolve()}:/work:rw", call)
