@@ -444,12 +444,13 @@ def ticket_images_page(repo: str, issue: int, files_by_run: dict, images_by_run:
     return out + f'<p><a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">← back to the ticket</a></p>'
 
 
-def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=(), has_images: bool = False) -> str:
+def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=(), has_images: bool = False, journey: str = "") -> str:
     done = sum(s["status"] == "done" for s in steps)
     head = f'<p>{ticket_link(repo, issue)} <span class="step-count" role="status">{esc(step_summary((done, len(steps))))}</span></p>'
     if has_images and REPO.match(str(repo)):
         head += f'<p><a class="button" href="{esc(images_url(repo, issue))}">View images</a></p>'
-    return head + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs) + '<p><a href="/tickets">← all tickets</a></p>'
+    return (head + (f"<h2>Journey</h2>{journey}" if journey else "") + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs)
+            + '<p><a href="/tickets">← all tickets</a></p>')
 
 
 def steps_cell(t: dict, counts: dict) -> str:
