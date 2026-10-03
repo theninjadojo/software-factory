@@ -370,6 +370,19 @@ class Images(UiCase):
                     f"/runimg?run={rid}&kind=built&name=nope", f"/runimg?run=x&kind=built&name=home-desktop", f"/runimg?run={rid}&kind=zip&name=home-desktop"):
             self.assertEqual(self.req("GET", bad, cookie=cookie)[0], 404, bad)
 
+    def test_the_ticket_page_offers_its_images_only_when_there_are_some(self):
+        cookie, _ = self.session()
+        t = "/ticket?repo=o/r&n=5"
+        dbm.start_run(self.db, "stage", "o/r", 5, "T", "claude-code", "sonnet", "medium", "", "designer")
+        self.assertNotIn("View images", self.req("GET", t, cookie=cookie)[2])
+        rid = dbm.start_run(self.db, "build", "o/r", 5, "T", "claude-code", "sonnet", "medium")
+        dbm.add_run_images(self.db, rid, [{"kind": "built", "name": "home-desktop", "png": self.PNG}])
+        self.assertIn("/ticket/images?repo=o%2Fr&amp;n=5", self.req("GET", t, cookie=cookie)[2])
+        s, _, html = self.req("GET", "/ticket/images?repo=o/r&n=5", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn(f"/runimg?run={rid}&amp;kind=built&amp;name=home-desktop", html)
+        self.assertEqual(self.req("GET", "/ticket/images?repo=a%20b/c&n=5", cookie=cookie)[0], 404)
+
 
 class ModeSwitch(UiCase):
     """The dry-run switch on the home screen."""

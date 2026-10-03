@@ -320,13 +320,18 @@ class Handler(BaseHTTPRequestHandler):
                 if stage not in views.DOC_LABEL:
                     return self._send(404, "Unknown stage.", "text/plain")
                 return page(f"{views.DOC_LABEL[stage]} · {q['repo']} #{int(n)}", self._doc(db, q["repo"], int(n), stage))
-            if path == "/ticket":
+            if path in ("/ticket", "/ticket/images"):
                 n = q.get("n", "")
                 if not views.REPO.match(q.get("repo", "")) or not n.isdigit():
                     return self._send(404, "no such ticket", "text/plain")
                 steps = dbm.steps_for_ticket(db, q["repo"], int(n))
+                all_runs = [i for s in steps for i in s["run_ids"]]
+                shots = {i: im for i in all_runs if (im := dbm.run_images(db, i))}
+                if path == "/ticket/images":
+                    return page(f"Images · #{int(n)}", views.ticket_images_page(q["repo"], int(n), dbm.design_files_for_runs(db, all_runs), shots))
                 files = dbm.design_files_for_runs(db, [i for s in steps if s["step"] == "design" for i in s["run_ids"]])
-                return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), steps, files, dbm.doc_stages(db, q["repo"], int(n))))
+                has_images = bool(shots) or any(views.mockup_img(f) for fs in dbm.design_files_for_runs(db, all_runs).values() for f in fs)
+                return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), steps, files, dbm.doc_stages(db, q["repo"], int(n)), has_images))
             if path == "/prs":
                 prs = dbm.watched_prs(db)
                 return page("PRs & CI", views.prs_summary_line(prs) + views.prs_cards(prs, self.app.cfg().ci.fix_rounds))

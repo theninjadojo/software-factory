@@ -428,9 +428,27 @@ def pipeline(steps: list[dict], files_by_run: dict | None = None, repo: str = ""
     return f'<ol class="belt">{items}</ol>' + cards_table(h, rows)
 
 
-def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=()) -> str:
+def images_url(repo: str, issue: int) -> str:
+    return "/ticket/images?" + urlencode({"repo": repo, "n": int(issue)})
+
+
+def ticket_images_page(repo: str, issue: int, files_by_run: dict, images_by_run: dict) -> str:
+    """Every mockup preview and run screenshot kept for a ticket, grouped by run. Each image goes through the same checks as on the run page."""
+    out = f'<p>{ticket_link(repo, issue)}</p>'
+    for rid in sorted(set(files_by_run) | set(images_by_run)):
+        files = [f for f in files_by_run.get(rid, []) if designfiles.link_ok(f)]
+        mock = "".join(mockup_img(f) for f in files)
+        shots = run_images_html(rid, images_by_run.get(rid, []))
+        if mock or shots:
+            out += f'<h2><a href="/runs/{int(rid)}">Run #{int(rid)}</a></h2>' + (f'<div class="mockups">{mock}</div>' if mock else "") + shots
+    return out + f'<p><a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">← back to the ticket</a></p>'
+
+
+def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=(), has_images: bool = False) -> str:
     done = sum(s["status"] == "done" for s in steps)
     head = f'<p>{ticket_link(repo, issue)} <span class="step-count" role="status">{esc(step_summary((done, len(steps))))}</span></p>'
+    if has_images and REPO.match(str(repo)):
+        head += f'<p><a class="button" href="{esc(images_url(repo, issue))}">View images</a></p>'
     return head + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs) + '<p><a href="/tickets">← all tickets</a></p>'
 
 
