@@ -52,8 +52,8 @@ build without one, then apply `factory:ready` again. The behaviour (block, warn 
 
 ## 5. Go live
 
-When the dry-run decisions look right, turn dry-run off in Settings (or set `dry_run = false` in `config/config.toml`) and run
-`docker compose up -d`. Repeat steps 2 to 4 on the same issue. This is where the factory starts commenting and opening PRs.
+When the dry-run decisions look right, press **Go live** on the UI's home screen (tick the box first). It is one click back to dry run
+from the same place. (The setting is also under Settings, General, or `dry_run` in `config/config.toml`.) Repeat steps 2 to 4 on the same issue. This is where the factory starts commenting and opening PRs.
 
 ## Optional: check screens on every build
 

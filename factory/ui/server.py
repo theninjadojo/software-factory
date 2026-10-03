@@ -264,11 +264,11 @@ class Handler(BaseHTTPRequestHandler):
         flt = q.get("need", "") if q.get("need") in ("questions", "decisions") else ""
         if path in ("/", "/fragment/overview"):
             body = views.overview_fragment(self.app.overview(), csrf, q.get("station"), L.needs_you(self), L.action_forms_for, flt,
-                                           "list" if q.get("view") == "list" else "")
+                                           "list" if q.get("view") == "list" else "", q.get("mode") == "confirm")
             if path == "/":
                 shown = L.flash_pop(csrf)                  # the result of the button that sent you back here (the refresh fragment never takes it)
                 return self._send(200, views.page("Factory floor", f'<div id="live">{body}</div>', path, csrf, wide=True, badges=badges,
-                                                  flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
+                                                  flash=shown[0] if shown else admin.FLASH.get(q.get("ok", "")), flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
         if path in ("/needs", "/fragment/needs"):
             rows = L.needs_you(self)
