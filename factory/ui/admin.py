@@ -1,16 +1,23 @@
 """Routes that show or change settings, credentials and Telegram. All POSTs arrive here already CSRF-checked."""
 import json
+from pathlib import Path
 
 from .. import db as dbm
 from ..config import deep_merge
 from ..router import decide
-from . import forms, integrations as I, labels as L, settings as S, views
+import time
+
+from .. import schedules as sched
+from . import forms, integrations as I, labels as L, schedules as SC, settings as S, views, workers as WK
 from .views import esc
 
 FLASH = {
     "saved": "Saved. The factory applies it at its next idle moment (never mid-task).",
     "secret": "Saved. The factory restarts when it is next idle so it picks the credential up.",
     "id": "Chat id saved. Press 'Send a test message' to confirm.",
+    "run": "Run requested. The factory runs it within a poll (up to a minute) and opens a real ticket, whatever dry-run says.",
+    "sched_saved": "Schedule saved. The factory applies it at its next idle moment (never mid-task).",
+    "sched_deleted": "Schedule deleted. Snapshots already on disk were kept.",
 }
 
 
@@ -188,9 +195,119 @@ def telegram_test(h, form, csrf: str) -> None:
     _telegram(h, csrf, r["message"], "ok" if r["ok"] else "bad")
 
 
-GET = {"/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
+# ------------------------------------------------------------------ verification workers
+def workers_get(h, q: dict, csrf: str) -> None:
+    db = h.app.ro_db()
+    try:
+        if db is None:
+            return _send_page(h, 200, "Workers", '<p class="muted">The orchestrator has not created its database yet.</p>', "/workers", csrf)
+        if "id" in q:
+            body = WK.job_page(db, int(q["id"])) if q["id"].isdigit() and len(q["id"]) < 10 else None
+            if body is None:
+                return _send_page(h, 404, "Workers", '<p class="muted">No such job.</p>', "/workers", csrf, section="workers")
+            return _send_page(h, 200, f"Job #{int(q['id'])}", body, "/workers", csrf, section="workers")
+        _send_page(h, 200, "Workers", WK.workers_page(h.app.cfg(), db), "/workers", csrf, section="workers")
+    finally:
+        if db is not None:
+            db.close()
+
+
+# ------------------------------------------------------------------ schedules
+def _sched_form(h, csrf: str, v: dict, original: str, status: int = 200, flash=None, kind="ok", preview: str = "") -> None:
+    cfg = h.app.cfg()
+    cred = next((x.get("source", {}).get("token_file") for x in SC.raw_list(h.app.config_path) if x.get("name") == original), None)
+    ok = bool(cred) and Path(cred).is_file() and Path(cred).stat().st_size > 0
+    _send_page(h, status, "Edit schedule" if original else "New schedule", SC.form_page(cfg, v, csrf, original, ok, preview), "/schedules", csrf,
+               flash, kind, section="schedules")
+
+
+def schedules_get(h, q: dict, csrf: str) -> None:
+    cfg, db = h.app.cfg(), h.app.ro_db()
+    try:
+        if h.path.split("?")[0] == "/schedules/edit":
+            name = q.get("name", "")
+            entry = next((x for x in SC.raw_list(h.app.config_path) if x.get("name") == name), None) if name else None
+            if name and entry is None:
+                return _send_page(h, 404, "Schedules", '<p class="muted">No such schedule.</p>', "/schedules", csrf, section="schedules")
+            return _sched_form(h, csrf, SC.flat(entry, cfg), name)
+        if h.path.split("?")[0] == "/schedules/view":
+            body = SC.detail_page(cfg, db, h.app.state_dir(), q.get("name", ""), csrf)
+            if body is None:
+                return _send_page(h, 404, "Schedules", '<p class="muted">No such schedule.</p>', "/schedules", csrf, section="schedules")
+            return _send_page(h, 200, q["name"], body, "/schedules", csrf, FLASH.get(q.get("ok", "")), section="schedules")
+        _send_page(h, 200, "Schedules", SC.list_page(cfg, db, csrf), "/schedules", csrf, FLASH.get(q.get("ok", "")), section="schedules")
+    finally:
+        if db is not None:
+            db.close()
+
+
+def schedules_run(h, form, csrf: str) -> None:
+    name = form.get("name", "")
+    if name not in {s.name for s in h.app.cfg().schedules}:
+        return h._send(404, "no such schedule", "text/plain")
+    h.app.request_schedule_run(name)
+    h._redirect("/schedules?ok=run")
+
+
+def _sched_prepare(h, form):
+    """(cfg, values, original name, existing raw entry, key) from a submitted form."""
+    cfg, orig = h.app.cfg(), form.get("orig", "")
+    existing = next((x for x in SC.raw_list(h.app.config_path) if x.get("name") == orig), None) if orig else None
+    v = SC.from_form(form)
+    if orig:
+        v["name"] = orig
+    key = (form.get("key") or "").strip()
+    v["_key"] = key
+    return cfg, v, orig, existing, key
+
+
+def schedules_save(h, form, csrf: str) -> None:
+    cfg, v, orig, existing, key = _sched_prepare(h, form)
+    if orig and existing is None:
+        return h._send(404, "no such schedule", "text/plain")
+    try:
+        SC.check_key(key)
+        entry = SC.build(v, cfg, existing, not orig, {s.name for s in cfg.schedules})
+        SC.store(h.app.config_path, h.app.state_dir(), orig or entry["name"], entry)
+        if key:
+            SC.save_credential(cfg, entry, key)
+    except S.SettingsError as e:
+        return _sched_form(h, csrf, v, orig, 422, " · ".join(e.messages), "bad")
+    h._redirect(f"/schedules/view?name={entry['name']}&ok=sched_saved")
+
+
+def schedules_test(h, form, csrf: str) -> None:
+    cfg, v, orig, existing, key = _sched_prepare(h, form)
+    try:
+        entry = SC.build(v, cfg, existing, not orig, {s.name for s in cfg.schedules} | {orig})
+    except S.SettingsError as e:
+        return _sched_form(h, csrf, v, orig, 422, " · ".join(e.messages), "bad")
+    if key:
+        return _sched_form(h, csrf, v, orig, 200, preview=SC.preview_html(error="Save the schedule first so the new key is stored, then test."))
+    try:
+        data = sched.preview(entry["source"], time.time())
+    except Exception as e:
+        return _sched_form(h, csrf, v, orig, 200, preview=SC.preview_html(error=f"{type(e).__name__}: {str(e)[:300]}"))
+    _sched_form(h, csrf, v, orig, 200, preview=SC.preview_html(data))
+
+
+def schedules_delete(h, form, csrf: str) -> None:
+    name = form.get("name", "")
+    if not any(x.get("name") == name for x in SC.raw_list(h.app.config_path)):
+        return h._send(404, "no such schedule", "text/plain")
+    if form.get("confirm") != "1":
+        return _send_page(h, 400, "Schedules", '<p class="muted">Tick the box to confirm the delete.</p>', "/schedules", csrf, kind="bad", section="schedules")
+    try:
+        SC.store(h.app.config_path, h.app.state_dir(), name, None)
+    except S.SettingsError as e:
+        return _send_page(h, 422, "Schedules", "", "/schedules", csrf, " · ".join(e.messages), "bad", section="schedules")
+    h._redirect("/schedules?ok=sched_deleted")
+
+
+GET = {"/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get}
-POST = {"/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
+POST = {"/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
+        "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
         "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace}

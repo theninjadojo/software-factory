@@ -298,7 +298,7 @@ def run_images_html(rid: int, images) -> str:
     """Screenshots a run kept: what it built, and where that differs from the baselines. Names and kinds are checked first."""
     cells = ""
     for i in images or []:
-        if i.get("kind") in ("built", "diff") and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", str(i.get("name", ""))):
+        if i.get("kind") in ("built", "diff", "verify") and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", str(i.get("name", ""))):
             src = "/runimg?" + urlencode({"run": int(rid), "kind": i["kind"], "name": i["name"]})
             cells += (f'<figure><a href="{esc(src)}" target="_blank"><img class="mockup" src="{esc(src)}" alt="{esc(i["kind"])} {esc(i["name"])}" loading="lazy"></a>'
                       f'<figcaption class="muted">{esc(i["kind"])}: {esc(i["name"])}</figcaption></figure>')

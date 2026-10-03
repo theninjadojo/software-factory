@@ -1,8 +1,10 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>|health]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>|workers add <name>|schedules [list|run <name>]|health]"""
 import os
+import secrets
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import pause, screens, version
@@ -116,6 +118,49 @@ def screens_baseline(cfg, repo: str, checkout: Path) -> int:
     return 0
 
 
+def workers_add(cfg, name: str) -> int:
+    """Create a token for a verification worker: appended to workers.tokens_file (mode 0600) and printed once. Never overwrites."""
+    from .config import WORKER_NAME
+    from .workerapi import read_tokens
+    if not WORKER_NAME.fullmatch(name):
+        print("a worker name is lowercase letters, digits and dashes (at most 41 characters)")
+        return 1
+    path = Path(cfg.workers.tokens_file)
+    if name in read_tokens(str(path)):
+        print(f"a worker called {name} already exists; remove its line from {path} to replace it")
+        return 1
+    token = secrets.token_urlsafe(32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as f:
+        f.write(f"{name} {token}\n")
+    print(f"Token for worker {name} (shown once; put it in the worker's token_file):\n{token}")
+    return 0
+
+
+def schedules_cmd(cfg, args: list[str]) -> int:
+    """`schedules` lists each schedule and when it last ran; `schedules run <name>` runs one now (needs the GitHub token, ignores dry_run)."""
+    from . import db as dbm, schedules
+    from .github import GitHub
+    db = dbm.local(cfg.db_path)
+    if args[:1] == ["run"] and len(args) == 2:
+        if args[1] not in {s.name for s in cfg.schedules}:
+            print(f"no schedule called {args[1]}")
+            return 1
+        token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else None
+        schedules.tick(cfg, GitHub(token), db, time.time(), Path(cfg.db_path).parent,
+                       lambda kind, msg, *a: print(f"{kind}: {msg}"), lambda text, event="info": print(text), only=args[1])
+        return 0
+    if args:
+        print("usage: schedules [list|run <name>]")
+        return 1
+    for s in cfg.schedules:
+        st = schedules.get_state(db, s.name) or {}
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(st["last_run"])) if st else "never"
+        print(f"{s.name:<24} {s.repo:<30} {s.every or s.cron:<12} {'on ' if s.enabled else 'off'} last: {when} {st.get('status', '')} {st.get('detail', '')}")
+    return 0
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     cfg = load(os.environ.get("FACTORY_CONFIG", "/srv/factory/config.toml"))
@@ -139,11 +184,15 @@ def main():
             print("no GitHub token: put it in", cfg.token_file)
             sys.exit(1)
         sys.exit(create_labels(cfg, GitHub(token), sys.argv[2:] or list(cfg.repos)))
+    if cmd == "workers" and sys.argv[2:3] == ["add"] and len(sys.argv) == 4:
+        sys.exit(workers_add(cfg, sys.argv[3]))
     if cmd == "health":
         from . import health
         results = health.run_checks(cfg)
         print(health.format_report(results))
         sys.exit(1 if any(r.level == "crit" for r in results) else 0)
+    if cmd == "schedules":
+        sys.exit(schedules_cmd(cfg, sys.argv[2:]))
     if cmd == "pause":
         (state / "PAUSED").write_text("")
         print("paused")

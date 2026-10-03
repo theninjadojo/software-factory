@@ -58,6 +58,15 @@ It cannot see an expired Claude subscription token before a run fails; the `run-
 `ssh -L 8787:127.0.0.1:8787 host`. It writes `config.overrides.toml` next to `config.toml`, so both files must be readable by
 the orchestrator and the proxy, and the UI must be able to write the overrides, the state directory and the secrets directory.
 
+### Verification workers
+
+Optional (see [workers.md](workers.md)). Set `[workers] enabled = true` and add `[[workers.checks]]`, create a token per worker
+(`python3 -m factory.ctl workers add my-mac`), then `systemctl --user enable --now factory-workers` (or
+`docker compose --profile workers up -d`). It listens on loopback (`127.0.0.1:8788`); give the Mac an SSH tunnel
+(`ssh -L 8788:127.0.0.1:8788 host`), a VPN or a TLS proxy, and run `worker/worker.py` there. The **Settings → Workers** page shows who is
+online, the queue, and each job's log and screenshots; Telegram sends `worker_offline` when jobs wait and no worker has polled for two
+minutes. `scripts/deploy.sh` copies `worker/` and restarts the worker API if it is enabled.
+
 ## Day to day
 
 - Status: `python3 -m factory.ctl status` (mode, paused?, last decisions). Pause/resume: `ctl pause|resume`, or `/pause`

@@ -13,6 +13,7 @@ EVENT_HELP = {
     "rate_limit": "A plan or API limit was hit", "pr_ready": "A pull request is ready", "stage_done": "An analyst, designer or architect document is on the ticket",
     "ci_result": "CI passed, or finished without a fix", "ci_fix": "CI failed and an agent fix round is starting", "recovery": "An interrupted run was requeued",
     "conflict": "A factory pull request conflicts with its base branch, or a conflict was resolved",
+    "worker_offline": "Verification jobs are waiting and no worker has been seen (or a worker is back)",
     "fallback": "A model was unavailable (limit or API error) and the next fallback model was tried", "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from Telegram",
     "info": "Anything else",
 }
@@ -31,7 +32,7 @@ def _fmt(f: S.Field, v) -> str:
 
 SIDE = [("general", "General", "/settings?section=general"), ("routing", "Routing", "/settings?section=routing"),
         ("roles", "Role agents", "/settings?section=roles"), ("projects", "Projects", "/settings?section=projects"),
-        ("harnesses", "Harnesses", "/harnesses"), ("credentials", "Credentials", "/credentials"), ("telegram", "Telegram", "/telegram"),
+        ("harnesses", "Harnesses", "/harnesses"), ("workers", "Workers", "/workers"), ("schedules", "Schedules", "/schedules"), ("credentials", "Credentials", "/credentials"), ("telegram", "Telegram", "/telegram"),
         ("labels", "Labels", "/settings?section=labels")]
 SIDE_MORE = [(k, t, f"/settings?section={k}") for k, t in TABS if k not in {s[0] for s in SIDE}]
 

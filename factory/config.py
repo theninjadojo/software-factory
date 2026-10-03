@@ -236,6 +236,25 @@ class ConflictsCfg:
 
 
 @dataclass(frozen=True)
+class ScheduleCfg:
+    """A scheduled job: on `every` (6h, 2d, 1w) or `cron` (UTC, five fields), fetch `source`, save a snapshot and open a ticket
+    on `repo`. `labels` default to the auto label, so the classifier picks the next stage and only builds what it is sure about;
+    use [] for a ticket nobody acts on, or e.g. ["factory:analyze"] for analysis only. See factory/schedules.py."""
+    name: str
+    repo: str
+    source: dict
+    every: str | None = None
+    cron: str | None = None
+    title: str = "Scheduled review: ${name} ${date}"
+    instructions: str = ""                 # what the agent should do with the data; empty = a general review (schedules.DEFAULT_INSTRUCTIONS)
+    labels: tuple[str, ...] | None = None  # None = [auto].label
+    enabled: bool = True
+    skip_if_open: bool = True              # do not open another ticket while the previous one is still open
+    keep: int = 30                         # snapshots kept on disk per schedule
+    max_data_chars: int = 30000            # of the data put in the ticket
+
+
+@dataclass(frozen=True)
 class ProjectRepo:
     repo: str            # owner/name
     role: str = ""       # one line telling the agent and the classifier what this repo is for
@@ -282,6 +301,28 @@ class ScreensCfg:
 
 
 @dataclass(frozen=True)
+class WorkerCheck:
+    """One verification a repo's patch must pass on a worker before anything is pushed. Trusted config only."""
+    repo: str
+    recipe: str                          # a recipe name defined on the worker itself; never a command
+    platform: str = "any"                # a worker claims the job only if it declares this platform
+
+
+@dataclass(frozen=True)
+class WorkersCfg:
+    """Verification workers (factory/jobs.py, workerapi.py, verify.py; docs/workers.md). Off by default."""
+    enabled: bool = False
+    listen: str = "127.0.0.1:8788"       # the worker API; put TLS or a VPN / SSH tunnel in front of it
+    tokens_file: str = "/srv/factory/secrets/worker_tokens"   # one "name token" per line, mode 0600
+    mode: str = "block"                  # block: a failing or missing check fails the run; warn: push anyway and say so
+    lease_seconds: int = 120             # a claimed job needs a heartbeat at least this often
+    claim_wait_seconds: int = 900        # a job nobody claims within this long fails
+    max_wait_seconds: int = 3600         # the orchestrator never waits longer than this for one check
+    max_attempts: int = 2                # claims per job (a lost lease puts it back in the queue)
+    checks: tuple[WorkerCheck, ...] = ()
+
+
+@dataclass(frozen=True)
 class Config:
     db_path: str
     poll_seconds: int
@@ -310,8 +351,10 @@ class Config:
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
+    workers: WorkersCfg = field(default_factory=WorkersCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
     health: HealthCfg = field(default_factory=HealthCfg)
+    schedules: tuple[ScheduleCfg, ...] = ()
     prompts: PromptsCfg = field(default_factory=PromptsCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
@@ -554,6 +597,36 @@ def _screens(raw: dict, repos: list[str]) -> ScreensCfg:
     return c
 
 
+WORKER_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,40}")
+
+
+def _workers(raw: dict, repos: list[str]) -> WorkersCfg:
+    raw = dict(raw)
+    checks = tuple(WorkerCheck(**c) for c in raw.pop("checks", []))
+    c = WorkersCfg(**{**raw, "checks": checks})
+    if c.mode not in ("block", "warn"):
+        raise ValueError("workers.mode must be block or warn")
+    host, _, port = c.listen.rpartition(":")
+    if not host or not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ValueError("workers.listen must look like 127.0.0.1:8788")
+    for n, lo, hi in (("lease_seconds", 10, 3600), ("claim_wait_seconds", 10, 86400), ("max_wait_seconds", 30, 86400), ("max_attempts", 1, 5)):
+        v = getattr(c, n)
+        if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
+            raise ValueError(f"workers.{n} must be a whole number from {lo} to {hi}")
+    if not isinstance(c.tokens_file, str) or not c.tokens_file:
+        raise ValueError("workers.tokens_file must not be empty")
+    seen = set()
+    for k in c.checks:
+        if k.repo not in repos:
+            raise ValueError(f"workers.checks: {k.repo} is not a configured repo")
+        if not WORKER_NAME.fullmatch(str(k.recipe)) or not WORKER_NAME.fullmatch(str(k.platform)):
+            raise ValueError("workers.checks: recipe and platform must match [a-z0-9-]")
+        if (k.repo, k.recipe) in seen:
+            raise ValueError(f"workers.checks: {k.repo} lists recipe {k.recipe!r} twice")
+        seen.add((k.repo, k.recipe))
+    return c
+
+
 def overrides_path(path: str) -> Path:
     """The file the UI writes. Deep-merged over the hand-edited config, which is never rewritten."""
     p = Path(path)
@@ -575,6 +648,37 @@ def load_raw(path: str) -> dict:
 
 def load(path: str) -> Config:
     return parse(load_raw(path))
+
+
+def _schedules(raw: list, repos: list[str]) -> tuple[ScheduleCfg, ...]:
+    from . import schedules as sc
+    out, seen = [], set()
+    for r in raw:
+        r = _tuples(dict(r))
+        s = ScheduleCfg(**r)
+        w = f"schedules.{s.name!r}"
+        if not isinstance(s.name, str) or not sc.NAME.fullmatch(s.name) or s.name in seen:
+            raise ValueError(f"{w}: name must be unique lowercase letters, digits and dashes")
+        seen.add(s.name)
+        if s.repo not in repos:
+            raise ValueError(f"{w}: repo {s.repo} is not one of the configured repos")
+        if (s.every is None) == (s.cron is None):
+            raise ValueError(f"{w}: set exactly one of every and cron")
+        if s.every is not None and (sc.parse_every(s.every) is None or sc.parse_every(s.every) < 300):
+            raise ValueError(f"{w}: every must look like 30m, 6h, 2d or 1w and be at least 5m")
+        if s.cron is not None and sc.parse_cron(s.cron) is None:
+            raise ValueError(f"{w}: cron must be five fields (minute hour day month weekday), UTC")
+        if (why := sc.source_problem(s.source)):
+            raise ValueError(f"{w}: {why}")
+        if s.labels is not None and not all(isinstance(l, str) and l.strip() for l in s.labels):
+            raise ValueError(f"{w}: labels must be non-empty strings")
+        for k in ("keep", "max_data_chars"):
+            if not isinstance(getattr(s, k), int) or isinstance(getattr(s, k), bool) or getattr(s, k) < 0:
+                raise ValueError(f"{w}: {k} must be a whole number")
+        if not s.title.strip():
+            raise ValueError(f"{w}: title must not be empty")
+        out.append(s)
+    return tuple(out)
 
 
 def parse(raw: dict) -> Config:
@@ -637,6 +741,7 @@ def parse(raw: dict) -> Config:
     if not isinstance(pm.unblock_label, str) or not pm.unblock_label.strip():
         raise ValueError("pm.unblock_label must not be empty")
     screens = _screens(raw.get("screens", {}), repos)
+    workers = _workers(raw.get("workers", {}), repos)
     _check_models(routes, roles, review, pm)
     _check_fallbacks(routes, roles, review)
     _check_harness_use(routes, roles, harnesses, review, pm)
@@ -663,6 +768,7 @@ def parse(raw: dict) -> Config:
         auto_chain=bool(raw.get("auto", {}).get("chain", True)),
         ci=CiCfg(**raw.get("ci", {})),
         screens=screens,
+        workers=workers,
         conflicts=conflicts,
         review=review,
         mockups=mockups,
@@ -670,6 +776,7 @@ def parse(raw: dict) -> Config:
         pm=pm,
         health=health,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
+        schedules=_schedules(raw.get("schedules", []), repos),
         prompts=_prompts(raw.get("prompts", {})),
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),

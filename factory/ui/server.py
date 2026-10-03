@@ -20,6 +20,7 @@ from .. import pause, updates, version
 from .. import questions as Q
 from ..config import load
 from . import admin, floor, views
+from . import workers as WK
 from . import labels as L
 from .auth import AuthStore, Sessions, Throttle
 from .settings import Form
@@ -80,6 +81,16 @@ class App:
         try:
             db.execute("INSERT OR REPLACE INTO approvals VALUES (?,?,?,?)", (repo, int(issue), action, time.time()))
             db.commit()
+        finally:
+            db.close()
+
+    def request_schedule_run(self, name: str) -> None:
+        """Queue a "Run now" for the orchestrator (the UI has no GitHub token). The caller has checked `name` is a configured schedule."""
+        from .. import schedules
+        db = sqlite3.connect(self.cfg().db_path, timeout=10)
+        try:
+            schedules.ensure_tables(db)
+            schedules.request_run(db, name, time.time())
         finally:
             db.close()
 
@@ -273,6 +284,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/runimg":
                 rid, kind, name = q.get("run", ""), q.get("kind", ""), q.get("name", "")
                 png = dbm.run_image(db, int(rid), kind, name) if rid.isdigit() and kind in dbm.IMAGE_KINDS and dbm.IMAGE_NAME.fullmatch(name) else None
+                return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
+            if path == "/workerimg":
+                job, name = q.get("job", ""), q.get("name", "")
+                png = WK.artifact_png(db, int(job), name) if job.isdigit() and len(job) < 10 else None
                 return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
             if path == "/mockup":
                 repo, pth = q.get("repo", ""), q.get("path", "")
