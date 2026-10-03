@@ -69,9 +69,10 @@ fi
 
 BASE="${SHIKUMI_ASSET_BASE:-https://github.com/$REPO/releases/download/$TAG}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-for f in docker-compose.yml config.example.toml VERSION .env.example; do
+for f in docker-compose.yml config.example.toml VERSION env.example; do      # (env.example is saved as .env.example: GitHub renames dotfile assets)
   curl -fsSL "$BASE/$f" -o "$TMP/$f" || die "could not download $f from release $TAG"
 done
+mv "$TMP/env.example" "$TMP/.env.example"
 [ "v$(cat "$TMP/VERSION")" = "$TAG" ] || die "the release files do not match $TAG"
 for f in setup.sh update.sh; do curl -fsSL "$BASE/$f" -o "$TMP/$f" || die "could not download $f"; done
 

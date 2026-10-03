@@ -6,7 +6,7 @@
 2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
 3. The `release` workflow (`.github/workflows/release.yml`) checks the tag matches `VERSION`, runs the tests, builds and pushes five images to
    `ghcr.io/<owner>/shikumi`, `shikumi-agent`, `shikumi-render`, `shikumi-screens` and `shikumi-android` (tagged `v0.2.0` and `latest`), and creates a GitHub
-   Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `.env.example`, `setup.sh`, `update.sh` and `install.sh`, plus the worker
+   Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `env.example` (the `.env` template), `setup.sh`, `update.sh` and `install.sh`, plus the worker
    files: `install-worker.sh`, `setup-worker.sh`, `update-worker.sh` and `shikumi-worker.tar.gz` (the `worker/` folder and `sandbox/android/`).
 4. First release only: GitHub makes new container packages private. In the repo's Packages settings, make the five packages public (or
    every installer needs a registry login).

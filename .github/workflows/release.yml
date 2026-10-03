@@ -38,7 +38,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir dist
-          cp docker-compose.yml config.example.toml VERSION .env.example scripts/setup.sh scripts/update.sh scripts/install.sh deploy/update-native.sh dist/
+          cp docker-compose.yml config.example.toml VERSION scripts/setup.sh scripts/update.sh scripts/install.sh deploy/update-native.sh dist/
           cp scripts/install-worker.sh scripts/setup-worker.sh scripts/update-worker.sh dist/                      # verification workers
           tar -czf dist/shikumi-worker.tar.gz --exclude=__pycache__ worker sandbox/android
+          cp .env.example dist/env.example      # GitHub renames a release file that starts with a dot (to default.env.example)
           python3 scripts/publish-release.py dist

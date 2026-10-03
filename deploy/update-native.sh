@@ -12,6 +12,7 @@ ROOT="${SHIKUMI_ROOT:-/srv/factory}"
 REPO="${SHIKUMI_REPO:-theninjadojo/software-factory}"
 APP="$ROOT/app"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+cd "$ROOT"      # the caller's directory may be unreadable to the factory user (python then fails to start)
 run() { if [ -n "${DRY_RUN:-}" ]; then echo "+ $*"; else "$@"; fi; }
 die() { echo "$*" >&2; exit 1; }
 command -v curl >/dev/null && command -v python3 >/dev/null || die "curl and python3 are required"
@@ -87,4 +88,4 @@ if [ -z "${DRY_RUN:-}" ]; then
   for u in factory-proxy factory factory-ui; do systemctl --user is-enabled $u.service >/dev/null 2>&1 || continue
     systemctl --user is-active --quiet $u.service || rollback; done
 fi
-echo "Now on $TAG. Rollback with: $APP/deploy/update-native.sh v$HAVE   (read the release notes first)"
+if [ "$HAVE" = none ]; then echo "Now on $TAG."; else echo "Now on $TAG. Rollback with: $APP/deploy/update-native.sh v$HAVE   (read the release notes first)"; fi
