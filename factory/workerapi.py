@@ -7,7 +7,9 @@ import argparse
 import hmac
 import json
 import logging
+import os
 import re
+import secrets
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,6 +39,20 @@ def read_tokens(path: str) -> dict[str, str]:
         if len(parts) == 2 and not line.lstrip().startswith("#") and WORKER_NAME.fullmatch(parts[0]) and len(parts[1]) >= 24:
             out[parts[0]] = parts[1]
     return out
+
+
+def add_token(path: str, name: str) -> str:
+    """Create a token for worker `name`: appended to `path` (mode 0600), returned once. Raises ValueError for a bad or taken name; never overwrites."""
+    if not WORKER_NAME.fullmatch(name):
+        raise ValueError("a worker name is lowercase letters, digits and dashes (at most 41 characters)")
+    if name in read_tokens(path):
+        raise ValueError(f"a worker called {name} already exists; remove its line from {path} to replace it")
+    token = secrets.token_urlsafe(32)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as f:
+        f.write(f"{name} {token}\n")
+    return token
 
 
 def authenticate(header: str | None, tokens: dict[str, str]) -> str | None:

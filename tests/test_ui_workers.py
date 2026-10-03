@@ -81,6 +81,35 @@ class WorkersPage(UiCase):
         self.assertEqual(self.req("GET", f"/runimg?run={rid}&kind=verify&name=ios-test-home", cookie=cookie)[0], 200)
 
 
+    def test_add_worker_creates_a_token_and_shows_the_install_command_once(self):
+        self.enable()
+        tf = self.root / "tokens"
+        c = self.root / "config.toml"
+        c.write_text(c.read_text().replace("[workers]\nenabled = true", f'[workers]\nenabled = true\ntokens_file = "{tf}"'))
+        cookie, csrf = self.session()
+        self.assertIn('action="/workers/add"', self.req("GET", "/workers", cookie=cookie)[2])
+        s, _, html = self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "box", "recipes": "web android"}), cookie=cookie)
+        self.assertEqual(s, 200)
+        name, token = tf.read_text().split()
+        self.assertEqual(name, "box")
+        self.assertEqual(tf.stat().st_mode & 0o777, 0o600)
+        self.assertIn(token, html)
+        self.assertIn("FACTORY_URL=http://127.0.0.1:8788", html)
+        self.assertIn("WORKER_RECIPES=&quot;web android&quot;", html)
+        self.assertNotIn(token, self.req("GET", "/workers", cookie=cookie)[2])       # shown once
+        s, _, html = self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "box"}), cookie=cookie)
+        self.assertEqual(s, 422)
+        self.assertIn("already exists", html)
+
+    def test_add_worker_rejects_bad_input_and_needs_workers_on_and_csrf(self):
+        cookie, csrf = self.session()
+        self.assertEqual(self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "box"}), cookie=cookie)[0], 400)   # workers off
+        self.enable()
+        self.assertEqual(self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "Bad Name"}), cookie=cookie)[0], 422)
+        self.assertEqual(self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "ok", "recipes": "web; rm -rf /"}), cookie=cookie)[0], 422)
+        self.assertEqual(self.req("POST", "/workers/add", urlencode({"name": "ok"}), cookie=cookie)[0], 403)
+
+
 class Watch(unittest.TestCase):
     def setUp(self):
         import tempfile
