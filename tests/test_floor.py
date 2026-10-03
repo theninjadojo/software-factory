@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -65,6 +66,11 @@ class Render(unittest.TestCase):
         for state, word in (("run", "Working"), ("idle", "Idle"), ("warn", "Needs you"), ("fail", "Failing"), ("off", "Off")):
             self.assertIn(f'<span class="fl-sw {state}" aria-hidden="true"></span>{word}', key)
         self.assertIn("Select a station for details.", key)
+    def test_the_answers_dialog_cannot_scroll_sideways(self):
+        css = (Path(__file__).resolve().parent.parent / "factory" / "ui" / "static" / "style.css").read_text()
+        self.assertIn(".nd-dialog .nd-qs { grid-template-columns:minmax(0,1fr); }", css)        # a 1fr track grows to a long URL or path; minmax(0,1fr) wraps it
+        self.assertIn(".nd-dialog { overflow-x:hidden; }", css)
+        self.assertIn("overflow-wrap:anywhere", css.split(".nd-dialog { overflow-x:hidden; }")[1])
 
     def test_no_inline_styles_anywhere_because_the_csp_forbids_them(self):
         d = data(running=[run(1, "stage", "architect", 18)], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}])
