@@ -25,5 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t software-factory:ci .
-      - run: docker run --rm --entrypoint python3 -w /app software-factory:ci -m unittest discover -s tests
+      # A smoke test of the image only: the full suite runs in the `unit` job. (The worker and Android tests need sandbox/, Node and a shell, which the runtime image does not carry.)
+      - run: docker run --rm --entrypoint python3 -w /app software-factory:ci -c "import factory.main, factory.ui.server, factory.ctl; print('image imports ok')"
       - run: FACTORY_HOME=/tmp/fh DOCKER_GID=0 docker compose config -q
