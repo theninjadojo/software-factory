@@ -127,6 +127,7 @@ table.tickets .steps { flex-wrap:nowrap; } table.tickets td:first-child { min-wi
   .ph-dot.good, .ph-dot.run { background:var(--good); } .ph-dot.bad { background:var(--bad); } .ph-dot.queued { background:var(--accent); }
   .ph-tiles { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem; margin:.8rem 0; }
   .ph-tile { display:flex; flex-direction:column; padding:.7rem; border:1px solid var(--line); border-radius:10px; background:var(--panel); } .ph-tile b { font-size:1.4rem; } .ph-tile span { font-size:.8rem; color:var(--muted); }
+  .ph-pause { margin:1rem 0; } .ph-pause form, .ph-pause button { width:100%; min-height:44px; }
   .ph-now, .ph-need { margin:.8rem 0; padding:1rem; } .ph-now progress, .ph-now .fl-bar { width:100%; }
   .ph-h { margin:1rem 0 .4rem; } .ph-pipe { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.4rem; }
   .ph-step { display:flex; align-items:center; gap:.7rem; min-height:48px; padding:0 .9rem; border:1px solid var(--line2); border-radius:10px; background:var(--panel); color:var(--text); text-decoration:none; }
@@ -141,6 +142,8 @@ table.tickets .steps { flex-wrap:nowrap; } table.tickets td:first-child { min-wi
   table.stack td[data-l]:before { content:attr(data-l); display:block; font:500 11px ui-monospace,Menlo,Consolas,monospace; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
   table.stack td.actions button, table.stack td.actions a, table.stack td a { min-height:44px; display:inline-flex; align-items:center; }
   table.tickets .steps { flex-wrap:wrap; }
+  .evlist li { flex-wrap:wrap; row-gap:.15rem; } .evlist li > :last-child { order:1; min-width:0; white-space:normal; overflow-wrap:anywhere; } .evlist li .wrap { order:2; flex:1 1 100%; }
+  table.stack td.actions { white-space:normal; display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; } table.stack td.actions form { margin-right:0; }
   table.stack td.nowrap, table.stack td.wrap { white-space:normal; } table.tickets td:first-child { min-width:0; }
   .fl-ihead h2 { font-size:1.15rem; } .fl-cards { grid-template-columns:1fr; } .fl-acts .btn, .fl-acts button { min-height:44px; flex:1; }
 }
@@ -207,6 +210,8 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .fl-cols { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; align-items:start; } .fl-cols h2 { margin-top:0; }
 .fl-list li form { margin:0; } .fl-list li .fl-grow { min-width:8rem; }
 @media (max-width:900px) { .fl-cols { grid-template-columns:1fr; } }
+.fl-rail { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }   /* map view: the list is for screen readers only */
+.fl-listview .fl-rail { width:auto; height:auto; overflow:visible; clip-path:none; white-space:normal; }
 .fl-listview .fl-wrap { display:none; }
 .fl-listview .fl-rail { display:flex; flex-direction:column; gap:.5rem; list-style:none; margin:0; padding:0 0 0 1.3rem; position:relative; }
 .fl-listview .fl-rail:before { content:""; position:absolute; left:5px; top:10px; bottom:10px; width:3px; border-radius:2px; background:repeating-linear-gradient(180deg,var(--line2) 0 8px,transparent 8px 14px); animation:fl-bmv 1.2s linear infinite; }

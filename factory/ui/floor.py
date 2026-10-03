@@ -180,7 +180,7 @@ def _stale(d: dict, now: float) -> bool:
     return last_ok is None or now - last_ok > max(120, 3 * cfg["poll_seconds"])
 
 
-def phone_home(d: dict, live: dict, needs, now: float) -> str:
+def phone_home(d: dict, live: dict, needs, now: float, csrf: str = "") -> str:
     """The Factory screen for phones (CSS shows it instead of the map and tables below 760px): health, three tiles, what is running,
     the pipeline as a vertical list and the top ticket that needs a person. Built from the same escaped data as the desktop page."""
     stale = _stale(d, now)
@@ -222,7 +222,8 @@ def phone_home(d: dict, live: dict, needs, now: float) -> str:
         top = '<section class="card ph-need" aria-label="Needs you"><h3>Needs you</h3><p class="muted">Save a GitHub token on the Credentials page to see these.</p></section>'
     else:
         top = '<section class="card ph-need" aria-label="Needs you"><h3>Needs you</h3><p class="muted">Nothing needs you.</p></section>'
-    return f'<div class="ph-home">{health}<h2 class="ph-title">{title}</h2><p class="muted">{sentence}</p>{tiles}{now_card}{pipe}{top}</div>'
+    pause = f'<div class="ph-pause">{pause_form(d["paused"], csrf)}</div>' if csrf else ""
+    return f'<div class="ph-home">{health}<h2 class="ph-title">{title}</h2><p class="muted">{sentence}</p>{tiles}{now_card}{pipe}{top}{pause}</div>'
 
 
 def rail(live: dict, sel: str) -> str:
@@ -289,10 +290,14 @@ def summary_bar(d: dict, needs, now: float) -> str:
             + (f'<p class="bad-text">last error: {esc(err)}</p>' if err else ""))
 
 
+def pause_form(paused, csrf: str) -> str:
+    return (f'<form method="post" action="/action/{"resume" if paused else "pause"}" class="inline">{csrf_field(csrf)}'
+            f'<button class="secondary">{"Resume" if paused else "Pause"}</button></form>')
+
+
 def title_row(live: dict, needs, d: dict, csrf: str, view: str) -> str:
     paused = d["paused"]
-    btn = (f'<form method="post" action="/action/{"resume" if paused else "pause"}" class="inline">{csrf_field(csrf)}'
-           f'<button class="secondary">{"Resume" if paused else "Pause"}</button></form>')
+    btn = pause_form(paused, csrf)
     toggle = '<a class="btn secondary" href="/">Show as floor</a>' if view == "list" else '<a class="btn secondary" href="/?view=list">Show as list</a>'
     line = sentence(live, needs) + (f" Paused: {paused}." if paused else "")
     return f'<div class="fl-title"><p class="muted">{esc(line)}</p><span class="fl-grow"></span>{toggle}{btn}</div>'
@@ -417,4 +422,4 @@ def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=No
     back = f"/?station={sel}" + ("&view=list" if view == "list" else "")
     desk = (title_row(live, needs, d, csrf, view) + summary_bar(d, needs, now) + floor + legend + inspector(sel, live[sel], d, now)
             + f'<div class="fl-cols">{needs_summary(needs, csrf, back)}{today_card(d, now)}</div>')
-    return f'<div class="fl-desk">{desk}</div>' + phone_home(d, live, needs, now)
+    return f'<div class="fl-desk">{desk}</div>' + phone_home(d, live, needs, now, csrf)

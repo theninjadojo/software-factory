@@ -149,6 +149,21 @@ class Phone(unittest.TestCase):
         self.assertNotIn("<img", html)
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
 
+    def test_the_phone_screen_can_pause_and_resume(self):
+        live = floor.gather(data(), [], time.time())
+        html = floor.phone_home(data(), live, [], time.time(), "tok")
+        self.assertIn('action="/action/pause"', html)
+        self.assertIn('name="csrf" value="tok"', html)
+        html = floor.phone_home(data(paused="manual pause"), live, [], time.time(), "tok")
+        self.assertIn('action="/action/resume"', html)
+        self.assertNotIn("/action/pause", floor.phone_home(data(), live, [], time.time()))       # no token, no form
+
+    def test_app_js_reads_the_form_action_as_an_attribute(self):
+        # a <button name="action"> inside a form shadows form.action in the DOM, so fetch(f.action) posted to "[object HTMLButtonElement]"
+        from pathlib import Path
+        js = (Path(floor.__file__).parent / "static" / "app.js").read_text()
+        self.assertNotIn("f.action", js)
+
     def test_phone_states_without_work_or_a_token(self):
         d = data()
         live = floor.gather(d, None, time.time())
