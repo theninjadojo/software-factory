@@ -62,7 +62,7 @@
       if (sub) sub.textContent = label;
       note(tr, text, "bad");
     }
-    fetch(f.action, { method: "POST", body: data, credentials: "same-origin" })
+    fetch(f.getAttribute("action"), { method: "POST", body: data, credentials: "same-origin" })
       .then(function (r) {
         if (r.status === 401 || /\/login/.test(r.url)) { location.href = "/login"; return null; }
         return r.ok ? r.text() : Promise.reject();

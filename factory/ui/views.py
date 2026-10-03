@@ -13,6 +13,7 @@ REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 NAV = [("/", "Factory"), ("/needs", "Needs you"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
        ("/settings", "Settings"), ("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram")]
+ICON = '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 16 16\'%3E%3Ccircle cx=\'8\' cy=\'8\' r=\'6\' fill=\'%23e0a030\'/%3E%3C/svg%3E">'
 PRIMARY = 3         # the first three stay on the phone tab bar; the rest sit behind "More"
 
 GOOD = {"pr", "stage", "passed", "success", "closed", "ok"}
@@ -83,7 +84,7 @@ def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | N
                 if len(items) > PRIMARY else f"<nav aria-label=Main>{links}</nav>")
     note = f'<div class="flash {esc(flash_kind)}" role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
-            f'<meta name="color-scheme" content="dark"><title>{esc(title)} · software-factory</title><link rel="stylesheet" href="/static/style.css"></head><body>'
+            f'<meta name="color-scheme" content="dark"><title>{esc(title)} · software-factory</title>{ICON}<link rel="stylesheet" href="/static/style.css"></head><body>'
             f'<header><strong class="brand"><i></i>software-factory</strong>{nav_html}'
             f'<form method="post" action="/logout" class="signout">{csrf_field(csrf)}<button class="link">Sign out</button></form></header>'
             f'<main{" class=wide" if wide else ""}>{note}<h1>{esc(title)}</h1>{body}</main><script src="/static/app.js" defer></script></body></html>')
@@ -93,7 +94,7 @@ def login_page(error: str | None = None, setup_hint: bool = False) -> str:
     err = f'<div class="flash bad">{esc(error)}</div>' if error else ""
     hint = '<p class="muted">No password is set yet. Run <code>python3 -m factory.ui --set-password</code> on the host.</p>' if setup_hint else ""
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
-            '<title>Sign in · software-factory</title><link rel="stylesheet" href="/static/style.css"></head><body class="login"><main>'
+            f'<title>Sign in · software-factory</title>{ICON}<link rel="stylesheet" href="/static/style.css"></head><body class="login"><main>'
             f'<h1>software-factory</h1>{err}{hint}<form method="post" action="/login"><label>Password'
             '<input type="password" name="password" autocomplete="current-password" autofocus required></label>'
             '<button>Sign in</button></form></main></body></html>')
@@ -192,7 +193,7 @@ def runs_list(runs: list[dict]) -> str:
     if not runs:
         return '<p class="muted">No runs yet.</p>'
     rows = "".join(
-        f'<tr><td data-l="Run"><a href="/runs/{int(r["id"])}">{esc(r["repo"])}#{esc(r["issue"])}</a><br><span class="muted">{ticket_link(r["repo"], r["issue"])}</span></td>'
+        f'<tr><td data-l="Run"><a href="/runs/{int(r["id"])}">Run #{int(r["id"])}</a><br><span class="muted">{ticket_link(r["repo"], r["issue"])}</span></td>'
         f'<td data-l="What">{esc(run_what(r))}<br><span class="muted">{esc(r["title"])}</span></td><td data-l="Status">{badge(r["status"])}</td><td data-l="Model">{esc(r["model"])}</td>'
         f'<td data-l="Took">{esc(dur(r["started"], r["finished"]))}</td><td data-l="Started" title="{esc(ts(r["started"]))}">{esc(ago(r["started"]))}</td></tr>' for r in runs)
     return ('<div class="scroll"><table class="stack"><thead><tr><th>Run</th><th>What</th><th>Status</th><th>Model</th><th>Took</th><th>Started</th></tr></thead>'
