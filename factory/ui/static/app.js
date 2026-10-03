@@ -91,7 +91,7 @@
   // --- Parts that load by themselves (GitHub is slow): fetch, then put the answer where the loader was.
   function calm(root) {
     if (!window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    var nets = (root || document).querySelectorAll("svg.ld-net");
+    var nets = (root || document).querySelectorAll("svg.ld-net, svg.fm");
     for (var i = 0; i < nets.length; i++) if (nets[i].pauseAnimations) nets[i].pauseAnimations();
   }
   function get(url) {

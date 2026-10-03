@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 from .. import db as dbm
 from .. import questions as Q
-from . import views
+from . import views, yard
 from .views import ago, esc, tok
 
 STATIONS = (("poll", "Poll"), ("classify", "Classify"), ("route", "Route"), ("analyst", "Analyst"), ("designer", "Designer"),
@@ -593,25 +593,55 @@ def floor_stations(rows: list[dict]) -> dict:
     return out
 
 
-def snake(fl: dict) -> str:
-    """The floor: ten stations in two rows (left to right, down, right to left), joined by belts with crates."""
+def floor_order(cfg: dict) -> list[tuple[str, str, str]]:
+    """The stations on the floor, in route order, from what the factory has: every stage role in the config, and review and CI only
+    when they are on. (station id, label, icon path)."""
+    roles = cfg.get("roles") or ["analyst", "designer", "architect"]
+    ids = ["poll", "classify", "route", *roles, "build"] + (["review"] if cfg.get("review", True) else []) + (["ci"] if cfg.get("ci", "on") != "off" else []) + ["pr"]
+    return [(sid, LABEL.get(sid, sid.replace("_", " ").title()), ICON.get(sid, yard.GENERIC_ICON)) for sid in ids]
+
+
+def _floor_word(sid: str, o: dict) -> str:
+    return "To merge" if sid == "pr" and o["state"] == "done" else {"none": "Idle"}.get(o["state"], STATE_WORD[o["state"]])
+
+
+def floor_card(d: dict, rows: list[dict], now: float) -> str:
+    """The floor: the map (stations, the yard with the workers' trains, GitHub's drones) and, for phones, the stations as a list."""
+    order = floor_order(d["cfg"])
+    fl = floor_stations(rows)
+    for sid, _, _ in order:
+        fl.setdefault(sid, {"state": "none", "refs": [], "count": 0})
+    svg = yard.floor_map(order, fl, d.get("workers") or [], bool(d["cfg"].get("workers")), now, _floor_word,
+                         lambda sid: f"/tickets?{_qs(stage='all', at=sid)}")
+    return snake(fl, [sid for sid, _, _ in order], svg)
+
+
+def snake(fl: dict, order=SNAKE, floor_map: str = "") -> str:
+    """The floor: the stations joined by belts with crates. Given the map, the list is what phones show (one column, belts running
+    down); without it the list is laid out in two rows (left to right, down, right to left)."""
     out = ""
-    for i, sid in enumerate(SNAKE):
+    for i, sid in enumerate(order):
         o = fl[sid]
-        word = "To merge" if sid == "pr" and o["state"] == "done" else {"none": "Idle"}.get(o["state"], STATE_WORD[o["state"]])
-        out += (f'<a class="sd-mach p{i} {o["state"]}" href="/tickets?{esc(_qs(stage="all", at=sid))}" aria-label="{esc(LABEL[sid])}: {int(o["count"])} ticket(s), {esc(word)}">'
-                f'<span class="sd-mtop">{_svg(sid)}<b class="mono">{int(o["count"])}</b></span><strong>{esc(LABEL[sid])}</strong>'
+        word = _floor_word(sid, o)
+        label = LABEL.get(sid, sid.replace("_", " ").title())
+        out += (f'<a class="sd-mach p{i} {o["state"]}" href="/tickets?{esc(_qs(stage="all", at=sid))}" aria-label="{esc(label)}: {int(o["count"])} ticket(s), {esc(word)}">'
+                f'<span class="sd-mtop">{_svg(sid) if sid in ICON else ""}<b class="mono">{int(o["count"])}</b></span><strong>{esc(label)}</strong>'
                 f'<span class="sd-mstate">{esc(word)}</span><span class="mono muted sd-refs">{esc(" · ".join(o["refs"][:3]))}</span></a>')
-        if i < len(SNAKE) - 1:
-            nxt = fl[SNAKE[i + 1]]["state"]
+        if i < len(order) - 1:
+            nxt = fl[order[i + 1]]["state"]
             into = nxt if nxt != "none" else ("done" if o["state"] != "none" else "none")
             way = " down" if i == 4 else " left" if i > 4 else ""
             out += _belt(into, f" q{i}{way}")
     legend = "".join(f'<li><span class="sd-dot {k}" aria-hidden="true"></span>{esc(w)}</li>'
                      for k, w in (("done", "Finished"), ("run", "Running now"), ("wait", "Waiting for a person"), ("fail", "Failed"), ("none", "Nothing here")))
+    if floor_map:
+        if "fm-train" in floor_map:
+            legend += '<li class="fm-key"><span class="sd-dot fm-train-key" aria-hidden="true"></span>A train to a worker and back; signals let one onto the shared track at a time</li>'
+        legend += ('<li class="fm-key"><span class="sd-dot fm-drone-key" aria-hidden="true"></span>Drones: issues in from GitHub, pull requests out</li>')
+    lst = f'<div class="sd-scroll{" fm-phone" if floor_map else ""}"><div class="sd-snake">{out}</div></div>'
     return (f'<section class="sd-card sd-floor" aria-labelledby="floor-h"><div class="sd-cardhead"><h2 id="floor-h">The floor</h2>'
             f'<span class="muted sd-fine">Pick a station to see the tickets at it, in Tickets.</span></div>'
-            f'<div class="sd-scroll"><div class="sd-snake">{out}</div></div><ul class="sd-legend">{legend}</ul></section>')
+            + (f'<div class="sd-scroll fm-wrap">{floor_map}</div>' if floor_map else "") + f'{lst}<ul class="sd-legend">{legend}</ul></section>')
 
 
 def _tile(href: str, lab: str, num, tone: str, sub: str, hot: bool = False) -> str:
@@ -717,7 +747,7 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
              + _tile("/tickets?stage=failed", "Failed", len(fail_rows), "fail", f'#{fail_rows[0]["issue"]} {fail_rows[0]["why"]}'[:48] if fail_rows else "none"))
     head = (f'<div class="sd-dash-head"><div><p class="muted sd-fine">{esc(line)}</p><h1>Factory</h1></div>'
             f'<div class="sd-acts">{floor.pause_form(paused, csrf)}<a class="btn secondary" href="/?mode=confirm">Mode: {"live" if cfg["live"] else "dry run"}</a></div></div>')
-    return (f'<div class="sd-dash">{head}{mode_bar}<div class="sd-tiles five">{tiles}</div>{snake(floor_stations(rows))}'
+    return (f'<div class="sd-dash">{head}{mode_bar}<div class="sd-tiles five">{tiles}</div>{floor_card(d, rows, now)}'
             f'<div class="sd-cols">{slot("/fragment/needs-tray", "Asking GitHub what needs you", "sd-card sd-flush sd-needs", '<h2 class="sd-bar-h">Needs you</h2>') if d.get("needs_loading") else needs_tray(needs, csrf)}<div class="sd-side">{running_card(d, rows, now)}{usage_card(d, now)}</div></div></div>')
 
 
