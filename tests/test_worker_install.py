@@ -287,26 +287,18 @@ class FactorySetup(unittest.TestCase):
         from factory.config import load
         cfg = load(str(self.app / "config" / "config.toml"))                         # the whole file still validates
         self.assertEqual((cfg.workers.enabled, len(cfg.workers.checks)), (True, 2))
-        self.assertIn("COMPOSE_PROFILES=workers", (self.app / ".env").read_text())
+        self.assertNotIn("COMPOSE_PROFILES", (self.app / ".env").read_text())       # the UI starts the worker API: no compose profile
         calls = self.log.read_text()
         self.assertIn("ctl workers add my-mac", calls)
         self.assertLess(calls.index("workers add"), calls.index("up -d"))           # the token exists before the stack starts
         self.assertIn("install-worker.sh", out)
 
-    def test_rerun_keeps_what_is_there_and_does_not_duplicate_the_profile(self):
+    def test_rerun_keeps_what_is_there(self):
         self.run_setup(FACTORY_WORKERS="1")
         before = (self.app / "config" / "config.toml").read_text()
         code, out = self.run_setup(FACTORY_WORKERS="1", FACTORY_WORKER_CHECKS="o/ios:ios-test:macos")
         self.assertEqual(code, 0, out)
         self.assertEqual((self.app / "config" / "config.toml").read_text(), before)
-        self.assertEqual((self.app / ".env").read_text().count("COMPOSE_PROFILES"), 1)
-
-    def test_an_existing_profile_list_is_extended(self):
-        self.run_setup()
-        env = self.app / ".env"
-        env.write_text(env.read_text() + "COMPOSE_PROFILES=build\n")
-        self.run_setup(FACTORY_WORKERS="1")
-        self.assertIn("COMPOSE_PROFILES=build,workers", env.read_text())
 
     def test_bad_worker_input_stops_setup(self):
         for env in ({"FACTORY_WORKER_NAME": "Bad Name"}, {"FACTORY_WORKER_CHECKS": "o/ios:ios-test"}, {"FACTORY_WORKER_CHECKS": "o/ios:Bad:macos"},

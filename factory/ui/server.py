@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import os
+import signal
 import sqlite3
 import sys
 import threading
@@ -24,6 +25,7 @@ from . import workers as WK
 from . import labels as L
 from .auth import AuthStore, Sessions, Throttle
 from .settings import Form
+from .workerproc import WorkerApiProcess
 
 log = logging.getLogger("factory.ui")
 STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8", "fonts/space-grotesk-latin.woff2": "font/woff2", "fonts/jetbrains-mono-latin.woff2": "font/woff2"}
@@ -449,7 +451,14 @@ def main() -> None:
         sys.exit("No UI password is set. Run: python3 -m factory.ui --config <config> --set-password")
     srv = serve(app, host or "127.0.0.1", int(port))
     log.info("UI listening on %s (allowed hosts: %s)", args.listen, sorted(app.allowed_hosts))
-    srv.serve_forever()
+    # The worker API runs as our child while [workers] is enabled; FACTORY_WORKERS_LISTEN overrides where it binds (Docker: 0.0.0.0:8788).
+    workerapi = WorkerApiProcess(args.config, os.environ.get("FACTORY_WORKERS_LISTEN") or None)
+    threading.Thread(target=workerapi.run, args=(app.cfg,), daemon=True).start()
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))       # so the finally below runs on `systemctl stop` / `docker stop`
+    try:
+        srv.serve_forever()
+    finally:
+        workerapi.stop()
 
 
 if __name__ == "__main__":

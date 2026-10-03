@@ -89,9 +89,6 @@ open("config/config.toml", "a").write(out)
 PY
     echo "added [workers] to config/config.toml$([ -z "${FACTORY_WORKER_CHECKS:-}" ] && echo " (no checks yet: add them under Settings -> Workers)")"
   fi
-  # the worker API is a compose profile: with COMPOSE_PROFILES set, plain `docker compose up -d` (and update.sh) include it
-  if grep -q '^COMPOSE_PROFILES=' .env; then grep -q '^COMPOSE_PROFILES=.*workers' .env || sed -i 's|^COMPOSE_PROFILES=\(.*\)$|COMPOSE_PROFILES=\1,workers|' .env
-  else printf 'COMPOSE_PROFILES=workers\n' >> .env; fi
 fi
 
 say "GitHub token"

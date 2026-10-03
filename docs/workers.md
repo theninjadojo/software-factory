@@ -67,9 +67,10 @@ queue (at most `max_attempts`, default 2) and then fails. A job nobody claims wi
 The same way as the factory: a release one-liner, an environment-driven setup script, an update script with rollback.
 
 1. **Factory host.** `FACTORY_WORKERS=1 FACTORY_WORKER_NAME=my-mac FACTORY_WORKER_CHECKS="org/app:web-test:any" ./scripts/setup.sh` (or, on an
-   existing install, add `[workers]` and run `python3 -m factory.ctl workers add my-mac`). `setup.sh` writes `[workers]` and the checks, sets
-   `COMPOSE_PROFILES=workers` in `.env` (so `docker compose up -d` and `scripts/update.sh` start and update the worker API like every other
-   service), makes the token and prints it once. Native installs enable `deploy/systemd/factory-workers.service`; `scripts/deploy.sh` restarts it.
+   existing install, add `[workers]` and run `python3 -m factory.ctl workers add my-mac`). `setup.sh` writes `[workers]` and the checks, makes the
+   token and prints it once. The admin UI runs the worker API as its own child process while workers are enabled (it starts within seconds of turning
+   them on in Settings, and stops when they are turned off), so there is no separate service to install or restart; updating the UI updates it.
+   In Docker the `ui` container publishes it on `127.0.0.1:8788` (`FACTORY_WORKERS_BIND` / `FACTORY_WORKERS_PORT` in `.env`).
    Or from the UI: Settings → Workers → enable, then Workers → **Add a worker**. It creates the token (shown once) and prints the install command for the worker machine.
 2. **Make the API reachable** from the worker: it listens on `127.0.0.1:8788`. Use `ssh -L 8788:127.0.0.1:8788 factory-host`, a VPN, or a TLS reverse
    proxy. Never expose it plainly: the token is the only credential.

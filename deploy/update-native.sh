@@ -95,7 +95,8 @@ run podman build -q -t factory-agent -f sandbox/Dockerfile sandbox || rollback
 run podman build -q -t factory-render -f sandbox/render/Dockerfile sandbox/render || rollback
 [ -f sandbox/screens/Dockerfile ] && { run podman build -q -t factory-screens -f sandbox/screens/Dockerfile sandbox/screens || rollback; }
 run systemctl --user restart factory.service
-for u in factory-ui factory-workers; do systemctl --user is-enabled $u.service >/dev/null 2>&1 && run systemctl --user restart $u.service; done
+systemctl --user is-enabled factory-workers.service >/dev/null 2>&1 && run systemctl --user disable --now factory-workers.service   # the UI runs the worker API now
+systemctl --user is-enabled factory-ui.service >/dev/null 2>&1 && run systemctl --user restart factory-ui.service
 if [ -z "${DRY_RUN:-}" ]; then
   sleep 10
   for u in factory-proxy factory factory-ui; do systemctl --user is-enabled $u.service >/dev/null 2>&1 || continue

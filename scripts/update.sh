@@ -83,7 +83,7 @@ cp -f docker-compose.yml VERSION .env config.example.toml "$BK"/ 2>/dev/null || 
 pull_images "$TAG"
 cp "$TMP/docker-compose.yml" "$TMP/config.example.toml" "$TMP/VERSION" "$TMP/.env.example" .
 cp "$TMP/setup.sh" scripts/setup.sh; chmod +x scripts/setup.sh
-run docker compose up -d
+run docker compose up -d --remove-orphans     # (removes services a release dropped, e.g. the old separate `workers` container)
 
 rollback() {
   echo "The new version did not come up healthy: rolling back to v$HAVE" >&2

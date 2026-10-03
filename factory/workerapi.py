@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -158,6 +159,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="software-factory worker API")
     ap.add_argument("--config", required=True)
     ap.add_argument("--listen", help="override workers.listen, e.g. 127.0.0.1:8788")
+    ap.add_argument("--parent-pid", type=int, help="exit when this process (the UI that started it) is gone")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     cfg = load(args.config)
@@ -167,7 +169,17 @@ def main() -> None:
     dbm.connect(cfg.db_path).close()            # make sure the tables exist
     srv = ThreadingHTTPServer((host, int(port)), make_handler(Api(lambda: load(args.config))))
     log.info("worker API on %s:%s", host, port)
+    if args.parent_pid:
+        threading.Thread(target=exit_with_parent, args=(args.parent_pid,), daemon=True).start()
     srv.serve_forever()
+
+
+def exit_with_parent(pid: int, every: float = 2.0) -> None:
+    """Never outlive the UI that started us (a killed UI would otherwise leave an old worker API holding the port)."""
+    while os.getppid() == pid:
+        time.sleep(every)
+    log.info("the UI that started the worker API is gone: exiting")
+    os._exit(0)
 
 
 if __name__ == "__main__":
