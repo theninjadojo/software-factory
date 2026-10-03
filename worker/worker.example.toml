@@ -19,3 +19,11 @@ env_passthrough = []                               # the only extra environment 
 command = ["/Users/factory/recipes/web-test.sh"]
 timeout_seconds = 1800
 artifacts = ["test-results/**/*.png"]              # Playwright failure screenshots; images over 1600x6000 are dropped, not fatal
+
+[recipes.android-test]
+# Builds and tests inside the factory-android container (sandbox/android/), so the SDK is not installed on this machine and the
+# agent-written project never runs on it directly. Add "--emulator" (Linux with /dev/kvm, image built with WITH_EMULATOR=1) for
+# connected tests, "--dir", "app" for a subfolder, "--task", ":app:testDebugUnitTest" for a specific Gradle task.
+command = ["/home/factory/recipes/android-test.sh"]
+timeout_seconds = 3600
+artifacts = ["build/screens/*.png"]                # the emulator's final screenshot

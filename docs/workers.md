@@ -134,7 +134,7 @@ and no worker polled for 2 minutes; once when it starts and once when it clears)
   Enabling, switching to `warn`, and any change to the checks need the confirmation box. The listen address and token file stay in
   `config.toml` on purpose.
 
-**Phase 4: recipes (web done; Android and iOS next).**
+**Phase 4: recipes (web and Android done; iOS next).**
 Recipes ship in `worker/recipes/` and are copied to the worker, outside any checkout, so the repo cannot alter them.
 
 - `web-test.sh` (done): installs with the lockfile (`npm ci`, `pnpm install --frozen-lockfile` or `yarn install --frozen-lockfile`; a missing
@@ -143,7 +143,16 @@ Recipes ship in `worker/recipes/` and are copied to the worker, outside any chec
   Exit 0 = every step that applied passed; exit 1 = a step failed (a *failure*, which gets a fix round); exit 2 = the recipe could not
   tell what to run (no `package.json`, nothing to run, bad option), which the factory sees as a worker problem and never retries.
   Tested with stub package managers (every branch) and with real npm against a cloned, patched repo.
-- Android (Gradle + emulator) and iOS (Xcode in a Tart VM, simulator tests, screenshots): next.
+- `android-test.sh` (done, stub-tested only): runs `./gradlew <task>` inside the `factory-android` container (`sandbox/android/`: a pinned JDK
+  17 image plus the Android SDK; the command-line tools download is verified against a checksum you must supply, and the emulator and
+  its system image are an opt-in build argument). The agent-written project runs only in that throwaway container: the worker's own uid,
+  read-only root, no capabilities, no new privileges, memory/CPU/pid limits, and only two host mounts (the checkout, and a Gradle cache
+  folder). It has a network, because Gradle must fetch dependencies. `--emulator` adds a single `--device /dev/kvm` (Linux only; Docker on a
+  Mac has no KVM, so Macs run unit tests) and boots a headless AVD, runs the task, and returns a final screenshot even when the tests
+  fail. Exit codes follow the web recipe: 1 = build or tests failed, 2 = the environment is wrong (no engine, image not built, no
+  `gradlew`, no KVM, the emulator did not boot), which is never retried. **Not yet run against a real SDK, image or emulator**: the tests use
+  stub `docker`, `gradlew`, `adb`, `emulator` and `avdmanager`.
+- iOS (Xcode in a Tart VM, simulator tests, screenshots): next. It cannot be containerised: Xcode runs only on macOS.
 
 The worker drops any returned PNG outside the orchestrator's size limits (16..1600 wide, up to 6000 high) rather than sending it:
 one oversize full-page screenshot would otherwise make the whole result invalid and turn a passing run into an error.
