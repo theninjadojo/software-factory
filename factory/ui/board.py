@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 from .. import db as dbm
 from .. import questions as Q
-from . import plant, views, yard
+from . import floorplan, plant, views, yard
 from .views import ago, esc, tok
 
 STATIONS = (("poll", "Poll"), ("classify", "Classify"), ("route", "Route"), ("analyst", "Analyst"), ("designer", "Designer"),
@@ -638,9 +638,19 @@ def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
               "schedules": d.get("schedules") or [],
               "poll": {"every": d["cfg"].get("poll_seconds"), "last": float(last) if last else None},
               "flights": L.flights(now)}
-    svg = plant.floor_map(order, fl, d.get("workers") or [], bool(d["cfg"].get("workers")), now, _floor_word,
-                          lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras)
-    return snake(fl, [sid for sid, _, _ in order], svg, add_ticket(d["cfg"].get("repos") or [], csrf, roles))
+    workers = d.get("workers") or []
+    ctx = floor_ctx(d["cfg"], workers)
+    plan, _ = floorplan.usable(*d["floor_layout"], ctx) if d.get("floor_layout") else (None, "")
+    svg = plant.floor_map(order, fl, workers, bool(d["cfg"].get("workers")), now, _floor_word,
+                          lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras, floorplan.compile_plan(plan, ctx) if plan else None)
+    edit = '<a class="btn secondary fm-edit" href="/floor/edit">Edit layout</a>' if csrf else ""
+    return snake(fl, [sid for sid, _, _ in order], svg, add_ticket(d["cfg"].get("repos") or [], csrf, roles) + edit)
+
+
+def floor_ctx(cfg: dict, workers: list) -> "floorplan.Ctx":
+    """What a floor layout has to hold for this config (see floorplan.py)."""
+    return floorplan.Ctx([sid for sid, _, _ in floor_order(cfg)], [h["name"] for h in cfg.get("power") or []],
+                         bool(cfg.get("workers")) or bool(workers), min(len(workers), yard.MAX_WORKERS))
 
 
 def add_ticket(repos: list[str], csrf: str, roles: list[str]) -> str:
