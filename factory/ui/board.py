@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 from .. import db as dbm
 from .. import questions as Q
-from . import views, yard
+from . import plant, views, yard
 from .views import ago, esc, tok
 
 STATIONS = (("poll", "Poll"), ("classify", "Classify"), ("route", "Route"), ("analyst", "Analyst"), ("designer", "Designer"),
@@ -620,23 +620,45 @@ def _floor_word(sid: str, o: dict) -> str:
     return "To merge" if sid == "pr" and o["state"] == "done" else {"none": "Idle"}.get(o["state"], STATE_WORD[o["state"]])
 
 
-def floor_card(d: dict, rows: list[dict], now: float) -> str:
-    """The floor: the map (stations, the yard with the workers' trains, GitHub's drones) and, for phones, the stations as a list."""
+def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
+    """The floor: the plant (plant.py) and, for phones, the stations as a list."""
+    from . import labels as L
     order = floor_order(d["cfg"])
     fl = floor_stations(rows)
     for sid, _, _ in order:
         fl.setdefault(sid, {"state": "none", "refs": [], "count": 0})
     roles = d["cfg"].get("roles") or ["analyst", "designer", "architect"]
     working = [r for r in rows if r["at"] == "build" and r["stations"].get("build") == "run"]
+    running = {x.get("harness") for x in d.get("running") or []}
+    last = d.get("status", {}).get("last_poll_ok", {}).get("value")
     extras = {"bypass": [f'#{r["issue"]}' for r in working if all(r["stations"].get(x, "none") == "none" for x in roles)],
               "fix": [f'#{r["issue"]}' for r in working if r["stations"].get("ci") == "fail"],
-              "queued": [f'#{int(q["issue"])}' for q in d.get("queued") or []]}
-    svg = yard.floor_map(order, fl, d.get("workers") or [], bool(d["cfg"].get("workers")), now, _floor_word,
-                         lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras)
-    return snake(fl, [sid for sid, _, _ in order], svg)
+              "queued": [f'#{int(q["issue"])}' for q in d.get("queued") or []],
+              "power": [{**h, "on": h["name"] in running} for h in d["cfg"].get("power") or []],
+              "schedules": d.get("schedules") or [],
+              "poll": {"every": d["cfg"].get("poll_seconds"), "last": float(last) if last else None},
+              "flights": L.flights(now)}
+    svg = plant.floor_map(order, fl, d.get("workers") or [], bool(d["cfg"].get("workers")), now, _floor_word,
+                          lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras)
+    return snake(fl, [sid for sid, _, _ in order], svg, add_ticket(d["cfg"].get("repos") or [], csrf))
 
 
-def snake(fl: dict, order=SNAKE, floor_map: str = "") -> str:
+def add_ticket(repos: list[str], csrf: str) -> str:
+    """The floor's Add a ticket: the same form as Tickets' New ticket, back to the floor, where the ticket arrives by air."""
+    from . import labels as L
+    if not csrf or not repos:
+        return ""
+    opts = "".join(f'<option value="{esc(r)}">{esc(r)}</option>' for r in repos)
+    return ('<details class="disclose fn-addt"><summary class="btn">Add a ticket</summary>'
+            f'<form method="post" action="/tickets/create" class="field">{views.csrf_field(csrf)}<input type="hidden" name="back" value="/">'
+            f'<label>Repository<select name="repo">{opts}</select></label>'
+            f'<label>Title<input name="title" required maxlength="{L.MAX_TITLE}"></label>'
+            f'<label>Description (optional)<textarea name="body" rows="4" maxlength="{L.MAX_BODY}"></textarea></label>'
+            '<p class="muted">It is flown in from the mainland and lands at Receiving. Creating a ticket does not start work.</p>'
+            '<button>Send by air</button></form></details>')
+
+
+def snake(fl: dict, order=SNAKE, floor_map: str = "", add: str = "") -> str:
     """The floor: the stations joined by belts with crates. Given the map, the list is what phones show (one column, belts running
     down); without it the list is laid out in two rows (left to right, down, right to left)."""
     out = ""
@@ -660,7 +682,7 @@ def snake(fl: dict, order=SNAKE, floor_map: str = "") -> str:
         legend += ('<li class="fm-key"><span class="sd-dot fm-drone-key" aria-hidden="true"></span>Drones: issues in from GitHub, pull requests out</li>')
     lst = f'<div class="sd-scroll{" fm-phone" if floor_map else ""}"><div class="sd-snake">{out}</div></div>'
     return (f'<section class="sd-card sd-floor" aria-labelledby="floor-h"><div class="sd-cardhead"><h2 id="floor-h">The floor</h2>'
-            f'<span class="muted sd-fine">Pick a station to see the tickets at it, in Tickets.</span></div>'
+            f'<span class="muted sd-fine">Pick a station to see the tickets at it, in Tickets.</span>{add}</div>'
             + (f'<div class="sd-scroll fm-wrap">{floor_map}</div>' if floor_map else "") + f'{lst}<ul class="sd-legend">{legend}</ul></section>')
 
 
@@ -767,7 +789,7 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
              + _tile("/tickets?stage=failed", "Failed", len(fail_rows), "fail", f'#{fail_rows[0]["issue"]} {fail_rows[0]["why"]}'[:48] if fail_rows else "none"))
     head = (f'<div class="sd-dash-head"><div><p class="muted sd-fine">{esc(line)}</p><h1>Factory</h1></div>'
             f'<div class="sd-acts">{floor.pause_form(paused, csrf)}<a class="btn secondary" href="/?mode=confirm">Mode: {"live" if cfg["live"] else "dry run"}</a></div></div>')
-    return (f'<div class="sd-dash">{head}{mode_bar}<div class="sd-tiles five">{tiles}</div>{floor_card(d, rows, now)}'
+    return (f'<div class="sd-dash">{head}{mode_bar}<div class="sd-tiles five">{tiles}</div>{floor_card(d, rows, now, csrf)}'
             f'<div class="sd-cols">{slot("/fragment/needs-tray", "Asking GitHub what needs you", "sd-card sd-flush sd-needs", '<h2 class="sd-bar-h">Needs you</h2>') if d.get("needs_loading") else needs_tray(needs, csrf)}<div class="sd-side">{running_card(d, rows, now)}{usage_card(d, now)}</div></div></div>')
 
 
