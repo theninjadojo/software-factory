@@ -1,4 +1,4 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>|health]"""
 import os
 import sqlite3
 import subprocess
@@ -139,6 +139,11 @@ def main():
             print("no GitHub token: put it in", cfg.token_file)
             sys.exit(1)
         sys.exit(create_labels(cfg, GitHub(token), sys.argv[2:] or list(cfg.repos)))
+    if cmd == "health":
+        from . import health
+        results = health.run_checks(cfg)
+        print(health.format_report(results))
+        sys.exit(1 if any(r.level == "crit" for r in results) else 0)
     if cmd == "pause":
         (state / "PAUSED").write_text("")
         print("paused")

@@ -24,6 +24,34 @@ Run `systemctl --user ...` as that user with `XDG_RUNTIME_DIR=/run/user/<uid>` s
 `scripts/deploy.sh user@host` tars the checkout, runs the tests on the host, and restarts the service. Add `--image` when
 `sandbox/` changed. It **refuses to restart while an agent run is in flight**, because a restart kills the run.
 
+### Health monitoring
+
+`factory-health.timer` runs `python3 -m factory.health` every 5 minutes as its own process, so it still reports when the
+orchestrator is hung or dead. Install and start it like the other units:
+`systemctl --user enable --now factory-health.timer`.
+
+It sends a Telegram alert (event `health`, shown even at `quiet` verbosity) when a check turns bad or worse, repeats it every
+`repeat_hours` while the problem lasts, and says so once when it recovers. Checks:
+
+| Check | Warns / critical when |
+|---|---|
+| `disk:<path>`, `inodes:<path>` | free space or inodes low on the state dir, work dir or container storage (the usual way a factory stops) |
+| `memory` | `MemAvailable` low (sandboxes are OOM-killed) |
+| `orchestrator` | no completed poll for `stale_poll_minutes` (hung, crashed or failing every poll; includes the last error) |
+| `database` | the SQLite file cannot be read |
+| `stuck-runs` | a run is still "running" after twice `timeout_seconds` |
+| `run-failures` | the last `failed_runs_warn` runs all failed (expired Claude token, API outage, broken image) |
+| `engine`, `proxy` | `podman info` fails, or the egress proxy socket refuses connections |
+| `secrets` | the GitHub token file or `claude.env` is missing |
+| `github` | the token is rejected (401) or few API calls are left this hour |
+
+`python3 -m factory.ctl health` (or `python3 -m factory.health --print`) shows every check and exits 1 if one is critical; it sends
+nothing. The latest problems are also stored in the database's `status` table (`health`, `health_checked`).
+
+A watchdog on the same machine cannot report that the machine is down. Set `[health] heartbeat_url` to a dead-man's-switch
+service (healthchecks.io or similar): it is pinged on every run where nothing is critical, and that service alerts you when the pings stop.
+It cannot see an expired Claude subscription token before a run fails; the `run-failures` check catches that after the fact.
+
 ### The UI
 
 `systemctl --user enable --now factory-ui` after setting the password (see [ui.md](ui.md)). It listens on loopback; use

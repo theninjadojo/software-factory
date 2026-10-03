@@ -59,7 +59,7 @@ chat_id = 0   # your numeric Telegram user id; the only account the bot will obe
 verbosity = "normal"   # quiet: needs-a-person, failures, rate limits | normal: + PR ready, stage done, CI results | verbose: everything
 # events = ["needs_human", "failure", "pr_ready"]   # optional explicit list; overrides verbosity.
 # ui_url = "https://factory.example.internal"   # optional: an "Open in UI" button on open-question messages
-# All events: needs_human failure rate_limit pr_ready stage_done ci_result ci_fix recovery started startup skipped info
+# All events: needs_human failure rate_limit health pr_ready stage_done ci_result ci_fix recovery started startup skipped info
 
 [classifier]
 backend = "rules"   # "jev" classifies with TypeSafe Jev via OpenRouter; falls back to labels on any error
@@ -86,6 +86,27 @@ wait_for_checks_minutes = 10
 timeout_minutes = 90
 queued_warn_minutes = 15     # CI queued this long without starting: warn (self-hosted runners may be offline)
 manual_wait_hours = 24       # keep watching this long for CI that a person starts by hand (repos with manual-only CI)
+
+# Health watchdog (factory-health.timer, every 5 min; a separate process, so it still alerts when the orchestrator is hung or dead).
+# Telegram alert when a check turns bad, a reminder every repeat_hours, and a note when it recovers. Event "health" (shown at every
+# verbosity). Checks: free disk and inodes (state, work dir, container storage), free memory, the orchestrator's poll heartbeat,
+# stuck runs, a streak of failed runs, the container engine, the egress proxy, secret files, the GitHub token and its rate limit.
+# `python3 -m factory.ctl health` prints them all. Every key is optional.
+[health]
+enabled = true
+disk_warn_percent = 15       # free space: warn under this % or under disk_warn_gb, critical under disk_crit_*
+disk_crit_percent = 5
+disk_warn_gb = 5
+disk_crit_gb = 2
+# extra_disk_paths = ["/mnt/builds"]
+mem_warn_mb = 512
+mem_crit_mb = 256
+stale_poll_minutes = 10      # no completed poll for this long: the orchestrator is hung or stopped
+failed_runs_warn = 5         # this many finished runs in a row all failed
+github_rate_warn = 200
+repeat_hours = 6
+# heartbeat_url = "https://hc-ping.com/your-uuid"   # dead-man's switch: pinged each run while nothing is critical, so the service
+#                                                   # (healthchecks.io etc.) alerts you if this whole machine goes quiet
 
 # Mirror each pipeline step of a ticket as a GitHub sub-issue (the UI shows the steps either way).
 [subtasks]
