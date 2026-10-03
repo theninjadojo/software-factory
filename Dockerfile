@@ -8,6 +8,7 @@ RUN useradd -m -u 1000 factory
 WORKDIR /app
 COPY factory ./factory
 COPY tests ./tests
+COPY worker ./worker
 COPY config.example.toml VERSION ./
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
 USER 1000:1000
