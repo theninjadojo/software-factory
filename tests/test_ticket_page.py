@@ -40,7 +40,21 @@ class Stations(unittest.TestCase):
         st = board.stations(journey([run(1, "build", "running")], "running"))
         self.assertEqual((st["build"], board.current(st), board.ticket_state(st, False, [])), ("run", "build", "working"))
         st = board.stations(journey([run(1, "build", "done")]), [{"status": "watching", "number": 5}])
-        self.assertEqual((st["ci"], st["pr"], board.ticket_state(st, False, [{"status": "watching"}])), ("run", "run", "prs"))
+        self.assertEqual((st["ci"], st["pr"], board.ticket_state(st, False, [{"status": "watching"}])), ("run", "done", "prs"))
+        for status, ci in (("passed", "done"), ("no-ci", "done"), ("timed-out", "fail"), ("failed", "fail"), ("closed", "done")):
+            st = board.stations(journey([run(1, "build", "done")]), [{"status": status, "number": 5}])
+            self.assertEqual(st["ci"], ci, status)                                  # checks run only while the PR is watched
+
+    def test_an_interrupted_run_is_not_running(self):
+        st = board.stations(journey([run(1, "build", "queued")]))
+        self.assertEqual(st["build"], "none")
+        self.assertNotEqual(board.ticket_state(st, False, []), "working")
+
+    def test_once_github_is_read_it_decides_who_waits_for_a_person(self):
+        st = board.stations(journey(WAITING, "waiting"))
+        self.assertEqual(st["designer"], "wait")                                   # the database says the designer asked
+        known = {k: ("done" if v == "wait" else v) for k, v in st.items()}          # what _one does when GitHub says nobody is waiting
+        self.assertEqual(board.ticket_state(known, False, []), "done")
         st = board.stations(journey([run(1, "build", "done")]), [{"status": "failed", "number": 5}])
         self.assertEqual(board.ticket_state(st, False, [{"status": "failed"}]), "failed")
         st = board.stations(journey([run(1, "build", "done")]), [{"status": "closed", "number": 5}])

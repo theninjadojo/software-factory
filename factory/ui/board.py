@@ -41,7 +41,7 @@ TICKET_TONE = {"needs": "wait", "working": "run", "prs": "run", "failed": "fail"
 ORDER = {"needs": 0, "working": 1, "failed": 2, "prs": 3, "done": 4}
 _RUN_AT = {"analyst": "analyst", "designer": "designer", "architect": "architect", "build": "build", "review": "review",
            "ci": "ci", "conflicts": "pr"}
-_STEP = {"done": "done", "running": "run", "queued": "run", "failed": "fail", "waiting": "wait"}
+_STEP = {"done": "done", "running": "run", "queued": "none", "failed": "fail", "waiting": "wait"}   # queued: interrupted or requeued, not running
 
 
 def secs(s) -> str:
@@ -82,9 +82,9 @@ def stations(j: dict, prs: list[dict] = ()) -> dict:
         st["route"] = "done"
     for p in prs:
         status = p.get("status") or ""
-        st["pr"] = "done" if status == "closed" else "run" if st["pr"] != "done" else "done"
+        st["pr"] = "done"                                   # opened; whether it is merged yet shows on the ticket, not as work in progress
         if st["ci"] in ("none", "done", "run"):
-            st["ci"] = {"failed": "fail", "passed": "done", "closed": "done"}.get(status, "run")
+            st["ci"] = CI_STATE.get(status, "done")
     # A station can only be finished if the ticket got past it: fill the gaps behind the furthest station reached.
     ids = [sid for sid, _ in STATIONS]
     last = max((i for i, sid in enumerate(ids) if st[sid] != "none"), default=-1)
@@ -92,6 +92,11 @@ def stations(j: dict, prs: list[dict] = ()) -> dict:
         if st[sid] == "none" and sid in ("poll", "classify", "route"):
             st[sid] = "done"
     return st
+
+
+CI_STATE = {"watching": "run", "failed": "fail", "timed-out": "fail"}      # passed, no-ci and closed: nothing left to run
+CI_WORD = {"watching": "checks running", "passed": "checks passed, waiting to merge", "no-ci": "no checks, waiting to merge",
+           "failed": "checks failing", "timed-out": "checks timed out", "closed": "closed"}
 
 
 def current(st: dict) -> str | None:
@@ -169,14 +174,18 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
         if key in seen:
             continue
         seen.add(key)
-        out.append(_one(db, t, by_ticket.get(key, []), need.get(key), titles.get(key), now))
+        out.append(_one(db, t, by_ticket.get(key, []), need.get(key), titles.get(key), now, needs_rows is not None))
     out.sort(key=lambda r: (ORDER[r["state"]], -r["when"]))
     return out
 
 
-def _one(db, t: dict, prs: list, need, title, now: float) -> dict:
+def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -> dict:
+    """known: GitHub has been read, so a ticket is waiting for a person only if it says so (the database's record of questions
+    asked or a person called can be out of date: answered on GitHub, or the issue closed)."""
     j = dbm.journey(db, t["repo"], int(t["issue"]), now)
     st = stations(j, prs)
+    if known and need is None:
+        st = {k: ("done" if v == "wait" else v) for k, v in st.items()}
     state = ticket_state(st, need is not None, prs)
     at = current(st)
     last = max([s["finished"] or s["started"] for s in j["steps"]] + [p.get("updated") or 0 for p in prs] + [t.get("decided_at") or 0])
@@ -193,7 +202,8 @@ def row_for(db, repo: str, issue: int, needs_rows=None, titles: dict | None = No
         title = next((x["title"] for x in dbm.tickets(db, 500) if x["repo"] == repo and x["issue"] == issue), None)
     except Exception:
         prs, title = [], None
-    return _one(db, {"repo": repo, "issue": issue, "title": title, "detail": "", "decided_at": 0}, prs, need, (titles or {}).get((repo, issue)), now)
+    return _one(db, {"repo": repo, "issue": issue, "title": title, "detail": "", "decided_at": 0}, prs, need, (titles or {}).get((repo, issue)), now,
+                needs_rows is not None)
 
 
 def ticket_extras(db, repo: str, issue: int, j: dict) -> tuple[list, list, list, bool]:
@@ -229,7 +239,7 @@ def _why(state: str, j: dict, prs: list, need, t: dict, at, now: float) -> str:
         return f'{LABEL.get(at or "", "A step")} failed' + (f": {why[:70]}" if why else "")
     if state == "prs" and prs:
         p = next(p for p in prs if (p.get("status") or "") != "closed")
-        return f'PR #{int(p["number"])} · CI {p.get("status") or "pending"}'
+        return f'PR #{int(p["number"])} · {CI_WORD.get(p.get("status") or "", "checks pending")}'
     detail = plain((t.get("detail") or "").rsplit(";", 1)[-1])
     return detail[:90] or ("Merged" if prs else "Finished")
 
@@ -569,7 +579,7 @@ SNAKE = ("poll", "classify", "route", "analyst", "designer", "architect", "build
 def floor_stations(rows: list[dict]) -> dict:
     """{station: {"state", "refs", "count"}}: the open tickets at each station now."""
     out = {sid: {"state": "none", "refs": [], "count": 0} for sid, _ in STATIONS}
-    rank = {"wait": 3, "run": 2, "fail": 1, "none": 0}
+    rank = {"wait": 4, "run": 3, "fail": 2, "done": 1, "none": 0}
     for r in rows:
         if r["state"] == "done" or not r["at"]:
             continue
@@ -587,7 +597,7 @@ def snake(fl: dict) -> str:
     out = ""
     for i, sid in enumerate(SNAKE):
         o = fl[sid]
-        word = {"none": "Idle"}.get(o["state"], STATE_WORD[o["state"]])
+        word = "To merge" if sid == "pr" and o["state"] == "done" else {"none": "Idle"}.get(o["state"], STATE_WORD[o["state"]])
         out += (f'<a class="sd-mach p{i} {o["state"]}" href="/tickets?{esc(_qs(stage="all", at=sid))}" aria-label="{esc(LABEL[sid])}: {int(o["count"])} ticket(s), {esc(word)}">'
                 f'<span class="sd-mtop">{_svg(sid)}<b class="mono">{int(o["count"])}</b></span><strong>{esc(LABEL[sid])}</strong>'
                 f'<span class="sd-mstate">{esc(word)}</span><span class="mono muted sd-refs">{esc(" · ".join(o["refs"][:3]))}</span></a>')

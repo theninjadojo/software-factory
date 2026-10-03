@@ -183,6 +183,30 @@ class Inline(UiCase):
         self.assertEqual(rows[0]["st"].stage, "architect")
         L._needs_cache.update(at=0.0, rows=None)
 
+    def test_waiting_tickets_older_than_the_first_page_are_fetched_by_number(self):
+        from factory.ui import labels as L
+        L._needs_cache.update(at=0.0, rows=None)
+        L._logins.clear()
+        gh = mock.MagicMock()
+        gh.login.return_value = "bot"
+        gh.issues.return_value = ([{"number": 300, "title": "New", "state": "open", "labels": []}], True)       # page 1 is full of newer items
+        old = {19: {"number": 19, "title": "Old one", "state": "open", "labels": []}, 7: {"number": 7, "title": "Closed", "state": "closed", "labels": []}}
+        gh.get_issue.side_effect = lambda repo, n: old[n]
+        h = mock.MagicMock()
+        h.app.cfg.return_value = mock.MagicMock(repos=[REPO])
+        h.app.ro_db.return_value = self.app.ro_db()
+        with mock.patch("factory.ui.labels._gh", return_value=gh), \
+             mock.patch("factory.ui.labels.dbm.questions_waiting", return_value={19, 7}), \
+             mock.patch("factory.ui.labels.actions_for", return_value=("", [])), \
+             mock.patch("factory.ui.labels.Q.from_comments", side_effect=lambda c, me: c), \
+             mock.patch("factory.ui.labels.Q.latest", side_effect=lambda c: Q.StageQuestions("architect", [_Q1])), \
+             mock.patch.object(gh, "issue_comments", side_effect=lambda repo, n: n):
+            rows = L.needs_you(h)
+        self.assertEqual([r["issue"] for r in rows], [19])                         # found by number; the closed one is dropped
+        self.assertEqual(sorted(c.args[1] for c in gh.get_issue.call_args_list), [7, 19])
+        self.assertEqual(L.titles_cached()[(REPO, 19)], "Old one")
+        L._needs_cache.update(at=0.0, rows=None)
+
 
 def many(n):
     return Q.StageQuestions("architect", [Q.Question(f"q{i}", f"Question {i}?", (("a", "A"), ("b", "B")), "a", "why", Q.PERSON) for i in range(1, n + 1)])
