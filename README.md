@@ -196,10 +196,10 @@ FACTORY_WORKERS=1 FACTORY_WORKER_NAME=my-mac FACTORY_WORKER_CHECKS="your-org/app
 docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml ui python3 -m factory.ctl workers add my-mac   # another token later
 ```
 
-This adds `[workers]` to `config/config.toml`, sets `COMPOSE_PROFILES=workers` in `.env` (so `docker compose up -d` and `update.sh` include the worker
-API) and prints the token once. The API listens on `127.0.0.1:8788`: reach it from the worker with an SSH tunnel (`ssh -L 8788:127.0.0.1:8788 host`), a
+This adds `[workers]` to `config/config.toml` and prints the token once. The UI starts the worker API by itself whenever workers are enabled
+(turning them on under **Settings → Workers** is enough). The API listens on `127.0.0.1:8788`: reach it from the worker with an SSH tunnel (`ssh -L 8788:127.0.0.1:8788 host`), a
 VPN or a TLS proxy. Checks can also be edited in the UI under **Settings → Workers**; the **Workers** page shows who is online and every job's log.
-Native installs use `deploy/systemd/factory-workers.service` and `python3 -m factory.ctl workers add`.
+Native installs: enable workers in the UI or `config.toml`, and add tokens with `python3 -m factory.ctl workers add`.
 
 **2. On the worker machine** (use a dedicated unprivileged account: a recipe runs agent-written code):
 

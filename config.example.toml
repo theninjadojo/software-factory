@@ -202,7 +202,7 @@ bypass_label = "factory:skip-mockup"
 
 # Verification workers: a machine you own (a Mac, a networked Linux box) that checks an agent's patch BEFORE anything is pushed, using
 # what the sandbox lacks (Xcode, an emulator, the network for `npm ci`). Pull-based; recipes are defined on the worker, never here.
-# Setup: python3 -m factory.ctl workers add my-mac, run factory-workers.service, then worker/worker.py on the machine. docs/workers.md
+# Setup: enable this (or Settings -> Workers in the UI, which then starts the worker API itself), add a worker, run worker/worker.py there. docs/workers.md
 # [workers]
 # enabled = true
 # listen = "127.0.0.1:8788"                           # the worker API; put TLS or a VPN / SSH tunnel in front of it

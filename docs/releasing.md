@@ -56,8 +56,8 @@ It creates `./shikumi-worker`, downloads `shikumi-worker.tar.gz` and runs `scrip
 a launchd or systemd user service, and a self-check). It is non-interactive when you pass `FACTORY_URL`, `WORKER_TOKEN` and `WORKER_RECIPES`.
 Update with `./scripts/update-worker.sh [vX.Y.Z]`: it refuses while a job is running, replaces `worker/` and `sandbox/`, pulls the matching
 `shikumi-android` image, restarts, runs `worker.py --check`, and **rolls back by itself** if that fails. `worker.toml`, `secrets/` and `work/` are never
-touched. On the factory host, `FACTORY_WORKERS=1 ./scripts/setup.sh` turns the worker API on and makes a token; `docker compose up -d` and
-`update.sh` then include it (they use `COMPOSE_PROFILES=workers` in `.env`). See [workers.md](workers.md).
+touched. On the factory host, `FACTORY_WORKERS=1 ./scripts/setup.sh` turns workers on and makes a token; the UI then runs the worker API
+itself (`update.sh` removes the separate `workers` container older releases used). See [workers.md](workers.md).
 
 ## What a release carries (and what it needs from you)
 

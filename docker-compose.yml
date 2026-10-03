@@ -48,8 +48,10 @@ services:
     command: ["python3", "-m", "factory.ui", "--config", "/etc/factory/config.toml", "--listen", "0.0.0.0:8787"]
     environment:
       FACTORY_UI_ALLOWED_HOSTS: ${FACTORY_UI_ALLOWED_HOSTS:-}
+      FACTORY_WORKERS_LISTEN: 0.0.0.0:8788           # the UI starts the worker API itself while [workers] enabled = true (docs/workers.md)
     ports:
       - "${FACTORY_UI_BIND:-127.0.0.1}:${FACTORY_UI_PORT:-8787}:8787"
+      - "${FACTORY_WORKERS_BIND:-127.0.0.1}:${FACTORY_WORKERS_PORT:-8788}:8788"   # nothing answers here until workers are turned on
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=3).status == 200 else 1)"]
       interval: 30s
@@ -57,17 +59,6 @@ services:
       - ./config:/etc/factory                      # writable: the UI saves config.overrides.toml here
       - ${FACTORY_HOME:-/srv/factory}/secrets:${FACTORY_HOME:-/srv/factory}/secrets   # write-only credential entry
       - ${FACTORY_HOME:-/srv/factory}/state:${FACTORY_HOME:-/srv/factory}/state
-
-  workers:        # the worker API for verification workers (docs/workers.md). Off unless you ask: `docker compose --profile workers up -d`
-    <<: *common
-    profiles: ["workers"]
-    command: ["python3", "-m", "factory.workerapi", "--config", "/etc/factory/config.toml", "--listen", "0.0.0.0:8788"]
-    ports:
-      - "${FACTORY_WORKERS_BIND:-127.0.0.1}:${FACTORY_WORKERS_PORT:-8788}:8788"
-    volumes:
-      - ./config:/etc/factory:ro
-      - ${FACTORY_HOME:-/srv/factory}/secrets:${FACTORY_HOME:-/srv/factory}/secrets:ro   # the worker tokens (create with factory.ctl workers add)
-      - ${FACTORY_HOME:-/srv/factory}/state:${FACTORY_HOME:-/srv/factory}/state          # the job queue lives in the factory database
 
   sandbox-image:  # build-only: `docker compose --profile build build` produces factory-agent:latest
     build: ./sandbox

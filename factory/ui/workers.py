@@ -11,6 +11,8 @@ from .views import badge, csrf_field, dur, esc, ago, ticket_link, ts
 
 INSTALL_URL = "https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh"
 
+NOT_RUNNING = ("The UI starts it within a few seconds of workers being turned on; if this stays, the UI's log says why "
+               "(for example, a [workers] setting it cannot use).")
 JOB_BADGE = {"passed": "good", "queued": "warn", "claimed": "warn", "failed": "bad", "error": "bad", "cancelled": ""}
 
 
@@ -48,8 +50,7 @@ def created_page(cfg, name: str, token: str, recipes: str) -> str:
     port = cfg.workers.listen.rpartition(":")[2]
     up = api_up(cfg.workers.listen)
     status = (badge("running", "good") + f' the worker API answers on <code>{esc(cfg.workers.listen)}</code>.' if up else
-              badge("not running", "bad") + f' nothing answers on <code>{esc(cfg.workers.listen)}</code>. Start the worker API service on this host '
-              '(<code>factory-workers.service</code>, or <code>docker compose up -d</code> with the <code>workers</code> profile).')
+              badge("not running", "bad") + f' nothing answers on <code>{esc(cfg.workers.listen)}</code> yet. ' + NOT_RUNNING)
     cmd = install_command(cfg.workers.listen, token, recipes)
     return (f'<h2>Worker {esc(name)} created</h2><p><strong>Copy this now: the token is shown once.</strong></p>'
             f'<p>Worker API: {status}</p>'
@@ -88,7 +89,7 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
                       f"<tbody>{rows}</tbody></table>")
         else:
             online = '<h2>Workers</h2><p class="muted">No worker has connected yet. Add one below.</p>'
-        online += add_form(csrf) + ("" if api_up(w.listen) else f'<p class="muted">{badge("not running", "bad")} the worker API is not answering on <code>{esc(w.listen)}</code>; start <code>factory-workers.service</code>.</p>')
+        online += add_form(csrf) + ("" if api_up(w.listen) else f'<p class="muted">{badge("not running", "bad")} the worker API is not answering on <code>{esc(w.listen)}</code>. {NOT_RUNNING}</p>')
     jobs_html = ""
     if recent:
         rows = "".join(

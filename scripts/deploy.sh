@@ -35,8 +35,8 @@ if [ "$1" = "--image" ]; then podman build -q -t factory-agent -f sandbox/Docker
 systemctl --user restart factory.service
 # The UI runs no agents, so restarting it is always safe; without this it keeps serving the old code.
 if systemctl --user is-enabled factory-ui.service >/dev/null 2>&1; then systemctl --user restart factory-ui.service; fi
-# The worker API likewise runs no agents; restart it only if it is installed.
-if systemctl --user is-enabled factory-workers.service >/dev/null 2>&1; then systemctl --user restart factory-workers.service; fi
+# The UI now runs the worker API itself: retire the separate unit from older installs so the two do not fight over the port.
+if systemctl --user is-enabled factory-workers.service >/dev/null 2>&1; then systemctl --user disable --now factory-workers.service; fi
 sleep 8
 systemctl --user is-active factory-proxy.service factory.service factory-ui.service
 journalctl --user -u factory.service --since "-12s" --no-pager | grep -v "systemd\|podman\[" | cut -c1-200
