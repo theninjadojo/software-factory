@@ -84,39 +84,60 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 
 ### You will need
 
+- A Linux host with **Docker and the compose plugin** (or Podman for the native install), plus `curl` and `python3`.
 - A **GitHub account for the factory** (a bot account is best, so PRs aren't authored as you) with write access to your
   repos, and a **fine-grained token** for it: Contents, Issues and Pull requests *read and write*, Metadata *read*; add
   **Actions** *read* for the CI feedback (Commit statuses *read* is optional; the Checks permission is not needed). No Workflows, no Administration.
 - **Model credentials** for the agent: `ANTHROPIC_API_KEY` (the supported route for unattended use) or a Claude
   subscription token from `claude setup-token` (see [caveats](#limits-and-honest-caveats)).
 - Optional: a **Telegram bot** (BotFather) and your numeric Telegram id; an **OpenRouter key** for Jev.
-- A container engine: **Podman** (recommended) or **Docker**.
 
-### Install from a release (no git, no build)
+### Option 1: install from a release (recommended; no git, no build)
 
 ```bash
 curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install.sh | bash
 ```
 
-Then update any time with `./scripts/update.sh` (rolls back if the new version does not start). See [docs/releasing.md](docs/releasing.md).
+This creates `./shikumi`, downloads the release files, pulls the prebuilt images (`ghcr.io/theninjadojo/shikumi*`) and runs
+`scripts/setup.sh`, which asks for your repos, GitHub token and model key, sets the UI password, creates the labels in your repos
+and starts everything in **dry-run**. It is non-interactive when you pass `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`,
+`FACTORY_REPOS="org/a org/b"` and `FACTORY_UI_PASSWORD`.
 
-### Or from source: one script (Docker)
+This needs the repository's release files and the four container packages to be readable by you: public, or you are signed in to
+GitHub and `ghcr.io`. If the project is private, use option 2.
+
+### Option 2: from source (Docker)
 
 ```bash
-git clone <this repo> && cd software-factory
-./scripts/setup.sh      # asks for your repos, GitHub token and model key; builds the images; sets the UI password; creates the labels; starts in dry-run
+git clone https://github.com/theninjadojo/software-factory && cd software-factory
+./scripts/setup.sh      # the same setup, but builds the four images from source
 ```
 
-It is non-interactive when you pass `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, `FACTORY_REPOS="org/a org/b"` and `FACTORY_UI_PASSWORD`. The manual steps it performs are below.
-Labels can be (re)created any time with `python3 -m factory.ctl labels [owner/repo ...]`.
-
-### Docker, step by step
+### Then
 
 ```bash
-git clone <this repo> && cd software-factory
+docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml orchestrator python3 -m factory.ctl doctor   # checks the install
+```
+
+Open the UI at http://127.0.0.1:8787 (remote access: [docs/ui.md](docs/ui.md)) and follow [docs/first-ticket.md](docs/first-ticket.md).
+Setting `dry_run = false` (in the UI or `config/config.toml`) and `docker compose up -d` makes it live.
+
+### Updating
+
+| Installed from | Update with |
+|---|---|
+| a release | `./scripts/update.sh` (latest) or `./scripts/update.sh v0.2.0`. Refuses while an agent run is in flight, rolls back if the new version does not start. See [docs/releasing.md](docs/releasing.md). |
+| source | `git pull && docker compose --profile build build && docker compose up -d` |
+| native (Podman) | `scripts/deploy.sh user@host [--image]` |
+
+The UI shows a banner when a newer release exists (`[updates] check = false` turns that off). `python3 -m factory.ctl version` prints what is running.
+
+### Docker, step by step (what `setup.sh` does)
+
+```bash
 sudo mkdir -p /srv/factory/{secrets,state,work,run} && sudo chown -R 1000:1000 /srv/factory
 
-mkdir config && cp config.example.toml config/config.toml   # edit: engine = "docker", your repos/projects (or just run ./scripts/setup.sh)
+mkdir config && cp config.example.toml config/config.toml   # edit: engine = "docker", your repos/projects
 cp .env.example .env                   # set DOCKER_GID=$(stat -c %g /var/run/docker.sock)
 
 # secrets: files, 0600, never in the repo (use `read -rs` so they stay out of shell history)
@@ -124,14 +145,13 @@ read -rsp "GitHub token: " T; printf %s "$T" > /srv/factory/secrets/github_token
 printf 'ANTHROPIC_API_KEY=%s\n' "$KEY" > /srv/factory/secrets/claude.env
 chmod 600 /srv/factory/secrets/*
 
-docker compose --profile build build   # the orchestrator image and the agent sandbox image
+docker compose --profile build build   # four images: orchestrator, agent sandbox, design-preview renderer, screen checker
 docker compose run --rm ui python3 -m factory.ui --config /etc/factory/config.toml --set-password   # choose the UI password
+docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml orchestrator python3 -m factory.ctl labels   # create the labels
 docker compose up -d                   # starts in dry-run: it logs decisions and acts on nothing
-# the UI is now at http://127.0.0.1:8787 (see docs/ui.md for remote access)
 docker compose logs -f orchestrator
 ```
 
-When the dry run looks right, go live from the UI (or set `dry_run = false` in `config/config.toml`) and `docker compose up -d` again.
 **Read the security note in `docker-compose.yml`:** on a rootful Docker the engine socket the orchestrator uses is
 root-equivalent on the host. Prefer rootless Docker, or the native install below.
 
@@ -142,9 +162,9 @@ full layout, the unit files in `deploy/systemd/`, and `scripts/deploy.sh` for de
 
 ### First run
 
-The step-by-step version, with what you should see at each step, is [docs/first-ticket.md](docs/first-ticket.md). `python3 -m factory.ctl doctor` checks your install.
+The step-by-step version, with what you should see at each step, is [docs/first-ticket.md](docs/first-ticket.md).
 
-1. Create the labels in each repo (`factory:ready`, `factory:analyze`, `factory:design`, `factory:architect`, `factory:auto`).
+1. The labels (`factory:ready`, `factory:analyze`, `factory:design`, `factory:architect`, `factory:auto` and the rest) are created by `setup.sh`; to add them to another repo, run `python3 -m factory.ctl labels owner/repo`.
 2. Open a small, low-risk issue and apply `factory:analyze`. A document should appear on the ticket.
 3. Apply `factory:ready` to build it. A PR should appear within a few minutes.
 
@@ -172,7 +192,7 @@ Everything is in one TOML file (plus the optional `config.overrides.toml` the UI
   protection or rulesets requiring review are the real control.
 - **A hijacked agent can still write bad code or misleading documents.** Review every PR. See SECURITY.md.
 - **Jev's Decisions API is an alpha endpoint** and may change; the classifier degrades to labels on any error.
-- One orchestrator, one task at a time.
+- One orchestrator; it runs up to `[runner] max_parallel` tasks at once (default 1).
 
 ## Roadmap
 
