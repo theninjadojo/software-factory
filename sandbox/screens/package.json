@@ -1,0 +1,10 @@
+{
+  "name": "factory-screens",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "playwright": "1.49.1",
+    "pixelmatch": "6.0.0",
+    "pngjs": "7.0.0"
+  }
+}

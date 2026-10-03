@@ -86,3 +86,15 @@ container (`sandbox/render/`: headless Chromium, no network, read-only, no capab
 checks the PNG (signature, size limits), commits it as `<design dir>/previews/<name>.png` on the same draft-PR branch, lists it in the PR
 body, and links it in the designer's ticket comment and on the run/pipeline pages (all through `designfiles.link_ok`). A missing renderer
 image, a crash or a timeout only means no preview: the canvases are still published.
+
+## Screen verification
+
+For a repo with `[[screens.pages]]` configured, `runner.run_task` runs `screens.verify` after the agent's patch is validated and applied
+to the clean clone, before anything is pushed. Screens are listed in trusted config, never in the repo. Two sealed containers of the
+`sandbox/screens/` image (no network, read-only, no capabilities) do the work: `shoot.js` serves a copy of the repo (no `.git`) on
+127.0.0.1 and screenshots each page at each viewport, then `compare.js`, which sees only PNGs, diffs them against the baselines committed
+under `screens.baseline_dir`. The orchestrator validates every PNG (`render.png_ok`, same size as its baseline) and re-judges the numeric
+verdict against `max_diff_ratio`. It fails closed: a missing image, baseline or screenshot fails the run and nothing is pushed; diff PNGs
+are kept on the host under `<work_dir>/../artifacts/screens/`. A patch that changes baseline images opens a draft PR with the
+`screens.label` label so a person reviews them; in a CI fix round it is rejected. Not covered yet: an automatic fix round on mismatch, a
+`ctl` command to create baselines, and the screens tool in the agent image.
