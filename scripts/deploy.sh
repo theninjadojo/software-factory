@@ -7,7 +7,8 @@
 set -euo pipefail
 TARGET="${1:?usage: deploy.sh user@host [--image]}"; REBUILD="${2:-}"
 cd "$(dirname "$0")/.."
-tar -czf /tmp/sf-deploy.tgz factory tests sandbox deploy worker config.example.toml VERSION
+# scripts/ and .github/ go too: the tests that run on the host before the restart check the install and release scripts.
+tar -czf /tmp/sf-deploy.tgz factory tests sandbox deploy worker scripts .github config.example.toml .env.example VERSION
 scp -q /tmp/sf-deploy.tgz "$TARGET:/tmp/sf-deploy.tgz"; rm -f /tmp/sf-deploy.tgz
 ssh "$TARGET" "cat > /tmp/sf-deploy.sh && chmod 755 /tmp/sf-deploy.sh && sudo -n -u factory /tmp/sf-deploy.sh $REBUILD; rm -f /tmp/sf-deploy.sh /tmp/sf-deploy.tgz" <<'REMOTE'
 #!/bin/bash
@@ -26,8 +27,8 @@ except Exception:
 "); echo "runs marked running: $DBRUNS"
 [ "$RUNNING" = "0" ] && [ "$DBRUNS" = "0" ] || { echo "ABORT: an agent run is in flight; try again when it finishes"; exit 1; }
 mkdir state/fd && tar -C state/fd -xzf /tmp/sf-deploy.tgz
-rm -rf app/factory app/tests app/sandbox app/deploy app/worker
-cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/deploy state/fd/worker state/fd/config.example.toml state/fd/VERSION app/ && rm -rf state/fd
+rm -rf app/factory app/tests app/sandbox app/deploy app/worker app/scripts app/.github
+cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/deploy state/fd/worker state/fd/scripts state/fd/.github state/fd/config.example.toml state/fd/.env.example state/fd/VERSION app/ && rm -rf state/fd
 cd app
 if ! python3 -m unittest discover -s tests > /tmp/sf-tests.log 2>&1; then tail -25 /tmp/sf-tests.log; echo 'TESTS FAILED: not restarting (the new code is on disk but the running service is unchanged)'; exit 1; fi
 tail -3 /tmp/sf-tests.log
