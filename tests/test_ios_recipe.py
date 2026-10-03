@@ -78,8 +78,10 @@ class IosRecipe(unittest.TestCase):
         code, out, calls = self.run_recipe()
         self.assertEqual(code, 0, out)
         v = self.verbs(calls)
-        order = [v.index(x) for x in ("clone", "run", "ip")] + [v.index("exec")]
+        # `tart run` is started in the background, so its log line can land after `tart ip`: only the real dependencies are ordered
+        order = [v.index(x) for x in ("clone", "ip", "exec")]
         self.assertEqual(order, sorted(order))
+        self.assertGreater(v.index("run"), v.index("clone"))
         self.assertEqual(v[-2:], ["stop", "delete"])
         self.assertIn("tart clone shikumi-ios shikumi-job-", calls[next(i for i, c in enumerate(calls) if " clone " in c)])
         xc = next(c for c in calls if c.startswith("XCODE:"))
