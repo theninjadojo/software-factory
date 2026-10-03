@@ -47,6 +47,9 @@ CONFLICT_MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
 IDENT = ["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
 
 
+API_ERROR = re.compile(r"API Error: 5\d\d|overloaded_error|\bapi_error\b|internal server error|service unavailable", re.I)
+
+
 @dataclass
 class RunResult:
     status: str          # "pr" | "stage" | "no-change" | "rejected" | "failed" | "rate-limited" | "needs-person" (merge only)
@@ -57,6 +60,7 @@ class RunResult:
     notes: str = ""       # anything worth telling a person (for example design files that were dropped)
     images: list = field(default_factory=list)  # screenshots of what was built: {kind: built|diff, name, png}, kept for the UI
     screen_failure: dict | None = None          # a failed screen check: {text, diffs: {id: png}, built: {id: png}}, for one fix round
+    transient: bool = False   # failed on a model-side API error (5xx/overloaded): worth trying a fallback model
 
 
 def bad_path(p: str, rn: RunnerCfg) -> str | None:
@@ -175,6 +179,15 @@ def push_factory_branch(base: Path, branch: str, env: dict) -> None:
 def _neutral(text: str) -> str:
     """Stop untrusted text from closing the XML-ish wrappers the prompt uses."""
     return text.replace("</", "<​/")
+
+
+def looks_unavailable(text: str, code: str) -> bool:
+    """A failed run whose log tail shows a model-side API error (5xx, overloaded). Gated like looks_rate_limited."""
+    return bool(API_ERROR.search(text[-2000:])) and (code != "0" or len(text.strip()) < 400)
+
+
+def wants_fallback(res: "RunResult") -> bool:
+    return res.status == "rate-limited" or (res.status == "failed" and res.transient)
 
 
 def looks_rate_limited(text: str, code: str) -> bool:
@@ -494,7 +507,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             if code == "?":
                 return RunResult("failed", f"sandbox did not start (podman exit {proc.returncode}): {proc.stderr[-400:]}")
             if code != "0" or not text.strip():
-                return RunResult("failed", f"{role} exited {code}. Log tail: {text[-600:]}")
+                return RunResult("failed", f"{role} exited {code}. Log tail: {text[-600:]}", transient=looks_unavailable(text, code))
             result = RunResult("stage", f"{role} document ready", output=text.strip(), images=sink_images)
             if want_design:
                 made = {r.repo: d / "out" / f"{names[r.repo]}.diff" for r in project.repos
@@ -515,7 +528,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             if code == "?":
                 return RunResult("failed", f"sandbox did not start (podman exit {proc.returncode}): {proc.stderr[-400:]}")
             if code != "0":
-                return RunResult("failed", f"agent exited {code}. Log tail: {text[-600:]}")
+                return RunResult("failed", f"agent exited {code}. Log tail: {text[-600:]}", transient=looks_unavailable(text, code))
             return RunResult("no-change", f"agent produced no changes. Log tail: {text[-600:]}")
         summary = text[-3000:].replace(FENCE, "'" * 3)
         if merge_base and (stray := [r for r in patches if not todo.get(r)]):

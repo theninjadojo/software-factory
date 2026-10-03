@@ -13,6 +13,7 @@ class Route:
     harness: str
     model: str
     effort: str
+    fallback_models: tuple[str, ...] = ()   # admin-set; tried in order on the same harness and effort when a model is unavailable
 
 
 CLAUDE_COMMAND = ('claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions '
@@ -55,6 +56,7 @@ class Role:
     harness: str = "claude-code"
     design_files: bool = False           # designer only: also write static design mockups into the repo
     design_dir: str = "docs/design"      # where they go (design/ is often git-ignored: it holds local pulls of the design project)
+    fallback_models: tuple[str, ...] = ()
 
 
 DEFAULT_ROLES = (
@@ -104,6 +106,7 @@ class ReviewCfg:
     model: str = "sonnet"
     effort: str = "high"
     harness: str = "claude-code"
+    fallback_models: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -410,6 +413,32 @@ def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None,
             raise ValueError(f"{where} is not a valid model id (letters, digits and . _ : / @ + [ ] - only, up to 200 characters)")
 
 
+MAX_FALLBACKS = 3
+
+
+def _tuples(d: dict) -> dict:
+    return {k: (tuple(v) if isinstance(v, list) else v) for k, v in d.items()}
+
+
+def _check_fallbacks(routes: dict, roles: tuple, review: "ReviewCfg | None" = None) -> None:
+    items = [(f"routing.{k}", r) for k, r in routes.items()] + [(f"roles.{r.name}", r) for r in roles]
+    if review is not None:
+        items.append(("review", review))
+    for where, r in items:
+        fb, key = r.fallback_models, f"{where}.fallback_models"
+        if not isinstance(fb, tuple) or not all(isinstance(m, str) and MODEL_RE.fullmatch(m) for m in fb):
+            raise ValueError(f"{key} must be a list of valid model ids")
+        if len(fb) > MAX_FALLBACKS:
+            raise ValueError(f"{key} may hold at most {MAX_FALLBACKS} models")
+        if len(set(fb)) != len(fb) or r.model in fb:
+            raise ValueError(f"{key} must not repeat a model or include the primary model")
+
+
+def chain(route) -> list:
+    """The primary route followed by its fallbacks (same harness and effort). Admin configuration only."""
+    return [route] + [dataclasses.replace(route, model=m, fallback_models=()) for m in route.fallback_models]
+
+
 def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "ReviewCfg | None" = None,
                        pm: "PmCfg | None" = None) -> None:
     uses = [(f"routing.{k}", r.harness) for k, r in routes.items()] + [(f"roles.{r.name}", r.harness) for r in roles]
@@ -522,7 +551,7 @@ def load(path: str) -> Config:
 
 def parse(raw: dict) -> Config:
     g, gh = raw["general"], raw["github"]
-    routes = {k: Route(**v) for k, v in raw["routing"].items()}
+    routes = {k: Route(**_tuples(v)) for k, v in raw["routing"].items()}
     for level in ("low", "medium", "high"):
         if level not in routes:
             raise ValueError(f"routing.{level} missing")
@@ -542,7 +571,7 @@ def parse(raw: dict) -> Config:
                 repos.append(r.repo)
     runner_cfg = _runner(rn)
     harnesses = _harnesses(raw, runner_cfg)
-    roles = tuple(dataclasses.replace(r, **raw.get("roles", {}).get(r.name, {})) for r in DEFAULT_ROLES)
+    roles = tuple(dataclasses.replace(r, **_tuples(raw.get("roles", {}).get(r.name, {}))) for r in DEFAULT_ROLES)
     from .designfiles import valid_dir
     for r in roles:
         if not valid_dir(r.design_dir):
@@ -550,7 +579,7 @@ def parse(raw: dict) -> Config:
     conflicts = ConflictsCfg(**raw.get("conflicts", {}))
     if conflicts.max_attempts < 0 or not conflicts.label.strip():
         raise ValueError("conflicts.max_attempts must be 0 or more and conflicts.label must not be empty")
-    review = ReviewCfg(**raw.get("review", {}))
+    review = ReviewCfg(**_tuples(raw.get("review", {})))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
     mockups = MockupsCfg(**raw.get("mockups", {}))
@@ -567,6 +596,7 @@ def parse(raw: dict) -> Config:
         raise ValueError("pm.unblock_label must not be empty")
     screens = _screens(raw.get("screens", {}), repos)
     _check_models(routes, roles, review, pm)
+    _check_fallbacks(routes, roles, review)
     _check_harness_use(routes, roles, harnesses, review, pm)
     return Config(
         db_path=g["db_path"],

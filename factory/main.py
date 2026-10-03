@@ -13,7 +13,7 @@ from . import ci, conflicts, designfiles, mockups, pause, pm, runner, subtasks
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
-from .config import Config, Route, load, project_for, project_info, resource_warning
+from .config import Config, Route, chain, load, project_for, project_info, resource_warning
 from .events import event_enabled
 from .github import GitHub
 from .jev import JevClassifier
@@ -253,6 +253,23 @@ def design_pr_merged(gh: GitHub, previews: list[dict]) -> bool:
         return False
 
 
+def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route, c=None, stage: str | None = None, **kw):
+    """Run the task with the route's model, then with each admin-configured fallback while a model is unavailable (rate
+    limit or API error). Every attempt is its own run: fresh workspace, container, branch and `runs` row. The last result is
+    returned unchanged when the chain ends, so requeue/backoff/failure handling is as without fallbacks."""
+    models = chain(route)
+    for i, r in enumerate(models):
+        run_id, sink = begin_run(kind, repo, issue, r, c, stage), {}
+        res = runner.run_task(cfg, gh, repo, issue, r, sink=sink, **kw)
+        if i + 1 < len(models) and runner.wants_fallback(res):
+            res.detail = f"{res.detail} (falling back to {models[i + 1].model})"
+        end_run(run_id, res, sink)
+        if i + 1 == len(models) or not runner.wants_fallback(res):
+            return res, r
+        msg = f"{repo}#{issue['number']}: {r.model} unavailable ({res.status}); retrying with {models[i + 1].model}"
+        alert(msg, event="fallback")
+
+
 def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
              trigger_label: str | None = None, conn=None) -> runner.RunResult:
     """Build it: edit the repos in the sandbox and open PRs."""
@@ -272,16 +289,11 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         gh.comment(repo, num, why)
     alert(f"Starting {repo}#{num}: {issue['title'][:80]}\n{picked(route, c)}", event="started")
     claim(gh, repo, num, trigger_label, "implement")
-    run_id, sink = begin_run("build", repo, issue, route, c), {}
-    res = runner.run_task(cfg, gh, repo, issue, route, prior=prior, mockups=shown,
-                          comments=human_comments(gh, repo, num), sink=sink, answers=Q.summary(question_state(gh, repo, num)))
+    kw = dict(prior=prior, mockups=shown, comments=human_comments(gh, repo, num), answers=Q.summary(question_state(gh, repo, num)))
+    res, route = run_chain(cfg, gh, "build", repo, issue, route, c, **kw)
     if res.status == "failed" and getattr(res, "screen_failure", None):      # one fix round with the diffs, then it stays failed
-        end_run(run_id, res, sink)
-        emit("screens:retry", "the screens did not match the baselines: one fix round with the diffs", repo, num, run_id)
-        run_id, sink = begin_run("build", repo, issue, route, c), {}
-        res = runner.run_task(cfg, gh, repo, issue, route, prior=prior, mockups=shown, screen_retry=res.screen_failure,
-                              comments=human_comments(gh, repo, num), sink=sink, answers=Q.summary(question_state(gh, repo, num)))
-    end_run(run_id, res, sink)
+        emit("screens:retry", "the screens did not match the baselines: one fix round with the diffs", repo, num)
+        res, route = run_chain(cfg, gh, "build", repo, issue, route, c, screen_retry=res.screen_failure, **kw)
     gh.remove_label(repo, num, WORKING)
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, "implement")
@@ -365,16 +377,14 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                    trigger_label: str | None = None, chain: bool = False, conn=None) -> runner.RunResult:
     """Run an analyst, designer or architect and put its document on the ticket."""
     num, trigger_label = issue["number"], trigger_label or role.label
-    route = Route(role.harness, role.model, role.effort)
+    route = Route(role.harness, role.model, role.effort, role.fallback_models)
     alert(f"Starting {role.name}: {repo}#{num}: {issue['title'][:80]}\nAgent: {route.model}, effort {route.effort}"
           + (f"\nchosen by {c.source} (stage {c.stage}, confidence {c.stage_confidence:.2f})" if c and c.stage_confidence else ""), event="started")
     claim(gh, repo, num, trigger_label, role.name)
     comments = human_comments(gh, repo, num)
-    run_id, sink = begin_run("stage", repo, issue, route, c, role.name), {}
     before = question_state(gh, repo, num)
-    res = runner.run_task(cfg, gh, repo, issue, route, role=role.name, prior=stage_outputs(gh, repo, num), comments=comments, sink=sink,
-                          answers=Q.summary(before))
-    end_run(run_id, res, sink)
+    res, route = run_chain(cfg, gh, "stage", repo, issue, route, c, role.name, role=role.name, prior=stage_outputs(gh, repo, num),
+                           comments=comments, answers=Q.summary(before))
     gh.remove_label(repo, num, working_label(role.name))
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, role.name)
@@ -487,12 +497,10 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
         return None
     if not branch.startswith("factory/"):                     # never review (or check out) a branch the factory did not create
         return None
-    route = Route(cfg.review.harness, cfg.review.model, cfg.review.effort)
+    route = Route(cfg.review.harness, cfg.review.model, cfg.review.effort, cfg.review.fallback_models)
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
-    run_id, sink = begin_run("review", repo, issue, route, None, "reviewer"), {}
-    res = runner.run_task(cfg, gh, repo, issue, route, role="reviewer", prior=stage_outputs(gh, repo, num),
-                          comments=human_comments(gh, repo, num), fix_branch=branch, sink=sink, mockups=ticket_mockups(repo, num))
-    end_run(run_id, res, sink)
+    res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
+                           comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num))
     if res.status == "rate-limited":
         if trigger_label:
             requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
@@ -558,10 +566,8 @@ def run_fix(cfg: Config, gh: GitHub, repo: str, number: int, issue_repo: str, is
     if not branch.startswith("factory/") or pr["head"]["repo"]["full_name"] != repo:
         return False                                     # never touch a branch the factory did not create
     issue = gh.get_issue(issue_repo, issue_num)
-    run_id, sink = begin_run("fix", issue_repo, issue, cfg.routes["medium"]), {}
-    res = runner.run_task(cfg, gh, issue_repo, issue, cfg.routes["medium"], prior=stage_outputs(gh, issue_repo, issue_num),
-                          comments=human_comments(gh, issue_repo, issue_num), fix_branch=branch, failures=failures, sink=sink)
-    end_run(run_id, res, sink)
+    res, _ = run_chain(cfg, gh, "fix", issue_repo, issue, cfg.routes["medium"], prior=stage_outputs(gh, issue_repo, issue_num),
+                       comments=human_comments(gh, issue_repo, issue_num), fix_branch=branch, failures=failures)
     if res.status == "rate-limited":
         if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
             alert(f"Rate limited during a CI fix for {repo}#{number}; pausing.", event="rate_limit")
@@ -619,10 +625,8 @@ def resolve_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, lab
     route, outcomes = cfg.routes["medium"], []
     for branch, prs in groups.items():
         alert(f"Resolving merge conflicts: {repo}#{num} on {branch}, {len(prs)} PR(s)\nAgent: {route.model}, effort {route.effort}", event="started")
-        run_id, sink = begin_run("conflicts", repo, issue, route), {}
-        res = runner.run_task(cfg, gh, repo, issue, route, prior=stage_outputs(gh, repo, num), comments=human_comments(gh, repo, num),
-                              fix_branch=branch, merge_base={r: base for r, _, base, _, _ in prs}, sink=sink)
-        end_run(run_id, res, sink)
+        res, _ = run_chain(cfg, gh, "conflicts", repo, issue, route, prior=stage_outputs(gh, repo, num), comments=human_comments(gh, repo, num),
+                           fix_branch=branch, merge_base={r: base for r, _, base, _, _ in prs})
         if res.status == "rate-limited":
             requeue_rate_limited(cfg, gh, repo, num, label, "conflicts")          # the attempt is not counted
             return "rate-limited"

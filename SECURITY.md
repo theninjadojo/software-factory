@@ -10,6 +10,7 @@ anything that matters.
 |---|---|---|
 | Who can start work | A trigger label counts only if a user with write access applied it (read from the issue timeline, fail closed) | `tests/test_core.py`, `tests/test_roles.py` |
 | What the classifier decides | Typed answers validated against fixed sets; a fixed table turns them into a model and effort. Ticket text cannot name a model, a command or a path | `tests/test_jev.py` |
+| Fallback models | The fallback chain is admin configuration (`fallback_models`, same harness, at most 3); ticket text and the classifier cannot select, add or reorder it | `tests/test_fallback.py` |
 | What the agent can reach | Sandbox: no network (only a unix socket to an allowlist proxy), read-only root, no capabilities, non-root, memory/CPU/pid limits, no GitHub credentials, per-task workspace copies | `tests/test_runner.py` |
 | What the agent can send out | The proxy tunnels TLS only to allowlisted host names on 443 | `tests/test_runner.py` |
 | What the agent's output can do | It is data. Patches are size- and file-count-limited, must not touch protected paths (`.git`, `.github`, `.claude`, `.githooks`, `.agents`, `.husky`, `.mcp.json`, CODEOWNERS ...) or add symlinks/submodules, and are applied by the orchestrator to **pristine clones**. Git is never run on the agent's own `.git`, and hooks are disabled | `tests/test_runner.py` |

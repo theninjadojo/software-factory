@@ -13,7 +13,7 @@ EVENT_HELP = {
     "rate_limit": "A plan or API limit was hit", "pr_ready": "A pull request is ready", "stage_done": "An analyst, designer or architect document is on the ticket",
     "ci_result": "CI passed, or finished without a fix", "ci_fix": "CI failed and an agent fix round is starting", "recovery": "An interrupted run was requeued",
     "conflict": "A factory pull request conflicts with its base branch, or a conflict was resolved",
-    "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from Telegram",
+    "fallback": "A model was unavailable (limit or API error) and the next fallback model was tried", "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from Telegram",
     "info": "Anything else",
 }
 TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("pm", "Project manager"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts"), ("prompts", "Agent prompts")]
@@ -22,7 +22,7 @@ TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents")
 def _fmt(f: S.Field, v) -> str:
     if v is None:
         return ""
-    if f.kind in ("repos", "hosts"):
+    if f.kind in ("repos", "hosts", "models"):
         return "\n".join(v)
     if f.kind == "kv":
         return "\n".join(f"{k}={x}" for k, x in sorted(v.items()))
@@ -67,7 +67,7 @@ def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = Fal
         elif f.kind == "checks":
             have = set(submitted.getall(f.key)) if submitted is not None else set(value or [])
             control = " ".join(f'<label class="check"><input type="checkbox" name="{name}" value="{esc(c)}"{" checked" if c in have else ""}> {esc(c)}</label>' for c in f.choices)
-        elif f.kind in ("repos", "hosts", "kv"):
+        elif f.kind in ("repos", "hosts", "kv", "models"):
             control = f'<textarea id="{name}" name="{name}" rows="{max(3, min(8, len((value or "").splitlines()) + 1))}">{esc(value)}</textarea>'
         elif f.kind == "prompt":           # the newline after the tag is dropped by the browser, so a leading one in the value survives
             control = f'<textarea id="{name}" name="{name}" rows="6" maxlength="{S.PROMPT_MAX}">\n{esc(value)}</textarea>'

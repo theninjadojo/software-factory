@@ -9,8 +9,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, deep_merge, default_harnesses, load_raw,
-                      overrides_path, parse, prompt_problem)
+from ..config import (DEFAULT_ROLES, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, deep_merge,
+                      default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..tomlw import dumps
 
@@ -29,12 +29,15 @@ class SettingsError(Exception):
 class Field:
     key: str                 # dotted path in the config
     label: str
-    kind: str                # int float bool text select checks repos hosts kv prompt
+    kind: str                # int float bool text select checks repos hosts kv models prompt
     help: str = ""
     choices: tuple = ()
     lo: float | None = None
     hi: float | None = None
     danger: str = ""         # non-empty: changing it requires an explicit confirmation
+
+FALLBACK_HELP = ("Tried in order, on the same harness and effort, when the model hits a usage limit or an API error. "
+                 "One model id per line, up to 3; empty for none.")
 
 
 def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
@@ -44,7 +47,8 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
                 Field(f"roles.{r.name}.done_label", f"{r.name.title()}: done label", "text"),
                 Field(f"roles.{r.name}.model", f"{r.name.title()}: model", "text", "sonnet, opus, haiku (or a full model id)"),
                 Field(f"roles.{r.name}.effort", f"{r.name.title()}: effort", "select", choices=EFFORTS),
-                Field(f"roles.{r.name}.harness", f"{r.name.title()}: agent harness", "select", choices=harnesses)]
+                Field(f"roles.{r.name}.harness", f"{r.name.title()}: agent harness", "select", choices=harnesses),
+                Field(f"roles.{r.name}.fallback_models", f"{r.name.title()}: fallback models", "models", FALLBACK_HELP)]
         if r.name == "designer":
             out.append(Field("roles.designer.design_files", "Designer: write design mockup files", "bool",
                              "In a repo that has Claude Design canvases (*.dc.html), add static mockups on a draft PR and link them from the ticket."))
@@ -63,7 +67,8 @@ def _routing_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
     for tier in ("low", "medium", "high"):
         out += [Field(f"routing.{tier}.harness", f"{tier.title()} tier: agent harness", "select", choices=harnesses),
                 Field(f"routing.{tier}.model", f"{tier.title()} tier: model", "text"),
-                Field(f"routing.{tier}.effort", f"{tier.title()} tier: effort", "select", choices=EFFORTS)]
+                Field(f"routing.{tier}.effort", f"{tier.title()} tier: effort", "select", choices=EFFORTS),
+                Field(f"routing.{tier}.fallback_models", f"{tier.title()} tier: fallback models", "models", FALLBACK_HELP)]
     return out
 
 
@@ -116,6 +121,7 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("review.model", "Reviewer model", "text", "Use a different harness and model family from the builder for a genuinely independent opinion."),
         Field("review.effort", "Reviewer effort", "select", choices=EFFORTS),
         Field("review.harness", "Reviewer agent harness", "select", choices=("claude-code",)),
+        Field("review.fallback_models", "Reviewer: fallback models", "models", FALLBACK_HELP),
     ]),
     "pm": ("Project manager", [
         Field("pm.enabled", "Enable the project manager", "bool",
@@ -219,7 +225,8 @@ def default_for(key: str):
     if section == "ci":
         return getattr(CiCfg(), name, None)
     if section == "review":
-        return getattr(ReviewCfg(), name, None)
+        v = getattr(ReviewCfg(), name, None)
+        return list(v) if isinstance(v, tuple) else v
     if section == "conflicts":
         return getattr(ConflictsCfg(), name, None)
     if section == "prompts":
@@ -228,8 +235,10 @@ def default_for(key: str):
         return getattr(PmCfg(), name, None)
     if section == "roles":
         role, _, field = name.partition(".")
-        return next((getattr(r, field) for r in DEFAULT_ROLES if r.name == role), None)
-    return {"auto.label": "factory:auto", "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
+        v = next((getattr(r, field) for r in DEFAULT_ROLES if r.name == role), None)
+        return list(v) if isinstance(v, tuple) else v
+    return {"auto.label": "factory:auto", "routing.low.fallback_models": [], "routing.medium.fallback_models": [], "routing.high.fallback_models": [],
+            "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
             "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
@@ -325,6 +334,11 @@ def parse_value(f: Field, form: Form):
             if not vals or len(vals) > 50 or not all(HOST_RE.match(v) for v in vals):
                 raise ValueError
             return vals
+        if f.kind == "models":
+            vals = _lines(raw)
+            if len(vals) > MAX_FALLBACKS or len(set(vals)) != len(vals) or not all(MODEL_RE.fullmatch(v) for v in vals):
+                raise ValueError
+            return vals
         if f.kind == "kv":
             out = {}
             for line in _lines(raw):
@@ -339,6 +353,7 @@ def parse_value(f: Field, form: Form):
     hint = {"int": f"a whole number between {f.lo} and {f.hi}", "float": f"a number between {f.lo} and {f.hi}",
             "select": "one of " + ", ".join(f.choices), "checks": "at least one choice", "repos": "owner/name per line",
             "hosts": "valid host names, one per line, at least one", "kv": "label=kind per line, kind one of " + ", ".join(sorted(KINDS)),
+            "models": f"up to {MAX_FALLBACKS} distinct model ids, one per line (may be empty)",
             "text": "a short single-line value",
             "prompt": f"at most {PROMPT_MAX} characters, with no control characters other than line breaks and tabs"}.get(f.kind, "a valid value")
     raise ValueError(f"{f.label}: must be {hint}")
