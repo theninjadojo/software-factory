@@ -89,6 +89,8 @@ cat <<MSG
 Done. The factory is in DRY-RUN: it only logs what it would do.
   UI:    http://127.0.0.1:8787   (remote: ssh -L 8787:127.0.0.1:8787 <host>)
   Logs:  docker compose logs -f orchestrator
+Check the install:  docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml orchestrator python3 -m factory.ctl doctor
+Walkthrough: docs/first-ticket.md
 Next: open a small issue, put the label  factory:analyze  on it, and watch the log. When the decisions look right, switch
 dry_run off in the UI (Settings) or in config/config.toml, then  docker compose up -d.
 MSG

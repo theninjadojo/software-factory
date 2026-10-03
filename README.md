@@ -134,6 +134,8 @@ full layout, the unit files in `deploy/systemd/`, and `scripts/deploy.sh` for de
 
 ### First run
 
+The step-by-step version, with what you should see at each step, is [docs/first-ticket.md](docs/first-ticket.md). `python3 -m factory.ctl doctor` checks your install.
+
 1. Create the labels in each repo (`factory:ready`, `factory:analyze`, `factory:design`, `factory:architect`, `factory:auto`).
 2. Open a small, low-risk issue and apply `factory:analyze`. A document should appear on the ticket.
 3. Apply `factory:ready` to build it. A PR should appear within a few minutes.

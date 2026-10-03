@@ -1,6 +1,7 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|pause|resume|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>]"""
 import os
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -47,6 +48,55 @@ def create_labels(cfg, gh, repos: list[str]) -> int:
     return bad
 
 
+def doctor(cfg, gh, run=subprocess.run) -> list[tuple[str, str]]:
+    """Check what a fresh install usually gets wrong. Returns [(level, message)], level ok|warn|FAIL. Reads only: nothing is changed."""
+    out: list[tuple[str, str]] = []
+    add = lambda lvl, msg: out.append((lvl, msg))
+    add("ok" if cfg.dry_run else "warn", "dry-run is ON: the factory only logs" if cfg.dry_run else "LIVE: the factory acts on GitHub")
+    # container engine and images
+    eng = cfg.runner.engine
+    try:
+        run([eng, "--version"], capture_output=True, check=True, timeout=20)
+        add("ok", f"{eng} is installed")
+        images = [("agent sandbox", cfg.runner.image)]
+        if cfg.runner.render_previews:
+            images.append(("design previews", cfg.runner.render_image))
+        if cfg.screens.pages:
+            images.append(("screen checks", cfg.screens.image))
+        for what, img in images:
+            r = run([eng, "image", "inspect", img], capture_output=True, timeout=30)
+            add("ok" if r.returncode == 0 else "FAIL", f"{what} image {img}" + ("" if r.returncode == 0 else " is missing: build it (docker compose --profile build build, or scripts/deploy.sh --image)"))
+    except (OSError, subprocess.SubprocessError):
+        add("FAIL", f"cannot run '{eng}': is it installed, and is [runner] engine right?")
+    # secrets and folders
+    env = Path(cfg.runner.claude_env_file)
+    ok = env.is_file() and any(k in env.read_text() for k in ("ANTHROPIC_API_KEY=", "CLAUDE_CODE_OAUTH_TOKEN="))
+    add("ok" if ok else "FAIL", f"model credentials in {env}" + ("" if ok else " are missing (ANTHROPIC_API_KEY=... or CLAUDE_CODE_OAUTH_TOKEN=...)"))
+    work = Path(cfg.runner.work_dir)
+    add("ok" if work.is_dir() else "FAIL", f"work folder {work}" + ("" if work.is_dir() else " does not exist"))
+    sock = Path(cfg.runner.proxy_socket)
+    add("ok" if sock.exists() else "warn", f"proxy socket {sock}" + ("" if sock.exists() else " is not there (is the proxy running?)"))
+    # GitHub: token, repo access, labels
+    if gh is None:
+        add("FAIL", f"no GitHub token at {cfg.token_file}")
+        return out
+    try:
+        add("ok", f"GitHub token works (acting as {gh.login()})")
+    except Exception as e:
+        add("FAIL", f"the GitHub token was refused ({type(e).__name__}): expired, or the wrong file?")
+        return out
+    want = {n for n, _, _ in factory_labels(cfg)}
+    for repo in cfg.repos:
+        try:
+            have = {lb["name"] for lb in gh.repo_labels(repo)}
+        except Exception as e:
+            add("FAIL", f"{repo}: cannot read it ({type(e).__name__}): is it in the token's repositories?")
+            continue
+        missing = sorted(want - have)
+        add("ok" if not missing else "warn", f"{repo}: labels complete" if not missing else f"{repo}: {len(missing)} label(s) missing: run 'ctl labels' (for example {missing[0]})")
+    return out
+
+
 def screens_baseline(cfg, repo: str, checkout: Path) -> int:
     """Render the configured screens of `repo` from a local checkout and write them as the baselines (a person reviews the images
     and commits them: nothing is pushed from here)."""
@@ -72,6 +122,14 @@ def main():
     state = Path(cfg.db_path).parent
     if cmd == "screens" and sys.argv[2:3] == ["baseline"] and len(sys.argv) == 5:
         sys.exit(screens_baseline(cfg, sys.argv[3], Path(sys.argv[4])))
+    if cmd == "doctor":
+        token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else None
+        results = doctor(cfg, GitHub(token) if token else None)
+        for lvl, msg in results:
+            print(f"{lvl:>4}  {msg}")
+        bad = sum(1 for lvl, _ in results if lvl == "FAIL")
+        print("\nAll good." if not bad else f"\n{bad} problem(s) to fix.")
+        sys.exit(1 if bad else 0)
     if cmd == "labels":
         token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else None
         if not token:
