@@ -36,6 +36,14 @@ the check off; it is one cached read of the public releases API every few hours)
 
 `ctl version` and the UI footer show the running version.
 
+## What a release carries (and what it needs from you)
+
+The orchestrator image holds all of `factory/` (the UI, scheduled jobs and worker API included), so new modules ship without any packaging change;
+`config.example.toml` and `docs/` describe them. New database tables are created on start (`CREATE TABLE IF NOT EXISTS`), and new config sections
+are optional, so a **minor** release needs no action. Scheduled jobs (`[[schedules]]`, Settings → Schedules, `docs/schedules.md`) are an example:
+nothing runs until a schedule is added, the orchestrator reads its keys from the mounted `secrets` directory and writes snapshots under `state/`, and
+the UI container saves keys and queues "Run now" through the same two mounts.
+
 ## Not covered
 
 - **Source checkouts** update with `git pull` and `docker compose --profile build build`.
