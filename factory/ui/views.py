@@ -17,6 +17,8 @@ NAV = [("/", "Factory"), ("/tickets", "Tickets"), ("/events", "Events"), ("/sett
 # Needs you, Runs and PRs & CI are part of Tickets: those pages light up the Tickets tab, and the needs count sits on it.
 TICKET_PAGES = {"/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/labels", "/labels/issue"}
 ICON = '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 16 16\'%3E%3Ccircle cx=\'8\' cy=\'8\' r=\'6\' fill=\'%23e0a030\'/%3E%3C/svg%3E">'
+BRAND = ('<svg class="brand-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V10l6 4V10l6 4V6h6v15z"/></svg>')
+MENU_ICON = '<svg class="ph-menu-i" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>'
 PRIMARY = 3         # the first three stay on the phone tab bar (with More: four buttons); the rest sit behind "More"
 
 GOOD = {"pr", "stage", "passed", "success", "closed", "ok"}
@@ -107,7 +109,9 @@ def update_banner() -> str:
             f'<a href="{esc(url)}" rel="noopener noreferrer" target="_blank">Release notes</a>. To update, run <code>./scripts/update.sh</code> on the host.</div>')
 
 
-def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "") -> str:
+def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "",
+         bare: bool = False) -> str:
+    """bare: the body draws its own heading (the Factory and Tickets screens)."""
     items = list(nav or NAV)
     if active in TICKET_PAGES or active.startswith("/runs/"):
         active = "/tickets"
@@ -123,9 +127,12 @@ def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | N
     note = f'<div class="flash {esc(flash_kind)}" role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
             f'<meta name="color-scheme" content="dark"><title>{esc(title)} · Shikumi</title>{ICON}<link rel="stylesheet" href="/static/style.css"></head><body>'
-            f'<header><strong class="brand"><i></i>Shikumi <span class="muted">仕組み</span></strong>{nav_html}'
-            f'<form method="post" action="/logout" class="signout">{csrf_field(csrf)}<button class="link">Sign out</button></form></header>'
-            f'<main{" class=wide" if wide else ""}>{update_banner()}{note}<h1>{esc(title)}</h1>{body}<p class="muted ver">Shikumi {esc(version.current())}</p></main><script src="/static/app.js" defer></script></body></html>')
+            f'<header><a class="brand" href="/">{BRAND}Software factory</a>{nav_html}'
+            f'<form method="post" action="/logout" class="signout">{csrf_field(csrf)}<button class="link">Sign out</button></form>'
+            f'<details class="ph-menu"><summary aria-label="Menu">{MENU_ICON}</summary><div class="ph-menu-list">'
+            + "".join(f'<a href="{p}"{" class=active" if p == active else ""}>{esc(n)}{count(p)}</a>' for p, n in items)
+            + f'<form method="post" action="/logout">{csrf_field(csrf)}<button class="link">Sign out</button></form></div></details></header>'
+            f'<main{" class=wide" if wide else ""}>{update_banner()}{note}{"" if bare else f"<h1>{esc(title)}</h1>"}{body}<p class="muted ver">Shikumi {esc(version.current())}</p></main><script src="/static/app.js" defer></script></body></html>')
 
 
 def login_page(error: str | None = None, setup_hint: bool = False) -> str:
@@ -150,7 +157,6 @@ RUN_HEADS = ["Run", "Started", "Kind", "Ticket", "Model", "Status", "Took", "Tok
 EVENT_HEADS = ["When", "Kind", "Ticket", "Message"]
 PR_HEADS = ["PR", "Ticket", "CI", "Fix rounds", "Summary", "Updated"]
 TICKET_HEADS = ["Ticket", "Decision", "Why", "Runs", "When", "Steps", "Labels"]
-STEP_HEADS = ["Step", "Status", "Agent", "Attempts", "Runs", "PRs"]
 
 
 def cards_table(heads: list[str], rows: str) -> str:
@@ -376,12 +382,6 @@ def events_page(events: list[dict], kind: str, older: int | None) -> str:
     return bar + body + more
 
 
-STEP_TITLES = {"analyze": "Analyze", "design": "Design", "architect": "Architect", "implement": "Implement", "review": "Review", "ci-fix": "CI fix"}
-STEP_GLYPH = {"done": "✓", "running": "●", "failed": "✕", "queued": "○"}
-STEP_BADGE = {"done": "good", "running": "warn", "failed": "bad", "queued": ""}
-
-
-STEP_STAGE = {"analyze": "analyst", "design": "designer", "architect": "architect"}
 DOC_LABEL = {"analyst": "Analysis", "designer": "Design", "architect": "Architecture"}
 DOC_NOUN = {"analyst": "analysis", "designer": "design", "architect": "architecture"}
 
@@ -398,43 +398,6 @@ def doc_link(repo: str, issue, stage: str, label: str, new_tab: bool = False) ->
     return f'<a href="{doc_url(repo, issue, stage)}"{tab}>{esc(label)}<span aria-hidden="true">{" ↗" if new_tab else ""}</span></a>'
 
 
-def step_summary(counts) -> str:
-    done, total = counts
-    return f"{int(done)} of {int(total)} steps done"
-
-
-def step_files(s: dict, files_by_run: dict | None) -> str:
-    fs = [f for i in s["run_ids"] for f in (files_by_run or {}).get(i, [])]
-    links, imgs = design_links(fs), "".join(mockup_img(f) for f in fs)
-    return (f'<br><span class="muted">Design files:</span><br>{links}' + (f'<div class="mockups">{imgs}</div>' if imgs else "")) if links else ""
-
-
-def pipeline(steps: list[dict], files_by_run: dict | None = None, repo: str = "", issue: int = 0, docs=()) -> str:
-    """Read-only belt of stations, one per pipeline step. Every value is escaped; links are checked against GH_URL."""
-    if not steps:
-        return '<p class="muted">No pipeline steps yet. They appear when the factory starts working on this ticket.</p>'
-    items = ""
-    for s in steps:
-        name, status = STEP_TITLES.get(s["step"], s["step"]), s["status"]
-        label = f'{name}, {status}, {s["role"]} agent, {s["model"]}, {int(s["attempts"])} attempt(s)'
-        items += (f'<li class="station {esc(status)}"><a class="station-link" href="#step-{esc(s["step"])}" aria-label="{esc(label)}">'
-                  f'<span aria-hidden="true">{STEP_GLYPH.get(status, "○")}</span> <strong>{esc(name)}</strong></a><br>'
-                  f'{badge(status.capitalize(), STEP_BADGE.get(status, ""))}'
-                  f'<p class="muted">{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])}<br>{int(s["attempts"])} attempt(s)</p></li>')
-    run_links = lambda s: " ".join(f'<a href="/runs/{int(i)}">#{int(i)}</a>' for i in s["run_ids"])
-    doc_of = lambda s: (" " + doc_link(repo, issue, STEP_STAGE[s["step"]], "Read document")) if STEP_STAGE.get(s["step"]) in docs else ""
-    h = STEP_HEADS
-    rows = "".join(trow(h, [
-        f'<strong>{esc(STEP_TITLES.get(s["step"], s["step"]))}</strong>', badge(s["status"].capitalize(), STEP_BADGE.get(s["status"], "")),
-        f'{esc(s["role"])} · {esc(s["harness"])} / {esc(s["model"])} <span class="muted">effort {esc(s["effort"])}</span>', str(int(s["attempts"])),
-        run_links(s) + doc_of(s), (pr_links(s["pr_urls"]) or "—") + step_files(s, files_by_run)], f' id="step-{esc(s["step"])}"') for s in steps)
-    return f'<ol class="belt">{items}</ol>' + cards_table(h, rows)
-
-
-def images_url(repo: str, issue: int) -> str:
-    return "/ticket/images?" + urlencode({"repo": repo, "n": int(issue)})
-
-
 def ticket_images_page(repo: str, issue: int, files_by_run: dict, images_by_run: dict) -> str:
     """Every mockup preview and run screenshot kept for a ticket, grouped by run. Each image goes through the same checks as on the run page."""
     out = f'<p>{ticket_link(repo, issue)}</p>'
@@ -445,23 +408,6 @@ def ticket_images_page(repo: str, issue: int, files_by_run: dict, images_by_run:
         if mock or shots:
             out += f'<h2><a href="/runs/{int(rid)}">Run #{int(rid)}</a></h2>' + (f'<div class="mockups">{mock}</div>' if mock else "") + shots
     return out + f'<p><a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">← back to the ticket</a></p>'
-
-
-def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=(), has_images: bool = False, journey: str = "",
-                  needs: str = "", prs: str = "") -> str:
-    done = sum(s["status"] == "done" for s in steps)
-    head = f'<p>{ticket_link(repo, issue)} <span class="step-count" role="status">{esc(step_summary((done, len(steps))))}</span></p>'
-    if has_images and REPO.match(str(repo)):
-        head += f'<p><a class="button" href="{esc(images_url(repo, issue))}">View images</a></p>'
-    return (head + needs + (f"<h2>Journey</h2>{journey}" if journey else "") + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs)
-            + "<h2>Pull requests and checks</h2>" + prs + '<p><a href="/tickets">← all tickets</a> · <a href="/runs">all runs</a></p>')
-
-
-def ticket_prs(prs: list[dict], fix_rounds: int = 1) -> str:
-    """The pull requests the factory opened for one ticket, with their checks and fix rounds (what the PRs & CI page used to list)."""
-    if not prs:
-        return '<p class="muted">No pull request yet. When a build opens one, it appears here with its checks and fix rounds.</p>'
-    return prs_summary_line(prs) + prs_cards(prs, fix_rounds)
 
 
 def steps_cell(t: dict, counts: dict) -> str:

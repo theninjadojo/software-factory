@@ -8,20 +8,24 @@ from playwright.sync_api import expect
 from conftest import PASSWORD, REPO
 from factory import db as dbm
 
-TICKETS = "/tickets"
+LABELS = "/labels"          # the label table: start, build or skip a ticket by hand
 
 
-def tab_bar(page, viewport):
-    """The primary navigation: the top bar on a desktop, the bottom tab bar on a phone."""
-    return page.get_by_role("navigation", name="Main")
+def go(page, viewport, name):
+    """Use the navigation like a person would: the top bar, or the header menu on a phone."""
+    if viewport == "phone":
+        page.locator(".ph-menu summary").click()
+        page.locator(".ph-menu-list").get_by_role("link", name=re.compile("^" + re.escape(name))).click()
+    else:
+        page.get_by_role("navigation", name="Main").get_by_role("link", name=re.compile("^" + re.escape(name))).click()
 
 
-def go(page, viewport, name, more=False):
-    """Use the navigation like a person would, including the phone's More menu."""
-    nav = tab_bar(page, viewport)
-    if viewport == "phone" and more:
-        nav.get_by_text("More", exact=True).click()
-    nav.get_by_role("link", name=name, exact=True).click()
+def sign_out(page, viewport):
+    if viewport == "phone":
+        page.locator(".ph-menu summary").click()
+        page.locator(".ph-menu-list").get_by_role("button", name="Sign out").click()
+    else:
+        page.get_by_role("button", name="Sign out").click()
 
 
 def test_login_rejects_a_wrong_password_then_accepts_the_right_one(browser, server):
@@ -33,11 +37,11 @@ def test_login_rejects_a_wrong_password_then_accepts_the_right_one(browser, serv
     expect(pg.get_by_text("Wrong password.")).to_be_visible()
     pg.fill("input[name=password]", PASSWORD)
     pg.click("button")
-    expect(pg.get_by_role("heading", name="Factory floor", exact=True)).to_be_visible()
+    expect(pg.get_by_role("heading", name="Factory", exact=True)).to_be_visible()
 
 
-def test_sign_out_ends_the_session(page, server):
-    page.get_by_role("button", name="Sign out").click()
+def test_sign_out_ends_the_session(page, server, viewport):
+    sign_out(page, viewport)
     expect(page).to_have_url(re.compile(r"/login$"))
     page.goto(server.url + "/tickets")
     expect(page).to_have_url(re.compile(r"/login$"))
@@ -46,10 +50,13 @@ def test_sign_out_ends_the_session(page, server):
 def test_navigating_every_primary_and_secondary_destination(page, server, viewport):
     go(page, viewport, "Tickets")
     expect(page.get_by_role("heading", name="Tickets", exact=True)).to_be_visible()
-    go(page, viewport, "Needs you")
-    expect(page.get_by_role("heading", name="Needs you", exact=True)).to_be_visible()
-    for name in ("Runs", "PRs & CI", "Events", "Settings"):
-        go(page, viewport, name, more=True)
+    for path, heading in (("/needs", "Needs you"), ("/runs", "Runs")):       # part of Tickets now, at their old addresses
+        page.goto(server.url + path)
+        expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
+    page.goto(server.url + "/prs")
+    expect(page).to_have_url(re.compile(r"/tickets\?stage=prs$"))
+    for name in ("Events", "Settings"):
+        go(page, viewport, name)
         expect(page.get_by_role("heading", name=name, exact=True)).to_be_visible()
     # Harnesses, Credentials, Telegram and Labels live inside Settings, behind its side list
     side = page.get_by_role("navigation", name="Settings")
@@ -58,27 +65,25 @@ def test_navigating_every_primary_and_secondary_destination(page, server, viewpo
         expect(page.get_by_role("heading", level=1)).to_be_visible()
         expect(side.locator("a.active", has_text=name)).to_be_visible()
     go(page, viewport, "Factory")
-    expect(page.get_by_role("heading", name="Factory floor", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Factory", exact=True)).to_be_visible()
 
 
 def test_the_floor_shows_what_is_running_and_pause_resume_works(page, server, viewport):
-    if viewport == "phone":
-        expect(page.locator(".ph-now").get_by_text("Add dark mode toggle")).to_be_visible()
-    else:
-        expect(page.get_by_text("Build is working on #4")).to_be_visible()
+    running = page.get_by_role("region", name="Running now")
+    expect(running.get_by_text("Add dark mode toggle")).to_be_visible()
+    expect(page.locator(".sd-mach.p6.run")).to_be_visible()                  # the Build station is lit
     paused = server.root / "state" / "PAUSED"
     page.get_by_role("button", name="Pause").click()
     expect(page.get_by_role("button", name="Resume")).to_be_visible()
     assert paused.exists()
-    if viewport == "phone":
-        expect(page.get_by_text("The queue is paused")).to_be_visible()
+    expect(page.get_by_text(re.compile("Paused: "))).to_be_visible()
     page.get_by_role("button", name="Resume").click()
     expect(page.get_by_role("button", name="Pause")).to_be_visible()
     assert not paused.exists()
 
 
 def test_start_a_ticket_with_auto_applies_the_trigger_label(page, server, viewport):
-    page.goto(server.url + TICKETS)
+    page.goto(server.url + LABELS)
     page.get_by_role("button", name="Auto #4").click()
     expect(page.get_by_text("Started.").first).to_be_visible()
     posts = [w for w in server.gh.writes if w[0] == "POST" and w[1].endswith("/issues/4/labels")]
@@ -87,7 +92,7 @@ def test_start_a_ticket_with_auto_applies_the_trigger_label(page, server, viewpo
 
 
 def test_build_anyway_queues_an_approval_for_the_orchestrator(page, server, viewport):
-    page.goto(server.url + TICKETS)
+    page.goto(server.url + LABELS)
     page.get_by_role("button", name="Build #4").click()
     expect(page.get_by_text("Started.").first).to_be_visible()
     db = dbm.connect(server.db_path)
@@ -95,10 +100,23 @@ def test_build_anyway_queues_an_approval_for_the_orchestrator(page, server, view
 
 
 def test_search_filters_the_ticket_list_by_number(page, server, viewport):
-    page.goto(server.url + TICKETS)
+    page.goto(server.url + "/tickets?stage=all")
     page.fill("input[name=q]", "#9")
-    page.get_by_role("button", name="Filter").click()
-    expect(page).to_have_url(re.compile(r"q=%239|q=#9"))
+    page.press("input[name=q]", "Enter")
+    expect(page).to_have_url(re.compile(r"q=%239"))
+    expect(page.locator(".sd-pick")).to_have_count(1)
+    expect(page.locator(".sd-pick")).to_contain_text("Per-repo budget limits")
+
+
+def test_a_ticket_opens_from_the_list_and_a_phone_goes_back(page, server, viewport):
+    page.goto(server.url + "/tickets?stage=all&q=9")
+    page.locator(".sd-pick", has_text="Per-repo budget limits").click()
+    expect(page).to_have_url(re.compile(r"/ticket\?repo=.*&n=9"))
+    expect(page.get_by_role("heading", name="Per-repo budget limits", level=2)).to_be_visible()
+    if viewport == "phone":
+        expect(page.locator(".sd-list")).to_be_hidden()
+        page.get_by_role("link", name="← All tickets").click()
+        expect(page.locator(".sd-list")).to_be_visible()
 
 
 def test_a_run_can_be_opened_from_the_runs_list(page, server, viewport):
@@ -118,7 +136,7 @@ def test_failed_chip_lists_only_failed_runs(page, server, viewport):
 
 def test_ticket_pipeline_links_to_the_stage_document(page, server, viewport):
     page.goto(server.url + f"/ticket?repo={REPO}&n=9")
-    page.get_by_role("link", name="Read document").first.click()
+    page.get_by_role("link", name="Read analysis").first.click()
     expect(page.get_by_text("Looks feasible")).to_be_visible()
     expect(page.get_by_role("link", name=re.compile("Pipeline"))).to_be_visible()
 
@@ -167,7 +185,7 @@ def test_settings_side_list_is_tappable_and_event_names_do_not_break(page, serve
 
 
 def test_ticket_actions_stay_on_screen_even_with_an_unbreakable_title(page, server, viewport):
-    page.goto(server.url + TICKETS)
+    page.goto(server.url + LABELS)
     width = page.evaluate("document.documentElement.clientWidth")
     for name in ("Auto #4", "Build #4"):
         box = page.get_by_role("button", name=name).bounding_box()

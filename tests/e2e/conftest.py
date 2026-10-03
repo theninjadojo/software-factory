@@ -90,11 +90,11 @@ def seed(db) -> None:
     dbm.set_status(db, "last_poll_ok", str(now - 4))
     done = dbm.start_run(db, "stage", REPO, 9, "Per-repo budget limits", "claude-code", "opus", "high", stage="analyst")
     dbm.finish_run(db, done, "stage", "analysed", output="# Analysis\n\nLooks feasible. **Two** open questions.", log_tail="step 1\nstep 2")
-    bad = dbm.start_run(db, "implement", REPO, 7, "Retry failed CI fixes once more, with a deliberately long title that must wrap on a phone",
+    bad = dbm.start_run(db, "build", REPO, 7, "Retry failed CI fixes once more, with a deliberately long title that must wrap on a phone",
                         "claude-code", "sonnet", "medium")
     dbm.finish_run(db, bad, "failed", "sandbox exited 1: " + "x" * 200)
-    dbm.start_run(db, "implement", REPO, 4, "Add dark mode toggle", "claude-code", "sonnet", "medium")
-    pr = dbm.start_run(db, "implement", REPO, 12, "Ship the thing", "claude-code", "opus", "high")
+    dbm.start_run(db, "build", REPO, 4, "Add dark mode toggle", "claude-code", "sonnet", "medium")
+    pr = dbm.start_run(db, "build", REPO, 12, "Ship the thing", "claude-code", "opus", "high")
     dbm.finish_run(db, pr, "pr", "opened", pr_urls=f"https://github.com/{REPO}/pull/31")
     dbm.record(db, REPO, 7, "2026-10-01T10:00:00Z", "run", "confident")
     dbm.record(db, REPO, 4, "2026-10-01T10:00:00Z", "ignored", "label applied by someone without write access")
@@ -111,7 +111,7 @@ def seed(db) -> None:
     dbm.finish_run(db, design, "stage", "designed", output="# Design\n\n" + "Long paragraph. " * 400)
     dbm.add_design_files(db, design, [{"repo": REPO, "path": "design/mockup.html", "url": f"https://github.com/{REPO}/blob/design-branch/design/mockup.html", "pr": ""}])
     for i in range(60):                                       # more than one page of runs
-        r = dbm.start_run(db, "implement", REPO, 100 + i, f"Bulk run {i} " + (LONG if i % 15 == 0 else ""), "claude-code", "sonnet", "medium")
+        r = dbm.start_run(db, "build", REPO, 100 + i, f"Bulk run {i} " + (LONG if i % 15 == 0 else ""), "claude-code", "sonnet", "medium")
         dbm.finish_run(db, r, ("passed", "failed", "pr")[i % 3], "x")
     for i in range(120):                                      # more than one page of events
         dbm.add_event(db, "run.start" if i % 2 else "alert.info", f"event {i} " + (LONG if i % 40 == 0 else ""), REPO, 100 + i)

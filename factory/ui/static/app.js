@@ -1,6 +1,13 @@
 // The server renders (and escapes) all HTML; this script only swaps it in and adds two conveniences. Every form works without it.
 (function () {
   var live = document.getElementById("live");
+  document.documentElement.classList.add("js");
+
+  // --- Ticket filters: a station or sort choice applies at once (the Apply button is there for pages without this script).
+  document.addEventListener("change", function (e) {
+    var f = e.target.closest("form[data-autosubmit]");
+    if (f && e.target.tagName === "SELECT") f.submit();
+  });
 
   // --- Send answers: keep the button honest about how many questions have an answer.
   function count(form) {
@@ -28,13 +35,6 @@
   });
   countAll();
 
-  // --- Reduced motion: the crates on the journey belts (SVG animation, which CSS cannot switch off) stay where they are.
-  function calm() {
-    if (!window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    var maps = document.querySelectorAll("svg.jy-map");
-    for (var i = 0; i < maps.length; i++) if (maps[i].pauseAnimations) maps[i].pauseAnimations();
-  }
-  calm();
 
   // --- Tickets list: row buttons post in the background and swap the row, so the page keeps its scroll position.
   // The POST is the normal one (CSRF, checks and the 303 are unchanged); we read the list it redirects to and take the row and flash from it.

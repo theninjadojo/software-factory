@@ -337,7 +337,7 @@ class Labels(AdminCase):
     def test_tickets_page_merges_github_labels_with_the_factory_decision(self):
         dbm.record(self.db, self.REPO, 7, "T", "run:stage", "analyst first")
         cookie, _ = self.session()
-        s, _, html = self.req("GET", "/tickets", cookie=cookie)
+        s, _, html = self.req("GET", "/labels", cookie=cookie)
         self.assertEqual(s, 200)
         for needle in ("bug", "run:stage", "/labels/issue?repo="):
             self.assertIn(needle, html)
@@ -348,7 +348,7 @@ class Labels(AdminCase):
         self.gh.issues.return_value = ([issue], True)
         self.gh.count_issues.return_value = 24
         cookie, _ = self.session()
-        _, _, html = self.req("GET", "/tickets", cookie=cookie)
+        _, _, html = self.req("GET", "/labels", cookie=cookie)
         for needle in ("New ticket", 'type="search"', "In progress", "Needs you", "Done", "<th>Stage</th>", "<th>Updated</th>", "Architect working",
                        "1/4", "Showing 1 of 24", 'action="/tickets/create"', 'name="csrf"'):
             self.assertIn(needle, html)
@@ -360,19 +360,19 @@ class Labels(AdminCase):
         issue = {"number": 7, "title": "T", "state": "closed", "labels": []}
         self.gh.search_page.return_value = ([issue], False, 24)
         cookie, _ = self.session()
-        _, _, html = self.req("GET", "/tickets?stage=done", cookie=cookie)
+        _, _, html = self.req("GET", "/labels?stage=done", cookie=cookie)
         self.assertEqual(self.gh.search_page.call_args.args[2], "closed")
         self.assertIn("Showing 1 of 24", html)
         self.assertIn("Done", html)
-        self.req("GET", "/tickets?stage=progress", cookie=cookie)
+        self.req("GET", "/labels?stage=progress", cookie=cookie)
         self.assertIn("factory:working", self.gh.search_page.call_args.kwargs["labels"])
-        self.req("GET", "/tickets?stage=%3Cb%3E", cookie=cookie)                   # an unknown stage is ignored, never passed on
+        self.req("GET", "/labels?stage=%3Cb%3E", cookie=cookie)                   # an unknown stage is ignored, never passed on
         self.assertEqual(self.gh.search_page.call_count, 2)
 
     def test_ticket_rows_are_addressable_for_in_place_updates(self):
         """app.js swaps a row by data-row after a background POST; the POST itself is the unchanged, CSRF-checked form."""
         cookie, _ = self.session()
-        html = self.req("GET", "/tickets", cookie=cookie)[2]
+        html = self.req("GET", "/labels", cookie=cookie)[2]
         self.assertIn(f'<tr data-row="{self.REPO}#7">', html)
 
     def refused(self, cookie, csrf, fields, back="/"):
@@ -390,7 +390,7 @@ class Labels(AdminCase):
         """Build and the stages must not go back through the classifier (it would ask again: the click would seem to do nothing)."""
         self.gh.repo_labels.return_value = [{"name": n} for n in ("factory:auto", "factory:ready", "factory:analyze", "factory:design", "factory:architect")]
         cookie, csrf = self.session()
-        s, _, html = self.req("GET", "/tickets", cookie=cookie)
+        s, _, html = self.req("GET", "/labels", cookie=cookie)
         for action in ("auto", "analyst", "designer", "architect", "build"):
             self.assertIn(f'name="action" value="{action}"', html)
         for action, want in (("build", "run"), ("analyst", "stage:analyst"), ("architect", "stage:architect")):
@@ -410,7 +410,7 @@ class Labels(AdminCase):
     def test_a_queued_decision_hides_the_buttons_and_cannot_be_repeated(self):
         cookie, csrf = self.session()
         self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="build"))[0], 303)
-        _, _, html = self.req("GET", "/tickets", cookie=cookie)
+        _, _, html = self.req("GET", "/labels", cookie=cookie)
         self.assertIn("starting", html)
         self.assertNotIn('name="action" value="build"', html)
         self.refused(cookie, csrf, self.fields(action="build"), "/tickets")
@@ -488,7 +488,7 @@ class Labels(AdminCase):
         self.gh.issues.return_value = ([issue], False)
         self.gh.repo_labels.return_value = [{"name": n} for n in ("factory:auto", "factory:ready", "factory:architect")]
         cookie, csrf = self.session()
-        _, _, html = self.req("GET", "/tickets", cookie=cookie)
+        _, _, html = self.req("GET", "/labels", cookie=cookie)
         self.assertIn("needs a person", html)
         self.assertLess(html.index('value="stage:architect"'), html.index('value="build"'))
         self.assertIn('value="skip"', html)
@@ -537,7 +537,7 @@ class Labels(AdminCase):
             s, h, _ = self.post(cookie, csrf, "/tickets/answer", {**self.fields(), "q": "q1", "o": "a", "back": "/"})
         self.assertEqual(s, 303)
         rec.assert_not_called()
-        self.assertIn("does not match", self.req("GET", "/tickets", cookie=cookie)[2])
+        self.assertIn("does not match", self.req("GET", "/labels", cookie=cookie)[2])
 
     def test_several_answers_are_sent_together_and_validated(self):
         cookie, csrf = self.session()
@@ -583,18 +583,19 @@ class Labels(AdminCase):
     def test_done_stages_are_not_offered_again(self):
         self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "stage:analysed"}]}
         self.gh.issues.return_value = ([self.gh.get_issue.return_value], False)
-        _, _, html = self.req("GET", "/tickets", cookie=self.session()[0])
+        _, _, html = self.req("GET", "/labels", cookie=self.session()[0])
         self.assertNotIn('value="analyst"', html)
         self.assertIn('value="designer"', html)
 
     def test_label_names_are_escaped_and_token_never_rendered(self):
         self.gh.get_issue.return_value["labels"] = [{"name": "<script>"}]
         cookie, _ = self.session()
-        for path in ("/tickets", f"/labels/issue?repo={quote(self.REPO)}&n=7"):
+        for path in ("/labels", f"/labels/issue?repo={quote(self.REPO)}&n=7", "/tickets"):
             s, _, html = self.req("GET", path, cookie=cookie)
             self.assertEqual(s, 200)
             self.assertNotIn("<script>", html.replace('<script src="/static/app.js" defer></script>', ""))
-            self.assertIn("&lt;script&gt;", html)
+            if path != "/tickets":                                     # the Tickets screen does not list labels
+                self.assertIn("&lt;script&gt;", html)
             self.assertNotIn(TOKEN, html)
 
 

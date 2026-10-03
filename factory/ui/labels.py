@@ -352,7 +352,7 @@ def action_forms_for(need: dict, csrf: str, back: str = "/") -> str:
     return action_forms(need["repo"], need["issue"], need["acts"], csrf, back)
 
 
-_needs_cache: dict = {"at": 0.0, "rows": None}
+_needs_cache: dict = {"at": 0.0, "rows": None, "titles": {}}
 _needs_lock = threading.Lock()
 NEEDS_TTL = 20      # seconds: the Floor refreshes every 5s, GitHub is asked at most this often
 
@@ -382,10 +382,11 @@ def needs_you(h) -> list | None:
     finally:
         db.close()
     queued = _approved(h)
-    rows = []
+    rows, titles = [], {}
     try:
         for repo, (issues, _) in zip(cfg.repos, _par(*[(lambda r=r: gh.issues(r, "open", None, 1)) for r in cfg.repos])):
             for i in issues:
+                titles[(repo, i["number"])] = (i.get("title") or "")[:160]
                 d = decisions.get((repo, i["number"]))
                 status, acts = actions_for(cfg, i, d, (repo, i["number"]) in queued)
                 if status == NEEDS_PERSON:
@@ -409,7 +410,7 @@ def needs_you(h) -> list | None:
         return None
     rows.sort(key=lambda r: r["at"], reverse=True)
     with _needs_lock:
-        _needs_cache.update(at=time.time(), rows=rows)
+        _needs_cache.update(at=time.time(), rows=rows, titles=titles)
     return rows
 
 
@@ -918,14 +919,7 @@ def stage_comment(h, repo: str, issue: int, stage: str) -> str | None:
         return None
 
 
-def ticket_needs(h, repo: str, n: int, csrf: str) -> str:
-    """What this ticket needs from a person, on its own page: the open questions or the decision, with the same forms as the Needs you list.
-    Empty when nothing is waiting (or the factory has no GitHub token to read the questions with)."""
-    from urllib.parse import quote
-    from . import floor
-    rows = needs_you(h) or []
-    mine = next((r for r in rows if r["repo"] == repo and r["issue"] == n), None)
-    if mine is None:
-        return ""
-    back = f"/ticket?repo={quote(repo, safe='')}&n={int(n)}"
-    return f'<h2>Needs you</h2><div class="nd-list">{floor._row(0, mine, csrf, back)}</div>'
+def titles_cached() -> dict:
+    """{(repo, issue): title} of the open issues the last Needs-you read saw (no GitHub call)."""
+    with _needs_lock:
+        return dict(_needs_cache.get("titles") or {})
