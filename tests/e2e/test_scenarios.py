@@ -48,9 +48,15 @@ def test_navigating_every_primary_and_secondary_destination(page, server, viewpo
     expect(page.get_by_role("heading", name="Tickets", exact=True)).to_be_visible()
     go(page, viewport, "Needs you")
     expect(page.get_by_role("heading", name="Needs you", exact=True)).to_be_visible()
-    for name in ("Runs", "PRs & CI", "Events", "Settings", "Harnesses", "Credentials", "Telegram"):
+    for name in ("Runs", "PRs & CI", "Events", "Settings"):
         go(page, viewport, name, more=True)
         expect(page.get_by_role("heading", name=name, exact=True)).to_be_visible()
+    # Harnesses, Credentials, Telegram and Labels live inside Settings, behind its side list
+    side = page.get_by_role("navigation", name="Settings")
+    for name in ("Harnesses", "Credentials", "Telegram", "Labels"):
+        side.get_by_role("link", name=name, exact=True).click()
+        expect(page.get_by_role("heading", level=1)).to_be_visible()
+        expect(side.locator("a.active", has_text=name)).to_be_visible()
     go(page, viewport, "Factory")
     expect(page.get_by_role("heading", name="Factory floor", exact=True)).to_be_visible()
 
@@ -128,13 +134,13 @@ def test_saving_a_setting_writes_an_override_and_bad_input_is_refused(page, serv
     page.goto(server.url + "/settings")
     field = page.locator("input[name=poll_seconds], input[name='general.poll_seconds']").first
     field.fill("90")
-    page.get_by_role("button", name="Save general").click()
+    page.get_by_role("button", name="Save changes").click()
     expect(page.locator(".flash")).to_be_visible()
     overrides = tomllib.loads((server.root / "config.overrides.toml").read_text())
     assert overrides["general"]["poll_seconds"] == 90
     field = page.locator("input[name=poll_seconds], input[name='general.poll_seconds']").first
     field.fill("-5")
-    page.get_by_role("button", name="Save general").click()
+    page.get_by_role("button", name="Save changes").click()
     expect(page.locator(".flash.bad")).to_be_visible()
     assert tomllib.loads((server.root / "config.overrides.toml").read_text())["general"]["poll_seconds"] == 90
 
@@ -147,3 +153,13 @@ def test_a_saved_credential_is_never_shown_back(page, server, viewport):
     card.get_by_role("button", name="Save").click()
     assert secret not in page.content()
     assert (server.root / "secrets" / "github_token").read_text().strip() == secret
+
+
+def test_settings_side_list_is_tappable_and_event_names_do_not_break(page, server, viewport):
+    page.goto(server.url + "/telegram")
+    for strong in page.locator(".check.evt strong").all():
+        box = strong.bounding_box()
+        assert box["height"] < 30, f"{strong.inner_text()} wrapped"          # one line: names are never broken mid-word
+    if viewport == "phone":
+        for link in page.get_by_role("navigation", name="Settings").get_by_role("link").all():
+            assert link.bounding_box()["height"] >= 44, link.inner_text()
