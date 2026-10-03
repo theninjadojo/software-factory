@@ -30,13 +30,10 @@ class Guard(unittest.TestCase):
 
 class Workflow(unittest.TestCase):
     def test_release_runs_on_main_and_tags_and_skips_existing_tags(self):
-        import yaml
-        wf = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text())
-        on = wf.get("on") or wf.get(True)
-        self.assertEqual(on["push"]["branches"], ["main"])
-        self.assertEqual(on["push"]["tags"], ["v*"])
-        self.assertEqual(wf["concurrency"]["cancel-in-progress"], False)
-        text = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+        text = (ROOT / ".github" / "workflows" / "release.yml").read_text()          # (text checks: PyYAML is not on the runners' python)
+        self.assertIn("branches: [main]", text)
+        self.assertIn('tags: ["v*"]', text)
+        self.assertIn("cancel-in-progress: false", text)
         self.assertIn("already released: nothing to do", text)
         self.assertEqual(text.count("steps.v.outputs.go == 'true'"), 4)       # every step after the decision is conditional
         self.assertIn("self-hosted", text)
