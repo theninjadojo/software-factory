@@ -24,12 +24,14 @@ def newer(latest: str, have: str) -> bool:
     return bool(a and b and a > b)
 
 
-def fetch_latest(repo: str, opener=urllib.request.urlopen) -> dict | None:
+def fetch_latest(repo: str, opener=urllib.request.urlopen, token: str = "") -> dict | None:
     """{tag, url} of the latest published release, or None."""
     if not REPO.match(repo or ""):
         return None
     req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/latest",
                                  headers={"Accept": "application/vnd.github+json", "User-Agent": "shikumi"})
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
     try:
         with opener(req, timeout=10) as r:
             data = json.loads(r.read(200_000))
@@ -51,10 +53,10 @@ def due(state_dir: Path, now=time.time) -> bool:
     return now() - float(_read(state_dir).get("checked", 0) or 0) > CACHE_SECONDS
 
 
-def refresh(state_dir: Path, repo: str, now=time.time, fetch=fetch_latest) -> None:
+def refresh(state_dir: Path, repo: str, now=time.time, fetch=fetch_latest, token: str = "") -> None:
     """Ask GitHub and remember the answer (a failed check is remembered too, so it is not retried on every page view)."""
     try:
-        (Path(state_dir) / "update_check.json").write_text(json.dumps({"checked": now(), "latest": fetch(repo)}))
+        (Path(state_dir) / "update_check.json").write_text(json.dumps({"checked": now(), "latest": fetch(repo, token=token) if token else fetch(repo)}))
     except OSError:
         pass
 

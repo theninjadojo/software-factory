@@ -128,7 +128,7 @@ Setting `dry_run = false` (in the UI or `config/config.toml`) and `docker compos
 |---|---|
 | a release | `./scripts/update.sh` (latest) or `./scripts/update.sh v0.2.0`. Refuses while an agent run is in flight, rolls back if the new version does not start. See [docs/releasing.md](docs/releasing.md). |
 | source | `git pull && docker compose --profile build build && docker compose up -d` |
-| native (Podman) | `scripts/deploy.sh user@host [--image]` |
+| native (Podman) | on the host: `sudo -n -u factory /srv/factory/app/deploy/update-native.sh` (a release, with tests, image rebuild and rollback); or `scripts/deploy.sh user@host [--image]` to push your checkout |
 
 The UI shows a banner when a newer release exists (`[updates] check = false` turns that off). `python3 -m factory.ctl version` prints what is running.
 

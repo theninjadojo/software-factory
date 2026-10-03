@@ -44,8 +44,20 @@ are optional, so a **minor** release needs no action. Scheduled jobs (`[[schedul
 nothing runs until a schedule is added, the orchestrator reads its keys from the mounted `secrets` directory and writes snapshots under `state/`, and
 the UI container saves keys and queues "Run now" through the same two mounts.
 
+## Native installs (Podman + systemd)
+
+```bash
+sudo -n -u factory /srv/factory/app/deploy/update-native.sh            # the latest release
+sudo -n -u factory /srv/factory/app/deploy/update-native.sh v0.2.0     # a specific one, also how you go back
+```
+
+It downloads the release's source tarball (a private repo needs a token: `SHIKUMI_TOKEN_FILE`, else `secrets/github_token_bot`, else
+`github_token`, whichever can read the repo), refuses while an agent run is in flight, **runs the tests on the new code first** (nothing
+changes if they fail), rebuilds the sandbox images, restarts the services and checks they stay up, and rolls back (previous code and
+images) if they do not. For the UI banner on a private repo set `[updates] token_file` to a token that can read it.
+`scripts/deploy.sh user@host` still deploys the working tree you have checked out (for development).
+
 ## Not covered
 
 - **Source checkouts** update with `git pull` and `docker compose --profile build build`.
-- **Native Podman installs** use `scripts/deploy.sh user@host` (it tars the checkout, including `VERSION`).
 - **Config or database changes** between versions are not migrated automatically: read the release notes before a major update.

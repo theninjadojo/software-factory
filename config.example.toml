@@ -168,6 +168,7 @@ bypass_label = "factory:skip-mockup"
 # [updates]
 # check = true
 # repo = "theninjadojo/software-factory"
+# token_file = "/srv/factory/secrets/github_token_bot"   # only for a private repo: a token that can read it (default: the [github] token)
 
 # Other models through OpenCode (experimental; build the image with `docker compose --profile opencode build`).
 # Enable on the Harnesses page, paste the key there, then route a tier to it. Ticket text never chooses these.

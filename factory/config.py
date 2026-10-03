@@ -126,6 +126,7 @@ class UpdatesCfg:
     """Tell the person in the UI when a newer release exists (one cached read of GitHub's public releases API, every few hours)."""
     check: bool = True
     repo: str = "theninjadojo/software-factory"
+    token_file: str = ""                 # a private repo needs a token that can read it; empty: the [github] token (public repos need none)
 
 
 PROMPT_MAX = 4000

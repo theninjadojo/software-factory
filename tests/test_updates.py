@@ -39,6 +39,17 @@ class Fetch(unittest.TestCase):
         self.assertIsNone(updates.fetch_latest("not a repo", ok))
 
 
+class Auth(unittest.TestCase):
+    def test_token_is_sent_only_when_given(self):
+        seen = []
+        def op(req, timeout):
+            seen.append(req.get_header("Authorization"))
+            return Fetch.R({"tag_name": "v0.2.0", "html_url": "https://github.com/o/r/releases/tag/v0.2.0"})
+        updates.fetch_latest("o/r", op)
+        updates.fetch_latest("o/r", op, token="t0k")
+        self.assertEqual(seen, [None, "Bearer t0k"])
+
+
 class Cache(unittest.TestCase):
     def test_refresh_then_available_and_staleness(self):
         with tempfile.TemporaryDirectory() as t:
