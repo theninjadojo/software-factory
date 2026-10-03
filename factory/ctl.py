@@ -1,8 +1,9 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>|health]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>|schedules [list|run <name>]]"""
 import os
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import pause, screens, version
@@ -116,12 +117,37 @@ def screens_baseline(cfg, repo: str, checkout: Path) -> int:
     return 0
 
 
+def schedules_cmd(cfg, args: list[str]) -> int:
+    """`schedules` lists each schedule and when it last ran; `schedules run <name>` runs one now (needs the GitHub token, ignores dry_run)."""
+    from . import db as dbm, schedules
+    from .github import GitHub
+    db = dbm.local(cfg.db_path)
+    if args[:1] == ["run"] and len(args) == 2:
+        if args[1] not in {s.name for s in cfg.schedules}:
+            print(f"no schedule called {args[1]}")
+            return 1
+        token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else None
+        schedules.tick(cfg, GitHub(token), db, time.time(), Path(cfg.db_path).parent,
+                       lambda kind, msg, *a: print(f"{kind}: {msg}"), lambda text, event="info": print(text), only=args[1])
+        return 0
+    if args:
+        print("usage: schedules [list|run <name>]")
+        return 1
+    for s in cfg.schedules:
+        st = schedules.get_state(db, s.name) or {}
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(st["last_run"])) if st else "never"
+        print(f"{s.name:<24} {s.repo:<30} {s.every or s.cron:<12} {'on ' if s.enabled else 'off'} last: {when} {st.get('status', '')} {st.get('detail', '')}")
+    return 0
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     cfg = load(os.environ.get("FACTORY_CONFIG", "/srv/factory/config.toml"))
     state = Path(cfg.db_path).parent
     if cmd == "screens" and sys.argv[2:3] == ["baseline"] and len(sys.argv) == 5:
         sys.exit(screens_baseline(cfg, sys.argv[3], Path(sys.argv[4])))
+    if cmd == "schedules":
+        sys.exit(schedules_cmd(cfg, sys.argv[2:]))
     if cmd == "version":
         print(version.current())
         return

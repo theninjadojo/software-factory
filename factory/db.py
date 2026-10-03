@@ -3,7 +3,7 @@ import sqlite3
 import threading
 import time
 
-from . import designfiles
+from . import designfiles, schedules
 from .render import png_ok
 
 _local = threading.local()
@@ -92,6 +92,7 @@ def connect(path: str) -> sqlite3.Connection:
             PRIMARY KEY (repo, issue))"""
     )
     ensure_step_tables(db)
+    schedules.ensure_tables(db)
     return db
 
 

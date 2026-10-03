@@ -236,6 +236,25 @@ class ConflictsCfg:
 
 
 @dataclass(frozen=True)
+class ScheduleCfg:
+    """A scheduled job: on `every` (6h, 2d, 1w) or `cron` (UTC, five fields), fetch `source`, save a snapshot and open a ticket
+    on `repo`. `labels` default to the auto label, so the classifier picks the next stage and only builds what it is sure about;
+    use [] for a ticket nobody acts on, or e.g. ["factory:analyze"] for analysis only. See factory/schedules.py."""
+    name: str
+    repo: str
+    source: dict
+    every: str | None = None
+    cron: str | None = None
+    title: str = "Scheduled review: ${name} ${date}"
+    instructions: str = ""                 # what the agent should do with the data; empty = a general review (schedules.DEFAULT_INSTRUCTIONS)
+    labels: tuple[str, ...] | None = None  # None = [auto].label
+    enabled: bool = True
+    skip_if_open: bool = True              # do not open another ticket while the previous one is still open
+    keep: int = 30                         # snapshots kept on disk per schedule
+    max_data_chars: int = 30000            # of the data put in the ticket
+
+
+@dataclass(frozen=True)
 class ProjectRepo:
     repo: str            # owner/name
     role: str = ""       # one line telling the agent and the classifier what this repo is for
@@ -311,6 +330,7 @@ class Config:
     pm: PmCfg = field(default_factory=PmCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
+    schedules: tuple[ScheduleCfg, ...] = ()
     health: HealthCfg = field(default_factory=HealthCfg)
     prompts: PromptsCfg = field(default_factory=PromptsCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
@@ -577,6 +597,37 @@ def load(path: str) -> Config:
     return parse(load_raw(path))
 
 
+def _schedules(raw: list, repos: list[str]) -> tuple[ScheduleCfg, ...]:
+    from . import schedules as sc
+    out, seen = [], set()
+    for r in raw:
+        r = _tuples(dict(r))
+        s = ScheduleCfg(**r)
+        w = f"schedules.{s.name!r}"
+        if not isinstance(s.name, str) or not sc.NAME.fullmatch(s.name) or s.name in seen:
+            raise ValueError(f"{w}: name must be unique lowercase letters, digits and dashes")
+        seen.add(s.name)
+        if s.repo not in repos:
+            raise ValueError(f"{w}: repo {s.repo} is not one of the configured repos")
+        if (s.every is None) == (s.cron is None):
+            raise ValueError(f"{w}: set exactly one of every and cron")
+        if s.every is not None and (sc.parse_every(s.every) is None or sc.parse_every(s.every) < 300):
+            raise ValueError(f"{w}: every must look like 30m, 6h, 2d or 1w and be at least 5m")
+        if s.cron is not None and sc.parse_cron(s.cron) is None:
+            raise ValueError(f"{w}: cron must be five fields (minute hour day month weekday), UTC")
+        if (why := sc.source_problem(s.source)):
+            raise ValueError(f"{w}: {why}")
+        if s.labels is not None and not all(isinstance(l, str) and l.strip() for l in s.labels):
+            raise ValueError(f"{w}: labels must be non-empty strings")
+        for k in ("keep", "max_data_chars"):
+            if not isinstance(getattr(s, k), int) or isinstance(getattr(s, k), bool) or getattr(s, k) < 0:
+                raise ValueError(f"{w}: {k} must be a whole number")
+        if not s.title.strip():
+            raise ValueError(f"{w}: title must not be empty")
+        out.append(s)
+    return tuple(out)
+
+
 def parse(raw: dict) -> Config:
     g, gh = raw["general"], raw["github"]
     routes = {k: Route(**_tuples(v)) for k, v in raw["routing"].items()}
@@ -670,6 +721,7 @@ def parse(raw: dict) -> Config:
         pm=pm,
         health=health,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
+        schedules=_schedules(raw.get("schedules", []), repos),
         prompts=_prompts(raw.get("prompts", {})),
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),

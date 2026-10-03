@@ -198,3 +198,21 @@ bypass_label = "factory:skip-mockup"
 # viewports = ["desktop", "mobile"]     # optional: default is all
 # mask = [".clock"]                     # optional CSS selectors of dynamic regions
 # wait_for = "main"                     # optional CSS selector
+
+# Scheduled jobs (docs/schedules.md): on a timer, fetch data, keep a snapshot, open a ticket carrying it. With the default
+# labels the ticket gets the auto label: the analyst proposes changes and the classifier decides whether to build them.
+# [[schedules]]
+# name = "umami-weekly"
+# repo = "your-org/shop-web"
+# every = "7d"                         # or cron = "0 9 * * 1" (UTC). Never run retroactively: the clock starts when first seen.
+# title = "Weekly analytics review ${date}"
+# instructions = "Look for pages with falling traffic or high drop-off and propose concrete changes."   # optional
+# # labels = ["factory:analyze"]       # default is the [auto] label; [] opens a ticket nobody acts on
+# # skip_if_open = true                # no new ticket while the last one is still open
+# [schedules.source]
+# type = "umami"                       # or "http" for any HTTPS JSON endpoint
+# base_url = "https://api.umami.is/v1" # self-hosted: https://umami.example.com/api with auth = "bearer"
+# website_id = "00000000-0000-0000-0000-000000000000"
+# token_file = "/srv/factory/secrets/umami_key"
+# days = 7
+# metrics = ["path", "referrer", "browser", "device", "country"]

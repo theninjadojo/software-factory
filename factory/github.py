@@ -209,6 +209,11 @@ class GitHub:
         """A person's new ticket (from the UI). Sends no labels or assignees, so it can never start work by itself."""
         return self._req("POST", f"/repos/{repo}/issues", {"title": title, "body": body})
 
+    def create_scheduled_issue(self, repo: str, title: str, body: str, labels: list[str]) -> dict:
+        """A ticket opened by an admin-configured schedule (see schedules.py). Unlike create_ticket it carries the labels the
+        admin chose, normally the auto label; assignees are never set."""
+        return self._req("POST", f"/repos/{repo}/issues", {"title": title, "body": body, "labels": list(labels)})
+
     def update_issue(self, repo: str, number: int, body: str | None = None, state: str | None = None) -> dict:
         data = {k: v for k, v in (("body", body), ("state", state)) if v is not None}
         if state == "closed":
