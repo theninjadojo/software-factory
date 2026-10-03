@@ -163,9 +163,11 @@ class Pages(UiCase):
         dbm.set_status(self.db, "last_poll_ok", str(__import__("time").time()))
         cookie, _ = self.session()
         _, _, home = self.req("GET", "/", cookie=cookie)
-        self.assertIn("orchestrator healthy", home)
-        self.assertIn("Add the thing", home)
-        self.assertIn("PR ready", home)
+        self.assertIn("Healthy, last poll", home)
+        for gone in ("Add the thing", "PR ready", "<table", "<h2>Timeline</h2>"):       # the tables live on their own pages
+            self.assertNotIn(gone, home)
+        self.assertIn("Add the thing", self.req("GET", "/runs", cookie=cookie)[2])
+        self.assertIn("PR ready", self.req("GET", "/events", cookie=cookie)[2])
         _, _, runs = self.req("GET", "/runs?status=stage", cookie=cookie)
         self.assertIn("sonnet", runs)
         _, _, detail = self.req("GET", f"/runs/{rid}", cookie=cookie)
@@ -173,14 +175,14 @@ class Pages(UiCase):
             self.assertIn(needle, detail)
         self.assertIn("watching", self.req("GET", "/prs", cookie=cookie)[2])
         self.assertIn("run:stage", self.req("GET", "/tickets", cookie=cookie)[2])
-        self.assertIn("alert:pr_ready", self.req("GET", "/events?kind=alert", cookie=cookie)[2])
+        self.assertIn("PR ready", self.req("GET", "/events?kind=alert", cookie=cookie)[2])
         self.assertEqual(self.req("GET", "/runs/999", cookie=cookie)[0], 404)
         self.assertEqual(self.req("GET", "/runs/abc", cookie=cookie)[0], 404)
 
     def test_health_goes_red_when_the_orchestrator_stops_reporting(self):
         dbm.set_status(self.db, "last_poll_ok", "1")
         cookie, _ = self.session()
-        self.assertIn("orchestrator not reporting", self.req("GET", "/fragment/overview", cookie=cookie)[2])
+        self.assertIn("Not reporting", self.req("GET", "/fragment/overview", cookie=cookie)[2])
 
     def test_hostile_text_is_escaped_everywhere(self):
         evil = '<script>alert(1)</script><img src=x onerror=alert(2)>'
@@ -284,3 +286,54 @@ class StageDocuments(UiCase):
         out = L.question_form(self.REPO, 5, Q.StageQuestions("designer", [q]), "csrf")
         self.assertIn(f'href="/ticket/doc?repo={self.REPO}&amp;n=5&amp;stage=designer" target="_blank" rel="noopener"', out)
         self.assertNotIn("/ticket/doc", L.question_form("evil/../x", 5, Q.StageQuestions("designer", [q]), "csrf"))
+
+
+class ImportantEvents(UiCase):
+    def test_important_view_hides_routine_events_and_everything_keeps_all(self):
+        for kind, msg in (("run:start", "r-start"), ("decision", "d-real"), ("decision", "ignored: nope"), ("decision", "dry-run: would run"),
+                          ("alert:pr_ready", "a-ready"), ("error", "e-boom"), ("startup", "s-up"), ("restart", "x-restart"),
+                          ("rate-limit", "rl"), ("answers", "ans")):
+            dbm.add_event(self.db, kind, msg, "o/web", 1, None)
+        kinds = lambda rows: {r["kind"] + ":" + r["message"] for r in rows}
+        imp = kinds(dbm.recent_events(self.db, 100, "important"))
+        self.assertEqual(imp, {"decision:d-real", "alert:pr_ready:a-ready", "error:e-boom"})
+        self.assertEqual(len(dbm.recent_events(self.db, 100, None)), 10)
+        self.assertEqual(kinds(dbm.recent_events(self.db, 100, "alerts")), {"alert:pr_ready:a-ready", "error:e-boom"})
+        cookie, _ = self.session()
+        default = self.req("GET", "/events", cookie=cookie)[2]
+        self.assertIn("d-real", default)
+        self.assertNotIn("r-start", default)
+        self.assertIn("r-start", self.req("GET", "/events?kind=all", cookie=cookie)[2])
+
+    def test_runs_summary_prs_cards_and_links(self):
+        rid = dbm.start_run(self.db, "build", "o/web", 1, "T <b>", "h", "sonnet", "low", "{}")
+        dbm.finish_run(self.db, rid, "pr", "ok", "https://github.com/o/web/pull/2", "", "")
+        dbm.watch_pr(self.db, "o/web", 2, "o/web", 1)
+        dbm.update_pr(self.db, "o/web", 2, status="failed", rounds=1)
+        dbm.watch_pr(self.db, "bad repo", 3, "o/web", 1)
+        cookie, _ = self.session()
+        runs = self.req("GET", "/runs?status=passed", cookie=cookie)[2]
+        self.assertIn("1 today · 1 passed · 0 failed", runs)
+        self.assertIn("Build opened PR", runs)
+        self.assertIn("status=passed", runs)
+        prs = self.req("GET", "/prs", cookie=cookie)[2]
+        self.assertIn("2 open · 0 passing · 1 failing", prs)
+        self.assertIn("Fix round 1 of ", prs)
+        self.assertIn('href="https://github.com/o/web/pull/2"', prs)
+        self.assertNotIn("github.com/bad repo", prs)
+        self.assertNotIn("<b>", prs)
+
+
+class ResponsiveContractTests(unittest.TestCase):
+    def test_phone_rules_present(self):
+        import pathlib
+        css = (pathlib.Path(__file__).resolve().parent.parent / "factory/ui/static/style.css").read_text()
+        phone = css[css.index("@media (max-width:760px)"):]
+        for needle in ("font-size:16px", "table.meta", "safe-area-inset-bottom", "max-width:calc(100vw - 1rem)"):
+            self.assertIn(needle, phone)
+
+    def test_viewport_allows_zoom(self):
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent / "factory/ui/views.py").read_text()
+        self.assertIn("viewport-fit=cover", src)
+        self.assertNotIn("user-scalable", src)

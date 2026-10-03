@@ -105,8 +105,8 @@ def credentials_test(h, form, csrf: str) -> None:
         return _send_page(h, 400, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, "Nothing is stored for that credential yet.", "bad")
     if name == "github":
         r = I.check_github(secret, cfg.repos)
-        table = ("<table><thead><tr><th>Repository</th><th>Access</th></tr></thead><tbody>" + "".join(
-            f'<tr><td>{esc(repo)}</td><td>{views.badge(a, "good" if a == "push" else "warn" if a == "read" else "bad")}</td></tr>'
+        table = ("<table class=stack><thead><tr><th>Repository</th><th>Access</th></tr></thead><tbody>" + "".join(
+            f'<tr><td data-l="Repository">{esc(repo)}</td><td data-l="Access">{views.badge(a, "good" if a == "push" else "warn" if a == "read" else "bad")}</td></tr>'
             for repo, a in r.get("access", {}).items()) + "</tbody></table>") if r.get("access") else ""
         return _send_page(h, 200, "Credentials", forms.credentials_page(cfg, csrf, table), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
     if name == "openrouter":

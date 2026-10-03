@@ -57,11 +57,12 @@ class Stations(unittest.TestCase):
 
 class Render(unittest.TestCase):
     def test_no_inline_styles_anywhere_because_the_csp_forbids_them(self):
-        d = data(running=[run(1, "stage", "architect", 18, "A <b>title</b>")], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}])
-        html = floor.render(d, "tok", "architect", [NEED, ASK], lambda n, c, b="/": "<form></form>")
+        d = data(running=[run(1, "stage", "architect", 18)], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}])
+        need = {**NEED, "title": "A <b>title</b>"}
+        html = floor.render(d, "tok", "architect", [need, ASK], lambda n, c, b="/": "<form></form>")
         self.assertNotIn("style=", html)
         self.assertNotIn("<b>title</b>", html)
-        self.assertIn("&lt;b&gt;title&lt;/b&gt;", html)
+        self.assertIn("A &lt;b&gt;title&lt;/b&gt;", html)
 
     def test_hostile_text_is_escaped_in_every_part(self):
         evil = '<img src=x onerror=alert(1)>'
@@ -77,6 +78,44 @@ class Render(unittest.TestCase):
         self.assertIn("<h2>Analyst</h2>", floor.render(d, "t", "analyst", [], None))
         self.assertIn("<h2>Architect</h2>", floor.render(d, "t", "<script>", [], None))
 
+    def test_summary_bar_counts_and_links(self):
+        d = data(running=[run(1, "stage", "architect", 18)], prs=[{"status": "passed", "repo": REPO, "number": 1}, {"status": "failed", "repo": REPO, "number": 2},
+                 {"status": "watching", "repo": REPO, "number": 3}])
+        html = floor.render(d, "t", None, [NEED, ASK], lambda n, c, b="/": "")
+        for needle in ("Healthy, last poll 5s ago", "<b>1</b> working", "<b>2</b> need you", "<b>3</b> PRs open", 'href="/needs"', 'href="/prs"', "LIVE",
+                       "Poll 60s · CI on · Telegram on · Edit", "Architect is working on #18. 2 tickets need you.", "3 PRs · 1 passing · 1 CI failing",
+                       "Show as list", "See all 2"):
+            self.assertIn(needle, html)
+        self.assertIn("DRY RUN", floor.render(data(cfg={**data()["cfg"], "live": False}), "t", None, [], None))
+        self.assertIn("Not reporting", floor.render(data(status={}), "t", None, [], None))
+
+    def test_today_line_and_last_four_runs(self):
+        now = time.time()
+        recent = [run(i, "implement", None, i, status=s, started=now - 60) for i, s in enumerate(["pr", "pr", "failed", "stage"], 1)]
+        html = floor.render(data(recent=recent, runs=recent + [run(9, "fix", None, 9, status="pr")]), "t", None, [], None)
+        self.assertIn("4 runs · 3 passed · 1 failed", html)
+        self.assertEqual(html.count('href="/runs/'), 4)
+
+    def test_the_tables_and_bulk_panel_are_gone_from_home(self):
+        d = data(cfg={**data()["cfg"], "live": False}, runs=[run(1, "implement", None, 5, "Unique run title", status="pr")], events=[{"id": 1, "ts": 1, "kind": "x", "message": "Unique event", "repo": REPO, "issue": 1, "run_id": 1}],
+                 prs=[{"status": "watching", "repo": REPO, "number": 3, "issue_repo": REPO, "issue_num": 1, "rounds": 0, "summary": "Unique pr", "updated": 1}])
+        html = floor.render(d, "t", None, [NEED, ASK, dict(ASK, issue=20)], lambda n, c, b="/": "")
+        for gone in ("<table", "Timeline", "Unique run title", "Unique event", "Unique pr", "nd-bulk", "nd-seg"):
+            self.assertNotIn(gone, html)
+        self.assertEqual(html.count('class="badge warn">'), 4)
+
+    def test_nodes_show_only_a_state_word_and_list_view_works(self):
+        d = data(running=[run(1, "stage", "architect", 18, model="secret-model")], cfg={**data()["cfg"], "review": False})
+        html = floor.render(d, "t", "architect", [], None)
+        self.assertIn('<span class="fl-ns">Working</span>', html)
+        self.assertIn('<span class="fl-ns">Off</span>', html)
+        self.assertNotIn("secret-model", html.split('class="fl-insp"')[0])
+        self.assertIn("secret-model", html.split('class="fl-insp"')[1])       # the model moved to the inspector
+        self.assertNotIn("fl-listview", html)
+        self.assertIn("fl-listview", floor.render(d, "t", "architect", [], None, view="list"))
+        failing = data(recent=[run(2, "implement", None, 4, status="failed", started=time.time() - 10)])
+        self.assertEqual(floor.gather(failing, [], time.time())["build"]["label"], "Failing")
+
     def test_the_tray_has_every_state(self):
         forms = lambda n, c, b="/": f"[{n['issue']}]"
         self.assertIn("Save a GitHub token", floor.tray(None, "t", forms))
@@ -87,6 +126,69 @@ class Render(unittest.TestCase):
         self.assertIn("https://github.com/your-org/shop-web/issues/13", html)         # the ticket on GitHub, not another page of this UI
         many = floor.tray([dict(NEED, issue=i) for i in range(15)], "t", forms)
         self.assertIn("3 more in Tickets", many)
+
+
+class Phone(unittest.TestCase):
+    """The phone layout: markup that CSS shows below 760px (it needs no JavaScript) and the stacked-card tables."""
+
+    def test_the_factory_screen_has_its_parts(self):
+        d = data(running=[run(1, "stage", "architect", 18, "Build it")])
+        html = floor.render(d, "t", None, [NEED, ASK], None)
+        for needle in ('class="ph-home"', "ph-health", "ph-tiles", "working</span>", "need you</span>", "PRs open</span>", "Running now", 'class="ph-pipe"',
+                       "Intake", "Analyst", "Designer", "Architect", "Build", "PRs and CI", "Running</span>", "Idle</span>", "Review →", 'href="/needs"'):
+            self.assertIn(needle, html)
+        self.assertEqual(html.count("ph-step "), 6)
+        self.assertIn("<progress", html.split('class="ph-home"')[1])
+        self.assertIn("shop-web#13", html.split("ph-need")[1])
+        self.assertNotIn("style=", html)
+
+    def test_phone_markup_escapes_untrusted_text(self):
+        evil = "<img src=x onerror=alert(1)>"
+        d = data(running=[run(1, "stage", "architect", 18, evil)], paused=evil)
+        html = floor.phone_home(d, floor.gather(d, [], time.time()), [{**NEED, "title": evil, "reason": evil}], time.time())
+        self.assertNotIn("<img", html)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
+
+    def test_the_phone_screen_can_pause_and_resume(self):
+        live = floor.gather(data(), [], time.time())
+        html = floor.phone_home(data(), live, [], time.time(), "tok")
+        self.assertIn('action="/action/pause"', html)
+        self.assertIn('name="csrf" value="tok"', html)
+        html = floor.phone_home(data(paused="manual pause"), live, [], time.time(), "tok")
+        self.assertIn('action="/action/resume"', html)
+        self.assertNotIn("/action/pause", floor.phone_home(data(), live, [], time.time()))       # no token, no form
+
+    def test_app_js_reads_the_form_action_as_an_attribute(self):
+        # a <button name="action"> inside a form shadows form.action in the DOM, so fetch(f.action) posted to "[object HTMLButtonElement]"
+        from pathlib import Path
+        js = (Path(floor.__file__).parent / "static" / "app.js").read_text()
+        self.assertNotIn("f.action", js)
+
+    def test_phone_states_without_work_or_a_token(self):
+        d = data()
+        live = floor.gather(d, None, time.time())
+        self.assertIn("Save a GitHub token", floor.phone_home(d, live, None, time.time()))
+        html = floor.phone_home(d, live, [], time.time())
+        self.assertIn("Nothing is running", html)
+        self.assertIn("Nothing needs you", html)
+        self.assertNotIn("Review →", html)
+
+    def test_tables_carry_column_names_for_stacked_cards_and_stay_escaped(self):
+        evil = "<script>x</script>"
+        html = views.runs_table([run(1, "stage", "architect", 18, evil)]) + views.events_table(
+            [dict(ts=1, kind="error", repo=REPO, issue=1, run_id=None, message=evil)])
+        self.assertIn('class="stack"', html)
+        for col in ('data-l="Status"', 'data-l="Ticket"', 'data-l="Message"'):
+            self.assertIn(col, html)
+        self.assertNotIn("<script>", html)
+
+    def test_the_tab_bar_keeps_the_four_destinations(self):
+        html = views.page("T", "", "/", "c", badges={"/needs": 3})
+        nav = html.split('<nav aria-label="Main">')[1].split("</nav>")[0]
+        self.assertIn('<span class="navbadge">3</span>', nav)
+        self.assertEqual([p for p, _ in views.NAV[:views.PRIMARY]], ["/", "/needs", "/tickets"])
+        for label in ("Factory", "Needs you", "Tickets", "More", "Runs", "PRs &amp; CI", "Events", "Settings"):
+            self.assertIn(label, nav)
 
 
 class Ordering(unittest.TestCase):
@@ -131,9 +233,9 @@ class Inline(UiCase):
         cookie, _ = self.session()
         with mock.patch("factory.ui.server.L.needs_you", return_value=[ASK, NEED]):
             html = self.req("GET", "/?station=build", cookie=cookie)[2]
-        for needle in ('name="a_q1" value="a"', 'name="a_q1" value="b"', 'name="x_q1"', 'name="accept" value="1"', 'name="send" value="1"',
-                       'name="stage" value="architect"', 'name="back" value="/?station=build"', "Run analyst", "nd-tog"):
+        for needle in ('name="accept" value="1"', 'name="back" value="/?station=build"', "Run analyst", "See all 2"):
             self.assertIn(needle, html)
+        self.assertNotIn("nd-tog", html)                      # the question forms are on /needs now
 
     def test_needs_you_attaches_the_questions_and_drops_stale_rows(self):
         from factory.ui import labels as L
@@ -172,7 +274,7 @@ class Needs(UiCase):
     def test_rows_filters_popup_and_bulk(self):
         rows = [ASK, dict(ASK, issue=20, st=many(1)), dict(ASK, issue=21, st=many(3)), NEED]
         html = floor.tray(rows, "tok", None, "/?station=build")
-        self.assertIn("nd-tog", html)                                              # one or two questions: inline
+        self.assertIn("nd-body", html)                                             # one or two questions: inline, no toggle
         self.assertIn('<dialog id="nd-d2"', html)                                  # three questions: a popup
         self.assertIn('data-dialog="nd-d2"', html)
         self.assertIn("<noscript>", html)                                          # and a link when scripts are off
@@ -184,7 +286,7 @@ class Needs(UiCase):
         self.assertIn('class="on" href="/?station=build&amp;need=questions"', q)
         d = floor.tray(rows, "tok", None, "/?station=build", "decisions")
         self.assertIn("Run analyst", d)
-        self.assertNotIn("nd-tog", d)
+        self.assertNotIn("nd-body", d)
         self.assertNotIn("answer-all", d)                                          # fewer than two tickets with questions: no bulk button
 
     def test_the_confidence_meter_and_meta_come_from_the_decision(self):
@@ -192,6 +294,7 @@ class Needs(UiCase):
         html = floor.tray([row], "t", None)
         self.assertIn('<meter class="nd-meter" min="0" max="1" value="0.50"', html)
         self.assertIn("feature · high complexity", html)
+        self.assertIn("shop-web#13 · feature", html)                                # repo#n · kind · complexity · age
         self.assertNotIn("style=", html)
 
     def test_needs_page_nav_count_and_fragment(self):
@@ -211,7 +314,7 @@ class Needs(UiCase):
         from factory.ui import labels as L
         for ok in ("/needs", "/needs?need=questions", "/?need=decisions", "/?station=build&need=questions"):
             self.assertTrue(L.BACK.fullmatch(ok), ok)
-        for bad in ("/needs?x=1", "/?need=<b>", "//evil", "/needs/../settings", "/?station=a&station=b&need=c"):
+        for bad in ("/needs?x=1", "/?need=<b>", "//evil", "/needs/../settings", "/?station=a&need=b&view=c&need=d"):
             self.assertFalse(L.BACK.fullmatch(bad), bad)
 
 

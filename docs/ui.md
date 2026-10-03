@@ -31,7 +31,7 @@ The top bar has seven tabs: Factory, Needs you (with a count badge), Tickets, Ru
 
 | Page | Changes |
 |---|---|
-| Settings | Poll interval, dry run (go live), confidence threshold, labels, who may apply them, repositories, projects, routing (tier → harness/model/effort), role agents, classifier (Jev or labels, label → kind aliases, with a **Try it** box), the code reviewer (on/off, automatic or by label, model, harness), sandbox limits and allowed hosts, CI feedback. |
+| Settings | Poll interval, dry run (go live), confidence threshold, labels, who may apply them, repositories, projects, routing (tier → harness/model/effort), role agents, classifier (Jev or labels, label → kind aliases, with a **Try it** box), the code reviewer (on/off, automatic or by label, model, harness), sandbox limits and allowed hosts, CI feedback, merge conflicts, agent prompts (your own instructions per agent, with the built-in prompt shown read-only). |
 | Harnesses | Enable or disable an agent harness; edit its image, command and hosts; set its key. Routes and roles choose among the enabled ones. |
 | Credentials | GitHub token, Claude credential (subscription token or API key), OpenRouter key, Telegram bot token. Write-only. GitHub and OpenRouter have a Test button. |
 | Telegram | Your chat id (with *Find my chat id*), a test message, and how chatty it is: a level, or an explicit list of events. |
@@ -101,9 +101,14 @@ what it does, what it is working on, its numbers for the last day and its recent
 survives the page's 5-second refresh). Under the map, **Needs you** lists the tickets waiting for a person with the same buttons as
 Telegram (Run <stage>, Build anyway, Skip, or Accept recommendations for stage questions).
 
-The map is read-only: stations are links, not controls, so pause and reroute can be added later without redrawing it. On a phone the
-map becomes a vertical list of stations, the navigation becomes a bottom tab bar (the rest sits behind **More**), and the Tickets
-table becomes cards. The theme is dark only, using system fonts and no inline styles (the page's CSP forbids them).
+The map is read-only: stations are links, not controls, so pause and reroute can be added later without redrawing it. On a phone (under 760px, tested at 360-430px) the
+navigation becomes a bottom tab bar (Factory, Needs you with a count badge, Tickets, and **More** for Runs, PRs & CI, Events, Settings and the
+rest; every target is at least 44px) and the Factory page shows a phone screen instead of the map: health dot, a title and sentence, three
+tiles (working, need you, PRs open), a card for what is running with a progress bar, the pipeline as a vertical list (Intake, Analyst,
+Designer, Architect, Build, PRs and CI, each with a state dot and word) and the top Needs-you ticket with *Review →*. The belt diagram,
+the pause button and the long tables are desktop-only. On the Needs you screen each ticket is a card with full-width buttons (the primary
+action first, then two side by side) and a back link. Tables on the other pages become stacked cards. It is all CSS media queries over
+server-rendered markup, so it works without JavaScript, and animation is switched off under `prefers-reduced-motion`. The theme is dark only, using system fonts and no inline styles (the page's CSP forbids them).
 
 **What the buttons do.** *Auto* and *Review* apply their trigger label (the classifier decides). *Build*, *Build anyway* and the stage
 buttons queue a person's approval in the factory's database, the same row the Telegram buttons write, and the factory runs the ticket

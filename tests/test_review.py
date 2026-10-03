@@ -20,9 +20,13 @@ class GH(FakeGH):
         super().__init__(*a, **k)
         self.branch = branch
         self.posted = []
+        self.ready = []
 
     def get_pr(self, repo, n):
         return {"head": {"ref": self.branch, "repo": {"full_name": repo}}}
+
+    def mark_ready(self, repo, n):
+        self.ready.append((repo, n))
 
     def comment(self, repo, num, body):
         self.posted.append((repo, num, body))
@@ -80,6 +84,19 @@ class AutomaticReview(unittest.TestCase):
         self.assertTrue(body.startswith("<!-- factory:review -->"))
         self.assertIn("never approves or requests changes", body)
         self.assertNotIn("@mallory", body)                                               # sanitized like every agent document
+        self.assertIn(("add", ("stage:reviewed",)), gh.calls)
+
+    def test_the_prs_are_marked_ready_only_after_the_review_is_posted(self):
+        _, gh, _ = self.run_dispatch()
+        self.assertEqual(sorted(gh.ready), [("o/m", 4), ("o/r", 9)])
+
+    def test_a_failed_review_leaves_the_prs_draft_and_a_mark_ready_error_is_contained(self):
+        for fake in (runner_fake(RuntimeError("boom")), runner_fake(RunResult("rate-limited", "x")), runner_fake(RunResult("failed", "x"))):
+            _, gh, _ = self.run_dispatch(fake=fake)
+            self.assertEqual(gh.ready, [])
+        with mock.patch.object(GH, "mark_ready", side_effect=RuntimeError("graphql")):
+            res, gh, _ = self.run_dispatch()
+        self.assertEqual(res.status, "pr")
         self.assertIn(("add", ("stage:reviewed",)), gh.calls)
 
     def test_it_only_comments_it_never_approves_or_reviews_formally(self):

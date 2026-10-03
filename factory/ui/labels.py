@@ -17,6 +17,7 @@ from .views import badge, csrf_field, esc
 log = logging.getLogger("factory.ui")
 NUM = re.compile(r"^\d{1,9}$")
 STATES = ("open", "closed", "all")
+STAGE_FILTERS = ("progress", "needs", "done")
 FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it is labelled again.", "started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced.",
          "answered": "Answer recorded on the ticket. Other questions still need an answer.",
          "continued": "Answers recorded on the ticket. The factory starts the next stage at its next poll."}
@@ -33,7 +34,7 @@ NO_TOKEN = "Save a GitHub token on the Credentials page first."
 # the server per session (never taken from the URL), so a link cannot make the page say something.
 _flash: dict = {}
 _flash_lock = threading.Lock()
-BACK = re.compile(r"^/(?:\?(?:station|need)=[a-z]{1,12}(?:&(?:station|need)=[a-z]{1,12})?|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?)?$")
+BACK = re.compile(r"^/(?:\?(?:station|need|view)=[a-z]{1,12}(?:&(?:station|need|view)=[a-z]{1,12}){0,2}|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?)?$")
 
 
 def flash_set(csrf: str, msg: str, kind: str = "ok") -> None:
@@ -244,50 +245,68 @@ def list_get(h, q: dict, csrf: str) -> None:
     state = q.get("state") if q.get("state") in STATES else "open"
     label, text = (q.get("label") or "")[:50], (q.get("q") or "").strip()[:100]
     page_no = int(q["page"]) if (q.get("page") or "").isdigit() and 1 <= int(q["page"]) <= 1000 else 1
+    stage = q.get("stage") if q.get("stage") in STAGE_FILTERS else ""
     gh = _gh(h)
     if gh is None:
         return _page(h, 200, "Tickets", views.tickets_page(_decisions(h, None)), csrf, NO_TOKEN + " Showing the factory's decisions only.", "bad")
+    # The chips filter on GitHub (a search over every page), not on the page that happens to be loaded. The label lists are built here from config.
+    any_of = tuple(sorted({f"factory:working-{r.name}" for r in cfg.roles} | {"factory:working"} if stage == "progress"
+                          else {cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles)} if stage == "needs" else set()))
+    want_state = "closed" if stage == "done" else state
     try:
         def fetch():
             if text.lstrip("#").isdigit() and len(text.lstrip("#")) <= 9:
                 issue = gh.get_issue(repo, int(text.lstrip("#")))
-                return ([] if "pull_request" in issue else [issue]), False
-            if text:
-                return gh.search_issues(repo, text, state, page_no)
-            return gh.issues(repo, state, label or None, page_no)
+                one = [] if "pull_request" in issue else [issue]
+                return one, False, len(one)
+            if text or any_of or stage == "done":
+                return gh.search_page(repo, text, want_state, page_no, labels=any_of, label=label)
+            issues, more = gh.issues(repo, want_state, label or None, page_no)
+            return issues, more, gh.count_issues(repo, want_state, label)
 
-        names, (issues, more) = _par(lambda: label_names(gh, repo), fetch)
+        names, (issues, more, total) = _par(lambda: label_names(gh, repo), fetch)
     except (urllib.error.URLError, OSError, ValueError) as e:
-        return _page(h, 502, "Tickets", filters(cfg, repo, state, label, text, []), csrf, _github_error(e), "bad")
-    if label and text:
+        return _page(h, 502, "Tickets", filters(cfg, repo, state, label, text, [], "", stage), csrf, _github_error(e), "bad")
+    if label and text.lstrip("#").isdigit():
         issues = [i for i in issues if label in _names(i)]
     decisions = _decisions(h, repo)
+    asked = _asked(h, gh, cfg, repo, issues, decisions)
+    approved = _approved(h)
+    if stage == "needs":                 # a trigger label alone is not a question for a person: keep what the factory actually asked about
+        issues = [i for i in issues if i["number"] in asked or actions_for(cfg, i, decisions.get((repo, i["number"])), (repo, i["number"]) in approved)[0] == NEEDS_PERSON]
+        total = len(issues) if not more else total
     from urllib.parse import urlencode
-    back = "/tickets?" + urlencode({"repo": repo, "state": state, "label": label, "q": text, "page": page_no})
+    back = "/tickets?" + urlencode({"repo": repo, "state": state, "label": label, "q": text, "page": page_no, **({"stage": stage} if stage else {})})
     if not BACK.fullmatch(back):
         back = "/tickets"
     shown = flash_pop(csrf) or (FLASH.get(q.get("ok", "")), "ok")
-    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names, csrf)
-          + table(cfg, repo, issues, decisions, csrf, _asked(h, gh, cfg, repo, issues, decisions), _approved(h), back)
-          + pager(repo, state, label, text, page_no, more), csrf, shown[0], shown[1])
+    _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, names, csrf, stage)
+          + table(cfg, repo, issues, decisions, csrf, asked, approved, back)
+          + (footer(len(issues), total) if issues else "") + pager(repo, state, label, text, page_no, more, stage), csrf, shown[0], shown[1])
 
 
-def filters(cfg, repo, state, label, text, names, csrf: str = "") -> str:
+def filters(cfg, repo, state, label, text, names, csrf: str = "", stage: str = "") -> str:
+    from urllib.parse import urlencode
     def opts(values, cur, blank=None):
         return "".join(f'<option value="{esc(v)}"{" selected" if v == cur else ""}>{esc(v or blank)}</option>' for v in values)
 
+    chip = lambda name, key: (f'<a href="/tickets?{esc(urlencode({"repo": repo, "state": state, "label": label, "q": text, **({"stage": key} if key else {})}))}"'
+                              f'{" aria-current=page" if key == stage else ""}>{name}</a>')
+    chips = "".join(chip(n, k) for n, k in (("All", ""), ("In progress", "progress"), ("Needs you", "needs"), ("Done", "done")))
     return (new_ticket_form(cfg, repo, csrf) + '<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
             f'<form method="get" class="filters"><select name="repo" aria-label="Repository">{opts(cfg.repos, repo)}</select>'
             f'<select name="state" aria-label="State">{opts(STATES, state)}</select>'
             f'<select name="label" aria-label="Label">{opts(["", *names], label, "any label")}</select>'
-            f'<input name="q" placeholder="search title or #number" value="{esc(text)}"><button>Filter</button></form>')
+            f'<input type="search" name="q" aria-label="Search title or #number" placeholder="search title or #number" value="{esc(text)}">'
+            f'{f"<input type=hidden name=stage value={esc(stage)}>" if stage else ""}<button>Filter</button></form>'
+            f'<nav class="nd-seg tk-seg" aria-label="Stage filter">{chips}</nav>')
 
 
 def new_ticket_form(cfg, repo: str, csrf: str) -> str:
     if not csrf or not cfg.repos:
         return ""
     opts = "".join(f'<option value="{esc(r)}"{" selected" if r == repo else ""}>{esc(r)}</option>' for r in cfg.repos)
-    return ('<details class="disclose"><summary>New ticket</summary>'
+    return ('<details class="disclose"><summary class="btn">New ticket</summary>'
             f'<form method="post" action="/tickets/create" class="field">{csrf_field(csrf)}'
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{MAX_TITLE}"></label>'
@@ -509,31 +528,54 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
             return out + ' <span class="muted">Can\'t close while work is running or waiting for an answer.</span>'
         return out + " " + close_form(repo, i, csrf, back)
 
-    def steps(i) -> str:
+    def stage_of(i) -> str:
+        """The one stage a ticket is in. Failed counts as Needs you (a person must act); queued and ready tickets show the stage they are about to run."""
+        n = i["number"]
+        d = decisions.get((repo, n))
+        status, _ = actions_for(cfg, i, d, (repo, n) in approved)
         names = set(_names(i))
-        out = []
-        for r in cfg.roles:
-            cls = "done" if r.done_label in names else "now" if f"factory:working-{r.name}" in names else ""
-            out.append(f'<span class="st {cls}">{esc(VERBS.get(r.name, r.name.capitalize()))}</span>')
-        build = "done" if "factory:pr-open" in names else "now" if "factory:working" in names else ""
-        out.append(f'<span class="st {build}">Build</span>')
-        return f'<div class="steps">{"".join(out)}</div>'
+        if status == "closed":
+            return "Done"
+        if d and d.get("outcome") in ("ignored", "skip"):
+            return "Ignored"
+        if status in (NEEDS_PERSON, "failed") or n in asked:
+            return "Needs you"
+        if status == "pr open":
+            return "PR open"
+        if status in ("running", "queued", "starting"):
+            role = next((r.name for r in cfg.roles if f"factory:working-{r.name}" in names or r.label in names), "")
+            return f"{VERBS.get(role, role.capitalize())} working" if role else "Build working"
+        return "Not started"
+
+    def progress(i) -> str:
+        names = set(_names(i))
+        marks = ["on" if r.done_label in names else "" for r in cfg.roles] + ["on" if "factory:pr-open" in names else ""]
+        return f'<span class="pg" role="img" aria-label="{marks.count("on")} of {len(marks)} steps done">{"".join('<i class="on"></i>' if m else "<i></i>" for m in marks)}</span> <span class="muted fl-mono">{marks.count("on")}/{len(marks)}</span>'
+
+    def updated(i) -> str:
+        d = decisions.get((repo, i["number"]))
+        when = _epoch(i.get("updated_at"))
+        return (f'{esc(views.ago(when))}' if when else '<span class="muted">—</span>') + (f'<br>{factory_cell(i["number"])}' if d else "")
 
     rows = "".join(
-        f'<tr><td data-l="Issue">{views.ticket_link(repo, i["number"])}<br><span class="muted">{esc(i.get("title"))}</span></td><td data-l="State">{badge(i.get("state"), "")}</td>'
-        f'<td data-l="Progress">{steps(i)}</td>'
-        f'<td data-l="Labels">{" ".join(chip(n, cfg) for n in _names(i)) or "<span class=muted>none</span>"}</td><td data-l="Factory">{factory_cell(i["number"])}</td>'
-        f'<td class="actions" data-l="Start">{buttons(i)}</td></tr>'
+        f'<tr data-row="{esc(repo)}#{int(i["number"])}"><td data-l="Ticket">{views.ticket_link(repo, i["number"])}<br><span>{esc(i.get("title"))}</span><br>'
+        f'{" ".join(chip(n, cfg) for n in _names(i))}</td><td data-l="Stage">{esc(stage_of(i))}</td>'
+        f'<td data-l="Progress">{progress(i)}</td><td data-l="Updated">{updated(i)}</td>'
+        f'<td class="actions" data-l="Actions">{buttons(i)}</td></tr>'
         for i in issues)
-    return ('<div class="scroll"><table class="tickets"><thead><tr><th>Issue</th><th>State</th><th>Progress</th><th>Labels</th><th>Factory</th><th>Start</th></tr></thead>'
+    return ('<div class="scroll"><table class="tickets stack"><thead><tr><th>Ticket</th><th>Stage</th><th>Progress</th><th>Updated</th><th>Actions</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 
-def pager(repo, state, label, text, page_no, more) -> str:
+def footer(shown: int, total) -> str:
+    return f'<p class="tk-foot">Showing {int(shown)}' + (f' of {int(total)}' if isinstance(total, int) and total >= shown else "") + "</p>"
+
+
+def pager(repo, state, label, text, page_no, more, stage: str = "") -> str:
     from urllib.parse import urlencode
 
     def link(text_, p):
-        return f'<a href="/tickets?{esc(urlencode({"repo": repo, "state": state, "label": label, "q": text, "page": p}))}">{text_}</a>'
+        return f'<a href="/tickets?{esc(urlencode({"repo": repo, "state": state, "label": label, "q": text, "page": p, **({"stage": stage} if stage else {})}))}">{text_}</a>'
 
     return '<p class="pager">' + (link("← newer", page_no - 1) if page_no > 1 else "") + " " + (link("older →", page_no + 1) if more else "") + "</p>"
 

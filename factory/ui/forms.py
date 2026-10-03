@@ -3,6 +3,7 @@ import json
 import time
 
 from ..events import ALL_EVENTS, LEVELS
+from ..roles import PROMPT_AGENTS, builtin_prompt
 from . import settings as S
 from .integrations import SECRETS, secret_status
 from .views import badge, csrf_field, ago, esc, ts
@@ -15,7 +16,7 @@ EVENT_HELP = {
     "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from Telegram",
     "info": "Anything else",
 }
-TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts")]
+TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("pm", "Project manager"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts"), ("prompts", "Agent prompts")]
 
 
 def _fmt(f: S.Field, v) -> str:
@@ -68,12 +69,20 @@ def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = Fal
             control = " ".join(f'<label class="check"><input type="checkbox" name="{name}" value="{esc(c)}"{" checked" if c in have else ""}> {esc(c)}</label>' for c in f.choices)
         elif f.kind in ("repos", "hosts", "kv"):
             control = f'<textarea id="{name}" name="{name}" rows="{max(3, min(8, len((value or "").splitlines()) + 1))}">{esc(value)}</textarea>'
+        elif f.kind == "prompt":           # the newline after the tag is dropped by the browser, so a leading one in the value survives
+            control = f'<textarea id="{name}" name="{name}" rows="6" maxlength="{S.PROMPT_MAX}">\n{esc(value)}</textarea>'
+            agent = f.key.partition(".")[2]
+            if agent in PROMPT_AGENTS:
+                control += (f'<details><summary class="muted">Built-in instructions (always included, and they win)</summary>'
+                            f'<pre>{esc(builtin_prompt(agent))}</pre></details>')
         else:
             control = f'<input id="{name}" name="{name}" value="{esc(value)}" autocomplete="off">'
     pinned = S.get_in(base, f.key)
     note = ""
     if S.get_in(eff, f.key) is not None and S.get_in(eff, f.key) != pinned and pinned is not None:
-        note = f'<span class="muted"> · changed here (config.toml says: {esc(_fmt(f, pinned))})</span>'
+        said = _fmt(f, pinned)
+        said = said[:200] + "…" if f.kind == "prompt" and len(said) > 200 else said
+        note = f'<span class="muted"> · changed here (config.toml says: {esc(said)})</span>'
     help_ = f'<div class="muted">{esc(f.help)}{note}</div>' if (f.help or note) else ""
     confirm = (f'<label class="check danger"><input type="checkbox" name="confirm__{name}" value="1"> I understand: {esc(f.danger)}</label>' if f.danger else "")
     if row:
@@ -104,11 +113,11 @@ def projects_form(base: dict, eff: dict, csrf: str, submitted=None) -> str:
     for i, p in enumerate(projects[:20]):
         repos = list(p.get("repos", [])) + [{"repo": "", "role": ""}, {"repo": "", "role": ""}]
         rows = "".join(
-            f'<tr><td><input name="p{i}_r{j}_repo" placeholder="owner/name" value="{esc(r["repo"])}"></td>'
-            f'<td><input name="p{i}_r{j}_role" placeholder="what this repo is for" value="{esc(r.get("role", ""))}" class="wide"></td></tr>' for j, r in enumerate(repos[:30]))
+            f'<tr><td data-l="Repository"><input name="p{i}_r{j}_repo" placeholder="owner/name" value="{esc(r["repo"])}"></td>'
+            f'<td data-l="Role"><input name="p{i}_r{j}_role" placeholder="what this repo is for" value="{esc(r.get("role", ""))}" class="wide"></td></tr>' for j, r in enumerate(repos[:30]))
         out.append(f'<fieldset><legend>{esc(p["name"] or "New project")}</legend><div class="field"><label>Name</label><input name="p{i}_name" value="{esc(p["name"])}"></div>'
                    f'<div class="field"><label>Description</label><input name="p{i}_desc" value="{esc(p.get("description", ""))}" class="wide"></div>'
-                   f'<table><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table></fieldset>')
+                   f'<table class="stack"><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table></fieldset>')
     out.append('<button>Save projects</button></form><p class="muted">Leave a project\'s name and repositories empty to remove it.</p>')
     return "".join(out)
 
@@ -162,8 +171,8 @@ def telegram_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") ->
     lv = "".join(f'<option{" selected" if v == level else ""}>{v}</option>' for v in ("quiet", "normal", "verbose"))
     found = ""
     if unknown:
-        found = ("<h2>People who messaged the bot</h2><table><thead><tr><th>Name</th><th>Id</th><th></th></tr></thead><tbody>" + "".join(
-            f'<tr><td>{esc(u["name"])} <span class="muted">{esc(u.get("chat", ""))}</span></td><td>{int(u["id"])}</td><td>'
+        found = ("<h2>People who messaged the bot</h2><table class=stack><thead><tr><th>Name</th><th>Id</th><th></th></tr></thead><tbody>" + "".join(
+            f'<tr><td data-l="Name">{esc(u["name"])} <span class="muted">{esc(u.get("chat", ""))}</span></td><td data-l="Id">{int(u["id"])}</td><td data-l="Actions">'
             f'<form method="post" action="/telegram/use" class="inline">{csrf_field(csrf)}<input type="hidden" name="chat_id" value="{int(u["id"])}"><button>Use this id</button></form></td></tr>'
             for u in unknown) + "</tbody></table><p class=muted>Only this account will ever be obeyed. Check the id is yours.</p>")
     return (
