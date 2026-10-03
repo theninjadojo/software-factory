@@ -250,3 +250,20 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .prcard.good { border-left-color:var(--good); } .prcard.warn { border-left-color:var(--warn); } .prcard.bad { border-left-color:var(--bad); } .prcard h3 { margin:0 0 .2rem; } .prcard p { margin:.2rem 0; }
 a.button { display:inline-block; margin-top:.4rem; padding:.35rem .9rem; min-height:32px; border:1px solid var(--line); border-radius:8px; text-decoration:none; }
 .check.evt input { flex:none; } .check.evt strong { flex:none; white-space:nowrap; overflow-wrap:normal; }
+.nd-opt .badge, .nd-opt .rec-tag { flex:none; white-space:nowrap; }
+@media (min-width:761px) and (max-width:920px) { header { gap:.4rem; padding-left:.8rem; padding-right:.8rem; } header nav a, header nav summary { padding-left:.55rem; padding-right:.55rem; } .brand { font-size:.95rem; } }
+@media (max-width:760px) { .nd-low > .nd-acts2 { width:100%; } .nd-acts2 { align-items:stretch; } .nd-acts2 form.inline { display:flex; } .nd-acts2 form.inline button { width:100%; min-height:44px; } }
+/* tablets: the map needs about 1030px, so between the phone layout and that width the stations show as the list (same markup as list view) */
+@media (min-width:761px) and (max-width:1060px) {
+  .fl-board .fl-rail { width:auto; height:auto; overflow:visible; clip-path:none; white-space:normal; }
+  .fl-board .fl-wrap { display:none; }
+  .fl-board .fl-rail { display:flex; flex-direction:column; gap:.5rem; list-style:none; margin:0; padding:0 0 0 1.3rem; position:relative; }
+  .fl-board .fl-rail:before { content:""; position:absolute; left:5px; top:10px; bottom:10px; width:3px; border-radius:2px; background:repeating-linear-gradient(180deg,var(--line2) 0 8px,transparent 8px 14px); animation:fl-bmv 1.2s linear infinite; }
+  .fl-board .fl-s { position:relative; display:flex; flex-wrap:wrap; align-items:center; gap:.7rem; min-height:56px; padding:.5rem .8rem; border-radius:10px; background:var(--panel); border:1px solid var(--line2); color:var(--text); text-decoration:none; }
+  .fl-board .fl-s:before { content:""; position:absolute; left:-1.3rem; top:50%; width:7px; height:7px; margin-top:-3px; border-radius:50%; background:var(--line2); }
+  .fl-board .fl-s.run { border-color:var(--accent); } .fl-board .fl-s.run:before { background:var(--accent); }
+  .fl-board .fl-s progress.fl-bar { position:static; width:100%; margin-top:.2rem; }
+}
+table.tickets td:first-child { overflow-wrap:anywhere; min-width:0; max-width:22rem; }
+@media (max-width:1100px) { table.tickets td.actions { white-space:normal; } table.tickets td.actions form { display:inline-block; margin:0 .25rem .3rem 0; } }
+.nd-row .nd-main, .nd-row .nd-t, .nd-row .nd-top > *, .nd-row .nd-low > *, .nd-grid > *, .nd-q-text, .nd-opt { min-width:0; overflow-wrap:anywhere; }
