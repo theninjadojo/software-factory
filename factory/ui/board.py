@@ -553,12 +553,13 @@ def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: st
     sel = (sel_row["repo"], sel_row["issue"]) if sel_row else None
     crumb = (f'<p class="sd-crumb muted">Tickets <span aria-hidden="true">/</span> <span class="mono">{esc(sel_row["repo"].split("/")[-1])}#{int(sel_row["issue"])}</span></p>'
              if sel_row and explicit else "")
-    back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at))}">← All tickets</a></p>' if explicit else ""
+    back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at))}">← All tickets</a></p>'     # shown on a phone while a ticket is open
     return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead">{crumb}<div class="sd-h1row"><h1>Tickets</h1>{new_ticket}</div>'
             '<p class="muted sd-lede">Everything about a ticket in one place: what it needs from you, where it is on the floor, every run, and its pull requests and checks.</p></div>'
             + phone_needs(rows, csrf) + filters_html(counts(rows), flt, q, at, order)
             + f'<div class="sd-split"><section class="sd-list" aria-label="Ticket list">{list_html(shown, sel, flt, q, at, now, csrf)}</section>'
-            + (detail or '<div class="sd-detail sd-none"><p class="muted">Pick a ticket to see its journey.</p></div>') + "</div></div>")
+            + (detail or '<div class="sd-detail sd-none"><p class="muted">Pick a ticket to see its journey.</p></div>') + "</div>"
+            + f'<template id="ld-detail"><div class="sd-detail sd-loading">{loader("Loading the ticket from GitHub")}</div></template></div>')
 
 
 # ---------------------------------------------------------------- the Factory dashboard
@@ -697,7 +698,8 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
     fail_rows = [r for r in rows if r["state"] == "failed"]
     nneeds = len(needs) if needs is not None else c["needs"]
     asking = sum(1 for r in needs or [] if r.get("st"))
-    tiles = (_tile("/tickets?stage=needs", "Needs you", nneeds, "wait", f"{asking} with questions, {nneeds - asking} to decide" if nneeds else "nothing waiting", hot=bool(nneeds))
+    needs_sub = ("asking GitHub…" if d.get("needs_loading") else f"{asking} with questions, {nneeds - asking} to decide" if nneeds else "nothing waiting")
+    tiles = (_tile("/tickets?stage=needs", "Needs you", nneeds, "wait", needs_sub, hot=bool(nneeds))
              + _tile("/tickets?stage=working", "Working now", len(d["running"]), "run", " and ".join(work_at) if d["running"] else "nothing running")
              + _tile("/tickets?stage=prs", "PRs & CI", f'{len(open_prs)} <small>open</small>', "run", f"{checks} running checks, {failing} failing")
              + _tile("/runs?status=passed", "Done today", passed, "done", f"{len(today)} runs in the last 24 hours")
@@ -705,4 +707,28 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
     head = (f'<div class="sd-dash-head"><div><p class="muted sd-fine">{esc(line)}</p><h1>Factory</h1></div>'
             f'<div class="sd-acts">{floor.pause_form(paused, csrf)}<a class="btn secondary" href="/?mode=confirm">Mode: {"live" if cfg["live"] else "dry run"}</a></div></div>')
     return (f'<div class="sd-dash">{head}{mode_bar}<div class="sd-tiles five">{tiles}</div>{snake(floor_stations(rows))}'
-            f'<div class="sd-cols">{needs_tray(needs, csrf)}<div class="sd-side">{running_card(d, rows, now)}{usage_card(d, now)}</div></div></div>')
+            f'<div class="sd-cols">{slot("/fragment/needs-tray", "Asking GitHub what needs you", "sd-card sd-flush sd-needs", '<h2 class="sd-bar-h">Needs you</h2>') if d.get("needs_loading") else needs_tray(needs, csrf)}<div class="sd-side">{running_card(d, rows, now)}{usage_card(d, now)}</div></div></div>')
+
+
+# ---------------------------------------------------------------- loading: a small belt network while GitHub answers
+# Five machines joined by belts that fork and merge; crates take three different routes at their own pace (SVG motion, so the page
+# policy allows it; app.js holds it still for people who ask for reduced motion). Machines are drawn last, so a crate passes behind them.
+_ROUTES = (("M30 70 H80 V28 H178 V70 H302", "3.2s", "0s"), ("M30 70 H80 V112 H178 V70 H302", "4.1s", "-1.4s"),
+           ("M30 70 H80 V28 H128 V112 H178 V70 H302", "5s", "-2.6s"), ("M30 70 H80 V112 H178 V70 H302", "4.1s", "-3.4s"))
+_BELTS = ("M48 70 H80 V28 H110", "M48 70 H80 V112 H110", "M146 28 H178 V70 H208", "M146 112 H178 V70 H208", "M128 42 V98", "M244 70 H284")
+_MACHINES = ((12, 56), (110, 14), (110, 98), (208, 56), (284, 56))
+
+
+def loader(what: str = "Loading") -> str:
+    belts = "".join(f'<path class="ld-belt" d="{d}"/><path class="ld-flow" d="{d}"/>' for d in _BELTS)
+    crates = "".join(f'<rect class="ld-crate" x="-5" y="-5" width="10" height="10"><animateMotion path="{d}" dur="{t}" begin="{b}" repeatCount="indefinite"/></rect>'
+                     for d, t, b in _ROUTES)
+    machines = "".join(f'<rect class="ld-m m{i}" x="{x}" y="{y}" width="36" height="28"/>' for i, (x, y) in enumerate(_MACHINES))
+    return (f'<div class="ld" role="status" aria-live="polite"><svg class="ld-net" viewBox="0 0 332 140" aria-hidden="true">{belts}{crates}{machines}</svg>'
+            f'<p class="muted sd-fine">{esc(what)}…</p></div>')
+
+
+def slot(src: str, what: str, cls: str = "", head: str = "") -> str:
+    """A part of the page that loads by itself (app.js fetches src and puts the answer in its place); a link stands in without scripts.
+    head: the part's own heading, kept while it loads so the page says what is coming."""
+    return f'<div class="ld-slot {cls}" data-load="{esc(src)}">{head}{loader(what)}<noscript><a href="{esc(src)}">Show it</a></noscript></div>'

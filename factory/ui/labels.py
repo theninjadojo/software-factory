@@ -923,3 +923,8 @@ def titles_cached() -> dict:
     """{(repo, issue): title} of the open issues the last Needs-you read saw (no GitHub call)."""
     with _needs_lock:
         return dict(_needs_cache.get("titles") or {})
+
+
+def has_token(h) -> bool:
+    """Whether a GitHub token is saved (no GitHub call)."""
+    return bool(I.read_secret(h.app.cfg(), "github"))
