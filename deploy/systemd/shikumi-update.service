@@ -1,0 +1,10 @@
+[Unit]
+Description=Shikumi: apply a newer patch release (opt-in; see docs/releasing.md)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/srv/factory/app/deploy/update-native.sh --auto
+WorkingDirectory=/srv/factory
+TimeoutStartSec=1800
+# No sandboxing options: the update runs podman builds and restarts the user services.

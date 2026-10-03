@@ -38,6 +38,12 @@ class Publish(unittest.TestCase):
         self.assertEqual([p for p, _, _ in Fake.seen], ["/repos/o/r/releases", "/repos/o/r/releases/7/assets?name=VERSION", "/repos/o/r/releases/7/assets?name=update.sh"])
         self.assertTrue(all(a == "Bearer tok" for _, a, _ in Fake.seen))
         self.assertEqual(json.loads(Fake.seen[0][2])["tag_name"], "v1.2.3")
+        self.assertNotIn("target_commitish", json.loads(Fake.seen[0][2]))
+        Fake.seen.clear()
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "VERSION").write_text("1.2.3\n")
+            pr.publish(Path(d), "o/r", "v1.2.3", "tok", "abc123")
+        self.assertEqual(json.loads(Fake.seen[0][2])["target_commitish"], "abc123")
 
 
 if __name__ == "__main__":

@@ -2,15 +2,22 @@
 
 ## Cutting a release (maintainer)
 
-1. Set `VERSION` to the new number (for example `0.2.0`) and merge it to `main`.
-2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
-3. The `release` workflow (`.github/workflows/release.yml`) checks the tag matches `VERSION`, runs the tests, builds and pushes five images to
-   `ghcr.io/<owner>/shikumi`, `shikumi-agent`, `shikumi-render`, `shikumi-screens` and `shikumi-android` (tagged `v0.2.0` and `latest`), and creates a GitHub
-   Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `env.example` (the `.env` template), `setup.sh`, `update.sh` and `install.sh`, plus the worker
-   files: `install-worker.sh`, `setup-worker.sh`, `update-worker.sh` and `shikumi-worker.tar.gz` (the `worker/` folder and `sandbox/android/`).
-4. First release only: GitHub makes new container packages private. In the repo's Packages settings, make the five packages public (or
-   every installer needs a registry login).
-5. Write what changed in the release notes, and say clearly when a config change is needed.
+Releases are automatic. To release:
+
+1. Change `VERSION` to the new number (for example `0.3.0`) in a PR and merge it to `main`. It must be higher than every existing tag
+   (the workflow refuses otherwise).
+2. That is all. The `release` workflow (`.github/workflows/release.yml`) runs on the merge: it tests the code, builds and pushes five images to
+   `ghcr.io/<owner>/shikumi`, `shikumi-agent`, `shikumi-render`, `shikumi-screens` and `shikumi-android` (tagged `v0.3.0` and `latest`), creates
+   the tag `v0.3.0` at that commit, and publishes a GitHub Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `env.example`
+   (the `.env` template), `setup.sh`, `update.sh`, `install.sh`, `update-native.sh` and the worker files.
+3. On every other merge to `main` the same workflow exits within seconds: the tag for that `VERSION` already exists.
+
+Pushing a tag by hand (`git tag v0.3.0 && git push origin v0.3.0`) still works and runs the same release; the tag must match `VERSION`.
+If a release run fails before it publishes, fix the cause and re-run the workflow (nothing is tagged until the release is created).
+
+First release only: GitHub makes new container packages private. In the repo's Packages settings, make the packages public (or every installer
+needs a registry login). Write what changed in the release notes (they are generated from the merged PRs), and say clearly when a config
+change is needed.
 
 Use semantic versions: a patch for fixes, a minor for features that need no action, a major when an install must change its config or data.
 
@@ -82,6 +89,11 @@ After that first update it is part of the install (`/srv/factory/app/deploy/upda
 changes if they fail), rebuilds the sandbox images, restarts the services and checks they stay up, and rolls back (previous code and
 images) if they do not. For the UI banner on a private repo set `[updates] token_file` to a token that can read it.
 `scripts/deploy.sh user@host` still deploys the working tree you have checked out (for development).
+
+**Optional: update by itself.** Copy `deploy/systemd/shikumi-update.service` and `.timer` to `~factory/.config/systemd/user/` and run
+`systemctl --user enable --now shikumi-update.timer`. Every night it runs `update-native.sh --auto`, which applies only a newer **patch**
+release (same major.minor) and quietly does nothing while an agent run is in flight; a new minor or major version waits for a person. It tests
+first and rolls back like a manual update. `journalctl --user -u shikumi-update.service` shows what it did. It is off unless you enable it.
 
 ## Not covered
 
