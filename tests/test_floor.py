@@ -57,6 +57,15 @@ class Stations(unittest.TestCase):
 
 
 class Render(unittest.TestCase):
+    def test_the_legend_is_a_colour_key_with_one_swatch_per_state(self):
+        d = {"cfg": {"live": False, "poll_seconds": 60, "ci": "on", "telegram": "off", "classifier": "rules", "max_parallel": 1, "review": False, "conflicts": False},
+             "paused": "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": [], "recent": [], "decided": {}, "conflicting": 0}
+        html = floor.render(d, "tok", "architect", [], lambda n, c, b="/": "")
+        key = html[html.index('class="fl-legend"'):]
+        key = key[:key.index("</ul>")]
+        for state, word in (("run", "Working"), ("idle", "Idle"), ("warn", "Needs you"), ("fail", "Failing"), ("off", "Off")):
+            self.assertIn(f'<span class="fl-sw {state}" aria-hidden="true"></span>{word}', key)
+        self.assertIn("Select a station for details.", key)
     def test_the_answers_dialog_cannot_scroll_sideways(self):
         css = (Path(__file__).resolve().parent.parent / "factory" / "ui" / "static" / "style.css").read_text()
         self.assertIn(".nd-dialog .nd-qs { grid-template-columns:minmax(0,1fr); }", css)        # a 1fr track grows to a long URL or path; minmax(0,1fr) wraps it
