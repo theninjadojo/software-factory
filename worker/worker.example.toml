@@ -27,3 +27,11 @@ artifacts = ["test-results/**/*.png"]              # Playwright failure screensh
 command = ["/home/factory/recipes/android-test.sh"]
 timeout_seconds = 3600
 artifacts = ["build/screens/*.png"]                # the emulator's final screenshot
+
+[recipes.ios-test]
+# A Mac with Tart (brew install cirruslabs/cli/tart) and a golden Xcode VM named shikumi-ios (docs/workers.md, "iOS golden image").
+# Builds and tests in a throwaway macOS VM, simulator only, code signing off. One recipe per project: the arguments are fixed here.
+command = ["/Users/factory/recipes/ios-test.sh", "--scheme", "App", "--project", "App.xcodeproj"]
+# command = [".../ios-test.sh", "--scheme", "App", "--workspace", "App.xcworkspace", "--destination", "platform=iOS Simulator,name=iPhone 15 Pro"]
+timeout_seconds = 3600
+artifacts = ["build/screens/*.png"]                # the simulator's final screenshot

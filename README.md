@@ -200,14 +200,14 @@ curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/down
 
 This creates `./shikumi-worker` and runs `scripts/setup-worker.sh`, which asks for the factory URL and the token, writes `worker.toml` and the token
 file (mode 0600), installs a launchd (macOS) or systemd user service, and finishes with a check (`worker.py --check`) that proves the URL, the token,
-git and every recipe. It is non-interactive when you pass `FACTORY_URL`, `WORKER_TOKEN` and optionally `WORKER_RECIPES="web android"`.
+git and every recipe. It is non-interactive when you pass `FACTORY_URL`, `WORKER_TOKEN` and optionally `WORKER_RECIPES="web android"` (and, for iOS, `WORKER_IOS_SCHEME` plus a project or workspace).
 You also need Python 3.11+ and git on the worker, and git credentials that can **clone** your repos (read-only).
 
 | Recipe | Does | Needs on the worker |
 |---|---|---|
 | `web-test` | `npm ci` / `pnpm` / `yarn`, build, test, Playwright | Node |
 | `android-test` | `./gradlew` in a throwaway container (`--emulator` on Linux with KVM) | Docker or Podman (the image is pulled, or built once from `sandbox/android`) |
-| iOS | not shipped yet: needs a Mac and Xcode | |
+| `ios-test` | `xcodebuild test` on a simulator inside a throwaway macOS VM (stub-tested only so far) | A Mac (Apple Silicon), [Tart](https://tart.run), and an Xcode VM image (about 30 GB, one-time); set `WORKER_IOS_SCHEME` and `WORKER_IOS_PROJECT` or `WORKER_IOS_WORKSPACE` |
 
 Update with `./scripts/update-worker.sh` (refuses while a job runs, rolls back if the new version fails its check). `worker.toml`, the token and your
 git setup are never touched. Check it any time: `python3 worker/worker.py --config worker.toml --check`, and on the factory `python3 -m factory.ctl doctor`.
@@ -241,8 +241,9 @@ Everything is in one TOML file (plus the optional `config.overrides.toml` the UI
 ## Roadmap
 
 - Verification workers: the mechanism, the admin page, fix rounds, the web recipe and the Android recipe exist and are installable (above).
-  Still to do: the iOS recipe (Xcode in a Tart VM), the Android emulator path against real hardware (the unit-test path has been run for real,
-  the emulator path is stub-tested only), and running one end to end on a Mac. See [docs/workers.md](docs/workers.md).
+  The iOS recipe (Xcode in a throwaway Tart VM) is written too. Still to do: run the iOS recipe and the Android emulator path on real hardware (the
+  Android unit-test path has been run for real; iOS and the emulator are stub-tested only), and run a worker end to end on a Mac.
+  See [docs/workers.md](docs/workers.md).
 - Verifying the Codex and Gemini harness templates end to end (the mechanism is tested; their command lines are not yet).
 
 ## Development
