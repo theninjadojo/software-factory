@@ -23,7 +23,7 @@ from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harne
 from . import designfiles, screens
 from . import mockups as mockups_mod
 from .render import render as preview_render
-from .roles import (CI_FIX_PROMPT, CONFLICTS_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
+from .roles import (CI_FIX_PROMPT, CONFLICTS_PROMPT, SCREEN_FIX_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
                     agent_key, common_for, design_files_rules, operator_prompt)
 from .github import GitHub
 
@@ -55,6 +55,8 @@ class RunResult:
     output: str = ""      # a role agent's document (status "stage")
     files: list = field(default_factory=list)   # design files published for a designer run: {repo, path, url, pr}
     notes: str = ""       # anything worth telling a person (for example design files that were dropped)
+    images: list = field(default_factory=list)  # screenshots of what was built: {kind: built|diff, name, png}, kept for the UI
+    screen_failure: dict | None = None          # a failed screen check: {text, diffs: {id: png}, built: {id: png}}, for one fix round
 
 
 def bad_path(p: str, rn: RunnerCfg) -> str | None:
@@ -215,7 +217,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                  prior: dict | None = None, comments: list | None = None, failures: str | None = None,
                  ticket: tuple | None = None, design_files: bool = False, design_dir: str = designfiles.DEFAULT_DIR,
                  conflicts: dict | None = None, answers: str = "", backlog: list | None = None, operator: str = "",
-                 mockups: list | None = None) -> str:
+                 mockups: list | None = None, built: list | None = None, screen_text: str = "") -> str:
     """backlog: the project manager's tickets ({number, title, labels, body}, untrusted text); it replaces the single ticket.
     operator: standing instructions from the operator's config (trusted), put before everything else and subordinate to the
     built-in rules that follow; empty leaves the prompt exactly as it was."""
@@ -236,12 +238,16 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
     else:
         task = IMPLEMENTER_PROMPT
     if mockups and role in (None, "reviewer"):
-        task += mockups_mod.prompt_section(mockups, reviewer=role == "reviewer")
+        task += mockups_mod.prompt_section(mockups, reviewer=role == "reviewer", built=built)
+    if screen_text and not role:
+        task += SCREEN_FIX_PROMPT
     if failures and not role:
         task += CI_FIX_PROMPT
     if conflicts and not role:
         task += CONFLICTS_PROMPT
     ctx = ""
+    if screen_text and not role:
+        ctx += "<screen_check>\nResult of the screen check on your first attempt (untrusted tool output):\n" + _neutral(screen_text[:4000]) + "\n</screen_check>\n\n"
     if conflicts:
         ctx += ("<merge_conflicts>\nFiles with conflict markers, per repository directory:\n"
                 + "".join(f"- {_neutral(r)}/: {_neutral(', '.join(fs)[:3000])}\n" for r, fs in conflicts.items())
@@ -370,7 +376,7 @@ def save_screen_diffs(rn: RunnerCfg, stamp: str, repo: str, rep) -> str:
 def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role: str | None = None,
              prior: dict | None = None, comments: list | None = None, fix_branch: str | None = None,
              failures: str | None = None, sink: dict | None = None, merge_base: dict | None = None, answers: str = "",
-             backlog: list | None = None, mockups: list | None = None) -> RunResult:
+             backlog: list | None = None, mockups: list | None = None, screen_retry: dict | None = None) -> RunResult:
     """Implementation (role=None): edit the workspace, validate the patches, push branches, open PRs.
     Role (analyst/designer/architect, reviewer, pm): read-only; any edits are discarded and the agent's document is returned.
     backlog: the project manager's tickets (role pm); the issue is then a stand-in with number 0.
@@ -397,6 +403,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
     d = Path(rn.work_dir) / f"{project.name}-{num}-{stamp}"
     made = False                     # only a directory this run created is deleted afterwards
     env = git_env(gh.token)
+    sink_images: list[dict] = []      # screenshots rendered for a reviewer, attached to its result
     pushed: list[str] = []
     on_branch: set[str] = set()      # repos whose clone is on fix_branch (they already have a PR)
     merged: dict[str, list | None] = {}   # merge mode: repo -> conflicted files (None: already contains its base)
@@ -443,9 +450,28 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
         conflicts = {names[r]: fs for r, fs in todo.items() if fs}
         operator = operator_prompt(cfg.prompts, agent_key(role, bool(failures), bool(conflicts)))
         shown = mockups_mod.fetch(gh, mockups, d / "task" / "mockups") if mockups and role in (None, "reviewer") and not conflicts else []
+        built_names: list[str] = []
+        if role == "reviewer" and fix_branch:                   # the reviewer also sees the pages as built, rendered the way the screen check does
+            for r in project.repos:
+                try:
+                    got, _ = screens.capture(rn, cfg.screens, r.repo, d / "base" / names[r.repo])
+                except Exception:
+                    log.exception("could not render the built screens for the reviewer")
+                    continue
+                for i, png in got.items():
+                    (d / "task" / "built").mkdir(exist_ok=True)
+                    (d / "task" / "built" / f"{i}.png").write_bytes(png)
+                    built_names.append(f"{i}.png")
+                    sink_images.append({"kind": "built", "name": i, "png": png})
+        if screen_retry:
+            for sub, imgs in (("diffs", screen_retry["diffs"]), ("built", screen_retry["built"])):
+                (d / "task" / sub).mkdir(exist_ok=True)
+                for i, png in imgs.items():
+                    (d / "task" / sub / (f"{i}-diff.png" if sub == "diffs" else f"{i}.png")).write_bytes(png)
         (d / "task" / "prompt.txt").write_text(
             build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
-                         (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown))
+                         (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown, built_names,
+                         screen_retry["text"] if screen_retry else ""))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
@@ -469,7 +495,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 return RunResult("failed", f"sandbox did not start (podman exit {proc.returncode}): {proc.stderr[-400:]}")
             if code != "0" or not text.strip():
                 return RunResult("failed", f"{role} exited {code}. Log tail: {text[-600:]}")
-            result = RunResult("stage", f"{role} document ready", output=text.strip())
+            result = RunResult("stage", f"{role} document ready", output=text.strip(), images=sink_images)
             if want_design:
                 made = {r.repo: d / "out" / f"{names[r.repo]}.diff" for r in project.repos
                         if (d / "out" / f"{names[r.repo]}.diff").exists() and (d / "out" / f"{names[r.repo]}.diff").stat().st_size > 0}
@@ -517,6 +543,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             return finish_merge(f"an agent resolved {sum(len(fs) for fs in todo.values())} conflicted file(s)")
         # screen gate: every configured screen of a changed repo must still match its committed baseline (fails closed)
         touched: list[str] = []
+        built_images: list[dict] = []
         for r, patch in patches.items():
             if not any(p.repo == r for p in cfg.screens.pages):
                 continue
@@ -525,9 +552,14 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                     return RunResult("rejected", f"{r}: a fix round may not change screen baselines; a person updates them")
                 touched.append(r)
             rep = screens.verify(rn, cfg.screens, r, d / "base" / names[r])
+            built_images += [{"kind": "built", "name": i, "png": b} for i, b in rep.shots.items()]
             if not rep.ok:
                 kept = save_screen_diffs(rn, stamp, r, rep)
-                return RunResult("failed", f"{r}: screen verification failed:\n{rep.text()}" + (f"\nDiff images: {kept}" if kept else ""))
+                res = RunResult("failed", f"{r}: screen verification failed:\n{rep.text()}" + (f"\nDiff images: {kept}" if kept else ""),
+                                images=built_images + [{"kind": "diff", "name": i, "png": b} for i, b in rep.diffs.items()])
+                if not screen_retry and rep.diffs:               # a mismatch (not an unavailable renderer) gets one fix round
+                    res.screen_failure = {"text": rep.text(), "diffs": rep.diffs, "built": rep.shots}
+                return res
         if fix_branch:                                  # a fix round adds a commit to the existing PR branch(es)
             ident =["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
             stray = [r for r in patches if r not in on_branch]
@@ -570,7 +602,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                                "Part of one change across repositories. Review and merge together:\n" + "\n".join(f"- {x}" for x in urls))
                 except Exception:
                     log.exception("cross-link comment failed")
-        return RunResult("pr", f"{len(urls)} pull request(s) opened", " ".join(urls))
+        return RunResult("pr", f"{len(urls)} pull request(s) opened", " ".join(urls), images=built_images)
     except NeedsPerson as e:
         return RunResult("needs-person", str(e))
     except Exception as e:

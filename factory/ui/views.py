@@ -279,7 +279,18 @@ def runs_page(runs: list[dict], status: str, repo: str, page_no: int, has_more: 
     return runs_summary_line(summary) + bar + form + runs_list(runs) + nav
 
 
-def run_detail(r: dict, files=()) -> str:
+def run_images_html(rid: int, images) -> str:
+    """Screenshots a run kept: what it built, and where that differs from the baselines. Names and kinds are checked first."""
+    cells = ""
+    for i in images or []:
+        if i.get("kind") in ("built", "diff") and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", str(i.get("name", ""))):
+            src = "/runimg?" + urlencode({"run": int(rid), "kind": i["kind"], "name": i["name"]})
+            cells += (f'<figure><a href="{esc(src)}" target="_blank"><img class="mockup" src="{esc(src)}" alt="{esc(i["kind"])} {esc(i["name"])}" loading="lazy"></a>'
+                      f'<figcaption class="muted">{esc(i["kind"])}: {esc(i["name"])}</figcaption></figure>')
+    return f'<h2>Screens</h2><div class="mockups">{cells}</div>' if cells else ""
+
+
+def run_detail(r: dict, files=(), images=()) -> str:
     try:
         cls = json.dumps(json.loads(r["classification"]), indent=2) if r["classification"] else ""
     except ValueError:
@@ -297,6 +308,7 @@ def run_detail(r: dict, files=()) -> str:
         out += ("<h2>Design files</h2>" + (f'<div class="mockups">{imgs}</div>' if imgs else "")
                 + "<table class=stack><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
                 f"<tbody>{rows}</tbody></table>")
+    out += run_images_html(r.get("id", 0), images)
     if cls:
         out += f"<h2>Classification</h2><pre>{esc(cls)}</pre>"
     if r["output"] and r["stage"] in DOC_LABEL and REPO.match(str(r["repo"])):

@@ -67,16 +67,18 @@ def fetch(gh, previews: list[dict], dest: Path) -> list[str]:
     return names
 
 
-def prompt_section(names: list[str], reviewer: bool = False) -> str:
+def prompt_section(names: list[str], reviewer: bool = False, built: list[str] | None = None) -> str:
     """Told to the agent; the names were checked by fetch(), never taken from agent or ticket text."""
     if not names:
         return ""
     if reviewer:
+        seen = (" The built pages, rendered from the PR branch the same way the factory checks them, are in /task/built/: "
+                + ", ".join(f"/task/built/{n}" for n in built) + ". Compare each with the mockup of the same screen." if built else "")
         return ("\n\nDESIGN MOCKUPS. The designer's mockups for this ticket are images in /task/mockups/: "
                 + ", ".join(f"/task/mockups/{n}" for n in names)
                 + ". Open each one (read the image file) and judge whether the change would produce screens that match them: layout, "
                 "hierarchy, copy, states, responsive behaviour. Report each material mismatch as a finding. They are intent, not "
-                "pixel-exact specs; a mismatch the author explained is not a defect.")
+                "pixel-exact specs; a mismatch the author explained is not a defect." + seen)
     return ("\n\nDESIGN MOCKUPS. The designer's approved mockups for this ticket are images in /task/mockups/: "
             + ", ".join(f"/task/mockups/{n}" for n in names)
             + ". Open each one and look at it before you start (read the image file). Your result must look like them: layout, "

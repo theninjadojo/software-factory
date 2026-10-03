@@ -29,6 +29,7 @@ class Report:
     ok: bool = True
     lines: list[str] = field(default_factory=list)
     diffs: dict[str, bytes] = field(default_factory=dict)      # shot id -> diff PNG (validated), for the host artifacts folder
+    shots: dict[str, bytes] = field(default_factory=dict)      # shot id -> screenshot of what was built (validated), pass or fail
 
     def fail(self, line: str) -> "Report":
         self.ok = False
@@ -158,6 +159,8 @@ def verify(rn: RunnerCfg, sc: ScreensCfg, repo: str, src: Path, run=subprocess.r
         todo, sizes = [], {}
         for s in shots:
             actual = _png(work / "actual" / f"{s['id']}.png")
+            if actual is not None:
+                rep.shots[s["id"]] = actual
             base = _png(src / sc.baseline_dir / f"{s['id']}.png")
             if actual is None:
                 rep.fail(f"{s['id']}: no usable screenshot was produced ({s['path']})")

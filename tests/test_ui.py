@@ -337,3 +337,24 @@ class ResponsiveContractTests(unittest.TestCase):
         src = (pathlib.Path(__file__).resolve().parent.parent / "factory/ui/views.py").read_text()
         self.assertIn("viewport-fit=cover", src)
         self.assertNotIn("user-scalable", src)
+
+
+class Images(UiCase):
+    PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + (100).to_bytes(4, "big") + (100).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00" + b"x" * 30)
+    PATH = "docs/design/previews/factory-5-home.png"
+
+    def test_images_need_a_session_and_come_back_as_png_only_when_valid(self):
+        rid = dbm.start_run(self.db, "stage", "o/r", 5, "T", "claude-code", "sonnet", "medium", "", "designer")
+        url = "https://github.com/o/r/blob/" + "a" * 40 + "/" + self.PATH
+        dbm.add_design_files(self.db, rid, [{"repo": "o/r", "path": self.PATH, "url": url, "pr": "", "png": self.PNG}])
+        dbm.add_run_images(self.db, rid, [{"kind": "built", "name": "home-desktop", "png": self.PNG}])
+        q = f"/mockup?repo=o%2Fr&path={self.PATH.replace('/', '%2F')}"
+        self.assertEqual(self.req("GET", q)[0], 303)                                  # no session: login
+        self.assertEqual(self.req("GET", f"/runimg?run={rid}&kind=built&name=home-desktop")[0], 303)
+        cookie, _ = self.session()
+        s, h, _ = self.req("GET", q, cookie=cookie)
+        self.assertEqual((s, h["Content-Type"]), (200, "image/png"))
+        self.assertEqual(self.req("GET", f"/runimg?run={rid}&kind=built&name=home-desktop", cookie=cookie)[0], 200)
+        for bad in ("/mockup?repo=o%2Fr&path=..%2F..%2Fetc%2Fpasswd", "/mockup?repo=o%2Fr&path=docs%2Fdesign%2Fpreviews%2Ffactory-6-x.png",
+                    f"/runimg?run={rid}&kind=built&name=nope", f"/runimg?run=x&kind=built&name=home-desktop", f"/runimg?run={rid}&kind=zip&name=home-desktop"):
+            self.assertEqual(self.req("GET", bad, cookie=cookie)[0], 404, bad)

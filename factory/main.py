@@ -168,6 +168,7 @@ def end_run(run_id, res, sink: dict) -> None:
         db = _ev()
         dbm.finish_run(db, run_id, res.status, res.detail, res.pr_url or "", res.output, sink.get("log", ""), sink.get("usage"))
         dbm.add_design_files(db, run_id, getattr(res, "files", None) or [])
+        dbm.add_run_images(db, run_id, getattr(res, "images", None) or [])
         emit(f"run:{res.status}", res.detail[:300], None, None, run_id)
         if step_gh is not None:
             r = dbm.get_run(db, run_id)
@@ -274,6 +275,12 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     run_id, sink = begin_run("build", repo, issue, route, c), {}
     res = runner.run_task(cfg, gh, repo, issue, route, prior=prior, mockups=shown,
                           comments=human_comments(gh, repo, num), sink=sink, answers=Q.summary(question_state(gh, repo, num)))
+    if res.status == "failed" and getattr(res, "screen_failure", None):      # one fix round with the diffs, then it stays failed
+        end_run(run_id, res, sink)
+        emit("screens:retry", "the screens did not match the baselines: one fix round with the diffs", repo, num, run_id)
+        run_id, sink = begin_run("build", repo, issue, route, c), {}
+        res = runner.run_task(cfg, gh, repo, issue, route, prior=prior, mockups=shown, screen_retry=res.screen_failure,
+                              comments=human_comments(gh, repo, num), sink=sink, answers=Q.summary(question_state(gh, repo, num)))
     end_run(run_id, res, sink)
     gh.remove_label(repo, num, WORKING)
     if res.status == "rate-limited":

@@ -100,3 +100,68 @@ class Recorded(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Dispatch(unittest.TestCase):
+    """main.dispatch: the mockup gate and the single screen fix round (run_task is faked)."""
+    def run_dispatch(self, labels, results, cfg=None, designer_doc=""):
+        import sys
+        from unittest import mock
+        from dataclasses import replace
+        sys.path.insert(0, str(Path(__file__).parent))
+        from test_roles import CFG, FakeGH, issue
+        from factory import main as m
+        gh = FakeGH(comments=[{"user": {"login": "bot"}, "body": "<!-- factory:stage=designer -->\n" + designer_doc}] if designer_doc else [])
+        fake = mock.Mock(side_effect=results)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(m.runner, "run_task", fake):
+            cfg = replace(cfg or CFG, db_path=d + "/f.db")
+            m._ev = lambda: None
+            res = m.dispatch(cfg, gh, "o/r", issue(5, labels), cfg.routes["low"])
+        return res, fake, gh
+
+    def test_blocked_without_a_mockup_and_nothing_runs(self):
+        res, fake, gh = self.run_dispatch(["stage:designed"], [])
+        self.assertEqual(res.status, "failed")
+        fake.assert_not_called()
+        self.assertTrue(any(c[0] == "comment" and "factory:skip-mockup" in c[1] for c in gh.calls))
+
+    def test_bypass_label_builds(self):
+        from factory.runner import RunResult
+        res, fake, _ = self.run_dispatch(["stage:designed", "factory:skip-mockup"], [RunResult("no-change", "x")])
+        fake.assert_called_once()
+
+    def test_one_screen_fix_round_then_stop(self):
+        from factory.runner import RunResult
+        bad = RunResult("failed", "screens", screen_failure={"text": "t", "diffs": {}, "built": {}})
+        res, fake, _ = self.run_dispatch([], [bad, RunResult("failed", "screens", screen_failure={"text": "t", "diffs": {}, "built": {}})])
+        self.assertEqual(fake.call_count, 2)
+        self.assertIsNone(fake.call_args_list[0].kwargs.get("screen_retry"))
+        self.assertEqual(fake.call_args_list[1].kwargs["screen_retry"]["text"], "t")
+        self.assertEqual(res.status, "failed")
+
+
+class Images(unittest.TestCase):
+    def test_run_images_roundtrip_and_view(self):
+        from factory import db as dbm
+        from factory.ui import views
+        with tempfile.TemporaryDirectory() as t:
+            db = dbm.connect(str(Path(t) / "f.db"))
+            dbm.add_run_images(db, 7, [{"kind": "built", "name": "home-desktop", "png": PNG}, {"kind": "diff", "name": "home-desktop", "png": PNG},
+                                      {"kind": "evil", "name": "x", "png": PNG}, {"kind": "built", "name": "../x", "png": PNG},
+                                      {"kind": "built", "name": "bad", "png": b"nope"}])
+            self.assertEqual([(i["kind"], i["name"]) for i in dbm.run_images(db, 7)], [("built", "home-desktop"), ("diff", "home-desktop")])
+            self.assertEqual(dbm.run_image(db, 7, "built", "home-desktop"), PNG)
+            self.assertIsNone(dbm.run_image(db, 8, "built", "home-desktop"))
+            html = views.run_images_html(7, dbm.run_images(db, 7))
+            self.assertIn("/runimg?run=7&amp;kind=built&amp;name=home-desktop", html)
+            self.assertEqual(views.run_images_html(7, []), "")
+
+    def test_screen_retry_prompt_and_reviewer_prompt(self):
+        from factory import runner
+        from factory.config import Project, ProjectRepo
+        p = Project("p", (ProjectRepo("o/r"),), "d")
+        txt = runner.build_prompt("t", "b", p, "o/r", None, screen_text="home-desktop: 4% differ")
+        self.assertIn("/task/diffs", txt)
+        self.assertIn("4% differ", txt)
+        rv = runner.build_prompt("t", "b", p, "o/r", "reviewer", mockups=["a.png"], built=["home-desktop.png"])
+        self.assertIn("/task/built/home-desktop.png", rv)

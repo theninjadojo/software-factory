@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import threading
 import time
@@ -75,6 +76,11 @@ def connect(path: str) -> sqlite3.Connection:
     db.execute(                                     # the rendered mockup PNGs, so the admin UI can show them without a GitHub token
         """CREATE TABLE IF NOT EXISTS mockup_images (
             repo TEXT NOT NULL, path TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL, PRIMARY KEY (repo, path))"""
+    )
+    db.execute(                                     # screenshots of what a run built (and diffs against the baselines), for the UI
+        """CREATE TABLE IF NOT EXISTS run_images (
+            run_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL,
+            PRIMARY KEY (run_id, kind, name))"""
     )
     db.execute(                                     # the project manager's latest validated assessment of each ticket
         """CREATE TABLE IF NOT EXISTS pm_assessments (
@@ -259,6 +265,35 @@ def design_files_for_runs(db, run_ids: list) -> dict[int, list[dict]]:
     for r in rows:
         out.setdefault(r["run_id"], []).append(r)
     return out
+
+
+IMAGE_KINDS = ("built", "diff")
+IMAGE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,80}")
+
+
+def add_run_images(db, run_id: int, images: list) -> None:
+    """Keep a run's screenshots: [{kind: built|diff, name: <page>-<viewport>, png}], only well-formed ones."""
+    for i in images or []:
+        if i.get("kind") in IMAGE_KINDS and IMAGE_NAME.fullmatch(str(i.get("name", ""))) and isinstance(i.get("png"), bytes) and png_ok(i["png"]):
+            db.execute("INSERT OR REPLACE INTO run_images (run_id, kind, name, png, created) VALUES (?,?,?,?,?)",
+                       (run_id, i["kind"], i["name"], i["png"], time.time()))
+    db.commit()
+
+
+def run_images(db, run_id: int) -> list[dict]:
+    """(kind, name) of the images a run kept, built first."""
+    try:
+        return _dicts(db.execute("SELECT kind, name FROM run_images WHERE run_id=? ORDER BY kind, name", (int(run_id),)))
+    except sqlite3.OperationalError:
+        return []
+
+
+def run_image(db, run_id: int, kind: str, name: str) -> bytes | None:
+    try:
+        row = db.execute("SELECT png FROM run_images WHERE run_id=? AND kind=? AND name=?", (int(run_id), kind, name)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return bytes(row[0]) if row else None
 
 
 def mockup_image(db, repo: str, path: str) -> bytes | None:
