@@ -264,7 +264,11 @@ class Handler(BaseHTTPRequestHandler):
         db = self.app.ro_db()
         if db is None:
             return self._send(200, views.page("Tickets", '<p class="muted">The orchestrator has not created its database yet.</p>', path, csrf, badges=badges))
-        needs = L.needs_you(self)
+        # GitHub is slow: the page is drawn from the factory's database and the last GitHub read; when that read is too old, the
+        # ticket's detail (its questions come from GitHub) loads in place, behind a loader. A fragment always reads GitHub.
+        fragment = path.startswith("/fragment/")
+        needs = L.needs_you(self) if fragment else L.needs_cached()
+        cold = needs is None and not fragment and L.has_token(self)
         try:
             rows = board.ticket_rows(db, needs, L.titles_cached(), now)
             c = board.counts(rows)
@@ -273,7 +277,7 @@ class Handler(BaseHTTPRequestHandler):
             at = q.get("at") if q.get("at") in board.LABEL else ""
             text, order = (q.get("q") or "").strip()[:100], "oldest" if q.get("sort") == "oldest" else "latest"
             repo, n = q.get("repo", ""), q.get("n", "")
-            explicit = path in ("/ticket", "/fragment/ticket")
+            explicit = path in ("/ticket", "/fragment/ticket", "/fragment/detail")
             if explicit and not (views.REPO.match(repo) and n.isdigit() and len(n) < 10):
                 return self._send(404, "no such ticket", "text/plain")
             if explicit:
@@ -287,7 +291,12 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/fragment/ticket":
                     return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now))
                 back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}"
-                detail = board.detail_html(sel, board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images)
+                if cold:
+                    detail = board.slot("/fragment/detail?" + board._qs(repo=sel["repo"], n=sel["issue"]), "Loading the ticket from GitHub", "sd-detail sd-loading")
+                else:
+                    detail = board.detail_html(sel, board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images)
+                if path == "/fragment/detail":
+                    return self._send(200, detail)
         finally:
             db.close()
         new = L.new_ticket_form(cfg, cfg.repos[0], csrf) if cfg.repos else ""
@@ -303,7 +312,11 @@ class Handler(BaseHTTPRequestHandler):
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))
         flt = q.get("need", "") if q.get("need") in ("questions", "decisions") else ""
         if path in ("/", "/fragment/overview"):
-            d, needs = self.app.overview(), L.needs_you(self)
+            # the page itself never waits for GitHub: with no recent read, the Needs-you tray loads in place (the refresh reads GitHub)
+            d = self.app.overview()
+            needs = L.needs_you(self) if path == "/fragment/overview" else L.needs_cached()
+            if needs is None and path == "/" and L.has_token(self):
+                d["needs_loading"] = True
             db = self.app.ro_db()
             try:
                 d["ticket_rows"] = board.ticket_rows(db, needs, L.titles_cached()) if db is not None else []
@@ -317,6 +330,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, views.page("Factory", f'<div id="live">{body}</div>', path, csrf, wide=True, badges=badges, bare=True,
                                                   flash=shown[0] if shown else admin.FLASH.get(q.get("ok", "")), flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
+        if path == "/fragment/needs-tray":
+            return self._send(200, board.needs_tray(L.needs_you(self), csrf))
         if path in ("/needs", "/fragment/needs"):
             rows = L.needs_you(self)
             body = floor.tray(rows, csrf, None, "/needs" + (f"?need={flt}" if flt else ""), flt, heading=False)
@@ -326,7 +341,7 @@ class Handler(BaseHTTPRequestHandler):
                                                   badges={"/tickets": len(rows)} if rows else None,
                                                   flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
-        if path in ("/tickets", "/ticket", "/fragment/ticket"):
+        if path in ("/tickets", "/ticket", "/fragment/ticket", "/fragment/detail"):
             return self._tickets(path, q, csrf, badges)
         route = admin.GET.get(path)
         if route:

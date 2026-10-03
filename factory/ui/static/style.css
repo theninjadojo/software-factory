@@ -389,3 +389,18 @@ meter.sd-meter.bad::-webkit-meter-optimum-value { background:var(--bad); } meter
   .sd-mach strong { grid-area:name; margin:0; } .sd-mstate { grid-area:state; margin:0; } .sd-refs { grid-area:refs; margin:0; min-height:0; text-align:right; }
   .sd-legend { gap:6px 16px; }
 }
+
+/* Loading: a small belt network (board.loader). Belts fork and merge; crates take different routes; machines light up in turn. */
+.ld { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; min-height:260px; padding:28px 24px; }
+.ld-net { width:100%; max-width:460px; height:auto; }
+.ld-belt { fill:none; stroke:#2a3238; stroke-width:9; }
+.ld-flow { fill:none; stroke:var(--accent-dark); stroke-width:3; stroke-dasharray:6 10; animation:ld-flow .8s linear infinite; opacity:.8; }
+.ld-crate { fill:var(--accent); stroke:#7a4d0a; stroke-width:2; }
+.ld-m { fill:var(--panel2); stroke:var(--line2); stroke-width:2; animation:ld-lit 2.4s ease-in-out infinite; }
+.ld-m.m0 { animation-delay:0s; } .ld-m.m1 { animation-delay:.5s; } .ld-m.m2 { animation-delay:1s; } .ld-m.m3 { animation-delay:1.5s; } .ld-m.m4 { animation-delay:2s; }
+@keyframes ld-flow { to { stroke-dashoffset:-16; } }
+@keyframes ld-lit { 0%, 60%, 100% { stroke:var(--line2); } 25% { stroke:var(--accent); } }
+.ld p { margin:0; text-align:center; }
+.ld-slot.sd-detail, .sd-detail.sd-loading { background:var(--panel); border:1px solid var(--line); }
+.ld-slot.sd-card { padding:0; }
+@media (prefers-reduced-motion:reduce) { .ld-flow, .ld-m { animation:none !important; } }

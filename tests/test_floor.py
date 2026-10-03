@@ -241,7 +241,7 @@ class Needs(UiCase):
 class Pages(UiCase):
     def test_the_dashboard_is_the_default_page_and_refreshes_itself(self):
         cookie, _ = self.session()
-        with mock.patch("factory.ui.server.L.needs_you", return_value=[NEED, ASK]):
+        with mock.patch("factory.ui.server.L.needs_you", return_value=[NEED, ASK]), mock.patch("factory.ui.server.L.needs_cached", return_value=[NEED, ASK]):
             s, _, html = self.req("GET", "/", cookie=cookie)
             frag = self.req("GET", "/fragment/overview", cookie=cookie)[2]
         self.assertEqual(s, 200)
@@ -251,6 +251,35 @@ class Pages(UiCase):
         self.assertIn("The floor", frag)
         self.assertNotIn("<html", frag)
         self.assertEqual(self.req("GET", "/fragment/overview")[0], 401)
+
+    def test_the_page_never_waits_for_github_and_the_tray_loads_in_place(self):
+        cookie, _ = self.session()
+        with mock.patch("factory.ui.server.L.needs_cached", return_value=None), mock.patch("factory.ui.server.L.has_token", return_value=True), \
+                mock.patch("factory.ui.server.L.needs_you", side_effect=AssertionError("the page waited for GitHub")):
+            html = self.req("GET", "/", cookie=cookie)[2]
+        self.assertIn('data-load="/fragment/needs-tray"', html)
+        self.assertIn("asking GitHub", html)
+        with mock.patch("factory.ui.server.L.needs_you", return_value=[NEED]):
+            tray = self.req("GET", "/fragment/needs-tray", cookie=cookie)[2]
+        self.assertIn("Run analyst", tray)
+        self.assertNotIn("<html", tray)
+        self.assertEqual(self.req("GET", "/fragment/needs-tray")[0], 401)
+
+    def test_tickets_never_wait_for_github_and_the_ticket_loads_in_place(self):
+        dbm.record(self.db, REPO, 13, "t", "human", "needs a person: low confidence")
+        cookie, _ = self.session()
+        with mock.patch("factory.ui.server.L.needs_cached", return_value=None), mock.patch("factory.ui.server.L.has_token", return_value=True), \
+                mock.patch("factory.ui.server.L.needs_you", side_effect=AssertionError("the page waited for GitHub")):
+            html = self.req("GET", "/tickets?stage=all", cookie=cookie)[2]
+        self.assertIn('data-load="/fragment/detail?repo=your-org%2Fshop-web&amp;n=13"', html)
+        self.assertIn('<template id="ld-detail">', html)
+        with mock.patch("factory.ui.server.L.needs_you", return_value=[NEED]):
+            s, _, detail = self.req("GET", f"/fragment/detail?repo={REPO}&n=13", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn('class="sd-detail"', detail)
+        self.assertIn("Run analyst", detail)                        # the decision buttons came with it
+        self.assertNotIn("<html", detail)
+        self.assertEqual(self.req("GET", f"/fragment/detail?repo={REPO}&n=13")[0], 401)
 
     def test_floor_works_without_a_github_token(self):
         cookie, _ = self.session()

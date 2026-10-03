@@ -1,6 +1,5 @@
 // The server renders (and escapes) all HTML; this script only swaps it in and adds two conveniences. Every form works without it.
 (function () {
-  var live = document.getElementById("live");
   document.documentElement.classList.add("js");
 
   // --- Ticket filters: a station or sort choice applies at once (the Apply button is there for pages without this script).
@@ -89,10 +88,61 @@
       .catch(function () { fail("Couldn’t reach the factory. Nothing was changed that we know of. Try again."); });
   });
 
-  // --- Live refresh of the Floor and Needs-you pages.
-  if (!live) return;
-  // Never replace the page while someone is answering on it: an open popup, a focused field, or typed text would be lost.
-  function busy() {
+  // --- Parts that load by themselves (GitHub is slow): fetch, then put the answer where the loader was.
+  function calm(root) {
+    if (!window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var nets = (root || document).querySelectorAll("svg.ld-net");
+    for (var i = 0; i < nets.length; i++) if (nets[i].pauseAnimations) nets[i].pauseAnimations();
+  }
+  function get(url) {
+    return fetch(url, { credentials: "same-origin", cache: "no-store" }).then(function (r) {
+      if (r.status === 401) { location.href = "/login"; return null; }
+      return r.ok ? r.text() : null;
+    });
+  }
+  function fill(slot) {
+    get(slot.getAttribute("data-load")).then(function (html) {
+      if (html === null) { slot.querySelector(".ld p").textContent = "Could not load this. Reload the page to try again."; return; }
+      slot.outerHTML = html; countAll(); calm();
+    }).catch(function () { var p = slot.querySelector(".ld p"); if (p) p.textContent = "Could not reach the factory. Reload the page to try again."; });
+  }
+  var slots = document.querySelectorAll("[data-load]");
+  for (var k = 0; k < slots.length; k++) fill(slots[k]);
+  calm();
+
+  // --- Tickets: picking a ticket loads only its detail, behind a loader where the detail goes; the list stays as it is.
+  var tpl = document.getElementById("ld-detail");
+  function open(href, push) {
+    var page = document.querySelector(".sd-page"), detail = document.querySelector(".sd-detail");
+    if (!page || !detail || !tpl) { location.href = href; return; }
+    var url = new URL(href, location.href);
+    detail.outerHTML = tpl.innerHTML;
+    page.classList.add("has-sel");
+    var picks = document.querySelectorAll(".sd-pick");
+    for (var i = 0; i < picks.length; i++) {
+      var on = new URL(picks[i].href, location.href).search === url.search;
+      picks[i].classList.toggle("on", on);
+      if (on) picks[i].setAttribute("aria-current", "page"); else picks[i].removeAttribute("aria-current");
+    }
+    if (push) history.pushState({ ticket: true }, "", href);
+    if (window.innerWidth <= 760) window.scrollTo(0, 0);
+    calm();
+    get("/fragment/detail" + url.search).then(function (html) {
+      var spot = document.querySelector(".sd-detail");
+      if (html === null || !spot) { location.href = href; return; }
+      spot.outerHTML = html; countAll(); calm();
+    }).catch(function () { location.href = href; });
+  }
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest("a.sd-pick");
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0 || !window.fetch || !window.history) return;
+    e.preventDefault();
+    open(a.href, true);
+  });
+  window.addEventListener("popstate", function () { location.reload(); });
+
+  // --- Live refresh of the Floor, the Needs-you page and a running ticket (whichever #live is on the page now).
+  function busy(live) {
     var a = document.activeElement;
     if (a && live.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
     if (live.querySelector("dialog[open]")) return true;
@@ -101,13 +151,10 @@
     return live.querySelector("input[type=radio]:checked") !== null;
   }
   function tick() {
-    if (document.hidden || busy()) return;
-    fetch((live.getAttribute("data-src") || "/fragment/overview") + location.search, { credentials: "same-origin", cache: "no-store" })
-      .then(function (r) {
-        if (r.status === 401) { location.href = "/login"; return null; }
-        return r.ok ? r.text() : null;
-      })
-      .then(function (html) { if (html !== null) { live.innerHTML = html; countAll(); } })
+    var live = document.getElementById("live");
+    if (!live || document.hidden || busy(live)) return;
+    get((live.getAttribute("data-src") || "/fragment/overview") + location.search)
+      .then(function (html) { if (html !== null && document.getElementById("live") === live) { live.innerHTML = html; countAll(); calm(); } })
       .catch(function () {});
   }
   setInterval(tick, 5000);

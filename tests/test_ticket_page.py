@@ -197,3 +197,26 @@ class Styled(unittest.TestCase):
             self.assertIn(f".p{i} {{ grid-area:", css)
         for i in range(9):
             self.assertIn(f".q{i} {{ grid-area:", css)
+
+
+class Loading(unittest.TestCase):
+    def test_the_loader_is_a_belt_network_with_crates_on_different_routes(self):
+        html = board.loader("Loading <x>")
+        self.assertIn('role="status"', html)
+        self.assertEqual(html.count("<animateMotion"), 4)
+        self.assertGreaterEqual(len({p for p in __import__("re").findall(r'animateMotion path="([^"]+)"', html)}), 3)   # different routes
+        self.assertEqual(html.count('class="ld-belt"'), 6)
+        self.assertIn("Loading &lt;x&gt;", html)
+        self.assertNotIn("style=", html)
+
+    def test_a_slot_loads_by_itself_and_keeps_its_heading(self):
+        html = board.slot("/fragment/needs-tray", "Asking", "sd-card", "<h2>Needs you</h2>")
+        self.assertIn('data-load="/fragment/needs-tray"', html)
+        self.assertLess(html.index("<h2>Needs you</h2>"), html.index('class="ld"'))
+        self.assertIn("<noscript>", html)
+
+    def test_the_tickets_page_carries_the_detail_loader_and_a_back_link(self):
+        rows = [row(1, "needs", board.stations(journey([])), at="route")]
+        html = board.tickets_page(rows, rows[0], False, "all", "", "", "latest", "", "", time.time(), "tok")
+        self.assertIn('<template id="ld-detail">', html)
+        self.assertIn('class="sd-back"', html)
