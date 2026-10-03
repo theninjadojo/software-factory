@@ -109,6 +109,18 @@ class ReviewCfg:
     fallback_models: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class MockupsCfg:
+    """What a build needs from the design stage. The designer's rendered mockup PNGs are handed to the build and review agents
+    to match. mode: "block" = a ticket whose design stage should have produced mockups (it ran, and did not say there are no
+    screens) is not built without them; "warn" = built anyway, with a note on the ticket; "off" = never checked.
+    A person can bypass the block on one ticket with bypass_label."""
+    mode: str = "block"
+    bypass_label: str = "factory:skip-mockup"
+    require_approval: bool = False       # True: the mockups also need a person's approval (the approve_label, or the design PR merged)
+    approve_label: str = "factory:design-approved"
+
+
 PROMPT_MAX = 4000
 
 
@@ -268,6 +280,7 @@ class Config:
     ci: CiCfg = field(default_factory=CiCfg)
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
+    mockups: MockupsCfg = field(default_factory=MockupsCfg)
     pm: PmCfg = field(default_factory=PmCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
@@ -569,6 +582,9 @@ def parse(raw: dict) -> Config:
     review = ReviewCfg(**_tuples(raw.get("review", {})))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
+    mockups = MockupsCfg(**raw.get("mockups", {}))
+    if mockups.mode not in ("block", "warn", "off") or not mockups.bypass_label.strip() or not mockups.approve_label.strip():
+        raise ValueError("mockups.mode must be block, warn or off, and mockups.bypass_label and mockups.approve_label must not be empty")
     pm = PmCfg(**raw.get("pm", {}))
     if pm.effort not in ("low", "medium", "high"):
         raise ValueError("pm.effort must be low, medium or high")
@@ -607,6 +623,7 @@ def parse(raw: dict) -> Config:
         screens=screens,
         conflicts=conflicts,
         review=review,
+        mockups=mockups,
         pm=pm,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         prompts=_prompts(raw.get("prompts", {})),

@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .. import db as dbm
+from .. import designfiles
 from .. import pause
 from .. import questions as Q
 from ..config import load
@@ -252,6 +253,16 @@ class Handler(BaseHTTPRequestHandler):
         if db is None:
             return page("No data yet", '<p class="muted">The orchestrator has not created its database yet.</p>')
         try:
+            if path == "/runimg":
+                rid, kind, name = q.get("run", ""), q.get("kind", ""), q.get("name", "")
+                png = dbm.run_image(db, int(rid), kind, name) if rid.isdigit() and kind in dbm.IMAGE_KINDS and dbm.IMAGE_NAME.fullmatch(name) else None
+                return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
+            if path == "/mockup":
+                repo, pth = q.get("repo", ""), q.get("path", "")
+                if not designfiles.link_ok({"repo": repo, "path": pth, "url": f"https://github.com/{repo}/blob/{'0' * 40}/{pth}", "pr": ""}):
+                    return self._send(404, "no such image", "text/plain")
+                png = dbm.mockup_image(db, repo, pth)
+                return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
             if path == "/runs":
                 n = max(0, int(q.get("page", "0") or 0)) if q.get("page", "0").isdigit() else 0
                 rows = dbm.recent_runs(db, PAGE + 1, n * PAGE, q.get("status") or None, q.get("repo") or None)
@@ -261,7 +272,7 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/runs/"):
                 rid = path[len("/runs/"):]
                 run = dbm.get_run(db, int(rid)) if rid.isdigit() else None
-                return page(f"Run #{int(rid)}", views.run_detail(run, dbm.design_files_for_runs(db, [int(rid)]).get(int(rid), []))) if run else self._send(404, "no such run", "text/plain")
+                return page(f"Run #{int(rid)}", views.run_detail(run, dbm.design_files_for_runs(db, [int(rid)]).get(int(rid), []), dbm.run_images(db, int(rid)))) if run else self._send(404, "no such run", "text/plain")
             if path == "/tickets":
                 rows = dbm.tickets(db)
                 return page("Tickets", views.tickets_page(rows, dbm.step_counts(db, rows)))

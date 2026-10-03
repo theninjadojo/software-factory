@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, designfiles, pause, pm, runner, subtasks
+from . import ci, conflicts, designfiles, mockups, pause, pm, runner, subtasks
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -168,6 +168,7 @@ def end_run(run_id, res, sink: dict) -> None:
         db = _ev()
         dbm.finish_run(db, run_id, res.status, res.detail, res.pr_url or "", res.output, sink.get("log", ""), sink.get("usage"))
         dbm.add_design_files(db, run_id, getattr(res, "files", None) or [])
+        dbm.add_run_images(db, run_id, getattr(res, "images", None) or [])
         emit(f"run:{res.status}", res.detail[:300], None, None, run_id)
         if step_gh is not None:
             r = dbm.get_run(db, run_id)
@@ -232,6 +233,26 @@ def requeue_rate_limited(cfg: Config, gh: GitHub, repo: str, num: int, trigger_l
         emit("rate-limit", "rate limited too: requeued while already paused", repo, num)
 
 
+def ticket_mockups(repo: str, num: int) -> list[dict]:
+    """The rendered design mockups recorded for a ticket ([] when there are none or the database is unavailable)."""
+    try:
+        db = _ev()
+        return dbm.mockup_previews(db, repo, num) if db is not None else []
+    except Exception:
+        log.exception("could not read the mockups of %s#%s", repo, num)
+        return []
+
+
+def design_pr_merged(gh: GitHub, previews: list[dict]) -> bool:
+    """True when the design draft PR(s) the mockups live on are merged (read from GitHub, only for recorded PR urls)."""
+    prs = [m for f in previews if (m := PR_URL.match(f.get("pr") or ""))]
+    try:
+        return bool(prs) and all(gh.get_pr(m.group(1), int(m.group(2))).get("merged") for m in prs)
+    except Exception:
+        log.exception("could not read the design PR")
+        return False
+
+
 def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route, c=None, stage: str | None = None, **kw):
     """Run the task with the route's model, then with each admin-configured fallback while a model is unavailable (rate
     limit or API error). Every attempt is its own run: fresh workspace, container, branch and `runs` row. The last result is
@@ -253,10 +274,26 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
              trigger_label: str | None = None, conn=None) -> runner.RunResult:
     """Build it: edit the repos in the sandbox and open PRs."""
     num, trigger_label = issue["number"], trigger_label or cfg.trigger_label
+    prior = stage_outputs(gh, repo, num)
+    shown = ticket_mockups(repo, num)
+    verdict, why = mockups.gate(cfg.mockups, [lb["name"] for lb in issue.get("labels", [])], shown,
+                                NO_MOCKUPS in prior.get("designer", "") or MOCKUPS_OFF in prior.get("designer", ""),
+                                cfg.mockups.require_approval and design_pr_merged(gh, shown))
+    if verdict == "block":
+        gh.remove_label(repo, num, trigger_label)       # no retry loop: a person fixes it and triggers again
+        gh.add_labels(repo, num, [FAILED])
+        gh.comment(repo, num, why)
+        emit("mockups:blocked", "build not started: the design stage left no rendered mockup", repo, num)
+        return runner.RunResult("failed", "blocked: no rendered design mockup")
+    if verdict == "warn":
+        gh.comment(repo, num, why)
     alert(f"Starting {repo}#{num}: {issue['title'][:80]}\n{picked(route, c)}", event="started")
     claim(gh, repo, num, trigger_label, "implement")
-    res, route = run_chain(cfg, gh, "build", repo, issue, route, c, prior=stage_outputs(gh, repo, num),
-                           comments=human_comments(gh, repo, num), answers=Q.summary(question_state(gh, repo, num)))
+    kw = dict(prior=prior, mockups=shown, comments=human_comments(gh, repo, num), answers=Q.summary(question_state(gh, repo, num)))
+    res, route = run_chain(cfg, gh, "build", repo, issue, route, c, **kw)
+    if res.status == "failed" and getattr(res, "screen_failure", None):      # one fix round with the diffs, then it stays failed
+        emit("screens:retry", "the screens did not match the baselines: one fix round with the diffs", repo, num)
+        res, route = run_chain(cfg, gh, "build", repo, issue, route, c, screen_retry=res.screen_failure, **kw)
     gh.remove_label(repo, num, WORKING)
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, "implement")
@@ -463,7 +500,7 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
     route = Route(cfg.review.harness, cfg.review.model, cfg.review.effort, cfg.review.fallback_models)
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
-                           comments=human_comments(gh, repo, num), fix_branch=branch)
+                           comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num))
     if res.status == "rate-limited":
         if trigger_label:
             requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")

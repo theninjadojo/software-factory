@@ -98,3 +98,18 @@ verdict against `max_diff_ratio`. It fails closed: a missing image, baseline or 
 are kept on the host under `<work_dir>/../artifacts/screens/`. A patch that changes baseline images opens a draft PR with the
 `screens.label` label so a person reviews them; in a CI fix round it is rejected. Not covered yet: an automatic fix round on mismatch, a
 `ctl` command to create baselines, and the screens tool in the agent image.
+
+
+## Mockups and screens in the build loop
+
+1. The designer's rendered mockup PNGs are stored in the `mockup_images` table when the design PR is published (the UI serves them at `/mockup`, behind the login).
+2. A build is held when the design stage ran but no mockup exists (`[mockups] mode = "block"`; `warn` and `off` also exist; the `bypass_label` skips it per ticket;
+   `require_approval` additionally needs the `approve_label` or a merged design PR). A designer that said the ticket has no screens is never held.
+3. The implementer and the reviewer get the mockups as images in `/task/mockups/`. The reviewer also gets the built pages (`/task/built/`), rendered from the PR
+   branch by the screen check's own container.
+4. After the patch is applied the screen check renders each configured page (desktop and mobile) and compares it with the committed baselines. The screenshots of what
+   was built, and the diff images, are kept per run (`run_images`, shown on the run page). A mismatch gets one fix round: the agent is run again with the diff images
+   in `/task/diffs/`; a second mismatch fails the run.
+5. `python3 -m factory.ctl screens baseline <owner/repo> <checkout>` renders the configured screens of a local checkout and writes them as the baselines for a person to review and commit.
+
+Both images (`factory-render`, `factory-screens`) are built by `docker compose --profile build build` and by `scripts/deploy.sh --image`.

@@ -249,6 +249,7 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .prcards { list-style:none; padding:0; margin:0; display:grid; gap:.8rem; } .prcard { background:var(--panel); border:1px solid var(--line); border-left:5px solid var(--line); border-radius:10px; padding:.7rem 1rem; }
 .prcard.good { border-left-color:var(--good); } .prcard.warn { border-left-color:var(--warn); } .prcard.bad { border-left-color:var(--bad); } .prcard h3 { margin:0 0 .2rem; } .prcard p { margin:.2rem 0; }
 a.button { display:inline-block; margin-top:.4rem; padding:.35rem .9rem; min-height:32px; border:1px solid var(--line); border-radius:8px; text-decoration:none; }
+.mockups { display:flex; flex-wrap:wrap; gap:.75rem; margin:.5rem 0 1rem; } img.mockup { max-width:100%; width:22rem; border:1px solid var(--line, #8884); border-radius:6px; background:#fff; }
 .check.evt input { flex:none; } .check.evt strong { flex:none; white-space:nowrap; overflow-wrap:normal; }
 .nd-opt .badge, .nd-opt .rec-tag { flex:none; white-space:nowrap; }
 @media (min-width:761px) and (max-width:920px) { header { gap:.4rem; padding-left:.8rem; padding-right:.8rem; } header nav a, header nav summary { padding-left:.55rem; padding-right:.55rem; } .brand { font-size:.95rem; } }

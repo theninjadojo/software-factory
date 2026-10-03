@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-
  && rm -rf /var/lib/apt/lists/*
 COPY render.py /usr/local/bin/render.py
 RUN chmod 755 /usr/local/bin/render.py
+ENV HOME=/tmp
 USER 1000:1000
 WORKDIR /tmp
 ENTRYPOINT ["python3", "/usr/local/bin/render.py"]

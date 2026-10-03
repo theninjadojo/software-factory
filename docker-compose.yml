@@ -70,6 +70,12 @@ services:
     profiles: ["build"]
     entrypoint: ["true"]
 
+  screens-image:  # build-only: `docker compose --profile build build` also produces factory-screens:latest (screen verification)
+    build: {context: ./sandbox/screens}
+    image: factory-screens:latest
+    profiles: ["build"]
+    entrypoint: ["true"]
+
   sandbox-image-codex:   # EXPERIMENTAL: `docker compose --profile codex build` produces factory-agent-codex:latest
     build: {context: ./sandbox, dockerfile: codex/Dockerfile}
     image: factory-agent-codex:latest

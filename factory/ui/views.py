@@ -54,6 +54,14 @@ def gh_link(url: str, label: str | None = None) -> str:
     return f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">{esc(label or u)}</a>' if GH_URL.match(u) else esc(label or u)
 
 
+def mockup_img(f) -> str:
+    """The stored preview image of a recorded design file, inline (served by the UI itself, behind the login)."""
+    if not designfiles.link_ok(f) or "/previews/" not in f["path"] or not f["path"].endswith(".png"):
+        return ""
+    src = "/mockup?" + urlencode({"repo": f["repo"], "path": f["path"]})
+    return f'<a href="{esc(src)}" target="_blank"><img class="mockup" src="{esc(src)}" alt="{esc(f["path"])}" loading="lazy"></a>'
+
+
 def design_links(files) -> str:
     """One new-tab link per design file, only for files that pass designfiles.link_ok (the rows come from the database)."""
     return "<br>".join(f'<a href="{esc(f["url"])}" rel="noopener noreferrer" target="_blank">{esc(f["path"])}</a>'
@@ -274,7 +282,18 @@ def runs_page(runs: list[dict], status: str, repo: str, page_no: int, has_more: 
     return runs_summary_line(summary) + bar + form + runs_list(runs) + nav
 
 
-def run_detail(r: dict, files=()) -> str:
+def run_images_html(rid: int, images) -> str:
+    """Screenshots a run kept: what it built, and where that differs from the baselines. Names and kinds are checked first."""
+    cells = ""
+    for i in images or []:
+        if i.get("kind") in ("built", "diff") and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,80}", str(i.get("name", ""))):
+            src = "/runimg?" + urlencode({"run": int(rid), "kind": i["kind"], "name": i["name"]})
+            cells += (f'<figure><a href="{esc(src)}" target="_blank"><img class="mockup" src="{esc(src)}" alt="{esc(i["kind"])} {esc(i["name"])}" loading="lazy"></a>'
+                      f'<figcaption class="muted">{esc(i["kind"])}: {esc(i["name"])}</figcaption></figure>')
+    return f'<h2>Screens</h2><div class="mockups">{cells}</div>' if cells else ""
+
+
+def run_detail(r: dict, files=(), images=()) -> str:
     try:
         cls = json.dumps(json.loads(r["classification"]), indent=2) if r["classification"] else ""
     except ValueError:
@@ -288,8 +307,11 @@ def run_detail(r: dict, files=()) -> str:
     shown = [f for f in files or [] if designfiles.link_ok(f)]
     if shown:
         rows = "".join(f'<tr><td data-l="File (opens on GitHub)">{design_links([f])}</td><td data-l="Repo">{esc(f["repo"])}</td><td data-l="Draft PR">{pr_links(f.get("pr") or "") or "—"}</td></tr>' for f in shown)
-        out += ("<h2>Design files</h2><table class=stack><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
+        imgs = "".join(mockup_img(f) for f in shown)
+        out += ("<h2>Design files</h2>" + (f'<div class="mockups">{imgs}</div>' if imgs else "")
+                + "<table class=stack><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
                 f"<tbody>{rows}</tbody></table>")
+    out += run_images_html(r.get("id", 0), images)
     if cls:
         out += f"<h2>Classification</h2><pre>{esc(cls)}</pre>"
     if r["output"] and r["stage"] in DOC_LABEL and REPO.match(str(r["repo"])):
@@ -351,8 +373,9 @@ def step_summary(counts) -> str:
 
 
 def step_files(s: dict, files_by_run: dict | None) -> str:
-    links = design_links([f for i in s["run_ids"] for f in (files_by_run or {}).get(i, [])])
-    return f'<br><span class="muted">Design files:</span><br>{links}' if links else ""
+    fs = [f for i in s["run_ids"] for f in (files_by_run or {}).get(i, [])]
+    links, imgs = design_links(fs), "".join(mockup_img(f) for f in fs)
+    return (f'<br><span class="muted">Design files:</span><br>{links}' + (f'<div class="mockups">{imgs}</div>' if imgs else "")) if links else ""
 
 
 def pipeline(steps: list[dict], files_by_run: dict | None = None, repo: str = "", issue: int = 0, docs=()) -> str:

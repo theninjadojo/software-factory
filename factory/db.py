@@ -1,8 +1,10 @@
+import re
 import sqlite3
 import threading
 import time
 
 from . import designfiles
+from .render import png_ok
 
 _local = threading.local()
 TOKEN_COLS = ("tokens_in", "tokens_out", "tokens_cache_read", "tokens_cache_write")   # per run; NULL when the harness did not say
@@ -70,6 +72,15 @@ def connect(path: str) -> sqlite3.Connection:
         """CREATE TABLE IF NOT EXISTS design_files (
             run_id INTEGER NOT NULL, repo TEXT NOT NULL, path TEXT NOT NULL, url TEXT NOT NULL, pr TEXT NOT NULL DEFAULT '',
             created REAL NOT NULL, PRIMARY KEY (run_id, repo, path))"""
+    )
+    db.execute(                                     # the rendered mockup PNGs, so the admin UI can show them without a GitHub token
+        """CREATE TABLE IF NOT EXISTS mockup_images (
+            repo TEXT NOT NULL, path TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL, PRIMARY KEY (repo, path))"""
+    )
+    db.execute(                                     # screenshots of what a run built (and diffs against the baselines), for the UI
+        """CREATE TABLE IF NOT EXISTS run_images (
+            run_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL,
+            PRIMARY KEY (run_id, kind, name))"""
     )
     db.execute(                                     # the project manager's latest validated assessment of each ticket
         """CREATE TABLE IF NOT EXISTS pm_assessments (
@@ -237,6 +248,9 @@ def add_design_files(db, run_id: int, files: list) -> None:
     """Record a run's published design files; entries that fail designfiles.link_ok are dropped."""
     for f in files:
         if designfiles.link_ok(f):
+            png = f.get("png")
+            if isinstance(png, bytes) and f["path"].endswith(".png") and png_ok(png):
+                db.execute("INSERT OR REPLACE INTO mockup_images (repo, path, png, created) VALUES (?,?,?,?)", (f["repo"], f["path"], png, time.time()))
             db.execute("INSERT OR IGNORE INTO design_files (run_id, repo, path, url, pr, created) VALUES (?,?,?,?,?,?)",
                        (run_id, f["repo"], f["path"], f["url"], f.get("pr") or "", time.time()))
     db.commit()
@@ -256,6 +270,58 @@ def design_files_for_runs(db, run_ids: list) -> dict[int, list[dict]]:
     for r in rows:
         out.setdefault(r["run_id"], []).append(r)
     return out
+
+
+IMAGE_KINDS = ("built", "diff")
+IMAGE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,80}")
+
+
+def add_run_images(db, run_id: int, images: list) -> None:
+    """Keep a run's screenshots: [{kind: built|diff, name: <page>-<viewport>, png}], only well-formed ones."""
+    for i in images or []:
+        if i.get("kind") in IMAGE_KINDS and IMAGE_NAME.fullmatch(str(i.get("name", ""))) and isinstance(i.get("png"), bytes) and png_ok(i["png"]):
+            db.execute("INSERT OR REPLACE INTO run_images (run_id, kind, name, png, created) VALUES (?,?,?,?,?)",
+                       (run_id, i["kind"], i["name"], i["png"], time.time()))
+    db.commit()
+
+
+def run_images(db, run_id: int) -> list[dict]:
+    """(kind, name) of the images a run kept, built first."""
+    try:
+        return _dicts(db.execute("SELECT kind, name FROM run_images WHERE run_id=? ORDER BY kind, name", (int(run_id),)))
+    except sqlite3.OperationalError:
+        return []
+
+
+def run_image(db, run_id: int, kind: str, name: str) -> bytes | None:
+    try:
+        row = db.execute("SELECT png FROM run_images WHERE run_id=? AND kind=? AND name=?", (int(run_id), kind, name)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return bytes(row[0]) if row else None
+
+
+def mockup_image(db, repo: str, path: str) -> bytes | None:
+    """The stored PNG for a recorded preview (repo, path), or None."""
+    try:
+        row = db.execute("SELECT png FROM mockup_images WHERE repo=? AND path=?", (repo, path)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return bytes(row[0]) if row else None
+
+
+def mockup_previews(db, repo: str, issue: int) -> list[dict]:
+    """The rendered mockup PNGs of a ticket's latest design run that published any (repo, path, url, pr)."""
+    try:
+        run = db.execute("SELECT r.id FROM runs r WHERE r.repo=? AND r.issue=? AND r.stage='designer' AND EXISTS "
+                         "(SELECT 1 FROM design_files f WHERE f.run_id=r.id AND f.path LIKE '%/previews/%.png') "
+                         "ORDER BY r.id DESC LIMIT 1", (repo, int(issue))).fetchone()
+        if not run:
+            return []
+        return _dicts(db.execute("SELECT repo, path, url, pr FROM design_files WHERE run_id=? AND path LIKE '%/previews/%.png' ORDER BY rowid",
+                                 (run[0],)))
+    except sqlite3.OperationalError:
+        return []
 
 
 def mark_interrupted(db) -> int:

@@ -29,6 +29,7 @@ class Report:
     ok: bool = True
     lines: list[str] = field(default_factory=list)
     diffs: dict[str, bytes] = field(default_factory=dict)      # shot id -> diff PNG (validated), for the host artifacts folder
+    shots: dict[str, bytes] = field(default_factory=dict)      # shot id -> screenshot of what was built (validated), pass or fail
 
     def fail(self, line: str) -> "Report":
         self.ok = False
@@ -109,6 +110,32 @@ def _verdict(path: Path, ids: list[str]) -> dict[str, int] | None:
     return out
 
 
+def capture(rn: RunnerCfg, sc: ScreensCfg, repo: str, src: Path, run=subprocess.run) -> tuple[dict[str, bytes], str]:
+    """Render every configured screen of `repo` in the checkout `src` and return ({shot id: validated PNG}, problem). `problem` is
+    '' when every screen rendered. Used to make baselines and to attach screenshots of what was built; no comparison is done."""
+    shots = shots_for(sc, repo)
+    if not shots:
+        return {}, ""
+    Path(rn.work_dir).mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="screens-", dir=rn.work_dir))
+    try:
+        for sub in ("site", "spec", "actual"):
+            (work / sub).mkdir()
+        shutil.copytree(src, work / "site", symlinks=True, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git"))
+        (work / "spec" / "spec.json").write_text(json.dumps({"shots": shots, "max_h": 6000, "threshold": sc.threshold}))
+        run(["chmod", "-R", "a+rX", str(work / "site"), str(work / "spec")], check=True)
+        run(["chmod", "a+rwX", str(work / "actual")], check=True)
+        why = _exec(rn, sc, [(work / "site", "/in", "ro"), (work / "spec", "/spec", "ro"), (work / "actual", "/out", "rw")],
+                    ["/app/shoot.js"], run)
+        got = {s["id"]: p for s in shots if (p := _png(work / "actual" / f"{s['id']}.png")) is not None}
+        if why and not got:
+            return {}, f"rendering {why}"
+        missing = [s["id"] for s in shots if s["id"] not in got]
+        return got, (f"no usable screenshot for {', '.join(missing)}" if missing else "")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def verify(rn: RunnerCfg, sc: ScreensCfg, repo: str, src: Path, run=subprocess.run) -> Report:
     """Check every configured screen of `repo` in the checkout `src` (patch already applied). Report.ok only when every
     (page, viewport) rendered, has a baseline of the same size, and differs from it in at most max_diff_ratio of its pixels."""
@@ -132,6 +159,8 @@ def verify(rn: RunnerCfg, sc: ScreensCfg, repo: str, src: Path, run=subprocess.r
         todo, sizes = [], {}
         for s in shots:
             actual = _png(work / "actual" / f"{s['id']}.png")
+            if actual is not None:
+                rep.shots[s["id"]] = actual
             base = _png(src / sc.baseline_dir / f"{s['id']}.png")
             if actual is None:
                 rep.fail(f"{s['id']}: no usable screenshot was produced ({s['path']})")
