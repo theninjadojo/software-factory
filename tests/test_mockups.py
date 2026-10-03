@@ -73,6 +73,22 @@ class Recorded(unittest.TestCase):
             self.assertEqual([g["path"] for g in got], [PREV["path"]])
             self.assertEqual(dbm.mockup_previews(db, "o/r", 6), [])
 
+    def test_png_is_stored_for_the_ui(self):
+        from factory import db as dbm
+        from factory.ui import views
+        with tempfile.TemporaryDirectory() as t:
+            db = dbm.connect(str(Path(t) / "f.db"))
+            rid = dbm.start_run(db, "stage", "o/r", 5, "T", "claude-code", "sonnet", "medium", "", "designer")
+            dbm.add_design_files(db, rid, [{**PREV, "png": PNG}])
+            self.assertEqual(dbm.mockup_image(db, "o/r", PREV["path"]), PNG)
+            self.assertIsNone(dbm.mockup_image(db, "o/r", "docs/design/previews/factory-5-other.png"))
+            dbm.add_design_files(db, rid, [{**PREV, "path": "docs/design/previews/factory-5-bad.png", "png": b"<html>",
+                                            "url": PREV["url"].replace("home", "bad")}])
+            self.assertIsNone(dbm.mockup_image(db, "o/r", "docs/design/previews/factory-5-bad.png"))
+            html = views.mockup_img(PREV)
+            self.assertIn("/mockup?repo=o%2Fr", html)
+            self.assertEqual(views.mockup_img({**PREV, "path": "x/../etc.png"}), "")
+
 
 if __name__ == "__main__":
     unittest.main()

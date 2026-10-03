@@ -3,6 +3,7 @@ import threading
 import time
 
 from . import designfiles
+from .render import png_ok
 
 _local = threading.local()
 TOKEN_COLS = ("tokens_in", "tokens_out", "tokens_cache_read", "tokens_cache_write")   # per run; NULL when the harness did not say
@@ -70,6 +71,10 @@ def connect(path: str) -> sqlite3.Connection:
         """CREATE TABLE IF NOT EXISTS design_files (
             run_id INTEGER NOT NULL, repo TEXT NOT NULL, path TEXT NOT NULL, url TEXT NOT NULL, pr TEXT NOT NULL DEFAULT '',
             created REAL NOT NULL, PRIMARY KEY (run_id, repo, path))"""
+    )
+    db.execute(                                     # the rendered mockup PNGs, so the admin UI can show them without a GitHub token
+        """CREATE TABLE IF NOT EXISTS mockup_images (
+            repo TEXT NOT NULL, path TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL, PRIMARY KEY (repo, path))"""
     )
     db.execute(                                     # the project manager's latest validated assessment of each ticket
         """CREATE TABLE IF NOT EXISTS pm_assessments (
@@ -232,6 +237,9 @@ def add_design_files(db, run_id: int, files: list) -> None:
     """Record a run's published design files; entries that fail designfiles.link_ok are dropped."""
     for f in files:
         if designfiles.link_ok(f):
+            png = f.get("png")
+            if isinstance(png, bytes) and f["path"].endswith(".png") and png_ok(png):
+                db.execute("INSERT OR REPLACE INTO mockup_images (repo, path, png, created) VALUES (?,?,?,?)", (f["repo"], f["path"], png, time.time()))
             db.execute("INSERT OR IGNORE INTO design_files (run_id, repo, path, url, pr, created) VALUES (?,?,?,?,?,?)",
                        (run_id, f["repo"], f["path"], f["url"], f.get("pr") or "", time.time()))
     db.commit()
@@ -251,6 +259,15 @@ def design_files_for_runs(db, run_ids: list) -> dict[int, list[dict]]:
     for r in rows:
         out.setdefault(r["run_id"], []).append(r)
     return out
+
+
+def mockup_image(db, repo: str, path: str) -> bytes | None:
+    """The stored PNG for a recorded preview (repo, path), or None."""
+    try:
+        row = db.execute("SELECT png FROM mockup_images WHERE repo=? AND path=?", (repo, path)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return bytes(row[0]) if row else None
 
 
 def mockup_previews(db, repo: str, issue: int) -> list[dict]:

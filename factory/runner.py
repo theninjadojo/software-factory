@@ -320,7 +320,7 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
             continue
         branch = f"{BRANCH_PREFIX}design-{num}-{stamp}"
         ident = ["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
-        previews = {}                                      # file path -> preview path, for the canvases that rendered
+        previews, pngs = {}, {}                            # file path -> preview path, for the canvases that rendered; preview path -> bytes
         if rn.render_previews:
             by_stem = {x.rpartition("/")[2][: -len(".dc.html")]: x for x in paths}
             try:
@@ -330,6 +330,7 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
                     (base / pp).write_bytes(png)
                     git(["add", "-f", pp], base, env)       # -f: a repository may git-ignore its design folder
                     previews[by_stem[stem]] = pp
+                    pngs[pp] = png
             except Exception:
                 log.exception("rendering previews failed; publishing the design files without them")
         git([*ident, "checkout", "-q", "-b", branch], base, env)
@@ -346,7 +347,7 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
             draft=True)
         urls.append(pr)
         files += [{"repo": r, "path": x, "url": f"https://github.com/{r}/blob/{ref}/{x}", "pr": pr} for x in paths]
-        files += [{"repo": r, "path": pp, "url": f"https://github.com/{r}/blob/{ref}/{pp}", "pr": pr, "preview": True} for pp in previews.values()]
+        files += [{"repo": r, "path": pp, "url": f"https://github.com/{r}/blob/{ref}/{pp}", "pr": pr, "preview": True, "png": pngs[pp]} for pp in previews.values()]
     return files, notes, " ".join(urls)
 
 

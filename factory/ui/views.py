@@ -53,6 +53,14 @@ def gh_link(url: str, label: str | None = None) -> str:
     return f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">{esc(label or u)}</a>' if GH_URL.match(u) else esc(label or u)
 
 
+def mockup_img(f) -> str:
+    """The stored preview image of a recorded design file, inline (served by the UI itself, behind the login)."""
+    if not designfiles.link_ok(f) or "/previews/" not in f["path"] or not f["path"].endswith(".png"):
+        return ""
+    src = "/mockup?" + urlencode({"repo": f["repo"], "path": f["path"]})
+    return f'<a href="{esc(src)}" target="_blank"><img class="mockup" src="{esc(src)}" alt="{esc(f["path"])}" loading="lazy"></a>'
+
+
 def design_links(files) -> str:
     """One new-tab link per design file, only for files that pass designfiles.link_ok (the rows come from the database)."""
     return "<br>".join(f'<a href="{esc(f["url"])}" rel="noopener noreferrer" target="_blank">{esc(f["path"])}</a>'
@@ -285,7 +293,9 @@ def run_detail(r: dict, files=()) -> str:
     shown = [f for f in files or [] if designfiles.link_ok(f)]
     if shown:
         rows = "".join(f'<tr><td data-l="File (opens on GitHub)">{design_links([f])}</td><td data-l="Repo">{esc(f["repo"])}</td><td data-l="Draft PR">{pr_links(f.get("pr") or "") or "—"}</td></tr>' for f in shown)
-        out += ("<h2>Design files</h2><table class=stack><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
+        imgs = "".join(mockup_img(f) for f in shown)
+        out += ("<h2>Design files</h2>" + (f'<div class="mockups">{imgs}</div>' if imgs else "")
+                + "<table class=stack><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
                 f"<tbody>{rows}</tbody></table>")
     if cls:
         out += f"<h2>Classification</h2><pre>{esc(cls)}</pre>"
@@ -348,8 +358,9 @@ def step_summary(counts) -> str:
 
 
 def step_files(s: dict, files_by_run: dict | None) -> str:
-    links = design_links([f for i in s["run_ids"] for f in (files_by_run or {}).get(i, [])])
-    return f'<br><span class="muted">Design files:</span><br>{links}' if links else ""
+    fs = [f for i in s["run_ids"] for f in (files_by_run or {}).get(i, [])]
+    links, imgs = design_links(fs), "".join(mockup_img(f) for f in fs)
+    return (f'<br><span class="muted">Design files:</span><br>{links}' + (f'<div class="mockups">{imgs}</div>' if imgs else "")) if links else ""
 
 
 def pipeline(steps: list[dict], files_by_run: dict | None = None, repo: str = "", issue: int = 0, docs=()) -> str:
