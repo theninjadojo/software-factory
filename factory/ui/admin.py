@@ -1,13 +1,14 @@
 """Routes that show or change settings, credentials and Telegram. All POSTs arrive here already CSRF-checked."""
 import json
-import time
 from pathlib import Path
 
 from .. import db as dbm
-from .. import schedules as sched
 from ..config import deep_merge
 from ..router import decide
-from . import forms, integrations as I, labels as L, schedules as SC, settings as S, views
+import time
+
+from .. import schedules as sched
+from . import forms, integrations as I, labels as L, schedules as SC, settings as S, views, workers as WK
 from .views import esc
 
 FLASH = {
@@ -194,6 +195,23 @@ def telegram_test(h, form, csrf: str) -> None:
     _telegram(h, csrf, r["message"], "ok" if r["ok"] else "bad")
 
 
+# ------------------------------------------------------------------ verification workers
+def workers_get(h, q: dict, csrf: str) -> None:
+    db = h.app.ro_db()
+    try:
+        if db is None:
+            return _send_page(h, 200, "Workers", '<p class="muted">The orchestrator has not created its database yet.</p>', "/workers", csrf)
+        if "id" in q:
+            body = WK.job_page(db, int(q["id"])) if q["id"].isdigit() and len(q["id"]) < 10 else None
+            if body is None:
+                return _send_page(h, 404, "Workers", '<p class="muted">No such job.</p>', "/workers", csrf, section="workers")
+            return _send_page(h, 200, f"Job #{int(q['id'])}", body, "/workers", csrf, section="workers")
+        _send_page(h, 200, "Workers", WK.workers_page(h.app.cfg(), db), "/workers", csrf, section="workers")
+    finally:
+        if db is not None:
+            db.close()
+
+
 # ------------------------------------------------------------------ schedules
 def _sched_form(h, csrf: str, v: dict, original: str, status: int = 200, flash=None, kind="ok", preview: str = "") -> None:
     cfg = h.app.cfg()
@@ -286,7 +304,7 @@ def schedules_delete(h, form, csrf: str) -> None:
     h._redirect("/schedules?ok=sched_deleted")
 
 
-GET = {"/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
+GET = {"/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get}
 POST = {"/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,

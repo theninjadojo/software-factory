@@ -3,7 +3,7 @@ import sqlite3
 import threading
 import time
 
-from . import designfiles, schedules
+from . import designfiles, jobs, schedules
 from .render import png_ok
 
 _local = threading.local()
@@ -92,6 +92,7 @@ def connect(path: str) -> sqlite3.Connection:
             PRIMARY KEY (repo, issue))"""
     )
     ensure_step_tables(db)
+    jobs.ensure_tables(db)
     schedules.ensure_tables(db)
     return db
 
@@ -273,12 +274,12 @@ def design_files_for_runs(db, run_ids: list) -> dict[int, list[dict]]:
     return out
 
 
-IMAGE_KINDS = ("built", "diff")
+IMAGE_KINDS = ("built", "diff", "verify")      # verify: screenshots a verification worker returned
 IMAGE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,80}")
 
 
 def add_run_images(db, run_id: int, images: list) -> None:
-    """Keep a run's screenshots: [{kind: built|diff, name: <page>-<viewport>, png}], only well-formed ones."""
+    """Keep a run's screenshots: [{kind: built|diff|verify, name: <page>-<viewport>, png}], only well-formed ones."""
     for i in images or []:
         if i.get("kind") in IMAGE_KINDS and IMAGE_NAME.fullmatch(str(i.get("name", ""))) and isinstance(i.get("png"), bytes) and png_ok(i["png"]):
             db.execute("INSERT OR REPLACE INTO run_images (run_id, kind, name, png, created) VALUES (?,?,?,?,?)",

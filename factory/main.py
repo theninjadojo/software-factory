@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, designfiles, mockups, pause, pm, runner, schedules, subtasks, usage
+from . import ci, conflicts, designfiles, mockups, pause, pm, runner, schedules, subtasks, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -940,6 +940,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         schedules.tick(cfg, gh, conn, time.time(), Path(cfg.db_path).parent, emit, alert)
     except Exception:
         log.exception("scheduled jobs failed")                  # never stops the poll
+    try:
+        verify.watch(cfg, conn, lambda text, event="worker_offline": alert(text, event=event))
+    except Exception:
+        log.exception("worker watch failed")                    # never stops the poll
     if not cfg.dry_run:
         ci.watch_ci(cfg, gh, conn, lambda text, event="ci_result": alert(text, event=event),
                     lambda *a: run_fix(cfg, gh, *a), ci_submit(cfg, conn))

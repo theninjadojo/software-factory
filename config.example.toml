@@ -59,7 +59,7 @@ chat_id = 0   # your numeric Telegram user id; the only account the bot will obe
 verbosity = "normal"   # quiet: needs-a-person, failures, rate limits | normal: + PR ready, stage done, CI results | verbose: everything
 # events = ["needs_human", "failure", "pr_ready"]   # optional explicit list; overrides verbosity.
 # ui_url = "https://factory.example.internal"   # optional: an "Open in UI" button on open-question messages
-# All events: needs_human failure rate_limit health pr_ready stage_done ci_result ci_fix recovery started startup skipped info
+# All events: needs_human failure rate_limit health pr_ready stage_done ci_result ci_fix recovery worker_offline started startup skipped info
 
 [classifier]
 backend = "rules"   # "jev" classifies with TypeSafe Jev via OpenRouter; falls back to labels on any error
@@ -198,6 +198,22 @@ bypass_label = "factory:skip-mockup"
 # viewports = ["desktop", "mobile"]     # optional: default is all
 # mask = [".clock"]                     # optional CSS selectors of dynamic regions
 # wait_for = "main"                     # optional CSS selector
+
+# Verification workers: a machine you own (a Mac, a networked Linux box) that checks an agent's patch BEFORE anything is pushed, using
+# what the sandbox lacks (Xcode, an emulator, the network for `npm ci`). Pull-based; recipes are defined on the worker, never here.
+# Setup: python3 -m factory.ctl workers add my-mac, run factory-workers.service, then worker/worker.py on the machine. docs/workers.md
+# [workers]
+# enabled = true
+# listen = "127.0.0.1:8788"                           # the worker API; put TLS or a VPN / SSH tunnel in front of it
+# tokens_file = "/srv/factory/secrets/worker_tokens"  # "name token" per line, mode 0600
+# mode = "block"                                      # block: a failing or missing check fails the run; warn: push anyway and say so
+# lease_seconds = 120
+# claim_wait_seconds = 900                            # a job no worker claims in this time fails
+# max_wait_seconds = 3600
+# [[workers.checks]]
+# repo = "your-org/shop-mobile"
+# recipe = "ios-test"                                 # a recipe name on the worker
+# platform = "macos"                                  # "any" matches every worker
 
 # Scheduled jobs (docs/schedules.md): on a timer, fetch data, keep a snapshot, open a ticket carrying it. With the default
 # labels the ticket gets the auto label: the analyst proposes changes and the classifier decides whether to build them.

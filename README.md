@@ -162,8 +162,9 @@ Everything is in one TOML file (plus the optional `config.overrides.toml` the UI
 
 ## Limits and honest caveats
 
-- **Agents cannot build or run tests.** The sandbox has no network, so they cannot install dependencies. Their changes are
-  reasoned, not executed; your repos' CI is the real check (hence the CI feedback loop).
+- **Agents cannot build or run tests** in the sandbox: it has no network, so they cannot install dependencies. Their changes are
+  reasoned, not executed; your repos' CI is the real check (hence the CI feedback loop). Optional [verification workers](docs/workers.md)
+  (a Mac, or any machine you own) can build and test a patch before it is pushed.
 - **Subscription auth is a gray area.** Anthropic's docs describe `claude setup-token` for scripts and CI, but their terms
   limit subscription use to "ordinary, individual usage". Always-on automation is arguably outside that; an API key is the
   supported route. Decide for yourself.
@@ -175,8 +176,8 @@ Everything is in one TOML file (plus the optional `config.overrides.toml` the UI
 
 ## Roadmap
 
-- A verification worker for a Mac (or any machine): pull-based, runs only recipes defined on the worker itself, to build
-  and test web, Android and iOS and return logs and screenshots.
+- Verification workers, phase 2 onward: an admin UI page, a fix round when a check fails, and tested iOS / Android / Playwright
+  recipes. The mechanism itself (the queue, the worker API and a reference worker) exists; see [docs/workers.md](docs/workers.md).
 - Verifying the Codex and Gemini harness templates end to end (the mechanism is tested; their command lines are not yet).
 
 ## Development

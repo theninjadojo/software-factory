@@ -7,7 +7,7 @@
 set -euo pipefail
 TARGET="${1:?usage: deploy.sh user@host [--image]}"; REBUILD="${2:-}"
 cd "$(dirname "$0")/.."
-tar -czf /tmp/sf-deploy.tgz factory tests sandbox deploy config.example.toml VERSION
+tar -czf /tmp/sf-deploy.tgz factory tests sandbox deploy worker config.example.toml VERSION
 scp -q /tmp/sf-deploy.tgz "$TARGET:/tmp/sf-deploy.tgz"; rm -f /tmp/sf-deploy.tgz
 ssh "$TARGET" "cat > /tmp/sf-deploy.sh && chmod 755 /tmp/sf-deploy.sh && sudo -n -u factory /tmp/sf-deploy.sh $REBUILD; rm -f /tmp/sf-deploy.sh /tmp/sf-deploy.tgz" <<'REMOTE'
 #!/bin/bash
@@ -26,8 +26,8 @@ except Exception:
 "); echo "runs marked running: $DBRUNS"
 [ "$RUNNING" = "0" ] && [ "$DBRUNS" = "0" ] || { echo "ABORT: an agent run is in flight; try again when it finishes"; exit 1; }
 mkdir state/fd && tar -C state/fd -xzf /tmp/sf-deploy.tgz
-rm -rf app/factory app/tests app/sandbox app/deploy
-cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/deploy state/fd/config.example.toml state/fd/VERSION app/ && rm -rf state/fd
+rm -rf app/factory app/tests app/sandbox app/deploy app/worker
+cp -r state/fd/factory state/fd/tests state/fd/sandbox state/fd/deploy state/fd/worker state/fd/config.example.toml state/fd/VERSION app/ && rm -rf state/fd
 cd app
 if ! python3 -m unittest discover -s tests > /tmp/sf-tests.log 2>&1; then tail -25 /tmp/sf-tests.log; echo 'TESTS FAILED: not restarting (the new code is on disk but the running service is unchanged)'; exit 1; fi
 tail -3 /tmp/sf-tests.log
@@ -35,6 +35,8 @@ if [ "$1" = "--image" ]; then podman build -q -t factory-agent -f sandbox/Docker
 systemctl --user restart factory.service
 # The UI runs no agents, so restarting it is always safe; without this it keeps serving the old code.
 if systemctl --user is-enabled factory-ui.service >/dev/null 2>&1; then systemctl --user restart factory-ui.service; fi
+# The worker API likewise runs no agents; restart it only if it is installed.
+if systemctl --user is-enabled factory-workers.service >/dev/null 2>&1; then systemctl --user restart factory-workers.service; fi
 sleep 8
 systemctl --user is-active factory-proxy.service factory.service factory-ui.service
 journalctl --user -u factory.service --since "-12s" --no-pager | grep -v "systemd\|podman\[" | cut -c1-200

@@ -14,6 +14,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 | `roles.py` | Prompts for the analyst, designer and architect, and the stage names. |
 | `pm.py` | The project manager: validates its `factory-priorities` block, applies only the priority labels it owns, records blockers (`pm_assessments`), and answers "which open tickets hold this one back" for the poll loop. |
 | `ci.py` | Watches CI on factory PRs; reports; drives the optional fix round. |
+| `verify.py` / `jobs.py` / `workerapi.py` | Verification workers ([workers.md](workers.md)): `verify.gate` enqueues one job per configured check after the patch is applied and waits; `jobs.py` is the SQLite queue and the strict validation of results; `workerapi.py` is the separate process workers poll. `worker/worker.py` is the reference worker. |
 | `proxy.py` | The egress proxy: a CONNECT-only tunnel on a unix socket that allows only listed host names on port 443. |
 | `sanitize.py` | Cleans agent-written markdown before it is posted to GitHub. |
 | `telegram.py` / `events.py` | Alerts, commands and buttons; event categories and verbosity levels. |
@@ -113,3 +114,12 @@ are kept on the host under `<work_dir>/../artifacts/screens/`. A patch that chan
 5. `python3 -m factory.ctl screens baseline <owner/repo> <checkout>` renders the configured screens of a local checkout and writes them as the baselines for a person to review and commit.
 
 Both images (`factory-render`, `factory-screens`) are built by `docker compose --profile build build` and by `scripts/deploy.sh --image`.
+
+
+## Worker verification
+
+After the screen check and before the push, `runner.run_task` calls `verify.gate` for each changed repo that has `[[workers.checks]]`.
+The gate enqueues a job (repo, base commit, the validated patch, a recipe name) in `verify_jobs` and polls the table; a worker pulls it
+through `factory.workerapi`, runs its own recipe, and posts a status, a log and PNGs, which `jobs.py` validates before storing. All checks
+must pass (`mode = "block"`, closed: no worker, a timeout or an invalid result fails the run) or the PR notes the failure (`warn`). Screenshots
+from a worker are attached to the run as `run_images` of kind `verify`. See [workers.md](workers.md) for the protocol, security model and plan.

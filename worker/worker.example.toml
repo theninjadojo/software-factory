@@ -1,0 +1,18 @@
+# Verification worker config (docs/workers.md). Recipes are defined HERE, on the worker. The orchestrator only names one.
+server = "https://factory.example.internal:8788"   # the worker API (through TLS, a VPN or: ssh -L 8788:127.0.0.1:8788 factory-host)
+token_file = "~/.factory-worker-token"             # the token the operator generated for this worker (mode 0600)
+platform = "macos"                                 # matched against [[workers.checks]] platform ("any" jobs match every worker)
+poll_seconds = 5
+git_url = "https://github.com/{repo}.git"           # this machine's own git credentials (a read-only token) are used to clone
+work_dir = "~/factory-work"
+
+[recipes.ios-test]
+# An argv, never a shell string. Put the script OUTSIDE the checkout: anything inside it was written by an agent.
+command = ["/Users/factory/recipes/ios-test.sh"]
+timeout_seconds = 3600
+artifacts = ["build/screens/*.png"]                # PNG globs relative to the checkout; returned and shown in the admin UI
+env_passthrough = []                               # the only extra environment variables the recipe can see
+
+[recipes.web-test]
+command = ["/usr/bin/env", "bash", "-c", "npm ci && npm test"]
+timeout_seconds = 1800
