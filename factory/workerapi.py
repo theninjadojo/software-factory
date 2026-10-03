@@ -72,6 +72,8 @@ class Api:
         if not isinstance(data, dict):
             return 400, {"error": "the body must be a JSON object"}
         db, now = dbm.local(cfg.db_path), self.clock()
+        if path == "/v1/ping":                          # lets a worker's `--check` prove the URL and token without claiming anything
+            return 200, {"ok": True, "protocol": PROTOCOL, "worker": worker}
         if path == "/v1/claim":
             platform, recipes = data.get("platform"), data.get("recipes")
             if (not isinstance(platform, str) or not PLATFORM.fullmatch(platform) or not isinstance(recipes, list)

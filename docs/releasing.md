@@ -4,10 +4,11 @@
 
 1. Set `VERSION` to the new number (for example `0.2.0`) and merge it to `main`.
 2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
-3. The `release` workflow (`.github/workflows/release.yml`) checks the tag matches `VERSION`, runs the tests, builds and pushes four images to
-   `ghcr.io/<owner>/shikumi`, `shikumi-agent`, `shikumi-render` and `shikumi-screens` (tagged `v0.2.0` and `latest`), and creates a GitHub
-   Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `.env.example`, `setup.sh`, `update.sh` and `install.sh`.
-4. First release only: GitHub makes new container packages private. In the repo's Packages settings, make the four packages public (or
+3. The `release` workflow (`.github/workflows/release.yml`) checks the tag matches `VERSION`, runs the tests, builds and pushes five images to
+   `ghcr.io/<owner>/shikumi`, `shikumi-agent`, `shikumi-render`, `shikumi-screens` and `shikumi-android` (tagged `v0.2.0` and `latest`), and creates a GitHub
+   Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `.env.example`, `setup.sh`, `update.sh` and `install.sh`, plus the worker
+   files: `install-worker.sh`, `setup-worker.sh`, `update-worker.sh` and `shikumi-worker.tar.gz` (the `worker/` folder and `sandbox/android/`).
+4. First release only: GitHub makes new container packages private. In the repo's Packages settings, make the five packages public (or
    every installer needs a registry login).
 5. Write what changed in the release notes, and say clearly when a config change is needed.
 
@@ -35,6 +36,21 @@ secrets, database and `.env` settings are never overwritten. The UI shows a bann
 the check off; it is one cached read of the public releases API every few hours).
 
 `ctl version` and the UI footer show the running version.
+
+## Verification workers: install and update (optional)
+
+A worker is a separate machine (a Mac, or a Linux box with the tools a build needs), installed the same way as the factory, from the same release:
+
+```bash
+curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh | bash
+```
+
+It creates `./shikumi-worker`, downloads `shikumi-worker.tar.gz` and runs `scripts/setup-worker.sh` (factory URL, token, recipes, the Android image,
+a launchd or systemd user service, and a self-check). It is non-interactive when you pass `FACTORY_URL`, `WORKER_TOKEN` and `WORKER_RECIPES`.
+Update with `./scripts/update-worker.sh [vX.Y.Z]`: it refuses while a job is running, replaces `worker/` and `sandbox/`, pulls the matching
+`shikumi-android` image, restarts, runs `worker.py --check`, and **rolls back by itself** if that fails. `worker.toml`, `secrets/` and `work/` are never
+touched. On the factory host, `FACTORY_WORKERS=1 ./scripts/setup.sh` turns the worker API on and makes a token; `docker compose up -d` and
+`update.sh` then include it (they use `COMPOSE_PROFILES=workers` in `.env`). See [workers.md](workers.md).
 
 ## What a release carries (and what it needs from you)
 

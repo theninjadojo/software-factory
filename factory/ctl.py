@@ -78,6 +78,24 @@ def doctor(cfg, gh, run=subprocess.run) -> list[tuple[str, str]]:
     add("ok" if work.is_dir() else "FAIL", f"work folder {work}" + ("" if work.is_dir() else " does not exist"))
     sock = Path(cfg.runner.proxy_socket)
     add("ok" if sock.exists() else "warn", f"proxy socket {sock}" + ("" if sock.exists() else " is not there (is the proxy running?)"))
+    # verification workers
+    if cfg.workers.enabled:
+        from .workerapi import read_tokens
+        n = len(read_tokens(cfg.workers.tokens_file))
+        add("ok" if n else "FAIL", f"{n} worker token(s) in {cfg.workers.tokens_file}" if n else f"no worker token in {cfg.workers.tokens_file}: run 'ctl workers add <name>'")
+        add("ok" if cfg.workers.checks else "warn", f"{len(cfg.workers.checks)} worker check(s) configured" if cfg.workers.checks else "[workers] is on but no [[workers.checks]] are set, so nothing is verified")
+        try:
+            db = sqlite3.connect(f"file:{cfg.db_path}?mode=ro", uri=True, timeout=5)
+            try:
+                last = db.execute("SELECT name, MAX(last_seen) FROM workers").fetchone()
+            finally:
+                db.close()
+            seen = last[1] if last and last[1] else None
+            ago = time.time() - seen if seen else None
+            add("ok" if ago is not None and ago < 600 else "warn", f"worker {last[0]!r} polled {int(ago)}s ago" if ago is not None and ago < 600
+                else "no worker has polled in the last 10 minutes (is the worker API up, and a worker running? scripts/setup-worker.sh)")
+        except sqlite3.Error:
+            add("warn", "no worker has connected yet")
     # GitHub: token, repo access, labels
     if gh is None:
         add("FAIL", f"no GitHub token at {cfg.token_file}")

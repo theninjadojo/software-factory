@@ -65,7 +65,9 @@ Optional (see [workers.md](workers.md)). Set `[workers] enabled = true` and add 
 `docker compose --profile workers up -d`). It listens on loopback (`127.0.0.1:8788`); give the Mac an SSH tunnel
 (`ssh -L 8788:127.0.0.1:8788 host`), a VPN or a TLS proxy, and run `worker/worker.py` there. The **Settings → Workers** page shows who is
 online, the queue, and each job's log and screenshots; Telegram sends `worker_offline` when jobs wait and no worker has polled for two
-minutes. `scripts/deploy.sh` copies `worker/` and restarts the worker API if it is enabled.
+minutes. `scripts/deploy.sh` copies `worker/` and restarts the worker API if it is enabled. For the Docker install,
+`FACTORY_WORKERS=1 ./scripts/setup.sh` does all of this and sets `COMPOSE_PROFILES=workers`. The worker machine installs with
+`install-worker.sh` and updates with `update-worker.sh` (see [workers.md](workers.md#installing)); `python3 -m factory.ctl doctor` checks the factory side.
 
 ## Day to day
 

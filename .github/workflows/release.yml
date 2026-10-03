@@ -34,10 +34,13 @@ jobs:
           build shikumi-agent sandbox/Dockerfile sandbox
           build shikumi-render sandbox/render/Dockerfile sandbox/render
           build shikumi-screens sandbox/screens/Dockerfile sandbox/screens
+          build shikumi-android sandbox/android/Dockerfile sandbox/android     # for verification workers (docs/workers.md)
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir dist
           cp docker-compose.yml config.example.toml VERSION .env.example scripts/setup.sh scripts/update.sh scripts/install.sh deploy/update-native.sh dist/
+          cp scripts/install-worker.sh scripts/setup-worker.sh scripts/update-worker.sh dist/                      # verification workers
+          tar -czf dist/shikumi-worker.tar.gz --exclude=__pycache__ worker sandbox/android
           python3 scripts/publish-release.py dist

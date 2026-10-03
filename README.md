@@ -129,6 +129,7 @@ Setting `dry_run = false` (in the UI or `config/config.toml`) and `docker compos
 | a release | `./scripts/update.sh` (latest) or `./scripts/update.sh v0.2.0`. Refuses while an agent run is in flight, rolls back if the new version does not start. See [docs/releasing.md](docs/releasing.md). |
 | source | `git pull && docker compose --profile build build && docker compose up -d` |
 | native (Podman) | on the host: `sudo -n -u factory /srv/factory/app/deploy/update-native.sh` (a release, with tests, image rebuild and rollback); or `scripts/deploy.sh user@host [--image]` to push your checkout |
+| a verification worker machine | `./scripts/update-worker.sh` (see [below](#verification-workers-optional)) |
 
 The UI shows a banner when a newer release exists (`[updates] check = false` turns that off). `python3 -m factory.ctl version` prints what is running.
 
@@ -168,6 +169,49 @@ The step-by-step version, with what you should see at each step, is [docs/first-
 2. Open a small, low-risk issue and apply `factory:analyze`. A document should appear on the ticket.
 3. Apply `factory:ready` to build it. A PR should appear within a few minutes.
 
+### Verification workers (optional)
+
+The agent sandbox has no network and runs on Linux, so agents cannot install dependencies, run a build, or touch Xcode. A **verification
+worker** is a machine you own (a Mac, or a Linux box) that checks an agent's patch *before anything is pushed*: it clones the repo, applies the
+patch, runs a recipe that **lives on the worker**, and sends back pass/fail, the log and screenshots. A failing check fails the run (or, set to
+`warn`, is noted on the PR), and a real test failure gets an agent fix round with the log. How it works, the security model and the plan:
+[docs/workers.md](docs/workers.md).
+
+It installs the same way as the factory, in two steps.
+
+**1. On the factory host**, turn the worker API on and make a token (add `FACTORY_WORKERS=1` to the setup, or to an existing install run the
+second command):
+
+```bash
+FACTORY_WORKERS=1 FACTORY_WORKER_NAME=my-mac FACTORY_WORKER_CHECKS="your-org/app:web-test:any your-org/ios:ios-test:macos" ./scripts/setup.sh
+docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml ui python3 -m factory.ctl workers add my-mac   # another token later
+```
+
+This adds `[workers]` to `config/config.toml`, sets `COMPOSE_PROFILES=workers` in `.env` (so `docker compose up -d` and `update.sh` include the worker
+API) and prints the token once. The API listens on `127.0.0.1:8788`: reach it from the worker with an SSH tunnel (`ssh -L 8788:127.0.0.1:8788 host`), a
+VPN or a TLS proxy. Checks can also be edited in the UI under **Settings → Workers**; the **Workers** page shows who is online and every job's log.
+Native installs use `deploy/systemd/factory-workers.service` and `python3 -m factory.ctl workers add`.
+
+**2. On the worker machine** (use a dedicated unprivileged account: a recipe runs agent-written code):
+
+```bash
+curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh | bash
+```
+
+This creates `./shikumi-worker` and runs `scripts/setup-worker.sh`, which asks for the factory URL and the token, writes `worker.toml` and the token
+file (mode 0600), installs a launchd (macOS) or systemd user service, and finishes with a check (`worker.py --check`) that proves the URL, the token,
+git and every recipe. It is non-interactive when you pass `FACTORY_URL`, `WORKER_TOKEN` and optionally `WORKER_RECIPES="web android"`.
+You also need Python 3.11+ and git on the worker, and git credentials that can **clone** your repos (read-only).
+
+| Recipe | Does | Needs on the worker |
+|---|---|---|
+| `web-test` | `npm ci` / `pnpm` / `yarn`, build, test, Playwright | Node |
+| `android-test` | `./gradlew` in a throwaway container (`--emulator` on Linux with KVM) | Docker or Podman (the image is pulled, or built once from `sandbox/android`) |
+| iOS | not shipped yet: needs a Mac and Xcode | |
+
+Update with `./scripts/update-worker.sh` (refuses while a job runs, rolls back if the new version fails its check). `worker.toml`, the token and your
+git setup are never touched. Check it any time: `python3 worker/worker.py --config worker.toml --check`, and on the factory `python3 -m factory.ctl doctor`.
+
 ### Telegram
 
 Create a bot with BotFather, put its token in `secrets/telegram_token`, message the bot once, then read your id from
@@ -196,8 +240,9 @@ Everything is in one TOML file (plus the optional `config.overrides.toml` the UI
 
 ## Roadmap
 
-- Verification workers, phase 2 onward: an admin UI page, a fix round when a check fails, and tested iOS / Android / Playwright
-  recipes. The mechanism itself (the queue, the worker API and a reference worker) exists; see [docs/workers.md](docs/workers.md).
+- Verification workers: the mechanism, the admin page, fix rounds, the web recipe and the Android recipe exist and are installable (above).
+  Still to do: the iOS recipe (Xcode in a Tart VM), the Android emulator path against real hardware (the unit-test path has been run for real,
+  the emulator path is stub-tested only), and running one end to end on a Mac. See [docs/workers.md](docs/workers.md).
 - Verifying the Codex and Gemini harness templates end to end (the mechanism is tested; their command lines are not yet).
 
 ## Development

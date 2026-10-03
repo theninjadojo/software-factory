@@ -62,6 +62,32 @@ validated (protected paths, size, no symlinks). The worker clones the repo with 
 Leases: a claimed job needs a heartbeat at least every `lease_seconds` (default 120). A job with no heartbeat is put back in the
 queue (at most `max_attempts`, default 2) and then fails. A job nobody claims within `claim_wait_seconds` fails.
 
+## Installing
+
+The same way as the factory: a release one-liner, an environment-driven setup script, an update script with rollback.
+
+1. **Factory host.** `FACTORY_WORKERS=1 FACTORY_WORKER_NAME=my-mac FACTORY_WORKER_CHECKS="org/app:web-test:any" ./scripts/setup.sh` (or, on an
+   existing install, add `[workers]` and run `python3 -m factory.ctl workers add my-mac`). `setup.sh` writes `[workers]` and the checks, sets
+   `COMPOSE_PROFILES=workers` in `.env` (so `docker compose up -d` and `scripts/update.sh` start and update the worker API like every other
+   service), makes the token and prints it once. Native installs enable `deploy/systemd/factory-workers.service`; `scripts/deploy.sh` restarts it.
+2. **Make the API reachable** from the worker: it listens on `127.0.0.1:8788`. Use `ssh -L 8788:127.0.0.1:8788 factory-host`, a VPN, or a TLS reverse
+   proxy. Never expose it plainly: the token is the only credential.
+3. **Worker machine.** `curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh | bash`. This downloads
+   `shikumi-worker.tar.gz` (`worker/` and `sandbox/android/`) into `./shikumi-worker` and runs `scripts/setup-worker.sh`:
+   - asks for (or reads) `FACTORY_URL` and `WORKER_TOKEN`; the token goes to `secrets/token` with mode 0600;
+   - writes `worker.toml` with the recipes you chose (`WORKER_RECIPES="web android"`); an existing `worker.toml` is never overwritten;
+   - for `android`: pulls `ghcr.io/<owner>/shikumi-android:<version>` and tags it `factory-android:latest`, or builds it from `sandbox/android` if there is
+     no prebuilt image (several GB). Skip with `SKIP_IMAGE=1`;
+   - installs a launchd agent (macOS) or a systemd user service (Linux), filled in from `worker/service/`. Skip with `SKIP_SERVICE=1`;
+   - runs `worker.py --check`: recipes exist, git is installed, and the orchestrator accepts the token (`POST /v1/ping`, which claims nothing).
+4. **Add checks** on the factory (Settings → Workers, or `[[workers.checks]]`) that name a recipe the worker has. The Workers page lists the worker as online
+   within seconds, and `python3 -m factory.ctl doctor` reports tokens, checks and when a worker last polled.
+5. **Update** with `./scripts/update-worker.sh [vX.Y.Z]` on the worker: it refuses while a job is running (`FORCE=1` overrides), replaces `worker/` and
+   `sandbox/`, pulls the matching Android image, restarts, runs `--check`, and rolls back if that fails. `worker.toml`, `secrets/` and `work/` are never touched.
+
+The worker must be able to **clone** the repos it verifies, with its own credentials (a read-only token via a git credential helper, or an SSH key and
+`WORKER_GIT_URL=git@github.com:{repo}.git`). Nothing the factory holds is sent to the worker except the validated patch, the base commit and a recipe name.
+
 ## Configuration
 
 Orchestrator (`config.toml`):

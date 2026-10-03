@@ -4,6 +4,8 @@
 #   GITHUB_TOKEN=... ANTHROPIC_API_KEY=... FACTORY_REPOS="org/a org/b" ./scripts/setup.sh   # non-interactive (no prompts)
 # Optional environment: FACTORY_HOME (default /srv/factory), ENGINE (docker|podman, default: what is installed),
 #   SKIP_BUILD=1, SKIP_START=1, SKIP_LABELS=1, FACTORY_UI_PASSWORD (skips the password prompt).
+# Verification workers (optional, docs/workers.md): FACTORY_WORKERS=1 turns on the worker API, and creates a token for FACTORY_WORKER_NAME
+#   (default "worker"). FACTORY_WORKER_CHECKS="org/app:web-test:any org/ios:ios-test:macos" adds [[workers.checks]] (repo:recipe:platform).
 # It starts the factory in DRY-RUN: it logs what it would do and touches nothing until you turn dry_run off.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -56,6 +58,28 @@ if [ ! -f .env ]; then
   echo "wrote .env (DOCKER_GID=$GID)"
 else echo ".env exists: keeping it"; fi
 
+if [ -n "${FACTORY_WORKERS:-}" ]; then
+  say "Verification workers"
+  WNAME="${FACTORY_WORKER_NAME:-worker}"
+  [[ "$WNAME" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || { echo "FACTORY_WORKER_NAME must be lowercase letters, digits and dashes"; exit 1; }
+  for c in ${FACTORY_WORKER_CHECKS:-}; do [[ "$c" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$ ]] || { echo "not repo:recipe:platform: $c"; exit 1; }; done
+  if grep -q '^\[workers\]' config/config.toml; then echo "[workers] is already in config/config.toml: keeping it"; else
+    CHECKS="${FACTORY_WORKER_CHECKS:-}" HOME_DIR="$HOME_DIR" python3 - <<'PY'
+import os
+out = '\n# Verification workers (docs/workers.md). Added by setup.sh: change them in the UI under Settings -> Workers.\n[workers]\nenabled = true\n'
+out += 'listen = "127.0.0.1:8788"\ntokens_file = "%s/secrets/worker_tokens"\nmode = "block"\n' % os.environ["HOME_DIR"]
+for c in os.environ["CHECKS"].split():
+    repo, recipe, platform = c.split(":")
+    out += '\n[[workers.checks]]\nrepo = "%s"\nrecipe = "%s"\nplatform = "%s"\n' % (repo, recipe, platform)
+open("config/config.toml", "a").write(out)
+PY
+    echo "added [workers] to config/config.toml$([ -z "${FACTORY_WORKER_CHECKS:-}" ] && echo " (no checks yet: add them under Settings -> Workers)")"
+  fi
+  # the worker API is a compose profile: with COMPOSE_PROFILES set, plain `docker compose up -d` (and update.sh) include it
+  if grep -q '^COMPOSE_PROFILES=' .env; then grep -q '^COMPOSE_PROFILES=.*workers' .env || sed -i 's|^COMPOSE_PROFILES=\(.*\)$|COMPOSE_PROFILES=\1,workers|' .env
+  else printf 'COMPOSE_PROFILES=workers\n' >> .env; fi
+fi
+
 say "Secrets (files, mode 0600, outside the repo)"
 put_secret() {  # name, value
   printf %s "$2" | $S tee "$HOME_DIR/secrets/$1" >/dev/null; $S chmod 600 "$HOME_DIR/secrets/$1"; [ "$(id -u)" = 1000 ] || $S chown 1000:1000 "$HOME_DIR/secrets/$1"; }
@@ -88,6 +112,12 @@ if [ -z "${SKIP_LABELS:-}" ]; then
   docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml orchestrator python3 -m factory.ctl labels || echo "(labels failed: fix the token, then run: docker compose run --rm orchestrator python3 -m factory.ctl labels)"
 fi
 
+if [ -n "${FACTORY_WORKERS:-}" ]; then
+  say "Token for worker ${FACTORY_WORKER_NAME:-worker} (shown once)"
+  docker compose run --rm -T -e FACTORY_CONFIG=/etc/factory/config.toml ui python3 -m factory.ctl workers add "${FACTORY_WORKER_NAME:-worker}" \
+    || echo "(no new token: one with that name exists, or the command failed. Create another with: docker compose run --rm ui python3 -m factory.ctl workers add <name>)"
+fi
+
 if [ -z "${SKIP_START:-}" ]; then say "Starting"; docker compose up -d; fi
 cat <<MSG
 
@@ -96,6 +126,7 @@ Done. The factory is in DRY-RUN: it only logs what it would do.
   Logs:  docker compose logs -f orchestrator
 Check the install:  docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml orchestrator python3 -m factory.ctl doctor
 Walkthrough: docs/first-ticket.md
+$([ -n "${FACTORY_WORKERS:-}" ] && printf 'Workers: the worker API listens on 127.0.0.1:8788 (reach it from the worker machine with: ssh -L 8788:127.0.0.1:8788 <this-host>).\n  On that machine:  curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh | bash\n  and paste the token above. Details: docs/workers.md\n')
 Next: open a small issue, put the label  factory:analyze  on it, and watch the log. When the decisions look right, switch
 dry_run off in the UI (Settings) or in config/config.toml, then  docker compose up -d.
 MSG

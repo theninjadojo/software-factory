@@ -15,7 +15,7 @@
 # Exit 0 = passed; 1 = the build or tests failed (a failure: gets a fix round); 2 = the environment is wrong (no engine, no image, no
 # gradlew, no /dev/kvm, emulator did not boot...), which is never the patch's fault and is never retried.
 set -u
-IMAGE="localhost/factory-android:latest"; ENGINE=""; DIR="."; TASK="test"; EMULATOR=0
+IMAGE="factory-android:latest"; ENGINE=""; DIR="."; TASK="test"; EMULATOR=0
 CACHE="${HOME:-/tmp}/.cache/factory-android-gradle"; KVM=/dev/kvm; MEMORY=6g; CPUS=4
 while [ $# -gt 0 ]; do
   case "$1" in

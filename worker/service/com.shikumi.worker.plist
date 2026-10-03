@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Installed by scripts/setup-worker.sh (the @...@ values are filled in there). Runs as the logged-in user. -->
+  <key>Label</key><string>com.shikumi.worker</string>
+  <key>ProgramArguments</key>
+  <array><string>@PYTHON@</string><string>@DIR@/worker/worker.py</string><string>--config</string><string>@DIR@/worker.toml</string></array>
+  <key>WorkingDirectory</key><string>@DIR@</string>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>@PATH@</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>@DIR@/worker.log</string>
+  <key>StandardErrorPath</key><string>@DIR@/worker.log</string>
+</dict>
+</plist>

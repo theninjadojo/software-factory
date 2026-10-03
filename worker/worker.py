@@ -223,14 +223,41 @@ def poll_once(cfg: Config, api: Api) -> bool:
     return True
 
 
+def check(cfg: Config, api: Api) -> list[tuple[str, str]]:
+    """The worker's own doctor: [(ok|warn|FAIL, message)]. Reads only; it never claims a job."""
+    out = [("ok" if cfg.recipes else "FAIL", f"{len(cfg.recipes)} recipe(s): {', '.join(sorted(cfg.recipes)) or 'none configured'}")]
+    for name, r in sorted(cfg.recipes.items()):
+        exe = r.command[0]
+        found = exe if os.access(exe, os.X_OK) and os.path.isfile(exe) else shutil.which(exe)
+        out.append(("ok" if found else "FAIL", f"recipe {name}: {exe}" + ("" if found else " is not an executable file or on PATH")))
+    out.append(("ok" if shutil.which("git") else "FAIL", "git is installed" if shutil.which("git") else "git is not installed"))
+    try:
+        status, reply = api.call("/v1/ping", {}, 15)
+        if status == 200 and (reply or {}).get("ok"):
+            out.append(("ok", f"the orchestrator at {cfg.server} accepted the token (as worker {reply.get('worker')!r})"))
+        elif status == 401:
+            out.append(("FAIL", f"{cfg.server} refused the token: it is wrong, or not in the factory's tokens file"))
+        else:
+            out.append(("FAIL", f"{cfg.server} answered HTTP {status}: is [workers] enabled and the worker API running?"))
+    except (OSError, ValueError) as e:
+        out.append(("FAIL", f"cannot reach {cfg.server} ({type(e).__name__}): is the URL right, and is the tunnel or VPN up?"))
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="software-factory verification worker")
     ap.add_argument("--config", required=True)
+    ap.add_argument("--check", action="store_true", help="check the setup (recipes, git, server, token) and exit; claims nothing")
     ap.add_argument("--once", action="store_true", help="claim at most one job, then exit")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     cfg = load_config(args.config)
     api = Api(cfg)
+    if args.check:
+        results = check(cfg, api)
+        for level, msg in results:
+            print(f"[{level}] {msg}")
+        sys.exit(1 if any(lvl == "FAIL" for lvl, _ in results) else 0)
     log.info("worker up: platform=%s recipes=%s server=%s", cfg.platform, sorted(cfg.recipes), cfg.server)
     while True:
         try:

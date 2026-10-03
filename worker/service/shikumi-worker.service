@@ -1,0 +1,13 @@
+[Unit]
+Description=Shikumi verification worker
+After=network-online.target
+
+[Service]
+# Installed by scripts/setup-worker.sh (the @...@ values are filled in there). Runs as your user: use a dedicated unprivileged account.
+ExecStart=@PYTHON@ @DIR@/worker/worker.py --config @DIR@/worker.toml
+WorkingDirectory=@DIR@
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
