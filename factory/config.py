@@ -209,6 +209,38 @@ class Project:
 
 
 @dataclass(frozen=True)
+class Viewport:
+    name: str
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class ScreenPage:
+    """One screen of a project repo, checked at each named viewport against `<baseline_dir>/<name>-<viewport>.png` in that repo."""
+    repo: str
+    name: str
+    path: str                            # relative file served over http://127.0.0.1 from the repo root, inside the sealed container
+    viewports: tuple[str, ...] = ()      # empty: every viewport
+    mask: tuple[str, ...] = ()           # CSS selectors of dynamic regions, painted over before comparing
+    wait_for: str = ""                   # CSS selector to wait for before the screenshot
+
+
+@dataclass(frozen=True)
+class ScreensCfg:
+    """Screen verification during a build (factory/screens.py). Screens are listed here, in trusted config, never in the repo,
+    so an agent cannot drop one. Fails closed: with pages configured for a repo, a missing image or baseline fails the build."""
+    image: str = "localhost/factory-screens:latest"
+    timeout_seconds: int = 300
+    baseline_dir: str = "screens/baselines"
+    threshold: float = 0.1               # per-pixel colour distance (0..1) above which a pixel counts as different
+    max_diff_ratio: float = 0.001        # fraction of pixels allowed to differ (0.001 = 0.1 %)
+    viewports: tuple[Viewport, ...] = (Viewport("desktop", 1440, 900), Viewport("mobile", 390, 844))
+    pages: tuple[ScreenPage, ...] = ()
+    label: str = "factory:screens-changed"   # put on the draft PR when a patch changes baseline images
+
+
+@dataclass(frozen=True)
 class Config:
     db_path: str
     poll_seconds: int
@@ -234,6 +266,7 @@ class Config:
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
     pm: PmCfg = field(default_factory=PmCfg)
+    screens: ScreensCfg = field(default_factory=ScreensCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
     prompts: PromptsCfg = field(default_factory=PromptsCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
@@ -401,6 +434,56 @@ def _ui_url(v):
     return v.rstrip("/")
 
 
+_SCREEN_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
+_SCREEN_PATH = re.compile(r"[A-Za-z0-9_./-]{1,200}")
+
+
+def _screens(raw: dict, repos: list[str]) -> ScreensCfg:
+    raw = dict(raw)
+    pages_raw, vps_raw = raw.pop("pages", []), raw.pop("viewports", None)
+    vps = ScreensCfg().viewports if vps_raw is None else tuple(Viewport(str(k), v["width"], v["height"]) for k, v in vps_raw.items())
+    pages = tuple(ScreenPage(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in p.items()}) for p in pages_raw)
+    c = ScreensCfg(**{**raw, "viewports": vps, "pages": pages})
+    from .designfiles import valid_dir
+    from .render import MAX_H, MAX_W
+    if not valid_dir(c.baseline_dir):
+        raise ValueError("screens.baseline_dir must be a relative folder such as screens/baselines")
+    if not isinstance(c.timeout_seconds, int) or isinstance(c.timeout_seconds, bool) or not 10 <= c.timeout_seconds <= 3600:
+        raise ValueError("screens.timeout_seconds must be a whole number from 10 to 3600")
+    for n in ("threshold", "max_diff_ratio"):
+        v = getattr(c, n)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1:
+            raise ValueError(f"screens.{n} must be a number from 0 to 1")
+    if not c.image.strip() or not c.label.strip():
+        raise ValueError("screens.image and screens.label must not be empty")
+    names = [v.name for v in c.viewports]
+    if len(set(names)) != len(names):
+        raise ValueError("screens.viewports names must be unique")
+    for v in c.viewports:
+        if not _SCREEN_NAME.fullmatch(v.name):
+            raise ValueError("screens.viewports names must match [a-z0-9-]")
+        for dim, top in ((v.width, MAX_W), (v.height, MAX_H)):
+            if not isinstance(dim, int) or isinstance(dim, bool) or not 16 <= dim <= top:
+                raise ValueError(f"screens.viewports.{v.name}: width and height must be whole numbers from 16 to {top}")
+    seen = set()
+    for p in c.pages:
+        if p.repo not in repos:
+            raise ValueError(f"screens.pages: {p.repo} is not a configured repo")
+        if not _SCREEN_NAME.fullmatch(p.name) or (p.repo, p.name) in seen:
+            raise ValueError(f"screens.pages: {p.repo} name {p.name!r} must be unique and match [a-z0-9-]")
+        seen.add((p.repo, p.name))
+        parts = p.path.split("/")
+        if (not _SCREEN_PATH.fullmatch(p.path) or p.path.startswith("/") or ".." in parts or "" in parts
+                or any(x.lower() == ".git" for x in parts)):
+            raise ValueError(f"screens.pages.{p.name}: path must be a plain relative path inside the repo")
+        if not set(p.viewports) <= set(names):
+            raise ValueError(f"screens.pages.{p.name}: unknown viewport")
+        if (len(p.mask) > 20 or any(not isinstance(m, str) or not 0 < len(m) <= 200 for m in p.mask)
+                or not isinstance(p.wait_for, str) or len(p.wait_for) > 200):
+            raise ValueError(f"screens.pages.{p.name}: mask and wait_for must be short CSS selectors")
+    return c
+
+
 def overrides_path(path: str) -> Path:
     """The file the UI writes. Deep-merged over the hand-edited config, which is never rewritten."""
     p = Path(path)
@@ -466,6 +549,7 @@ def parse(raw: dict) -> Config:
             raise ValueError(f"pm.{name} must be a whole number from 1 to 100000")
     if not isinstance(pm.unblock_label, str) or not pm.unblock_label.strip():
         raise ValueError("pm.unblock_label must not be empty")
+    screens = _screens(raw.get("screens", {}), repos)
     _check_models(routes, roles, review, pm)
     _check_harness_use(routes, roles, harnesses, review, pm)
     return Config(
@@ -490,6 +574,7 @@ def parse(raw: dict) -> Config:
         auto_confirm_stages=bool(raw.get("auto", {}).get("confirm_stages", False)),
         auto_chain=bool(raw.get("auto", {}).get("chain", True)),
         ci=CiCfg(**raw.get("ci", {})),
+        screens=screens,
         conflicts=conflicts,
         review=review,
         pm=pm,
