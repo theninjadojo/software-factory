@@ -24,7 +24,7 @@ def go(page, viewport, name, more=False):
     nav.get_by_role("link", name=name, exact=True).click()
 
 
-def test_login_rejects_a_wrong_password_then_accepts_the_right_one(browser, server, viewport):
+def test_login_rejects_a_wrong_password_then_accepts_the_right_one(browser, server):
     pg = browser.new_context().new_page()
     pg.goto(server.url + "/runs")
     expect(pg).to_have_url(re.compile(r"/login$"))
@@ -102,7 +102,7 @@ def test_search_filters_the_ticket_list_by_number(page, server, viewport):
 
 
 def test_a_run_can_be_opened_from_the_runs_list(page, server, viewport):
-    page.goto(server.url + "/runs")
+    page.goto(server.url + "/runs?page=1")                 # the oldest runs: 60+ bulk runs fill the first page
     page.get_by_role("link", name="Run #1", exact=True).click()
     expect(page.get_by_role("heading", name="Run #1", exact=True)).to_be_visible()
     expect(page.get_by_text("Looks feasible")).to_be_visible()
@@ -111,7 +111,8 @@ def test_a_run_can_be_opened_from_the_runs_list(page, server, viewport):
 def test_failed_chip_lists_only_failed_runs(page, server, viewport):
     page.goto(server.url + "/runs")
     page.get_by_role("link", name="Failed", exact=True).click()
-    expect(page.locator(".badge", has_text="failed")).to_have_count(1)
+    badges = page.locator("tbody .badge").all_inner_texts()
+    assert badges and set(badges) == {"failed"}, badges
     expect(page.get_by_text("Ship the thing")).to_have_count(0)
 
 
@@ -163,3 +164,11 @@ def test_settings_side_list_is_tappable_and_event_names_do_not_break(page, serve
     if viewport == "phone":
         for link in page.get_by_role("navigation", name="Settings").get_by_role("link").all():
             assert link.bounding_box()["height"] >= 44, link.inner_text()
+
+
+def test_ticket_actions_stay_on_screen_even_with_an_unbreakable_title(page, server, viewport):
+    page.goto(server.url + TICKETS)
+    width = page.evaluate("document.documentElement.clientWidth")
+    for name in ("Auto #4", "Build #4"):
+        box = page.get_by_role("button", name=name).bounding_box()
+        assert box and box["x"] >= 0 and box["x"] + box["width"] <= width + 1, (name, box, width)

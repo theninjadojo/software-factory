@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from factory import db as dbm  # noqa: E402
 from factory import github as ghm  # noqa: E402
+from factory import questions as Q  # noqa: E402
 from factory.config import load  # noqa: E402
 from factory.ui import integrations as I  # noqa: E402
 from factory.ui.server import App, serve  # noqa: E402
@@ -29,6 +30,8 @@ PASSWORD = "correct horse battery"
 REPO = "your-org/standalone-service"
 DESKTOP = {"width": 1280, "height": 800}
 PHONE = {"width": 390, "height": 844}
+TABLET = {"width": 820, "height": 1180}
+LONG = "Supercalifragilisticexpialidocious" * 4      # an unbreakable word: the worst case for narrow layouts
 
 
 class FakeGitHub:
@@ -41,6 +44,11 @@ class FakeGitHub:
                                                  "labels": [{"name": x, "color": "ededed"} for x in labels], "comments": 0}
         self.issues = [mk(4, "Add dark mode toggle", []), mk(7, "Retry failed CI fixes once more, with a deliberately long title that must wrap on a phone", ["factory:ready"]),
                        mk(9, "Per-repo budget limits", ["factory:analyze"])]
+        self.issues += [mk(13, "Needs a person: low confidence ticket " + LONG, ["factory:ready"]), mk(19, "Retry failed CI fixes (questions waiting)", ["factory:needs-answers"]),
+                        mk(21, "Add 日本語 support and emoji 🚀 in titles", [])]
+        qs = [Q.Question("q1", "How should a retry be applied? " + LONG[:40], (("a", "Another fix commit"), ("b", "Re-run the CI only"), ("c", "Both, one after the other")), "a", "keeps one history", Q.PERSON),
+              Q.Question("q2", "Which branch should hold the fix?", (("a", "The PR branch"), ("b", "A new branch")), "a", "simpler review", Q.PERSON)]
+        self.comments = {19: [{"user": {"login": "factory-bot"}, "body": "<!-- factory:stage=architect -->\n" + Q.stored(qs) + "# Architecture\n\nUse a retry budget.", "created_at": now}]}
         self.labels = ["factory:ready", "factory:auto", "factory:analyze", "factory:design", "factory:architect", "bug"]
         self.writes: list[tuple] = []
 
@@ -54,7 +62,7 @@ class FakeGitHub:
             if p.startswith("/search/issues"):
                 return {"items": self.issues, "total_count": len(self.issues)}
             if p.endswith("/comments"):
-                return []
+                return self.comments.get(int(re.search(r"/issues/(\d+)/", p)[1]), [])
             m = re.search(r"/issues/(\d+)$", p)
             if m:
                 for i in self.issues:
@@ -92,7 +100,22 @@ def seed(db) -> None:
     dbm.record(db, REPO, 4, "2026-10-01T10:00:00Z", "ignored", "label applied by someone without write access")
     dbm.watch_pr(db, REPO, 31, REPO, 12)
     dbm.add_event(db, "run.start", "implement started", REPO, 4)
-    dbm.add_event(db, "alert.error", "something went wrong <script>alert(1)</script>", REPO, 7)
+    # a ticket the factory asked a person about, and one waiting on answers
+    dbm.record(db, REPO, 13, "2026-10-01T10:00:00Z", "human", "cls=feature/medium/human=yes/conf=0.45; low confidence, please decide")
+    dbm.set_questions(db, REPO, 19, "architect", 2)
+    # pull requests in every CI state, a design run with files, a stored document that was cut short
+    for n, status, summary in ((32, "passed", "3 checks passed"), (33, "failed", "lint failed " + LONG), (34, "no-ci", "no CI ever ran"), (35, "closed", "merged")):
+        dbm.watch_pr(db, REPO, n, REPO, 20 + n - 32)
+        dbm.update_pr(db, REPO, n, status=status, summary=summary, rounds=1 if status == "failed" else 0)
+    design = dbm.start_run(db, "stage", REPO, 21, "Add 日本語 support", "claude-code", "sonnet", "medium", stage="designer")
+    dbm.finish_run(db, design, "stage", "designed", output="# Design\n\n" + "Long paragraph. " * 400)
+    dbm.add_design_files(db, design, [{"repo": REPO, "path": "design/mockup.html", "url": f"https://github.com/{REPO}/blob/design-branch/design/mockup.html", "pr": ""}])
+    for i in range(60):                                       # more than one page of runs
+        r = dbm.start_run(db, "implement", REPO, 100 + i, f"Bulk run {i} " + (LONG if i % 15 == 0 else ""), "claude-code", "sonnet", "medium")
+        dbm.finish_run(db, r, ("passed", "failed", "pr")[i % 3], "x")
+    for i in range(120):                                      # more than one page of events
+        dbm.add_event(db, "run.start" if i % 2 else "alert.info", f"event {i} " + (LONG if i % 40 == 0 else ""), REPO, 100 + i)
+    dbm.add_event(db, "alert.error", "something went wrong <script>alert(1)</script>", REPO, 7)      # newest, so it is on the first page
 
 
 class Server:
@@ -136,7 +159,10 @@ def browser():
         b.close()
 
 
-@pytest.fixture(params=["desktop", "phone"])
+VIEWPORTS = {"desktop": DESKTOP, "tablet": TABLET, "phone": PHONE}
+
+
+@pytest.fixture(params=["desktop", "tablet", "phone"])
 def viewport(request):
     return request.param
 
@@ -144,8 +170,8 @@ def viewport(request):
 @pytest.fixture
 def page(browser, server, viewport):
     """A signed-in page, once at desktop size and once as a phone (touch, mobile user agent)."""
-    ctx = browser.new_context(viewport=DESKTOP if viewport == "desktop" else PHONE, is_mobile=viewport == "phone", has_touch=viewport == "phone",
-                              device_scale_factor=2 if viewport == "phone" else 1)
+    touch = viewport != "desktop"
+    ctx = browser.new_context(viewport=VIEWPORTS[viewport], is_mobile=touch, has_touch=touch, device_scale_factor=2 if touch else 1)
     pg = ctx.new_page()
     pg.errors = []
     pg.on("pageerror", lambda e: pg.errors.append(str(e)))
