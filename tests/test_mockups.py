@@ -165,3 +165,11 @@ class Images(unittest.TestCase):
         self.assertIn("4% differ", txt)
         rv = runner.build_prompt("t", "b", p, "o/r", "reviewer", mockups=["a.png"], built=["home-desktop.png"])
         self.assertIn("/task/built/home-desktop.png", rv)
+
+
+class DocPage(unittest.TestCase):
+    def test_design_document_shows_the_rendered_previews(self):
+        from factory.ui import views
+        page = views.doc_page("o/r", 5, "designer", ["designer"], None, "# Design", "Stored output", previews=[PREV])
+        self.assertIn('<img class="mockup"', page)
+        self.assertNotIn('<img class="mockup"', views.doc_page("o/r", 5, "designer", ["designer"], None, "# Design", "Stored output"))

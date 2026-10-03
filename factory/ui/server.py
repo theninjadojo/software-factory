@@ -254,7 +254,8 @@ class Handler(BaseHTTPRequestHandler):
             elif doc:
                 notice = ('<p class="muted"><strong>Warning:</strong> this document was cut short when it was stored, and the full text could not be '
                           'fetched from GitHub. Open the ticket on GitHub for the rest.</p>')
-        return views.doc_page(repo, n, stage, dbm.doc_stages(db, repo, n), doc, text, source, notice, "/needs")
+        return views.doc_page(repo, n, stage, dbm.doc_stages(db, repo, n), doc, text, source, notice, "/needs",
+                              dbm.mockup_previews(db, repo, n) if stage == "designer" else ())
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
         self.app.refresh_update_notice()
