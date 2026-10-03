@@ -20,7 +20,7 @@ A dashboard and settings editor, in the same standard-library-only style as the 
 | Page | Shows |
 |---|---|
 | Overview | Health (is the orchestrator polling?), mode (dry-run or LIVE), pause/resume, what is running now, recent runs, watched PRs, the timeline. Refreshes itself. |
-| Runs | Every agent run: ticket, model and effort, classification, status, duration, PR links. A run's page has the classifier's answer, the output document and the agent log tail. |
+| Runs | Every agent run: ticket, model and effort, classification, status, duration, token counts (in includes cache reads and writes; a dash when the harness reported none, with a total for today above the list), PR links. A run's page has the classifier's answer, the output document and the agent log tail. |
 | Tickets | The latest decision per ticket, including *ignored* ones and why (for example the label was applied by someone without write access), and a `done/total` pipeline-steps count. Each count opens the ticket's read-only pipeline view (stations for analyze, design, architect, implement, review, CI fix: status, agent, attempts, run and PR links, and the design files as GitHub links), built from the run history. A run page lists the design files it published (links to GitHub only; mockups are never served by the UI). |
 | PRs & CI | Pull requests being watched, CI status, fix rounds used. |
 | Events | The full timeline: decisions, every alert (including ones Telegram did not send), run starts and ends, errors, restarts. |
