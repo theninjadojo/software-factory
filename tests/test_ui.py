@@ -174,7 +174,7 @@ class Pages(UiCase):
         for needle in ("# The design", "agent log tail", "designer", "&quot;stage&quot;: &quot;design&quot;"):
             self.assertIn(needle, detail)
         self.assertEqual(self.req("GET", "/prs", cookie=cookie)[0], 303)            # PRs & CI is a filter of the Tickets page now
-        self.assertIn("watching", self.req("GET", "/tickets?stage=prs", cookie=cookie)[2])
+        self.assertIn("checks running", self.req("GET", "/tickets?stage=prs", cookie=cookie)[2])
         self.assertIn("Add the thing", self.req("GET", "/tickets?stage=all", cookie=cookie)[2])
         self.assertIn("PR ready", self.req("GET", "/events?kind=alert", cookie=cookie)[2])
         self.assertEqual(self.req("GET", "/runs/999", cookie=cookie)[0], 404)

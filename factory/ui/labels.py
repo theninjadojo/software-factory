@@ -355,6 +355,7 @@ def action_forms_for(need: dict, csrf: str, back: str = "/") -> str:
 _needs_cache: dict = {"at": 0.0, "rows": None, "titles": {}}
 _needs_lock = threading.Lock()
 NEEDS_TTL = 20      # seconds: the Floor refreshes every 5s, GitHub is asked at most this often
+NEEDS_EXTRA = 40    # waiting tickets older than the first page of open issues, fetched one by one
 
 
 def needs_cached():
@@ -384,7 +385,17 @@ def needs_you(h) -> list | None:
     queued = _approved(h)
     rows, titles = [], {}
     try:
-        for repo, (issues, _) in zip(cfg.repos, _par(*[(lambda r=r: gh.issues(r, "open", None, 1)) for r in cfg.repos])):
+        pages = dict(zip(cfg.repos, (issues for issues, _ in _par(*[(lambda r=r: gh.issues(r, "open", None, 1)) for r in cfg.repos]))))
+        # The first page holds the newest 50 open items, pull requests included. A ticket the factory is waiting on can be older:
+        # fetch those by number (the questions it left, or its call for a person), so the tray agrees with the rest of the page.
+        for repo in cfg.repos:
+            seen = {i["number"] for i in pages[repo]}
+            asked = sorted((d.get("decided_at") or 0, n) for (r, n), d in decisions.items() if r == repo and d.get("outcome") == "human")
+            want = [n for n in sorted(waiting.get(repo, ()), reverse=True) if n not in seen]
+            want += [n for _, n in reversed(asked) if n not in seen and n not in want]
+            more = _par(*[(lambda n=n, r=repo: gh.get_issue(r, n)) for n in want[:NEEDS_EXTRA]]) if want else []
+            pages[repo] = pages[repo] + [i for i in more if "pull_request" not in i and i.get("state") == "open"]
+        for repo, issues in pages.items():
             for i in issues:
                 titles[(repo, i["number"])] = (i.get("title") or "")[:160]
                 d = decisions.get((repo, i["number"]))
