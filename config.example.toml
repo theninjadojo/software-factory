@@ -210,10 +210,12 @@ bypass_label = "factory:skip-mockup"
 # lease_seconds = 120
 # claim_wait_seconds = 900                            # a job no worker claims in this time fails
 # max_wait_seconds = 3600
+# fix_rounds = 1                                      # extra agent attempts, with the failing log, when a required check FAILS (0 = report only)
 # [[workers.checks]]
 # repo = "your-org/shop-mobile"
 # recipe = "ios-test"                                 # a recipe name on the worker
 # platform = "macos"                                  # "any" matches every worker
+# required = true                                     # false: advisory, a failure is noted on the PR but never blocks
 
 # Scheduled jobs (docs/schedules.md): on a timer, fetch data, keep a snapshot, open a ticket carrying it. With the default
 # labels the ticket gets the auto label: the analyst proposes changes and the classifier decides whether to build them.

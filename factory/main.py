@@ -294,6 +294,10 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     if res.status == "failed" and getattr(res, "screen_failure", None):      # one fix round with the diffs, then it stays failed
         emit("screens:retry", "the screens did not match the baselines: one fix round with the diffs", repo, num)
         res, route = run_chain(cfg, gh, "build", repo, issue, route, c, screen_retry=res.screen_failure, **kw)
+    while res.status == "failed" and getattr(res, "verify_failure", None):      # fix rounds with the failing check's log, then it stays failed
+        vf = res.verify_failure
+        emit("verify:retry", f"a worker check failed: fix round {vf['round']} of {cfg.workers.fix_rounds}", repo, num)
+        res, route = run_chain(cfg, gh, "build", repo, issue, route, c, verify_retry=vf, **kw)
     gh.remove_label(repo, num, WORKING)
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, "implement")

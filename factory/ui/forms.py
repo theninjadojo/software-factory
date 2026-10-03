@@ -27,6 +27,8 @@ def _fmt(f: S.Field, v) -> str:
         return "\n".join(v)
     if f.kind == "kv":
         return "\n".join(f"{k}={x}" for k, x in sorted(v.items()))
+    if f.kind == "wchecks":
+        return "\n".join(f'{c["repo"]} {c["recipe"]} {c.get("platform", "any")}' + ("" if c.get("required", True) else " advisory") for c in v)
     return str(v)
 
 
@@ -68,7 +70,7 @@ def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = Fal
         elif f.kind == "checks":
             have = set(submitted.getall(f.key)) if submitted is not None else set(value or [])
             control = " ".join(f'<label class="check"><input type="checkbox" name="{name}" value="{esc(c)}"{" checked" if c in have else ""}> {esc(c)}</label>' for c in f.choices)
-        elif f.kind in ("repos", "hosts", "kv", "models"):
+        elif f.kind in ("repos", "hosts", "kv", "models", "wchecks"):
             control = f'<textarea id="{name}" name="{name}" rows="{max(3, min(8, len((value or "").splitlines()) + 1))}">{esc(value)}</textarea>'
         elif f.kind == "prompt":           # the newline after the tag is dropped by the browser, so a leading one in the value survives
             control = f'<textarea id="{name}" name="{name}" rows="6" maxlength="{S.PROMPT_MAX}">\n{esc(value)}</textarea>'

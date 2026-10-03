@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..tomlw import dumps
@@ -17,6 +17,7 @@ from ..tomlw import dumps
 REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 HOST_RE = re.compile(r"^(?=.{4,253}$)([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$")
 EFFORTS = ("low", "medium", "high")
+CHECK_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 
 
 class SettingsError(Exception):
@@ -29,7 +30,7 @@ class SettingsError(Exception):
 class Field:
     key: str                 # dotted path in the config
     label: str
-    kind: str                # int float bool text select checks repos hosts kv models prompt
+    kind: str                # int float bool text select checks repos hosts kv models prompt wchecks
     help: str = ""
     choices: tuple = ()
     lo: float | None = None
@@ -158,6 +159,23 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("conflicts.label", "Conflicts label", "text", "Apply it to a ticket to resolve the conflicts in its open factory PRs."),
         Field("conflicts.max_attempts", "Resolution attempts per PR", "int", "Then a person is asked.", lo=0, hi=50),
     ]),
+    "workers": ("Workers", [
+        Field("workers.enabled", "Verify patches on workers", "bool",
+              "On: for every repo with a check below, a patch must pass on a worker before anything is pushed. The worker API process and a worker must be running.",
+              danger="Builds of repos with checks will wait for a worker, and fail without one."),
+        Field("workers.mode", "When a required check fails or cannot run", "select",
+              "block: the run fails and nothing is pushed. warn: the PR is opened anyway, with the failure noted on it.", choices=("block", "warn"),
+              danger="Warn lets a change that failed its checks be pushed as a PR."),
+        Field("workers.fix_rounds", "Agent fix rounds after a failed check", "int",
+              "When a required check really FAILS (not when no worker could run it), the agent tries again with the log. 0 = report only.", lo=0, hi=3),
+        Field("workers.claim_wait_seconds", "Give up if no worker claims a job (seconds)", "int", lo=10, hi=86400),
+        Field("workers.max_wait_seconds", "Give up on a check after (seconds)", "int", lo=30, hi=86400),
+        Field("workers.lease_seconds", "A worker must report in every (seconds)", "int", lo=10, hi=3600),
+        Field("workers.checks", "Checks", "wchecks",
+              "One per line: owner/name recipe platform, with an optional fourth word, advisory (a failure is noted on the PR but never blocks). "
+              "The recipe is a name defined on the worker; platform is macos, linux ... or any.",
+              danger="Removing or loosening a check lets changes through that would have been verified."),
+    ]),
     "prompts": ("Agent prompts", _prompt_fields()),
 }
 
@@ -229,6 +247,9 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     if section == "conflicts":
         return getattr(ConflictsCfg(), name, None)
+    if section == "workers":
+        v = getattr(WorkersCfg(), name, None)
+        return [] if name == "checks" else v
     if section == "prompts":
         return getattr(PromptsCfg(), name, None)
     if section == "pm":
@@ -339,6 +360,20 @@ def parse_value(f: Field, form: Form):
             if len(vals) > MAX_FALLBACKS or len(set(vals)) != len(vals) or not all(MODEL_RE.fullmatch(v) for v in vals):
                 raise ValueError
             return vals
+        if f.kind == "wchecks":
+            out, seen = [], set()
+            for line in _lines(raw):
+                parts = line.split()
+                if len(parts) not in (3, 4) or (len(parts) == 4 and parts[3] != "advisory"):
+                    raise ValueError
+                repo, recipe, platform = parts[:3]
+                if not REPO_RE.match(repo) or not CHECK_NAME.fullmatch(recipe) or not CHECK_NAME.fullmatch(platform) or (repo, recipe) in seen:
+                    raise ValueError
+                seen.add((repo, recipe))
+                out.append({"repo": repo, "recipe": recipe, "platform": platform, **({"required": False} if len(parts) == 4 else {})})
+            if len(out) > 50:
+                raise ValueError
+            return out
         if f.kind == "kv":
             out = {}
             for line in _lines(raw):
@@ -353,6 +388,7 @@ def parse_value(f: Field, form: Form):
     hint = {"int": f"a whole number between {f.lo} and {f.hi}", "float": f"a number between {f.lo} and {f.hi}",
             "select": "one of " + ", ".join(f.choices), "checks": "at least one choice", "repos": "owner/name per line",
             "hosts": "valid host names, one per line, at least one", "kv": "label=kind per line, kind one of " + ", ".join(sorted(KINDS)),
+            "wchecks": "owner/name recipe platform [advisory] per line, names of lowercase letters, digits and dashes, no repeated repo and recipe",
             "models": f"up to {MAX_FALLBACKS} distinct model ids, one per line (may be empty)",
             "text": "a short single-line value",
             "prompt": f"at most {PROMPT_MAX} characters, with no control characters other than line breaks and tabs"}.get(f.kind, "a valid value")

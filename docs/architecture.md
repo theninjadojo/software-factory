@@ -122,4 +122,4 @@ After the screen check and before the push, `runner.run_task` calls `verify.gate
 The gate enqueues a job (repo, base commit, the validated patch, a recipe name) in `verify_jobs` and polls the table; a worker pulls it
 through `factory.workerapi`, runs its own recipe, and posts a status, a log and PNGs, which `jobs.py` validates before storing. All checks
 must pass (`mode = "block"`, closed: no worker, a timeout or an invalid result fails the run) or the PR notes the failure (`warn`). Screenshots
-from a worker are attached to the run as `run_images` of kind `verify`. See [workers.md](workers.md) for the protocol, security model and plan.
+from a worker are attached to the run as `run_images` of kind `verify`. A required check that really fails gets up to `fix_rounds` agent retries (`main.dispatch` loops on `RunResult.verify_failure`). See [workers.md](workers.md) for the protocol, security model and plan.
