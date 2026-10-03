@@ -18,10 +18,20 @@ BLOCKED_HELP = ("The design stage ran but no rendered mockup is attached to this
                 "design stage (`factory:design`) to produce one, or add the `{label}` label and re-trigger the build to go ahead without it.")
 
 
-def gate(cfg: MockupsCfg, labels: list[str], previews: list[dict], designer_says_no_screens: bool) -> tuple[str, str]:
+UNAPPROVED_HELP = ("The mockups for this ticket are not approved yet, so the build was not started. Look at them (linked in the design "
+                   "comment, and on the ticket's page in the factory UI), then add the `{approve}` label or merge the design PR, and "
+                   "re-trigger the build. Or add `{label}` to build without approval.")
+
+
+def gate(cfg: MockupsCfg, labels: list[str], previews: list[dict], designer_says_no_screens: bool,
+         pr_merged: bool = False) -> tuple[str, str]:
     """('ok'|'warn'|'block', message). Mockups are expected when the design stage ran and its own document did not say the ticket
     has no screens (or that mockups are off). Nothing is expected for a ticket that skipped design."""
-    if cfg.mode == "off" or previews or DESIGNED not in labels or designer_says_no_screens:
+    if cfg.mode == "off" or DESIGNED not in labels or designer_says_no_screens:
+        return "ok", ""
+    if previews:
+        if cfg.require_approval and cfg.mode == "block" and cfg.bypass_label not in labels and cfg.approve_label not in labels and not pr_merged:
+            return "block", UNAPPROVED_HELP.format(approve=cfg.approve_label, label=cfg.bypass_label)
         return "ok", ""
     if cfg.bypass_label in labels:
         return "ok", ""

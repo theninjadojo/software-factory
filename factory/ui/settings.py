@@ -129,6 +129,15 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("pm.effort", "Project manager effort", "select", choices=EFFORTS),
         Field("pm.harness", "Project manager agent harness", "select", choices=("claude-code",)),
     ]),
+    "mockups": ("Design mockups", [
+        Field("mockups.mode", "When a design stage left no mockup", "select",
+              "block: the build does not start. warn: build anyway and say so on the ticket. off: never check. Tickets whose design said "
+              "there are no screens are never held.", choices=("block", "warn", "off")),
+        Field("mockups.bypass_label", "Bypass label", "text", "Put it on one ticket to build without mockups."),
+        Field("mockups.require_approval", "Mockups need a person's approval", "bool",
+              "When on (and mode is block), a build waits until the approval label is on the ticket or the design PR is merged."),
+        Field("mockups.approve_label", "Approval label", "text"),
+    ]),
     "ci": ("CI feedback", [
         Field("ci.enabled", "Watch CI on factory PRs", "bool"),
         Field("ci.fix_rounds", "Agent fix rounds after a failure", "int", "0 = report only.", lo=0, hi=5),

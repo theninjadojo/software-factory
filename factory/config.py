@@ -114,6 +114,8 @@ class MockupsCfg:
     A person can bypass the block on one ticket with bypass_label."""
     mode: str = "block"
     bypass_label: str = "factory:skip-mockup"
+    require_approval: bool = False       # True: the mockups also need a person's approval (the approve_label, or the design PR merged)
+    approve_label: str = "factory:design-approved"
 
 
 PROMPT_MAX = 4000
@@ -552,8 +554,8 @@ def parse(raw: dict) -> Config:
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
     mockups = MockupsCfg(**raw.get("mockups", {}))
-    if mockups.mode not in ("block", "warn", "off") or not mockups.bypass_label.strip():
-        raise ValueError("mockups.mode must be block, warn or off, and mockups.bypass_label must not be empty")
+    if mockups.mode not in ("block", "warn", "off") or not mockups.bypass_label.strip() or not mockups.approve_label.strip():
+        raise ValueError("mockups.mode must be block, warn or off, and mockups.bypass_label and mockups.approve_label must not be empty")
     pm = PmCfg(**raw.get("pm", {}))
     if pm.effort not in ("low", "medium", "high"):
         raise ValueError("pm.effort must be low, medium or high")

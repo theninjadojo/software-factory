@@ -27,6 +27,14 @@ class Gate(unittest.TestCase):
     def test_designer_saying_no_screens_is_not_blocked(self):
         self.assertEqual(mockups.gate(self.cfg, ["stage:designed"], [], True)[0], "ok")
 
+    def test_approval_when_required(self):
+        c = MockupsCfg(require_approval=True)
+        self.assertEqual(mockups.gate(c, ["stage:designed"], [PREV], False)[0], "block")
+        self.assertEqual(mockups.gate(c, ["stage:designed", "factory:design-approved"], [PREV], False)[0], "ok")
+        self.assertEqual(mockups.gate(c, ["stage:designed"], [PREV], False, pr_merged=True)[0], "ok")
+        self.assertEqual(mockups.gate(c, ["stage:designed", "factory:skip-mockup"], [PREV], False)[0], "ok")
+        self.assertEqual(mockups.gate(c, [], [PREV], False)[0], "ok")        # no design stage: nothing to approve
+
     def test_bypass_label_and_modes(self):
         self.assertEqual(mockups.gate(self.cfg, ["stage:designed", "factory:skip-mockup"], [], False)[0], "ok")
         self.assertEqual(mockups.gate(MockupsCfg(mode="warn"), ["stage:designed"], [], False)[0], "warn")

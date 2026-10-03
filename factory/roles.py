@@ -112,7 +112,8 @@ def design_files_rules(design_dir: str) -> str:
         "handlers, forms, iframes, objects, <img>, video, or `url(...)` / `@import` / backslashes in CSS; links are `#` only; the only "
         "external resource is the Google Fonts stylesheet the existing files already use (draw icons and shapes with CSS or inline "
         "<svg>); at most three files of 150 KB each. Show the realistic states that matter (for example default, empty, error) as "
-        "separate frames in one file or as separate files. Do not modify, rename or delete any existing file. Your final answer is still "
+        "separate frames in one file or as separate files. When the screen is responsive, also make a phone version as its own file "
+        "(name it `...-mobile`) laid out in a frame 390 px wide, beside the 1440 px wide desktop one. Do not modify, rename or delete any existing file. Your final answer is still "
         "only the document; end it with one line `Design files: <the paths you created>` (or `Design files: none` if the ticket has no "
         "user-facing screens)."
     )

@@ -242,6 +242,16 @@ def ticket_mockups(repo: str, num: int) -> list[dict]:
         return []
 
 
+def design_pr_merged(gh: GitHub, previews: list[dict]) -> bool:
+    """True when the design draft PR(s) the mockups live on are merged (read from GitHub, only for recorded PR urls)."""
+    prs = [m for f in previews if (m := PR_URL.match(f.get("pr") or ""))]
+    try:
+        return bool(prs) and all(gh.get_pr(m.group(1), int(m.group(2))).get("merged") for m in prs)
+    except Exception:
+        log.exception("could not read the design PR")
+        return False
+
+
 def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
              trigger_label: str | None = None, conn=None) -> runner.RunResult:
     """Build it: edit the repos in the sandbox and open PRs."""
@@ -249,7 +259,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     prior = stage_outputs(gh, repo, num)
     shown = ticket_mockups(repo, num)
     verdict, why = mockups.gate(cfg.mockups, [lb["name"] for lb in issue.get("labels", [])], shown,
-                                NO_MOCKUPS in prior.get("designer", "") or MOCKUPS_OFF in prior.get("designer", ""))
+                                NO_MOCKUPS in prior.get("designer", "") or MOCKUPS_OFF in prior.get("designer", ""),
+                                cfg.mockups.require_approval and design_pr_merged(gh, shown))
     if verdict == "block":
         gh.remove_label(repo, num, trigger_label)       # no retry loop: a person fixes it and triggers again
         gh.add_labels(repo, num, [FAILED])
