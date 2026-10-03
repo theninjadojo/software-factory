@@ -444,12 +444,13 @@ def ticket_images_page(repo: str, issue: int, files_by_run: dict, images_by_run:
     return out + f'<p><a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">← back to the ticket</a></p>'
 
 
-def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=(), has_images: bool = False) -> str:
+def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=(), has_images: bool = False, journey: str = "") -> str:
     done = sum(s["status"] == "done" for s in steps)
     head = f'<p>{ticket_link(repo, issue)} <span class="step-count" role="status">{esc(step_summary((done, len(steps))))}</span></p>'
     if has_images and REPO.match(str(repo)):
         head += f'<p><a class="button" href="{esc(images_url(repo, issue))}">View images</a></p>'
-    return head + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs) + '<p><a href="/tickets">← all tickets</a></p>'
+    return (head + (f"<h2>Journey</h2>{journey}" if journey else "") + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs)
+            + '<p><a href="/tickets">← all tickets</a></p>')
 
 
 def steps_cell(t: dict, counts: dict) -> str:
@@ -459,8 +460,9 @@ def steps_cell(t: dict, counts: dict) -> str:
     return f'<a class="step-count" href="/ticket?repo={esc(t["repo"])}&amp;n={int(t["issue"])}">{int(c[0])}/{int(c[1])}</a>'
 
 
-def doc_page(repo: str, issue: int, stage: str, have: list[str], doc: dict | None, text: str, source: str, notice: str = "", back: str = "/tickets") -> str:
-    """A stage document, rendered from escaped Markdown. `text` is stored or GitHub-posted agent output and is never taken from the request."""
+def doc_page(repo: str, issue: int, stage: str, have: list[str], doc: dict | None, text: str, source: str, notice: str = "", back: str = "/tickets", previews=()) -> str:
+    """A stage document, rendered from escaped Markdown. `text` is stored or GitHub-posted agent output and is never taken from the request.
+    previews: the design run's recorded preview rows, shown as images above the document."""
     tabs = " ".join(f'<a href="{doc_url(repo, issue, s)}"{" aria-current=\"page\"" if s == stage else ""}>{esc(DOC_LABEL[s])}</a>' if s in have or s == stage
                     else f'<span class="muted">{esc(DOC_LABEL[s])}</span>' for s in DOC_LABEL)
     head = (f'<p>{ticket_link(repo, issue)} · <a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">Pipeline</a></p>'
@@ -471,6 +473,8 @@ def doc_page(repo: str, issue: int, stage: str, have: list[str], doc: dict | Non
     body, heads = md_render(text)
     meta = " · ".join(x for x in (esc(DOC_LABEL[stage]), f'<a href="/runs/{int(doc["id"])}">run #{int(doc["id"])}</a>' if doc else "",
                                   esc(ago(doc["started"])) if doc else "", esc(source)) if x)
+    imgs = "".join(mockup_img(f) for f in previews or [])
+    shots = f'<div class="mockups">{imgs}</div>' if imgs else ""
     toc = ("<details class=\"more\"><summary>Contents</summary><ul>" + "".join(f'<li><a href="#{i}">{esc(t)}</a></li>' for i, t in heads) + "</ul></details>") if heads else ""
     back_link = f'<p><a href="{esc(back)}">← Back to questions</a></p>'
-    return (f'{head}<p class="muted">{meta}</p>{notice}{toc}<article class="docview">{body}</article>{back_link}')
+    return (f'{head}<p class="muted">{meta}</p>{notice}{shots}{toc}<article class="docview">{body}</article>{back_link}')

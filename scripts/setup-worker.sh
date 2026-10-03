@@ -3,7 +3,9 @@
 #   ./scripts/setup-worker.sh                       # asks for what it needs
 #   FACTORY_URL=https://factory.example:8788 WORKER_TOKEN=... ./scripts/setup-worker.sh     # non-interactive (no prompts)
 # Get the token on the factory host:  python3 -m factory.ctl workers add <name>   (or FACTORY_WORKERS=1 ./scripts/setup.sh)
-# Optional environment: WORKER_RECIPES ("web", "android" or "web android"; default web), WORKER_PLATFORM (default: macos or linux),
+# Optional environment: WORKER_RECIPES ("web", "android", "ios" or a list; default web), WORKER_PLATFORM (default: macos or linux),
+#   for ios (a Mac with Tart): WORKER_IOS_SCHEME and WORKER_IOS_PROJECT (or WORKER_IOS_WORKSPACE), WORKER_IOS_DESTINATION,
+#   WORKER_IOS_PULL=1 to download the Xcode image (about 30 GB) as VM "shikumi-ios",
 #   WORKER_GIT_URL (default https://github.com/{repo}.git; use git@github.com:{repo}.git for SSH keys), SHIKUMI_REPO (image owner),
 #   SKIP_IMAGE=1, SKIP_SERVICE=1, SKIP_CHECK=1.
 # The worker runs agent-written code: use a dedicated unprivileged account or a throwaway VM, with no credentials on it except a
@@ -21,9 +23,20 @@ OS="$(uname -s)"
 PLATFORM="${WORKER_PLATFORM:-$([ "$OS" = Darwin ] && echo macos || echo linux)}"
 [[ "$PLATFORM" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || die "WORKER_PLATFORM must be lowercase letters, digits and dashes"
 RECIPES="${WORKER_RECIPES:-web}"
-for r in $RECIPES; do [[ "$r" == web || "$r" == android ]] || die "unknown recipe '$r' (this release ships: web, android)"; done
+for r in $RECIPES; do [[ "$r" == web || "$r" == android || "$r" == ios ]] || die "unknown recipe '$r' (this release ships: web, android, ios)"; done
 ENGINE="$(command -v docker >/dev/null 2>&1 && echo docker || { command -v podman >/dev/null 2>&1 && echo podman; } || true)"
 case " $RECIPES " in *" android "*) [ -n "$ENGINE" ] || die "the android recipe needs Docker (or Podman): it builds inside a container";; esac
+
+if [[ " $RECIPES " == *" ios "* ]]; then
+  command -v tart >/dev/null 2>&1 || die "the ios recipe needs Tart (macOS on Apple Silicon): brew install cirruslabs/cli/tart"
+  [[ "${WORKER_IOS_SCHEME:-}" =~ ^[A-Za-z0-9_.-]+$ ]] || die "the ios recipe needs WORKER_IOS_SCHEME (the Xcode scheme to test: letters, digits, dot, dash, underscore)"
+  [[ -n "${WORKER_IOS_PROJECT:-}" || -n "${WORKER_IOS_WORKSPACE:-}" ]] || die "the ios recipe needs WORKER_IOS_PROJECT (App.xcodeproj) or WORKER_IOS_WORKSPACE (App.xcworkspace)"
+  [[ -z "${WORKER_IOS_PROJECT:-}" || -z "${WORKER_IOS_WORKSPACE:-}" ]] || die "give WORKER_IOS_PROJECT or WORKER_IOS_WORKSPACE, not both"
+  for v in "${WORKER_IOS_PROJECT:-}" "${WORKER_IOS_WORKSPACE:-}"; do
+    [[ -z "$v" || ( "$v" =~ ^[A-Za-z0-9_./-]+$ && "$v" != /* && "$v" != *..* ) ]] || die "the ios project or workspace must be a plain relative path"; done
+  DEST_RE='^[A-Za-z0-9=,._ -]+$'          # in a variable: a space inside a bracket expression is not safe to write inline
+  [[ "${WORKER_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 15}" =~ $DEST_RE ]] || die "WORKER_IOS_DESTINATION has characters it cannot have"
+fi
 
 say "The factory"
 URL="${FACTORY_URL:-}"
@@ -41,6 +54,7 @@ fi
 
 say "Config"
 if [ -f worker.toml ]; then echo "worker.toml exists: keeping it"; else
+  IOS_SCHEME="${WORKER_IOS_SCHEME:-}" IOS_PROJECT="${WORKER_IOS_PROJECT:-}" IOS_WORKSPACE="${WORKER_IOS_WORKSPACE:-}" IOS_DEST="${WORKER_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 15}" \
   DIR="$DIR" URL="$URL" PLATFORM="$PLATFORM" RECIPES="$RECIPES" GIT_URL="${WORKER_GIT_URL:-https://github.com/{repo}.git}" python3 - <<'PY'
 import os
 d, r = os.environ["DIR"], os.environ["RECIPES"].split()
@@ -67,6 +81,15 @@ command = [{q(d + '/worker/recipes/android-test.sh')}]
 timeout_seconds = 3600
 artifacts = ["build/screens/*.png"]
 """
+if "ios" in r:
+    target = ["--workspace", os.environ["IOS_WORKSPACE"]] if os.environ["IOS_WORKSPACE"] else ["--project", os.environ["IOS_PROJECT"]]
+    args = [d + "/worker/recipes/ios-test.sh", "--scheme", os.environ["IOS_SCHEME"], *target, "--destination", os.environ["IOS_DEST"]]
+    out += f"""
+[recipes.ios-test]
+command = [{", ".join(q(a) for a in args)}]
+timeout_seconds = 3600
+artifacts = ["build/screens/*.png"]
+"""
 open("worker.toml", "w").write(out)
 PY
   chmod 600 worker.toml; echo "wrote worker.toml (platform: $PLATFORM, recipes: $RECIPES)"
@@ -82,6 +105,19 @@ if [ -z "${SKIP_IMAGE:-}" ] && [[ " $RECIPES " == *" android "* ]]; then
       echo "no prebuilt image available: building from sandbox/android (a few GB of downloads, several minutes)"
       "$ENGINE" build -t factory-android sandbox/android
     fi
+  fi
+fi
+
+if [ -z "${SKIP_IMAGE:-}" ] && [[ " $RECIPES " == *" ios "* ]]; then
+  say "iOS golden image (Tart VM shikumi-ios)"
+  if tart list 2>/dev/null | awk '{print $2}' | grep -qx shikumi-ios; then echo "VM shikumi-ios exists: keeping it"
+  elif [ -n "${WORKER_IOS_PULL:-}" ]; then
+    echo "downloading the Xcode image (about 30 GB; this takes a while)"
+    tart clone ghcr.io/cirruslabs/macos-sonoma-xcode:latest shikumi-ios
+  else
+    echo "No VM named shikumi-ios yet. Create it once (about 30 GB), or re-run with WORKER_IOS_PULL=1:"
+    echo "    tart clone ghcr.io/cirruslabs/macos-sonoma-xcode:latest shikumi-ios"
+    echo "Jobs fail with 'no VM image named shikumi-ios' until it exists. See docs/workers.md, \"iOS golden image\"."
   fi
 fi
 
@@ -111,5 +147,5 @@ Done. This machine now polls the factory for verification jobs.
   Config: $DIR/worker.toml   Token: $DIR/secrets/token   Update: ./scripts/update-worker.sh
   The worker must be able to CLONE the repos it verifies: set up git credentials (a read-only token, or an SSH key with WORKER_GIT_URL).
   On the factory, add checks (Settings -> Workers, or [[workers.checks]] in config.toml) that name a recipe here:
-    web-test (web) / android-test (android). The Settings -> Workers page shows this worker as online within seconds.
+    web-test (web) / android-test (android) / ios-test (ios). The Settings -> Workers page shows this worker as online within seconds.
 MSG

@@ -276,3 +276,38 @@ table.tickets td:first-child { overflow-wrap:anywhere; min-width:0; max-width:22
 .fl-sw.run { border-color:var(--accent); background:#2a2112; } .fl-sw.warn { border-color:#6a2f28; background:#2a1613; } .fl-sw.fail { border-color:var(--bad); background:#2a1613; }
 .fl-sw.off { border-style:dashed; opacity:.55; }
 .fl-board.fl-listview + .fl-legend { display:none; }
+/* Ticket journey (journey_view.py): tiles, the map of the route, the ordered steps. Colours: finished ok, running amber, failed red, waiting blue. */
+.jy-tiles { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:0 0 1rem; }
+.jy-tile { display:flex; flex-direction:column; gap:.2rem; padding:.8rem 1rem; } .jy-tile b { font-size:1.15rem; font-weight:600; } .jy-tile .muted { font-size:.85rem; }
+.jy-st.ok { color:#52c7a1; } .jy-st.run { color:#f2a93b; } .jy-st.fail { color:#ff6b5e; } .jy-st.wait { color:#8fa8ff; } .jy-st.none { color:var(--muted); }
+.jy-board { margin:0 0 1rem; padding:1rem; border:1px solid var(--line); border-radius:12px; background:var(--panel); overflow-x:auto; }
+.jy-map { display:block; width:100%; max-width:960px; min-width:700px; height:auto; margin:0 auto; }
+.jy-belt { fill:none; stroke-width:10; stroke-linecap:butt; } .jy-belt.dim { stroke:#2a3238; opacity:.7; }
+.jy-belt.ok { stroke:#52c7a1; } .jy-belt.fail { stroke:#ff6b5e; } .jy-belt.run { stroke:#f2a93b; stroke-dasharray:12 12; animation:jy-belt 1s linear infinite; }
+@keyframes jy-belt { to { stroke-dashoffset:-24; } }
+.jy-badge circle { fill:#12161a; stroke-width:2; } .jy-badge text { font:500 11px ui-monospace,Menlo,Consolas,monospace; }
+.jy-badge.ok circle { stroke:#52c7a1; } .jy-badge.ok text { fill:#52c7a1; } .jy-badge.fail circle { stroke:#ff6b5e; } .jy-badge.fail text { fill:#ff6b5e; }
+.jy-badge.run circle { stroke:#f2a93b; } .jy-badge.run text { fill:#f2a93b; }
+.jy-m rect { fill:#232a30; stroke-width:2; } .jy-m.ok rect { stroke:#52c7a1; } .jy-m.run rect { stroke:#f2a93b; filter:drop-shadow(0 0 8px rgba(242,169,59,.4)); }
+.jy-m.fail rect { stroke:#ff6b5e; } .jy-m.wait rect { stroke:#8fa8ff; } .jy-m.none { opacity:.55; } .jy-m.none rect { stroke:#3b464e; stroke-dasharray:6 5; }
+.jy-ml { fill:var(--text); font:700 15px system-ui,sans-serif; } .jy-ms { font:700 11px system-ui,sans-serif; letter-spacing:.05em; fill:var(--muted); }
+.jy-m.ok .jy-ms { fill:#52c7a1; } .jy-m.run .jy-ms { fill:#f2a93b; } .jy-m.fail .jy-ms { fill:#ff6b5e; } .jy-m.wait .jy-ms { fill:#8fa8ff; }
+.jy-mo, .jy-md { font:12px ui-monospace,Menlo,Consolas,monospace; fill:var(--muted); }
+.jy-legend { list-style:none; display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; margin:.8rem 0 0; padding:0; font-size:.85rem; color:var(--muted); }
+.jy-legend li { display:inline-flex; align-items:center; gap:.4rem; }
+.jy-dot { width:10px; height:10px; border-radius:50%; border:2px solid var(--muted); box-sizing:border-box; flex:none; }
+.jy-dot.ok { background:#52c7a1; border-color:#52c7a1; } .jy-dot.run { background:#f2a93b; border-color:#f2a93b; } .jy-dot.wait { background:#8fa8ff; border-color:#8fa8ff; }
+.jy-dot.fail { background:#ff6b5e; border-color:#ff6b5e; } .jy-dot.none { background:transparent; }
+.jy-steps { margin:0 0 1rem; padding:0; } table.jy td { vertical-align:middle; } table.jy .num { text-align:right; white-space:nowrap; } table.jy th:nth-child(5), table.jy th:nth-child(6) { text-align:right; }
+.jy-when { min-width:160px; } .jy-bar { display:block; width:100%; height:14px; } .jy-track { fill:#232a30; } .jy-fill.ok { fill:#52c7a1; } .jy-fill.fail { fill:#ff6b5e; } .jy-fill.wait { fill:#8fa8ff; }
+.jy-fill.run { fill:#f2a93b; animation:jy-pulse 1.4s ease-in-out infinite; } @keyframes jy-pulse { 50% { opacity:.55; } }
+tr.jy-live { background:rgba(242,169,59,.08); } tr.jy-dim { opacity:.6; } tr.jy-total td { background:var(--panel2); border-top:1px solid var(--line); }
+.jy-n { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:50%; border:2px solid var(--muted); font:500 11px ui-monospace,Menlo,Consolas,monospace; }
+.jy-n.ok { border-color:#52c7a1; color:#52c7a1; } .jy-n.run { border-color:#f2a93b; color:#f2a93b; } .jy-n.fail { border-color:#ff6b5e; color:#ff6b5e; } .jy-n.wait { border-color:#8fa8ff; color:#8fa8ff; }
+ol.jy-tl { display:none; list-style:none; margin:0 0 1rem; padding:.2rem 1rem; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+.jy-tl li { display:flex; gap:.8rem; padding:.8rem 0; border-bottom:1px solid var(--line); } .jy-tl li:last-child { border-bottom:0; } .jy-tl li > div { flex:1; min-width:0; }
+.jy-tl-top { display:flex; justify-content:space-between; gap:.5rem; } .jy-tl .muted { font-size:.85rem; margin-top:.15rem; overflow-wrap:anywhere; } .jy-tl li.jy-live { background:rgba(242,169,59,.08); }
+.jy-stripe { height:6px; margin-top:.6rem; background:repeating-linear-gradient(90deg,#f2a93b 0 8px,#b57a1f 8px 16px); background-size:24px 100%; animation:jy-stripe 1s linear infinite; }
+@keyframes jy-stripe { to { background-position:24px 0; } }
+@media (max-width:760px) { .jy-tiles { grid-template-columns:repeat(2,minmax(0,1fr)); } .jy-board, .jy-steps { display:none; } ol.jy-tl { display:block; } }
+@media (prefers-reduced-motion: reduce) { .jy-belt.run, .jy-fill.run, .jy-stripe { animation:none; } }
