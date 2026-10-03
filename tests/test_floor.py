@@ -53,6 +53,11 @@ class Render(unittest.TestCase):
         self.assertIn('name="back" value="/"', html)
         self.assertIn("Save a GitHub token", floor.render(data(), "t", None, None, None))
 
+    def test_phones_hide_the_maps_legend_lines(self):
+        css = (Path(__file__).resolve().parent.parent / "factory" / "ui" / "static" / "style.css").read_text()
+        phone = css[css.index("@media (max-width:760px) { .fm-wrap"):]
+        self.assertIn(".sd-legend .fm-key { display:none; }", phone.split("}")[0] + "}")   # beats .sd-legend li { display:inline-flex }
+
     def test_the_answers_dialog_cannot_scroll_sideways(self):
         css = (Path(__file__).resolve().parent.parent / "factory" / "ui" / "static" / "style.css").read_text()
         self.assertIn(".nd-dialog .nd-qs { grid-template-columns:minmax(0,1fr); }", css)        # a 1fr track grows to a long URL or path; minmax(0,1fr) wraps it

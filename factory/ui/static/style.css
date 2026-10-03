@@ -516,7 +516,7 @@ button.rv-del:hover { color:var(--bad); }
 .fm-drone { filter:drop-shadow(0 8px 3px rgba(0,0,0,.55)); } .fm-drone, .fm-ride, .fm-train { pointer-events:none; }
 .sd-dot.fm-train-key { width:16px; border-radius:2px; background:#3b464e; border:2px solid #8a949c; box-sizing:border-box; }
 .sd-dot.fm-drone-key { background:transparent; border:2px dotted #9aa7b0; box-sizing:border-box; }
-@media (max-width:760px) { .fm-wrap, .fm-key { display:none; } .fm-phone { display:block; } }
+@media (max-width:760px) { .fm-wrap, .sd-legend .fm-key { display:none; } .fm-phone { display:block; } }
 @media (prefers-reduced-motion:reduce) { .fm-flow, .fm-crate, .fm-m .fm-box { animation:none !important; } }
 
 /* ---- One ticket's journey (yard.journey) and the list's progress strip: the floor's belts, small ---- */
