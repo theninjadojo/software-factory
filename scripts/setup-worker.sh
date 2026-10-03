@@ -5,7 +5,7 @@
 # Get the token on the factory host:  python3 -m factory.ctl workers add <name>   (or FACTORY_WORKERS=1 ./scripts/setup.sh)
 # Optional environment: WORKER_RECIPES ("web", "android", "ios" or a list; default web), WORKER_PLATFORM (default: macos or linux),
 #   for ios (a Mac with Tart): WORKER_IOS_SCHEME and WORKER_IOS_PROJECT (or WORKER_IOS_WORKSPACE), WORKER_IOS_DESTINATION,
-#   WORKER_IOS_PULL=1 to download the Xcode image (about 30 GB) as VM "shikumi-ios",
+#   WORKER_IOS_PULL=1 to download the Xcode image (about 63 GB) as VM "shikumi-ios",
 #   WORKER_GIT_URL (default https://github.com/{repo}.git; use git@github.com:{repo}.git for SSH keys), SHIKUMI_REPO (image owner),
 #   SKIP_IMAGE=1, SKIP_SERVICE=1, SKIP_CHECK=1.
 # The worker runs agent-written code: use a dedicated unprivileged account or a throwaway VM, with no credentials on it except a
@@ -35,7 +35,7 @@ if [[ " $RECIPES " == *" ios "* ]]; then
   for v in "${WORKER_IOS_PROJECT:-}" "${WORKER_IOS_WORKSPACE:-}"; do
     [[ -z "$v" || ( "$v" =~ ^[A-Za-z0-9_./-]+$ && "$v" != /* && "$v" != *..* ) ]] || die "the ios project or workspace must be a plain relative path"; done
   DEST_RE='^[A-Za-z0-9=,._ -]+$'          # in a variable: a space inside a bracket expression is not safe to write inline
-  [[ "${WORKER_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 15}" =~ $DEST_RE ]] || die "WORKER_IOS_DESTINATION has characters it cannot have"
+  [[ "${WORKER_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 16}" =~ $DEST_RE ]] || die "WORKER_IOS_DESTINATION has characters it cannot have"
 fi
 
 say "The factory"
@@ -54,7 +54,7 @@ fi
 
 say "Config"
 if [ -f worker.toml ]; then echo "worker.toml exists: keeping it"; else
-  IOS_SCHEME="${WORKER_IOS_SCHEME:-}" IOS_PROJECT="${WORKER_IOS_PROJECT:-}" IOS_WORKSPACE="${WORKER_IOS_WORKSPACE:-}" IOS_DEST="${WORKER_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 15}" \
+  IOS_SCHEME="${WORKER_IOS_SCHEME:-}" IOS_PROJECT="${WORKER_IOS_PROJECT:-}" IOS_WORKSPACE="${WORKER_IOS_WORKSPACE:-}" IOS_DEST="${WORKER_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 16}" \
   DIR="$DIR" URL="$URL" PLATFORM="$PLATFORM" RECIPES="$RECIPES" GIT_URL="${WORKER_GIT_URL:-https://github.com/{repo}.git}" python3 - <<'PY'
 import os
 d, r = os.environ["DIR"], os.environ["RECIPES"].split()
@@ -112,10 +112,10 @@ if [ -z "${SKIP_IMAGE:-}" ] && [[ " $RECIPES " == *" ios "* ]]; then
   say "iOS golden image (Tart VM shikumi-ios)"
   if tart list 2>/dev/null | awk '{print $2}' | grep -qx shikumi-ios; then echo "VM shikumi-ios exists: keeping it"
   elif [ -n "${WORKER_IOS_PULL:-}" ]; then
-    echo "downloading the Xcode image (about 30 GB; this takes a while)"
+    echo "downloading the Xcode image (about 63 GB; this takes a while)"
     tart clone ghcr.io/cirruslabs/macos-sonoma-xcode:latest shikumi-ios
   else
-    echo "No VM named shikumi-ios yet. Create it once (about 30 GB), or re-run with WORKER_IOS_PULL=1:"
+    echo "No VM named shikumi-ios yet. Create it once (about 63 GB), or re-run with WORKER_IOS_PULL=1:"
     echo "    tart clone ghcr.io/cirruslabs/macos-sonoma-xcode:latest shikumi-ios"
     echo "Jobs fail with 'no VM image named shikumi-ios' until it exists. See docs/workers.md, \"iOS golden image\"."
   fi

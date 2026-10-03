@@ -355,7 +355,7 @@ class IosSetup(InstallBase):
         self.assertEqual(code, 0, out)
         cmd = W.load_config(str(self.inst / "worker.toml")).recipes["ios-test"].command
         self.assertEqual(cmd, [str(self.inst / "worker/recipes/ios-test.sh"), "--scheme", "App", "--project", "App.xcodeproj",
-                               "--destination", "platform=iOS Simulator,name=iPhone 15"])
+                               "--destination", "platform=iOS Simulator,name=iPhone 16"])
 
     def test_workspace_and_destination(self):
         env = {**self.stub_tart(), **self.IOS, "WORKER_IOS_PROJECT": "", "WORKER_IOS_WORKSPACE": "App.xcworkspace", "WORKER_IOS_DESTINATION": "platform=iOS Simulator,name=iPhone 15 Pro"}

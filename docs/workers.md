@@ -72,7 +72,7 @@ The same way as the factory: a release one-liner, an environment-driven setup sc
    service), makes the token and prints it once. Native installs enable `deploy/systemd/factory-workers.service`; `scripts/deploy.sh` restarts it.
 2. **Make the API reachable** from the worker: it listens on `127.0.0.1:8788`. Use `ssh -L 8788:127.0.0.1:8788 factory-host`, a VPN, or a TLS reverse
    proxy. Never expose it plainly: the token is the only credential.
-3. **Worker machine.** `curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh | bash`. This downloads
+3. **Worker machine.** Needs `python3` 3.11 or newer; a stock Mac has 3.9, so `brew install python@3.12` first. `curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh | bash`. This downloads
    `shikumi-worker.tar.gz` (`worker/` and `sandbox/android/`) into `./shikumi-worker` and runs `scripts/setup-worker.sh`:
    - asks for (or reads) `FACTORY_URL` and `WORKER_TOKEN`; the token goes to `secrets/token` with mode 0600;
    - writes `worker.toml` with the recipes you chose (`WORKER_RECIPES="web android"`); an existing `worker.toml` is never overwritten;
@@ -178,25 +178,25 @@ Recipes ship in `worker/recipes/` and are copied to the worker, outside any chec
   fail. Exit codes follow the web recipe: 1 = build or tests failed, 2 = the environment is wrong (no engine, image not built, no
   `gradlew`, no KVM, the emulator did not boot), which is never retried. **Not yet run against a real SDK, image or emulator**: the tests use
   stub `docker`, `gradlew`, `adb`, `emulator` and `avdmanager`.
-- `ios-test.sh` (done, **stub-tested only: never run against Tart or Xcode**): builds and tests inside a throwaway macOS VM, because Xcode runs only
+- `ios-test.sh` (done; run by hand against Tart 2.40.1 and Cirrus's `macos-sonoma-xcode` image (Xcode 16.1, iOS 18.1 simulators) on one Apple Silicon Mac; installing it through `setup-worker.sh` and a job through a factory are **not yet tested**): builds and tests inside a throwaway macOS VM, because Xcode runs only
   on macOS and cannot be containerised. [Tart](https://tart.run) runs macOS VMs on Apple Silicon. Per job the recipe clones a prepared golden VM
   (copy-on-write, fast), boots the clone headless, copies the checkout in (without `.git`) over `tart exec`, runs
-  `xcodebuild test -scheme S -destination D CODE_SIGNING_ALLOWED=NO`, copies a final simulator screenshot out (even when tests failed), and
+  `xcodebuild test -scheme S -destination D CODE_SIGNING_ALLOWED=NO`, copies a screenshot of the freshly built app out (`xcodebuild` shuts the simulator down at the end, so the recipe boots it again, installs and launches the app; even when tests failed), and
   deletes the clone, also when it is stopped by the worker (the worker now sends SIGTERM and waits 20 s before SIGKILL, so the cleanup runs;
   a leftover `shikumi-job-*` VM from a hard crash is deleted at the next job). The agent-written project never touches the Mac's files, keychain or
   signing identities and nothing survives the job. Simulator builds only: no identity is ever needed, so none should be in the image.
   Arguments (fixed in `worker.toml`, one recipe per project): `--scheme` (required), `--project` or `--workspace`, `--destination`
-  (default `platform=iOS Simulator,name=iPhone 15`), `--dir`, `--image`, `--boot-timeout`. Everything that reaches the VM's command line is
-  restricted to plain characters. Exit codes: 0 passed; 1 build or tests failed (`xcodebuild` 65 and other non-zero codes: gets a fix round);
+  (default `platform=iOS Simulator,name=iPhone 16`), `--dir`, `--image`, `--boot-timeout`. Everything that reaches the VM's command line is
+  restricted to plain characters. Exit codes: 0 passed; 1 build or tests failed (`xcodebuild` 65 and other non-zero codes: gets a fix round; but a 65 whose log says there is no such scheme or no matching device is 2);
   2 the environment is wrong (no `tart`, no golden image, the VM did not boot or its guest agent did not answer, `xcodebuild` usage errors 64/66/70-73),
   never retried. Limits: Apple Silicon only; Apple's licence allows two macOS VMs at once per Mac, and this uses one, so run **one worker per Mac**;
   there is no Intel-Mac or Linux path.
 
-**iOS golden image** (once per Mac; about 30 GB). `brew install cirruslabs/cli/tart`, then
+**iOS golden image** (once per Mac; a download of about 63 GB, about 83 GB on disk, measured with Xcode 16.1). `brew install cirruslabs/cli/tart` (if that fails with a `depends_on macos:` error, the tap's formula is broken: download `tart.tar.gz` from [the releases](https://github.com/cirruslabs/tart/releases) and put `tart.app/Contents/MacOS/tart` on your `PATH`), then
 `tart clone ghcr.io/cirruslabs/macos-sonoma-xcode:latest shikumi-ios` (or pass `WORKER_IOS_PULL=1` to `setup-worker.sh`). Cirrus's images include Xcode,
 simulators and the guest agent that `tart exec` needs. To add tools or simulators, `tart run shikumi-ios`, install them, and `tart stop shikumi-ios`.
 Do not sign in to an Apple ID or add certificates: every job clones this image, so anything in it is visible to agent-written code. Check it by hand
-before relying on it: `tart run --no-graphics shikumi-ios &`, then `tart exec shikumi-ios xcodebuild -version`.
+before relying on it (the image's simulators are iPhone 16 and newer, with no iPhone 15): `tart run --no-graphics shikumi-ios &`, then `tart exec shikumi-ios xcodebuild -version`.
 
 The worker drops any returned PNG outside the orchestrator's size limits (16..1600 wide, up to 6000 high) rather than sending it:
 one oversize full-page screenshot would otherwise make the whole result invalid and turn a passing run into an error.
