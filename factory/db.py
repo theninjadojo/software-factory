@@ -359,9 +359,12 @@ def recent_runs(db, limit: int = 50, offset: int = 0, status: str | None = None,
         where.append("status=?"); args.append(status)
     if repo:
         where.append("repo=?"); args.append(repo)
-    sql = ("SELECT id, kind, stage, repo, issue, title, harness, model, effort, started, finished, status, detail, pr_urls "
-           "FROM runs" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ? OFFSET ?")
-    return _dicts(db.execute(sql, (*args, limit, offset)))
+    tail = " FROM runs" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ? OFFSET ?"
+    cols = "id, kind, stage, repo, issue, title, harness, model, effort, started, finished, status, detail, pr_urls"
+    try:
+        return _dicts(db.execute("SELECT " + cols + ", " + ", ".join(TOKEN_COLS) + tail, (*args, limit, offset)))
+    except sqlite3.OperationalError:                # a database the orchestrator has not upgraded yet: no token counts
+        return _dicts(db.execute("SELECT " + cols + tail, (*args, limit, offset)))
 
 
 def runs_summary(db, since: float, repo: str | None = None) -> dict:
@@ -371,7 +374,13 @@ def runs_summary(db, since: float, repo: str | None = None) -> dict:
         where += " AND repo=?"; args.append(repo)
     row = db.execute(f"SELECT COUNT(*), COALESCE(SUM(status IN ('pr','stage')),0), COALESCE(SUM(status='failed'),0), "
                      f"AVG(CASE WHEN finished IS NOT NULL THEN finished-started END) FROM runs WHERE {where}", args).fetchone()
-    return {"total": row[0], "passed": row[1], "failed": row[2], "avg": row[3]}
+    out = {"total": row[0], "passed": row[1], "failed": row[2], "avg": row[3], "tokens": {"in": None, "out": None}}
+    try:
+        t = db.execute("SELECT " + ", ".join(f"SUM({c})" for c in TOKEN_COLS) + f" FROM runs WHERE {where}", args).fetchone()
+        out["tokens"] = run_tokens(dict(zip(TOKEN_COLS, t)))
+    except sqlite3.OperationalError:
+        pass
+    return out
 
 
 def get_run(db, run_id: int) -> dict | None:
@@ -555,7 +564,7 @@ def run_station(kind: str, stage: str | None) -> str | None:
     return _RUN_STATION.get(kind)
 
 
-def _tokens(r: dict) -> dict:
+def run_tokens(r: dict) -> dict:
     """Tokens in (uncached input plus cache reads and writes) and out; None where the harness did not report them."""
     parts = [r.get(c) for c in ("tokens_in", "tokens_cache_read", "tokens_cache_write")]
     return {"in": sum(p for p in parts if p is not None) if any(p is not None for p in parts) else None,
@@ -597,7 +606,7 @@ def journey(db, repo: str, issue: int, now: float | None = None) -> dict:
                           "run_kind": x["kind"], "stage": x["stage"], "status": x["status"], "harness": x["harness"],
                           "model": x["model"], "effort": x["effort"], "started": x["started"], "finished": end,
                           "seconds": (end if end is not None else now) - x["started"] if state == "running" or end is not None else None,
-                          "tokens": _tokens(x), "message": ""})
+                          "tokens": run_tokens(x), "message": ""})
         elif x["kind"] == "decision":
             person = x["message"].startswith(("needs a person", "human:")) and not x["message"].endswith("[dry-run]")
             steps.append({"kind": "person" if person else "decision",

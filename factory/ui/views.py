@@ -5,6 +5,7 @@ import re
 import time
 from urllib.parse import urlencode
 
+from .. import db as dbm
 from .. import designfiles
 from .. import version
 from ..sanitize import md_render
@@ -35,6 +36,18 @@ def ago(t, now=None) -> str:
         return "never"
     d = max(0, int((now or time.time()) - float(t)))
     return f"{d}s ago" if d < 90 else f"{d // 60}m ago" if d < 5400 else f"{d // 3600}h ago" if d < 172800 else f"{d // 86400}d ago"
+
+
+def tok(n) -> str:
+    """A token count in short form (1.2k, 3.4M); a dash where the harness reported none."""
+    if n is None:
+        return "—"
+    return str(n) if n < 1000 else f"{n / 1000:.1f}k" if n < 1_000_000 else f"{n / 1_000_000:.1f}M"
+
+
+def tokens_in_out(r: dict) -> str:
+    t = dbm.run_tokens(r)
+    return "—" if t["in"] is None and t["out"] is None else f'{tok(t["in"])} in · {tok(t["out"])} out'
 
 
 def dur(a, b=None) -> str:
@@ -130,7 +143,7 @@ def overview_fragment(d: dict, csrf: str, selected: str | None = None, needs=Non
 
 
 CARD = "stack"     # tables with this class turn into stacked cards on phones (each cell shows its column from data-l)
-RUN_HEADS = ["Run", "Started", "Kind", "Ticket", "Model", "Status", "Took", "PRs"]
+RUN_HEADS = ["Run", "Started", "Kind", "Ticket", "Model", "Status", "Took", "Tokens", "PRs"]
 EVENT_HEADS = ["When", "Kind", "Ticket", "Message"]
 PR_HEADS = ["PR", "Ticket", "CI", "Fix rounds", "Summary", "Updated"]
 TICKET_HEADS = ["Ticket", "Decision", "Why", "Runs", "When", "Steps", "Labels"]
@@ -158,7 +171,7 @@ def runs_table(runs: list[dict]) -> str:
     rows = "".join(trow(h, [
         f'<a href="/runs/{int(r["id"])}">#{int(r["id"])}</a>', (esc(ago(r["started"])), f' title="{esc(ts(r["started"]))}"'),
         esc(r["kind"]) + (" · " + esc(r["stage"]) if r["stage"] else ""), f'{ticket_link(r["repo"], r["issue"])}<br><span class="muted">{esc(r["title"])}</span>',
-        f'{esc(r["model"])} <span class="muted">{esc(r["effort"])}</span>', badge(r["status"]), esc(dur(r["started"], r["finished"])), pr_links(r["pr_urls"])]) for r in runs)
+        f'{esc(r["model"])} <span class="muted">{esc(r["effort"])}</span>', badge(r["status"]), esc(dur(r["started"], r["finished"])), esc(tokens_in_out(r)), pr_links(r["pr_urls"])]) for r in runs)
     return cards_table(h, rows)
 
 
@@ -208,6 +221,9 @@ def runs_summary_line(s: dict | None) -> str:
     parts = [f'{int(s["total"])} today', f'{int(s["passed"])} passed', f'{int(s["failed"])} failed']
     if s["avg"] is not None:
         parts.append(f'average {dur(0.001, 0.001 + float(s["avg"]))}')
+    t = s.get("tokens") or {}
+    if t.get("in") is not None or t.get("out") is not None:
+        parts.append(f'tokens {tok(t.get("in"))} in · {tok(t.get("out"))} out')
     return '<p class="summary">' + esc(" · ".join(parts)) + "</p>"
 
 
@@ -217,8 +233,8 @@ def runs_list(runs: list[dict]) -> str:
     rows = "".join(
         f'<tr><td data-l="Run"><a href="/runs/{int(r["id"])}">Run #{int(r["id"])}</a><br><span class="muted">{ticket_link(r["repo"], r["issue"])}</span></td>'
         f'<td data-l="What">{esc(run_what(r))}<br><span class="muted">{esc(r["title"])}</span></td><td data-l="Status">{badge(r["status"])}</td><td data-l="Model">{esc(r["model"])}</td>'
-        f'<td data-l="Took">{esc(dur(r["started"], r["finished"]))}</td><td data-l="Started" title="{esc(ts(r["started"]))}">{esc(ago(r["started"]))}</td></tr>' for r in runs)
-    return ('<div class="scroll"><table class="stack"><thead><tr><th>Run</th><th>What</th><th>Status</th><th>Model</th><th>Took</th><th>Started</th></tr></thead>'
+        f'<td data-l="Took">{esc(dur(r["started"], r["finished"]))}</td><td data-l="Tokens">{esc(tokens_in_out(r))}</td><td data-l="Started" title="{esc(ts(r["started"]))}">{esc(ago(r["started"]))}</td></tr>' for r in runs)
+    return ('<div class="scroll"><table class="stack"><thead><tr><th>Run</th><th>What</th><th>Status</th><th>Model</th><th>Took</th><th>Tokens</th><th>Started</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>')
 
 
@@ -312,7 +328,7 @@ def run_detail(r: dict, files=(), images=()) -> str:
         cls = r["classification"]
     meta = [("Status", badge(r["status"])), ("Kind", esc(r["kind"] + (" · " + r["stage"] if r["stage"] else ""))),
             ("Ticket", ticket_link(r["repo"], r["issue"]) + " — " + esc(r["title"])), ("Agent", esc(f'{r["harness"]} · {r["model"]} · effort {r["effort"]}')),
-            ("Started", esc(ts(r["started"]))), ("Took", esc(dur(r["started"], r["finished"]))), ("Detail", esc(r["detail"])),
+            ("Started", esc(ts(r["started"]))), ("Took", esc(dur(r["started"], r["finished"]))), ("Tokens", esc(tokens_in_out(r))), ("Detail", esc(r["detail"])),
             ("Pull requests", pr_links(r["pr_urls"]) or "—")]
     table = "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in meta)
     out = f'<table class="meta">{table}</table>'

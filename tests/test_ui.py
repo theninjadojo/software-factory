@@ -305,6 +305,17 @@ class ImportantEvents(UiCase):
         self.assertNotIn("r-start", default)
         self.assertIn("r-start", self.req("GET", "/events?kind=all", cookie=cookie)[2])
 
+    def test_runs_show_token_counts(self):
+        a = dbm.start_run(self.db, "build", "o/web", 1, "T", "h", "sonnet", "low", "{}")
+        dbm.finish_run(self.db, a, "pr", "ok", "", "", "", usage={"tokens_in": 100, "tokens_out": 2500, "tokens_cache_read": 1400, "tokens_cache_write": 0})
+        b = dbm.start_run(self.db, "build", "o/web", 2, "U", "h", "sonnet", "low", "{}")
+        dbm.finish_run(self.db, b, "pr", "ok", "", "", "")                      # the harness reported nothing
+        cookie, _ = self.session()
+        runs = self.req("GET", "/runs", cookie=cookie)[2]
+        self.assertIn("1.5k in · 2.5k out", runs)
+        self.assertIn("tokens 1.5k in · 2.5k out", runs)
+        self.assertIn("1.5k in · 2.5k out", self.req("GET", f"/runs/{a}", cookie=cookie)[2])
+
     def test_runs_summary_prs_cards_and_links(self):
         rid = dbm.start_run(self.db, "build", "o/web", 1, "T <b>", "h", "sonnet", "low", "{}")
         dbm.finish_run(self.db, rid, "pr", "ok", "https://github.com/o/web/pull/2", "", "")
