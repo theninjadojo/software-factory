@@ -183,7 +183,7 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .nd-empty { padding:1.8rem; display:flex; flex-direction:column; align-items:center; text-align:center; gap:.6rem; } .nd-empty h3 { margin:0; font-size:1.1rem; text-transform:none; letter-spacing:0; color:var(--text); }
 .nd-dialog { background:var(--panel); color:var(--text); border:1px solid var(--line2); border-radius:16px; padding:0; width:min(720px,94vw); max-height:90vh; overflow:auto; box-shadow:0 24px 80px rgba(0,0,0,.6); }
 .nd-dialog::backdrop { background:rgba(6,8,10,.72); } .nd-dhead { display:flex; justify-content:space-between; gap:1rem; padding:1rem 1.2rem; border-bottom:1px solid var(--line); } .nd-dhead p { margin:.3rem 0 0; font-size:.85rem; }
-.nd-dialog .nd-form { padding:1rem 1.2rem 1.2rem; } .nd-dialog .nd-qs { grid-template-columns:1fr; }
+.nd-dialog .nd-form { padding:1rem 1.2rem 1.2rem; } .nd-dialog .nd-qs { grid-template-columns:minmax(0,1fr); }
 @media (max-width:1100px) { .nd-grid { grid-template-columns:minmax(0,1fr) 220px; } .nd-acts, .nd-acts2 { grid-column:1/-1; align-items:stretch; justify-content:flex-start; } .nd-rec { text-align:left; } }
 @media (max-width:760px) {
   .nd-grid { grid-template-columns:1fr; } .nd-acts { justify-content:stretch; } .nd-acts > * { flex:1 1 calc(50% - .5rem); } .nd-acts > :first-child { flex-basis:100%; } .nd-acts form { display:flex; } .nd-acts button, .nd-acts .btn, .nd-acts label.btn { width:100%; min-height:44px; }
@@ -271,6 +271,8 @@ table.tickets td:first-child { overflow-wrap:anywhere; min-width:0; max-width:22
 .ver { margin-top:2rem; }
 .fl-mode { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem; margin:0 0 .8rem; padding:.7rem 1rem; }
 .fl-mode.dry { border-color:var(--warn, #c9a227); } .fl-mode form { margin:0; } .fl-mode-form { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem; } .fl-mode .check { margin:0; }
+/* The answers dialog never scrolls sideways: a long URL, path or option label wraps instead of widening its card. */
+.nd-dialog { overflow-x:hidden; } .nd-form, .nd-qs > *, .nd-q, .nd-qhead, .nd-qt, .nd-why, .nd-opts, .nd-opt > span, .nd-foot { min-width:0; overflow-wrap:anywhere; }
 /* Ticket journey (journey_view.py): tiles, the map of the route, the ordered steps. Colours: finished ok, running amber, failed red, waiting blue. */
 .jy-tiles { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:0 0 1rem; }
 .jy-tile { display:flex; flex-direction:column; gap:.2rem; padding:.8rem 1rem; } .jy-tile b { font-size:1.15rem; font-weight:600; } .jy-tile .muted { font-size:.85rem; }
