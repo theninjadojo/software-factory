@@ -253,6 +253,20 @@ def design_files_for_runs(db, run_ids: list) -> dict[int, list[dict]]:
     return out
 
 
+def mockup_previews(db, repo: str, issue: int) -> list[dict]:
+    """The rendered mockup PNGs of a ticket's latest design run that published any (repo, path, url, pr)."""
+    try:
+        run = db.execute("SELECT r.id FROM runs r WHERE r.repo=? AND r.issue=? AND r.stage='designer' AND EXISTS "
+                         "(SELECT 1 FROM design_files f WHERE f.run_id=r.id AND f.path LIKE '%/previews/%.png') "
+                         "ORDER BY r.id DESC LIMIT 1", (repo, int(issue))).fetchone()
+        if not run:
+            return []
+        return _dicts(db.execute("SELECT repo, path, url, pr FROM design_files WHERE run_id=? AND path LIKE '%/previews/%.png' ORDER BY rowid",
+                                 (run[0],)))
+    except sqlite3.OperationalError:
+        return []
+
+
 def mark_interrupted(db) -> int:
     """Runs still marked running when a new orchestrator starts were killed with the old one."""
     cur = db.execute("UPDATE runs SET status='interrupted', finished=?, detail='orchestrator restarted' WHERE status='running'", (time.time(),))

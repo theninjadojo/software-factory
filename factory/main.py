@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, designfiles, pause, pm, runner, subtasks
+from . import ci, conflicts, designfiles, mockups, pause, pm, runner, subtasks
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -232,14 +232,36 @@ def requeue_rate_limited(cfg: Config, gh: GitHub, repo: str, num: int, trigger_l
         emit("rate-limit", "rate limited too: requeued while already paused", repo, num)
 
 
+def ticket_mockups(repo: str, num: int) -> list[dict]:
+    """The rendered design mockups recorded for a ticket ([] when there are none or the database is unavailable)."""
+    try:
+        db = _ev()
+        return dbm.mockup_previews(db, repo, num) if db is not None else []
+    except Exception:
+        log.exception("could not read the mockups of %s#%s", repo, num)
+        return []
+
+
 def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
              trigger_label: str | None = None, conn=None) -> runner.RunResult:
     """Build it: edit the repos in the sandbox and open PRs."""
     num, trigger_label = issue["number"], trigger_label or cfg.trigger_label
+    prior = stage_outputs(gh, repo, num)
+    shown = ticket_mockups(repo, num)
+    verdict, why = mockups.gate(cfg.mockups, [lb["name"] for lb in issue.get("labels", [])], shown,
+                                NO_MOCKUPS in prior.get("designer", "") or MOCKUPS_OFF in prior.get("designer", ""))
+    if verdict == "block":
+        gh.remove_label(repo, num, trigger_label)       # no retry loop: a person fixes it and triggers again
+        gh.add_labels(repo, num, [FAILED])
+        gh.comment(repo, num, why)
+        emit("mockups:blocked", "build not started: the design stage left no rendered mockup", repo, num)
+        return runner.RunResult("failed", "blocked: no rendered design mockup")
+    if verdict == "warn":
+        gh.comment(repo, num, why)
     alert(f"Starting {repo}#{num}: {issue['title'][:80]}\n{picked(route, c)}", event="started")
     claim(gh, repo, num, trigger_label, "implement")
     run_id, sink = begin_run("build", repo, issue, route, c), {}
-    res = runner.run_task(cfg, gh, repo, issue, route, prior=stage_outputs(gh, repo, num),
+    res = runner.run_task(cfg, gh, repo, issue, route, prior=prior, mockups=shown,
                           comments=human_comments(gh, repo, num), sink=sink, answers=Q.summary(question_state(gh, repo, num)))
     end_run(run_id, res, sink)
     gh.remove_label(repo, num, WORKING)
@@ -451,7 +473,7 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
     run_id, sink = begin_run("review", repo, issue, route, None, "reviewer"), {}
     res = runner.run_task(cfg, gh, repo, issue, route, role="reviewer", prior=stage_outputs(gh, repo, num),
-                          comments=human_comments(gh, repo, num), fix_branch=branch, sink=sink)
+                          comments=human_comments(gh, repo, num), fix_branch=branch, sink=sink, mockups=ticket_mockups(repo, num))
     end_run(run_id, res, sink)
     if res.status == "rate-limited":
         if trigger_label:

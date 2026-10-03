@@ -133,6 +133,13 @@ model = "sonnet"
 effort = "medium"
 harness = "claude-code"
 
+# What a build needs from the design stage. The designer's rendered mockup images are shown to the build and review agents to match.
+# mode "block": a ticket whose design stage should have produced mockups (it ran, and did not say there are no screens) is not built
+# without them. "warn" builds anyway and says so on the ticket. "off" never checks. A person puts bypass_label on one ticket to skip.
+[mockups]
+mode = "block"
+bypass_label = "factory:skip-mockup"
+
 # Other models through OpenCode (experimental; build the image with `docker compose --profile opencode build`).
 # Enable on the Harnesses page, paste the key there, then route a tier to it. Ticket text never chooses these.
 # [harnesses.opencode-openrouter]

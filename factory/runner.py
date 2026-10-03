@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
-from . import designfiles
+from . import designfiles, mockups as mockups_mod
 from .render import render as preview_render
 from .roles import (CI_FIX_PROMPT, CONFLICTS_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
                     agent_key, common_for, design_files_rules, operator_prompt)
@@ -213,7 +213,8 @@ def parse_usage(text: str, fmt: str) -> tuple[str, dict | None]:
 def build_prompt(title: str, body: str, project: Project, issue_repo: str, role: str | None = None,
                  prior: dict | None = None, comments: list | None = None, failures: str | None = None,
                  ticket: tuple | None = None, design_files: bool = False, design_dir: str = designfiles.DEFAULT_DIR,
-                 conflicts: dict | None = None, answers: str = "", backlog: list | None = None, operator: str = "") -> str:
+                 conflicts: dict | None = None, answers: str = "", backlog: list | None = None, operator: str = "",
+                 mockups: list | None = None) -> str:
     """backlog: the project manager's tickets ({number, title, labels, body}, untrusted text); it replaces the single ticket.
     operator: standing instructions from the operator's config (trusted), put before everything else and subordinate to the
     built-in rules that follow; empty leaves the prompt exactly as it was."""
@@ -233,6 +234,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
             task += QUESTIONS_RULES
     else:
         task = IMPLEMENTER_PROMPT
+    if mockups and role in (None, "reviewer"):
+        task += mockups_mod.prompt_section(mockups, reviewer=role == "reviewer")
     if failures and not role:
         task += CI_FIX_PROMPT
     if conflicts and not role:
@@ -350,7 +353,7 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
 def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role: str | None = None,
              prior: dict | None = None, comments: list | None = None, fix_branch: str | None = None,
              failures: str | None = None, sink: dict | None = None, merge_base: dict | None = None, answers: str = "",
-             backlog: list | None = None) -> RunResult:
+             backlog: list | None = None, mockups: list | None = None) -> RunResult:
     """Implementation (role=None): edit the workspace, validate the patches, push branches, open PRs.
     Role (analyst/designer/architect, reviewer, pm): read-only; any edits are discarded and the agent's document is returned.
     backlog: the project manager's tickets (role pm); the issue is then a stand-in with number 0.
@@ -422,9 +425,10 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 return finish_merge("git merged it without conflicts, no agent was needed")
         conflicts = {names[r]: fs for r, fs in todo.items() if fs}
         operator = operator_prompt(cfg.prompts, agent_key(role, bool(failures), bool(conflicts)))
+        shown = mockups_mod.fetch(gh, mockups, d / "task" / "mockups") if mockups and role in (None, "reviewer") and not conflicts else []
         (d / "task" / "prompt.txt").write_text(
             build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
-                         (repo, num), want_design, design_dir, conflicts, answers, backlog, operator))
+                         (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"

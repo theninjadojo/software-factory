@@ -28,6 +28,19 @@ class GitHub:
             body = r.read()
             return json.loads(body) if body else None
 
+    def raw_file(self, repo: str, path: str, ref: str, max_bytes: int = 4_000_000) -> bytes:
+        """One file of a repository at a commit, as bytes (works for private repositories, with the token)."""
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path)}?ref={urllib.parse.quote(ref)}",
+            headers={"Accept": "application/vnd.github.raw+json", "User-Agent": "software-factory"})
+        if self.token:
+            req.add_header("Authorization", f"Bearer {self.token}")
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = r.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ValueError("file too large")
+        return data
+
     def _get(self, path: str):
         return self._req("GET", path)
 
