@@ -108,6 +108,7 @@ class App:
         summary["max_parallel"] = cfg.runner.max_parallel
         summary["review"], summary["conflicts"] = cfg.review.enabled, cfg.conflicts.enabled
         summary["roles"], summary["workers"] = [r.name for r in cfg.roles], cfg.workers.enabled
+        summary["power"], summary["repos"] = power_uses(cfg), list(cfg.repos)
         d = {"cfg": summary, "paused": pause.paused(self.state_dir()) or "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": [],
              "recent": [], "decided": {}, "conflicting": 0, "workers": []}
         if db is not None:
@@ -119,6 +120,10 @@ class App:
                 d["running"] = dbm.recent_runs(db, 20, status="running")      # every job in flight, newest first
                 d["recent"] = dbm.recent_runs(db, 200)                        # for each station's numbers today
                 d["decided"] = dict(db.execute("SELECT outcome, COUNT(*) FROM decisions WHERE decided_at > ? GROUP BY outcome", (time.time() - 86400,)))
+                try:
+                    d["schedules"] = schedule_trips(cfg, db, time.time())
+                except sqlite3.Error:
+                    pass                                                       # no schedule tables yet
                 try:
                     d["workers"] = workers_seen(db, time.time())
                 except sqlite3.Error:
@@ -135,6 +140,47 @@ class App:
             finally:
                 db.close()
         return d
+
+
+def power_uses(cfg) -> list[dict]:
+    """Every enabled agent harness and the stations whose agents use it (for the floor's power stations)."""
+    from ..config import default_harnesses
+    hs = cfg.harnesses or default_harnesses(cfg.runner)
+    uses = {n: [] for n, h in hs.items() if getattr(h, "enabled", True)}
+    uses.setdefault("claude-code", [])
+    for r in cfg.roles:
+        if r.harness in uses:
+            uses[r.harness].append(r.name)
+    for route in cfg.routes.values():
+        if route.harness in uses and "build" not in uses[route.harness]:
+            uses[route.harness].append("build")
+    if cfg.review.enabled and cfg.review.harness in uses:
+        uses[cfg.review.harness].append("review")
+    return [{"name": n, "uses": u} for n, u in uses.items()]
+
+
+def _short(s: float) -> str:
+    s = max(0, int(s))
+    return f"{s // 86400}d" if s >= 86400 else f"{s // 3600}h" if s >= 3600 else f"{max(1, s // 60)}m"
+
+
+def schedule_trips(cfg, db, now: float) -> list[dict]:
+    """Each enabled schedule as a round trip: how far it is from its last run to its next."""
+    from .. import schedules as sc
+    out = []
+    for sch in cfg.schedules:
+        if not sch.enabled:
+            continue
+        st = sc.get_state(db, sch.name)
+        nxt = sc.next_run(sch, st, now)
+        if st is None or nxt is None:
+            continue
+        span = max(1.0, nxt - st["last_run"])
+        due = now >= nxt
+        every = f"every {sch.every}" if sch.every else "cron"
+        out.append({"name": sch.name, "source": str((sch.source or {}).get("type") or "http"), "progress": min(1.0, (now - st["last_run"]) / span),
+                    "due": due, "when": f"{every} · " + ("due now" if due else f"back in {_short(nxt - now)}")})
+    return out
 
 
 def workers_seen(db, now: float) -> list[dict]:
@@ -344,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
                                            "list" if q.get("view") == "list" else "", q.get("mode") == "confirm")
             if path == "/":
                 shown = L.flash_pop(csrf)                  # the result of the button that sent you back here (the refresh fragment never takes it)
-                return self._send(200, views.page("Factory", f'<div id="live">{body}</div>', path, csrf, wide=True, badges=badges, bare=True,
+                return self._send(200, views.page("Factory", f'<div id="live">{body}</div>', path, csrf, wide=True, full=True, badges=badges, bare=True,
                                                   flash=shown[0] if shown else admin.FLASH.get(q.get("ok", "")), flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
         if path == "/fragment/needs-tray":

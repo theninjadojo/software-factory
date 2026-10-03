@@ -110,7 +110,7 @@ def update_banner() -> str:
 
 
 def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "",
-         bare: bool = False) -> str:
+         bare: bool = False, full: bool = False) -> str:
     """bare: the body draws its own heading (the Factory and Tickets screens)."""
     items = list(nav or NAV)
     if active in TICKET_PAGES or active.startswith("/runs/"):
@@ -132,7 +132,7 @@ def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | N
             f'<details class="ph-menu"><summary aria-label="Menu">{MENU_ICON}</summary><div class="ph-menu-list">'
             + "".join(f'<a href="{p}"{" class=active" if p == active else ""}>{esc(n)}{count(p)}</a>' for p, n in items)
             + f'<form method="post" action="/logout">{csrf_field(csrf)}<button class="link">Sign out</button></form></div></details></header>'
-            f'<main{" class=wide" if wide else ""}>{update_banner()}{note}{"" if bare else f"<h1>{esc(title)}</h1>"}{body}<p class="muted ver">Shikumi {esc(version.current())}</p></main><script src="/static/app.js" defer></script></body></html>')
+            f'<main{" class=\"wide full\"" if full else " class=wide" if wide else ""}>{update_banner()}{note}{"" if bare else f"<h1>{esc(title)}</h1>"}{body}<p class="muted ver">Shikumi {esc(version.current())}</p></main><script src="/static/app.js" defer></script></body></html>')
 
 
 def login_page(error: str | None = None, setup_hint: bool = False) -> str:

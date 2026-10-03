@@ -754,6 +754,17 @@ _recent: dict = {}          # (repo, title) -> time of the last create, so a dou
 _recent_lock = threading.Lock()
 
 
+_flights: list = []                       # (when, "#n") for tickets created here: the floor flies them in
+_flights_lock = threading.Lock()
+
+
+def flights(now: float, last: float = 20.0) -> list[dict]:
+    """Tickets created in the last few seconds, for the floor's 747 (each starts at its age, so a refresh does not restart it)."""
+    with _flights_lock:
+        _flights[:] = [f for f in _flights if now - f[0] < last]
+        return [{"label": lab, "age": now - t} for t, lab in _flights]
+
+
 def create(h, form, csrf: str) -> None:
     """A person's new ticket: title and body only, no labels, so it never starts work. Validated before GitHub is called."""
     cfg = h.app.cfg()
@@ -787,6 +798,9 @@ def create(h, form, csrf: str) -> None:
         return _done(h, form, csrf, _github_error(e) if isinstance(e, urllib.error.HTTPError)
                      else "GitHub did not accept the ticket. Nothing was created. Try again, or check the token under Credentials.", "bad")
     log.info("tickets: created %s#%s from the UI", repo, n)
+    with _flights_lock:
+        _flights.append((time.time(), f"#{int(n)}"))
+        del _flights[:-5]
     _done(h, form, csrf, f"Created {repo}#{int(n)}.")
 
 
