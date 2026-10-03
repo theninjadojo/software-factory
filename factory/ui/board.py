@@ -7,6 +7,7 @@ done (green), running (amber, the belt moves and crates ride it), waiting for a 
 failed (red) or not reached (dim). The Floor shows where every open ticket is; a ticket shows its own route.
 
 Every text is escaped; colours, placement and motion are CSS classes (the page policy forbids inline styles)."""
+import re
 import time
 from urllib.parse import urlencode
 
@@ -215,7 +216,7 @@ def _why(state: str, j: dict, prs: list, need, t: dict, at, now: float) -> str:
         w = j.get("waiting") or {}
         if w.get("pending"):
             return f'{LABEL.get(w.get("stage"), "A stage")} asked {int(w["pending"])} question{"s" if int(w["pending"]) != 1 else ""}'
-        return (need or {}).get("reason") or w.get("message") or "Waiting for a person"
+        return plain((need or {}).get("reason") or w.get("message") or "") or "Waiting for a person"
     if state == "working" and runs:
         r = next((s for s in runs if s["state"] in ("running", "queued")), runs[-1])
         return f'{LABEL.get(at or "", "A stage")} running, {secs(r["seconds"])} in' if r["seconds"] else f'{LABEL.get(at or "", "A stage")} queued'
@@ -229,12 +230,26 @@ def _why(state: str, j: dict, prs: list, need, t: dict, at, now: float) -> str:
     if state == "prs" and prs:
         p = next(p for p in prs if (p.get("status") or "") != "closed")
         return f'PR #{int(p["number"])} · CI {p.get("status") or "pending"}'
-    detail = (t.get("detail") or "").rsplit(";", 1)[-1].strip()
+    detail = plain((t.get("detail") or "").rsplit(";", 1)[-1])
     return detail[:90] or ("Merged" if prs else "Finished")
 
 
 def _open_pr(r: dict) -> bool:
     return any((p.get("status") or "") != "closed" for p in r["prs"])
+
+
+_TAG = re.compile(r"\s*\(?cls=[\w/.=,:-]*\)?|\s*\[dry-run\]")
+_SAYS = (("human: classifier flagged needs_human", "The classifier asked for a person"), ("needs a person: ", ""), ("human: ", ""))
+
+
+def plain(msg: str) -> str:
+    """A decision or event message without the classifier's internal tag (cls=kind/complexity/human=.../conf=...), in words."""
+    out = re.sub(r"([:;])\s*[:;]", r"\1", _TAG.sub("", msg or "")).strip(" ;:")
+    for raw, said in _SAYS:
+        if out.startswith(raw):
+            out = said + out[len(raw):]
+    out = out.strip(" ;:")
+    return out[:1].upper() + out[1:] if out else ""
 
 
 def counts(rows: list[dict]) -> dict:
@@ -312,7 +327,7 @@ def _tiles(j: dict, state: str) -> str:
     st, tk, models = j["status"], j["tokens"], j["models"]
     sub = {"needs": "waiting for you", "working": "agents at work", "failed": "see the failed step", "prs": "pull request open", "done": "finished"}[state]
     if state == "needs" and j.get("waiting"):
-        sub = (j["waiting"].get("message") or sub)[:60]
+        sub = (plain(j["waiting"].get("message")) or sub)[:60]
     tin, tout = tk["in"], tk["out"]
     mods = ", ".join(sorted(models)) or "—"
     return ('<div class="sd-tiles">'
@@ -345,10 +360,10 @@ def _step_label(s: dict) -> tuple[str, str]:
             return "Build", "CI fix round"
         return base, RUN_WORD.get(str(s.get("status") or ""), str(s.get("status") or ""))
     if s["kind"] == "person":
-        return ("Needs you", (s.get("message") or "")[:100])
+        return ("Needs you", plain(s.get("message"))[:100])
     if s["kind"] == "ci":
-        return "CI", (s.get("message") or "")[:100]
-    return "Classify", (s.get("message") or "")[:100]
+        return "CI", plain(s.get("message"))[:100]
+    return "Classify", plain(s.get("message"))[:100]
 
 
 def steps_html(j: dict, repo: str, issue: int, docs=()) -> str:
@@ -409,7 +424,7 @@ def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str) -
 def activity_html(events: list[dict], now: float) -> str:
     if not events:
         return ""
-    items = "".join(f'<li><span class="mono">{esc(ago(e["ts"], now))}</span> · {esc((e.get("message") or "")[:160])}</li>' for e in events[:8])
+    items = "".join(f'<li><span class="mono">{esc(ago(e["ts"], now))}</span> · {esc(plain(e.get("message"))[:160])}</li>' for e in events[:8])
     return f'<section class="sd-activity" aria-labelledby="ev-h"><h3 id="ev-h">Activity</h3><ul>{items}</ul></section>'
 
 
@@ -677,12 +692,13 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
     failing = sum(p["status"] == "failed" for p in open_prs)
     today = [r for r in d["recent"] if (r.get("finished") or r["started"]) > now - 86400]
     passed = sum(r["status"] in ("passed", "pr", "stage") for r in today)
-    work_at = sorted({LABEL[r["at"]].lower() for r in rows if r["state"] == "working" and r["at"]})
+    work_at = sorted({LABEL.get(_RUN_AT.get(x.get("stage") or "", "") or ("build" if x["kind"] in ("build", "fix") else "review" if x["kind"] == "review" else ""), "a run").lower()
+                      for x in d["running"]})
     fail_rows = [r for r in rows if r["state"] == "failed"]
     nneeds = len(needs) if needs is not None else c["needs"]
     asking = sum(1 for r in needs or [] if r.get("st"))
     tiles = (_tile("/tickets?stage=needs", "Needs you", nneeds, "wait", f"{asking} with questions, {nneeds - asking} to decide" if nneeds else "nothing waiting", hot=bool(nneeds))
-             + _tile("/tickets?stage=working", "Working now", len(d["running"]), "run", " and ".join(work_at) or "idle")
+             + _tile("/tickets?stage=working", "Working now", len(d["running"]), "run", " and ".join(work_at) if d["running"] else "nothing running")
              + _tile("/tickets?stage=prs", "PRs & CI", f'{len(open_prs)} <small>open</small>', "run", f"{checks} running checks, {failing} failing")
              + _tile("/runs?status=passed", "Done today", passed, "done", f"{len(today)} runs in the last 24 hours")
              + _tile("/tickets?stage=failed", "Failed", len(fail_rows), "fail", f'#{fail_rows[0]["issue"]} {fail_rows[0]["why"]}'[:48] if fail_rows else "none"))
