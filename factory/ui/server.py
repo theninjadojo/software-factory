@@ -19,18 +19,18 @@ from .. import designfiles
 from .. import pause, updates, version
 from .. import questions as Q
 from ..config import load
-from . import admin, floor, journey_view, views
+from . import admin, board, floor, views
 from . import workers as WK
 from . import labels as L
 from .auth import AuthStore, Sessions, Throttle
 from .settings import Form
 
 log = logging.getLogger("factory.ui")
-STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8"}
+STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8", "fonts/space-grotesk-latin.woff2": "font/woff2", "fonts/jetbrains-mono-latin.woff2": "font/woff2"}
 MAX_BODY = 64 * 1024
 PAGE = 50
 HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; "
+    "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; "
                                "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store",
 }
@@ -257,6 +257,45 @@ class Handler(BaseHTTPRequestHandler):
         return views.doc_page(repo, n, stage, dbm.doc_stages(db, repo, n), doc, text, source, notice, "/needs",
                               dbm.mockup_previews(db, repo, n) if stage == "designer" else ())
 
+    def _tickets(self, path: str, q: dict, csrf: str, badges) -> None:
+        """Tickets: the filtered list beside one ticket (/ticket names it; on a phone that is its own screen)."""
+        from urllib.parse import quote
+        cfg, now = self.app.cfg(), time.time()
+        db = self.app.ro_db()
+        if db is None:
+            return self._send(200, views.page("Tickets", '<p class="muted">The orchestrator has not created its database yet.</p>', path, csrf, badges=badges))
+        needs = L.needs_you(self)
+        try:
+            rows = board.ticket_rows(db, needs, L.titles_cached(), now)
+            c = board.counts(rows)
+            keys = {k for k, _, _ in board.FILTERS}
+            flt = q.get("stage") if q.get("stage") in keys else ("needs" if c["needs"] else "all")
+            at = q.get("at") if q.get("at") in board.LABEL else ""
+            text, order = (q.get("q") or "").strip()[:100], "oldest" if q.get("sort") == "oldest" else "latest"
+            repo, n = q.get("repo", ""), q.get("n", "")
+            explicit = path in ("/ticket", "/fragment/ticket")
+            if explicit and not (views.REPO.match(repo) and n.isdigit() and len(n) < 10):
+                return self._send(404, "no such ticket", "text/plain")
+            if explicit:
+                sel = next((r for r in rows if r["repo"] == repo and r["issue"] == int(n)), None) or board.row_for(db, repo, int(n), needs, L.titles_cached(), now)
+            else:
+                shown = board.pick(rows, flt, at, text, order)
+                sel = shown[0] if shown else None
+            detail = ""
+            if sel is not None:
+                files, docs, events, images = board.ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
+                if path == "/fragment/ticket":
+                    return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now))
+                back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}"
+                detail = board.detail_html(sel, board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images)
+        finally:
+            db.close()
+        new = L.new_ticket_form(cfg, cfg.repos[0], csrf) if cfg.repos else ""
+        shown = L.flash_pop(csrf)
+        title = f"#{int(sel['issue'])} · Tickets" if explicit and sel else "Tickets"
+        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf), path, csrf, wide=True,
+                                          badges=badges, bare=True, flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
+
     def _get(self, path: str, q: dict, csrf: str) -> None:
         self.app.refresh_update_notice()
         cached = L.needs_cached()                              # the nav count: never a GitHub call, only what the tray already read
@@ -264,11 +303,18 @@ class Handler(BaseHTTPRequestHandler):
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))
         flt = q.get("need", "") if q.get("need") in ("questions", "decisions") else ""
         if path in ("/", "/fragment/overview"):
-            body = views.overview_fragment(self.app.overview(), csrf, q.get("station"), L.needs_you(self), L.action_forms_for, flt,
+            d, needs = self.app.overview(), L.needs_you(self)
+            db = self.app.ro_db()
+            try:
+                d["ticket_rows"] = board.ticket_rows(db, needs, L.titles_cached()) if db is not None else []
+            finally:
+                if db is not None:
+                    db.close()
+            body = views.overview_fragment(d, csrf, q.get("station"), needs, L.action_forms_for, flt,
                                            "list" if q.get("view") == "list" else "", q.get("mode") == "confirm")
             if path == "/":
                 shown = L.flash_pop(csrf)                  # the result of the button that sent you back here (the refresh fragment never takes it)
-                return self._send(200, views.page("Factory floor", f'<div id="live">{body}</div>', path, csrf, wide=True, badges=badges,
+                return self._send(200, views.page("Factory", f'<div id="live">{body}</div>', path, csrf, wide=True, badges=badges, bare=True,
                                                   flash=shown[0] if shown else admin.FLASH.get(q.get("ok", "")), flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
         if path in ("/needs", "/fragment/needs"):
@@ -280,6 +326,8 @@ class Handler(BaseHTTPRequestHandler):
                                                   badges={"/tickets": len(rows)} if rows else None,
                                                   flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
+        if path in ("/tickets", "/ticket", "/fragment/ticket"):
+            return self._tickets(path, q, csrf, badges)
         route = admin.GET.get(path)
         if route:
             return route(self, q, csrf)
@@ -321,24 +369,14 @@ class Handler(BaseHTTPRequestHandler):
                 if stage not in views.DOC_LABEL:
                     return self._send(404, "Unknown stage.", "text/plain")
                 return page(f"{views.DOC_LABEL[stage]} · {q['repo']} #{int(n)}", self._doc(db, q["repo"], int(n), stage))
-            if path in ("/ticket", "/ticket/images", "/fragment/journey"):
+            if path == "/ticket/images":
                 n = q.get("n", "")
                 if not views.REPO.match(q.get("repo", "")) or not n.isdigit():
                     return self._send(404, "no such ticket", "text/plain")
-                if path == "/fragment/journey":                   # the live refresh of a running ticket's journey (same mechanism as the home page)
-                    return self._send(200, journey_view.journey_html(dbm.journey(db, q["repo"], int(n))))
-                j = dbm.journey(db, q["repo"], int(n))
                 steps = dbm.steps_for_ticket(db, q["repo"], int(n))
                 all_runs = [i for s in steps for i in s["run_ids"]]
                 shots = {i: im for i in all_runs if (im := dbm.run_images(db, i))}
-                if path == "/ticket/images":
-                    return page(f"Images · #{int(n)}", views.ticket_images_page(q["repo"], int(n), dbm.design_files_for_runs(db, all_runs), shots))
-                files = dbm.design_files_for_runs(db, [i for s in steps if s["step"] == "design" for i in s["run_ids"]])
-                has_images = bool(shots) or any(views.mockup_img(f) for fs in dbm.design_files_for_runs(db, all_runs).values() for f in fs)
-                tprs = [p for p in dbm.watched_prs(db, 300) if p["issue_repo"] == q["repo"] and p["issue_num"] == int(n)]
-                return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), steps, files, dbm.doc_stages(db, q["repo"], int(n)), has_images,
-                                                                    journey_view.live_wrap(j, journey_view.journey_html(j)) if j["steps"] else "",
-                                                                    L.ticket_needs(self, q["repo"], int(n), csrf), views.ticket_prs(tprs, self.app.cfg().ci.fix_rounds)), wide=True)
+                return page(f"Images · #{int(n)}", views.ticket_images_page(q["repo"], int(n), dbm.design_files_for_runs(db, all_runs), shots))
             if path == "/prs":                                   # now a filter of the Tickets page
                 return self._redirect("/tickets?stage=prs")
             if path == "/events":

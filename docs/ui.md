@@ -19,9 +19,9 @@ A dashboard and settings editor, in the same standard-library-only style as the 
 
 | Page | Shows |
 |---|---|
-| Overview | Health (is the orchestrator polling?), mode (dry-run or LIVE), pause/resume, what is running now, recent runs, watched PRs, the timeline. Refreshes itself. |
+| Factory | The dashboard: health and mode (with the last poll), pause/resume, five tiles (Needs you, Working now, PRs & CI, Done today, Failed) that open Tickets filtered, the floor (ten stations, Poll to Pull request, in two rows joined by belts: crates move into a running station and back up at one waiting for a person; each station opens Tickets at that station), the Needs-you tray (answer, decide, or accept every recommendation), what is running now and the Claude plan usage. Refreshes itself. |
 | Runs | Every agent run: ticket, model and effort, classification, status, duration, token counts (in includes cache reads and writes; a dash when the harness reported none, with a total for today above the list), PR links. A run's page has the classifier's answer, the output document and the agent log tail. |
-| Tickets | The latest decision per ticket, including *ignored* ones and why (for example the label was applied by someone without write access), and a `done/total` pipeline-steps count. Each count opens the ticket's read-only pipeline view (stations for analyze, design, architect, implement, review, CI fix: status, agent, attempts, run and PR links, and the design files as GitHub links), built from the run history. A run page lists the design files it published (links to GitHub only; mockups are never served by the UI). |
+| Tickets | Every ticket the factory has worked on, with chips for Needs you, Working, PRs & CI, Failed, Done and All (with counts), a station filter, sort and search (a number finds that ticket). Each card shows why it is where it is and a ten-step progress strip. The selected ticket opens beside the list (its own address is `/ticket?repo=&n=`): status tiles, its open questions answered in place, its journey on the same stations as the floor, the design mockups, every step with agent, time, tokens and run link, its pull requests with their checks and fix rounds, and its activity. On a phone the list and the ticket are two screens. The label table (start, build, skip, edit labels by hand) is at `/labels`. |
 | PRs & CI | Not a page of its own: the **PRs & CI** chip on Tickets lists the pull requests being watched (CI status, fix rounds used), and each ticket's page has its own *Pull requests and checks* section. `/prs` redirects there. |
 | Events | The full timeline: decisions, every alert (including ones Telegram did not send), run starts and ends, errors, restarts. |
 
@@ -101,14 +101,7 @@ what it does, what it is working on, its numbers for the last day and its recent
 survives the page's 5-second refresh). Under the map, **Needs you** lists the tickets waiting for a person with the same buttons as
 Telegram (Run <stage>, Build anyway, Skip, or Accept recommendations for stage questions).
 
-The map is read-only: stations are links, not controls, so pause and reroute can be added later without redrawing it. On a phone (under 760px, tested at 360-430px) the
-navigation becomes a bottom tab bar (Factory, Tickets with the needs-you count, Events, and **More** for Settings and the
-rest; every target is at least 44px) and the Factory page shows a phone screen instead of the map: health dot, a title and sentence, three
-tiles (working, need you, PRs open), a card for what is running with a progress bar, the pipeline as a vertical list (Intake, Analyst,
-Designer, Architect, Build, PRs and CI, each with a state dot and word) and the top Needs-you ticket with *Review →*. The belt diagram,
-the pause button and the long tables are desktop-only. On the Needs you screen each ticket is a card with full-width buttons (the primary
-action first, then two side by side) and a back link. Tables on the other pages become stacked cards. It is all CSS media queries over
-server-rendered markup, so it works without JavaScript, and animation is switched off under `prefers-reduced-motion`. The theme is dark only, using system fonts and no inline styles (the page's CSP forbids them).
+The floor is read-only: stations are links into Tickets, not controls. On a phone (under 760px, tested at 360-430px) the navigation moves into the header's menu button (Factory, Tickets with the needs-you count, Events, Settings and Sign out; every target is at least 44px). The dashboard's tiles and cards stack and the floor scrolls sideways inside its card; Tickets opens as the list (led by a card of what needs you, with decision buttons on the cards) and a ticket as its own screen, whose journey is a numbered list of the ten stations with the mockups in the Designer step.
 
 **What the buttons do.** *Auto* and *Review* apply their trigger label (the classifier decides). *Build*, *Build anyway* and the stage
 buttons queue a person's approval in the factory's database, the same row the Telegram buttons write, and the factory runs the ticket

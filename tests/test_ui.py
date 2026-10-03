@@ -164,7 +164,7 @@ class Pages(UiCase):
         cookie, _ = self.session()
         _, _, home = self.req("GET", "/", cookie=cookie)
         self.assertIn("Healthy, last poll", home)
-        for gone in ("Add the thing", "PR ready", "<table", "<h2>Timeline</h2>"):       # the tables live on their own pages
+        for gone in ("PR ready", "<table", "<h2>Timeline</h2>"):       # the tables live on their own pages
             self.assertNotIn(gone, home)
         self.assertIn("Add the thing", self.req("GET", "/runs", cookie=cookie)[2])
         self.assertIn("PR ready", self.req("GET", "/events", cookie=cookie)[2])
@@ -175,7 +175,7 @@ class Pages(UiCase):
             self.assertIn(needle, detail)
         self.assertEqual(self.req("GET", "/prs", cookie=cookie)[0], 303)            # PRs & CI is a filter of the Tickets page now
         self.assertIn("watching", self.req("GET", "/tickets?stage=prs", cookie=cookie)[2])
-        self.assertIn("run:stage", self.req("GET", "/tickets", cookie=cookie)[2])
+        self.assertIn("Add the thing", self.req("GET", "/tickets?stage=all", cookie=cookie)[2])
         self.assertIn("PR ready", self.req("GET", "/events?kind=alert", cookie=cookie)[2])
         self.assertEqual(self.req("GET", "/runs/999", cookie=cookie)[0], 404)
         self.assertEqual(self.req("GET", "/runs/abc", cookie=cookie)[0], 404)
@@ -234,12 +234,6 @@ class DesignFileLinks(unittest.TestCase):
         self.assertNotIn("javascript:", html)
         self.assertNotIn("<script>", html)
         self.assertNotIn("Design files", views.run_detail(self.RUN, []))
-
-    def test_pipeline_shows_the_files_on_the_design_step(self):
-        step = {"step": "design", "status": "done", "attempts": 1, "run_id": 7, "run_ids": [7], "role": "designer", "harness": "h",
-                "model": "m", "effort": "e", "pr_urls": "", "sub_number": None}
-        self.assertIn(self.GOOD["url"], views.pipeline([step], {7: [self.GOOD]}))
-        self.assertNotIn("Design files", views.pipeline([step], {}))
 
 
 class StageDocuments(UiCase):
@@ -329,7 +323,8 @@ class ImportantEvents(UiCase):
         self.assertIn("Build opened PR", runs)
         self.assertIn("status=passed", runs)
         prs = self.req("GET", "/tickets?stage=prs", cookie=cookie)[2]
-        self.assertIn("2 open · 0 passing · 1 failing", prs)
+        self.assertIn('class="sd-chip on"', prs)
+        self.assertIn("Checks failing", prs)                                 # the failing ticket is in PRs & CI, with its PR's checks
         self.assertIn("Fix round 1 of ", prs)
         self.assertIn('href="https://github.com/o/web/pull/2"', prs)
         self.assertNotIn("github.com/bad repo", prs)
@@ -375,7 +370,7 @@ class Images(UiCase):
         cookie, _ = self.session()
         t = "/ticket?repo=o/r&n=5"
         dbm.start_run(self.db, "stage", "o/r", 5, "T", "claude-code", "sonnet", "medium", "", "designer")
-        self.assertNotIn("View images", self.req("GET", t, cookie=cookie)[2])
+        self.assertNotIn("View images", self.req("GET", t, cookie=cookie)[2])                # nothing to show yet
         rid = dbm.start_run(self.db, "build", "o/r", 5, "T", "claude-code", "sonnet", "medium")
         dbm.add_run_images(self.db, rid, [{"kind": "built", "name": "home-desktop", "png": self.PNG}])
         self.assertIn("/ticket/images?repo=o%2Fr&amp;n=5", self.req("GET", t, cookie=cookie)[2])
@@ -409,9 +404,9 @@ class ModeSwitch(UiCase):
         self.assertEqual((s, h["Location"]), (303, "/?ok=live"))
         self.assertIn("dry_run = false", self.overrides())
         _, _, home = self.req("GET", "/?ok=live", cookie=cookie)
-        self.assertIn("Shikumi is live", home)
-        self.assertIn("Switch to dry run", home)
+        self.assertIn("Mode: live", home)
         self.assertIn("Going live.", home)                                   # the flash
+        self.assertIn("Switch to dry run", self.req("GET", "/?mode=confirm", cookie=cookie)[2])
         s, h, _ = self.req("POST", "/mode/set", f"csrf={csrf}&dry_run=1", cookie=cookie)   # back needs no confirmation
         self.assertEqual((s, h["Location"]), (303, "/?ok=dry"))
         self.assertNotIn("dry_run = false", self.overrides())
@@ -449,24 +444,25 @@ class JourneyPage(UiCase):
         cookie, _ = self.session()
         s, _, html = self.req("GET", "/ticket?repo=o/r&n=4", cookie=cookie)
         self.assertEqual(s, 200)
-        for want in ("<h2>Journey</h2>", "jy-tiles", 'class="jy-map"', "Steps in order", "Total", "CI fix round", "Finished", "Numbers show the order"):
+        for want in ('id="j-h">Journey', 'class="sd-tiles"', 'class="sd-strip"', "Steps in order", "CI fix round", "Pull requests and checks"):
             self.assertIn(want, html)
         self.assertIn("1× opus · 1× sonnet", html)                             # the models used and how many times
         self.assertNotIn("<b>x</b>", html)                                     # the decision text is escaped
-        self.assertNotIn("style=", html.split("<h2>Journey</h2>")[1].split("<h2>Pipeline</h2>")[0])   # the CSP forbids inline styles
+        self.assertNotIn("style=", html)                                       # the CSP forbids inline styles
         self.assertNotIn('id="live"', html)                                    # a finished ticket does not poll
 
     def test_a_running_ticket_refreshes_through_the_fragment(self):
         self.seed(running=True)
         cookie, _ = self.session()
         _, _, html = self.req("GET", "/ticket?repo=o/r&n=4", cookie=cookie)
-        self.assertIn('id="live" data-src="/fragment/journey"', html)
+        self.assertIn('id="live" data-src="/fragment/ticket"', html)
         self.assertIn("so far", html)
-        s, _, frag = self.req("GET", "/fragment/journey?repo=o/r&n=4", cookie=cookie)
+        s, _, frag = self.req("GET", "/fragment/ticket?repo=o/r&n=4", cookie=cookie)
         self.assertEqual(s, 200)
-        self.assertIn("jy-tiles", frag)
-        self.assertEqual(self.req("GET", "/fragment/journey?repo=o/r&n=4")[0], 401)      # needs a session, as a status code
-        self.assertEqual(self.req("GET", "/fragment/journey?repo=bad&n=x", cookie=cookie)[0], 404)
+        self.assertIn("sd-strip", frag)
+        self.assertNotIn("<html", frag)
+        self.assertEqual(self.req("GET", "/fragment/ticket?repo=o/r&n=4")[0], 401)      # needs a session, as a status code
+        self.assertEqual(self.req("GET", "/fragment/ticket?repo=bad&n=x", cookie=cookie)[0], 404)
 
     def test_a_ticket_with_no_work_says_so(self):
         cookie, _ = self.session()

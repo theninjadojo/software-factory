@@ -105,16 +105,5 @@ class Sync(unittest.TestCase):
             GitHub("t").create_issue("o/r", "Anything", "x")
 
 
-class View(unittest.TestCase):
-    def test_pipeline_escapes_and_checks_links(self):
-        steps = [{"step": "analyze", "status": "done", "attempts": 1, "run_id": 1, "run_ids": [1], "role": "<script>x</script>",
-                  "harness": "h", "model": "m", "effort": "e", "pr_urls": "https://evil.example/x https://github.com/o/r/pull/2"}]
-        out = views.ticket_detail("o/r", 4, steps)
-        self.assertNotIn("<script>", out)
-        self.assertNotIn("evil.example", out)
-        self.assertIn("1 of 1 steps done", out)
-        self.assertIn("No pipeline steps yet", views.ticket_detail("o/r", 4, []))
-
-
 if __name__ == "__main__":
     unittest.main()

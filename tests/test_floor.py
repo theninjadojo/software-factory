@@ -29,43 +29,28 @@ def data(**over):
     return d
 
 
-class Stations(unittest.TestCase):
-    def test_runs_map_to_stations(self):
-        for kind, stage, want in (("stage", "architect", "architect"), ("stage", "analyst", "analyst"), ("stage", "reviewer", "review"), ("implement", None, "build"),
-                                  ("fix", None, "ci"), ("review", "reviewer", "review"), ("conflicts", None, "conflicts"), ("stage", "odd", None), ("other", None, None)):
-            self.assertEqual(floor.station_of(kind, stage), want, (kind, stage))
-
-    def test_running_and_queued_work_shows_on_its_station(self):
-        d = data(running=[run(1, "stage", "architect", 18)], queued=[{"repo": REPO, "issue": 14, "kind": "implement", "title": "Q"}, {"repo": REPO, "issue": 15, "kind": "analyst", "title": "Q2"}])
-        live = floor.gather(d, [NEED], time.time())
-        self.assertEqual((live["architect"]["state"], live["architect"]["count"]), ("run", 1))
-        self.assertEqual((live["build"]["count"], live["build"]["ns"]), (1, "1 queued"))
-        self.assertEqual(live["analyst"]["count"], 1)
-        self.assertEqual(live["needs"]["count"], 1)
-        self.assertEqual(floor.default_station(live), "architect")
-        self.assertEqual(floor.default_station(floor.gather(data(), [], time.time())), "classify")
-
-    def test_disabled_stations_are_shown_off(self):
-        live = floor.gather(data(cfg={**data()["cfg"], "ci": "off", "conflicts": False}), None, time.time())
-        for sid in ("review", "ci", "conflicts"):
-            self.assertEqual(live[sid]["state"], "off", sid)
-        self.assertEqual(live["needs"]["ns"], "unknown")
-
-    def test_progress_never_reaches_100_and_handles_a_fresh_run(self):
-        self.assertLess(floor.progress({"started": time.time() - 99999}, 60), 100)
-        self.assertEqual(floor.progress({"started": time.time()}, None), 0)
-
-
 class Render(unittest.TestCase):
-    def test_the_legend_is_a_colour_key_with_one_swatch_per_state(self):
-        d = {"cfg": {"live": False, "poll_seconds": 60, "ci": "on", "telegram": "off", "classifier": "rules", "max_parallel": 1, "review": False, "conflicts": False},
-             "paused": "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": [], "recent": [], "decided": {}, "conflicting": 0}
-        html = floor.render(d, "tok", "architect", [], lambda n, c, b="/": "")
-        key = html[html.index('class="fl-legend"'):]
-        key = key[:key.index("</ul>")]
-        for state, word in (("run", "Working"), ("idle", "Idle"), ("warn", "Needs you"), ("fail", "Failing"), ("off", "Off")):
-            self.assertIn(f'<span class="fl-sw {state}" aria-hidden="true"></span>{word}', key)
-        self.assertIn("Select a station for details.", key)
+    def test_the_dashboard_has_the_designs_parts(self):
+        d = data(running=[run(1, "build", None, 18, "Build it")], prs=[{"status": "watching", "repo": REPO, "number": 3, "issue_repo": REPO, "issue_num": 18, "title": "PR"}],
+                 status={"last_poll_ok": {"value": str(time.time() - 5)}, "claude_usage": {"value": '{"session": {"used": 41}, "week": {"used": 18}}'}})
+        html = floor.render(d, "tok", None, [NEED, ASK], None)
+        for needle in ("<h1>Factory</h1>", "Live · running · polling every 60 s · Healthy, last poll 5s ago", "Needs you", "Working now", "PRs &amp; CI",
+                       "Done today", "Failed", "The floor", "Running now", "Build it", "CI · PR #3 · checks running", "Claude plan usage", 'value="41"',
+                       'href="/tickets?stage=needs"', 'href="/tickets?stage=prs"', 'action="/action/pause"', "Mode: live"):
+            self.assertIn(needle, html)
+        self.assertEqual(sum(f"sd-mach p{i} " in html for i in range(10)), 10)
+        self.assertIn("Not reporting", floor.render(data(status={}), "t", None, [], None))
+        self.assertIn("Dry run", floor.render(data(cfg={**data()["cfg"], "live": False}), "t", None, [], None))
+
+    def test_the_tray_answers_and_decides_in_place(self):
+        html = floor.render(data(), "tok", None, [ASK, NEED], None)
+        self.assertIn('action="/tickets/answer-all"', html)                          # accept every recommendation at once
+        self.assertIn("Answer 1 question", html)                                     # the questions themselves are on the ticket
+        self.assertIn('href="/ticket?repo=your-org%2Fshop-web&amp;n=19"', html)
+        self.assertIn("Run analyst", html)                                           # a decision is one click
+        self.assertIn('name="back" value="/"', html)
+        self.assertIn("Save a GitHub token", floor.render(data(), "t", None, None, None))
+
     def test_the_answers_dialog_cannot_scroll_sideways(self):
         css = (Path(__file__).resolve().parent.parent / "factory" / "ui" / "static" / "style.css").read_text()
         self.assertIn(".nd-dialog .nd-qs { grid-template-columns:minmax(0,1fr); }", css)        # a 1fr track grows to a long URL or path; minmax(0,1fr) wraps it
@@ -88,50 +73,6 @@ class Render(unittest.TestCase):
         html += floor.render(d, "tok", "architect", [need], lambda n, c, b="/": "")
         self.assertNotIn("<img", html)
 
-    def test_unknown_station_falls_back_and_selection_is_marked(self):
-        d = data(running=[run(1, "stage", "architect", 18)])
-        self.assertIn('aria-current=true', floor.render(d, "t", "analyst", [], None))
-        self.assertIn("<h2>Analyst</h2>", floor.render(d, "t", "analyst", [], None))
-        self.assertIn("<h2>Architect</h2>", floor.render(d, "t", "<script>", [], None))
-
-    def test_summary_bar_counts_and_links(self):
-        d = data(running=[run(1, "stage", "architect", 18)], prs=[{"status": "passed", "repo": REPO, "number": 1}, {"status": "failed", "repo": REPO, "number": 2},
-                 {"status": "watching", "repo": REPO, "number": 3}])
-        html = floor.render(d, "t", None, [NEED, ASK], lambda n, c, b="/": "")
-        for needle in ("Healthy, last poll 5s ago", "<b>1</b> working", "<b>2</b> need you", "<b>3</b> PRs open", 'href="/needs"', 'href="/tickets?stage=prs"', "LIVE",
-                       "Poll 60s · CI on · Telegram on · Edit", "Architect is working on #18. 2 tickets need you.", "3 PRs · 1 passing · 1 CI failing",
-                       "Show as list", "See all 2"):
-            self.assertIn(needle, html)
-        self.assertIn("DRY RUN", floor.render(data(cfg={**data()["cfg"], "live": False}), "t", None, [], None))
-        self.assertIn("Not reporting", floor.render(data(status={}), "t", None, [], None))
-
-    def test_today_line_and_last_four_runs(self):
-        now = time.time()
-        recent = [run(i, "implement", None, i, status=s, started=now - 60) for i, s in enumerate(["pr", "pr", "failed", "stage"], 1)]
-        html = floor.render(data(recent=recent, runs=recent + [run(9, "fix", None, 9, status="pr")]), "t", None, [], None)
-        self.assertIn("4 runs · 3 passed · 1 failed", html)
-        self.assertEqual(html.count('href="/runs/'), 4)
-
-    def test_the_tables_and_bulk_panel_are_gone_from_home(self):
-        d = data(cfg={**data()["cfg"], "live": False}, runs=[run(1, "implement", None, 5, "Unique run title", status="pr")], events=[{"id": 1, "ts": 1, "kind": "x", "message": "Unique event", "repo": REPO, "issue": 1, "run_id": 1}],
-                 prs=[{"status": "watching", "repo": REPO, "number": 3, "issue_repo": REPO, "issue_num": 1, "rounds": 0, "summary": "Unique pr", "updated": 1}])
-        html = floor.render(d, "t", None, [NEED, ASK, dict(ASK, issue=20)], lambda n, c, b="/": "")
-        for gone in ("<table", "Timeline", "Unique run title", "Unique event", "Unique pr", "nd-bulk", "nd-seg"):
-            self.assertNotIn(gone, html)
-        self.assertEqual(html.count('class="badge warn">'), 4)
-
-    def test_nodes_show_only_a_state_word_and_list_view_works(self):
-        d = data(running=[run(1, "stage", "architect", 18, model="secret-model")], cfg={**data()["cfg"], "review": False})
-        html = floor.render(d, "t", "architect", [], None)
-        self.assertIn('<span class="fl-ns">Working</span>', html)
-        self.assertIn('<span class="fl-ns">Off</span>', html)
-        self.assertNotIn("secret-model", html.split('class="fl-insp"')[0])
-        self.assertIn("secret-model", html.split('class="fl-insp"')[1])       # the model moved to the inspector
-        self.assertNotIn("fl-listview", html)
-        self.assertIn("fl-listview", floor.render(d, "t", "architect", [], None, view="list"))
-        failing = data(recent=[run(2, "implement", None, 4, status="failed", started=time.time() - 10)])
-        self.assertEqual(floor.gather(failing, [], time.time())["build"]["label"], "Failing")
-
     def test_the_tray_has_every_state(self):
         forms = lambda n, c, b="/": f"[{n['issue']}]"
         self.assertIn("Save a GitHub token", floor.tray(None, "t", forms))
@@ -147,47 +88,11 @@ class Render(unittest.TestCase):
 class Phone(unittest.TestCase):
     """The phone layout: markup that CSS shows below 760px (it needs no JavaScript) and the stacked-card tables."""
 
-    def test_the_factory_screen_has_its_parts(self):
-        d = data(running=[run(1, "stage", "architect", 18, "Build it")])
-        html = floor.render(d, "t", None, [NEED, ASK], None)
-        for needle in ('class="ph-home"', "ph-health", "ph-tiles", "working</span>", "need you</span>", "PRs open</span>", "Running now", 'class="ph-pipe"',
-                       "Intake", "Analyst", "Designer", "Architect", "Build", "PRs and CI", "Running</span>", "Idle</span>", "Review →", 'href="/needs"'):
-            self.assertIn(needle, html)
-        self.assertEqual(html.count("ph-step "), 6)
-        self.assertIn("<progress", html.split('class="ph-home"')[1])
-        self.assertIn("shop-web#13", html.split("ph-need")[1])
-        self.assertNotIn("style=", html)
-
-    def test_phone_markup_escapes_untrusted_text(self):
-        evil = "<img src=x onerror=alert(1)>"
-        d = data(running=[run(1, "stage", "architect", 18, evil)], paused=evil)
-        html = floor.phone_home(d, floor.gather(d, [], time.time()), [{**NEED, "title": evil, "reason": evil}], time.time())
-        self.assertNotIn("<img", html)
-        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
-
-    def test_the_phone_screen_can_pause_and_resume(self):
-        live = floor.gather(data(), [], time.time())
-        html = floor.phone_home(data(), live, [], time.time(), "tok")
-        self.assertIn('action="/action/pause"', html)
-        self.assertIn('name="csrf" value="tok"', html)
-        html = floor.phone_home(data(paused="manual pause"), live, [], time.time(), "tok")
-        self.assertIn('action="/action/resume"', html)
-        self.assertNotIn("/action/pause", floor.phone_home(data(), live, [], time.time()))       # no token, no form
-
     def test_app_js_reads_the_form_action_as_an_attribute(self):
         # a <button name="action"> inside a form shadows form.action in the DOM, so fetch(f.action) posted to "[object HTMLButtonElement]"
         from pathlib import Path
         js = (Path(floor.__file__).parent / "static" / "app.js").read_text()
         self.assertNotIn("f.action", js)
-
-    def test_phone_states_without_work_or_a_token(self):
-        d = data()
-        live = floor.gather(d, None, time.time())
-        self.assertIn("Save a GitHub token", floor.phone_home(d, live, None, time.time()))
-        html = floor.phone_home(d, live, [], time.time())
-        self.assertIn("Nothing is running", html)
-        self.assertIn("Nothing needs you", html)
-        self.assertNotIn("Review →", html)
 
     def test_tables_carry_column_names_for_stacked_cards_and_stay_escaped(self):
         evil = "<script>x</script>"
@@ -251,14 +156,6 @@ class Ordering(unittest.TestCase):
 
 class Inline(UiCase):
     """The Floor's tray lets a person finish an interaction without leaving the page."""
-
-    def test_questions_are_answerable_on_the_floor(self):
-        cookie, _ = self.session()
-        with mock.patch("factory.ui.server.L.needs_you", return_value=[ASK, NEED]):
-            html = self.req("GET", "/?station=build", cookie=cookie)[2]
-        for needle in ('name="accept" value="1"', 'name="back" value="/?station=build"', "Run analyst", "See all 2"):
-            self.assertIn(needle, html)
-        self.assertNotIn("nd-tog", html)                      # the question forms are on /needs now
 
     def test_needs_you_attaches_the_questions_and_drops_stale_rows(self):
         from factory.ui import labels as L
@@ -342,23 +239,18 @@ class Needs(UiCase):
 
 
 class Pages(UiCase):
-    def test_floor_is_the_default_page_and_the_nav_has_a_phone_menu(self):
+    def test_the_dashboard_is_the_default_page_and_refreshes_itself(self):
         cookie, _ = self.session()
         with mock.patch("factory.ui.server.L.needs_you", return_value=[NEED, ASK]):
-            s, h, html = self.req("GET", "/", cookie=cookie)
+            s, _, html = self.req("GET", "/", cookie=cookie)
+            frag = self.req("GET", "/fragment/overview", cookie=cookie)[2]
         self.assertEqual(s, 200)
-        for needle in ("Factory floor", 'class="fl-map"', "Needs you", "/tickets/start", "/tickets/answer", 'class="more"', "Factory</a>"):
+        for needle in ("<title>Factory · Shikumi</title>", '<div id="live">', "The floor", "/tickets/start", "Run analyst", 'class="ph-menu"'):
             self.assertIn(needle, html)
         self.assertNotIn("style=", html)
-        self.assertIn("Run analyst", html)
-
-    def test_station_param_and_fragment_follow_the_selection(self):
-        cookie, _ = self.session()
-        with mock.patch("factory.ui.server.L.needs_you", return_value=[]):
-            self.assertIn("<h2>Build</h2>", self.req("GET", "/fragment/overview?station=build", cookie=cookie)[2])
-            html = self.req("GET", "/?station=%3Cscript%3E", cookie=cookie)[2]
-        self.assertNotIn("<script>alert", html)
-        self.assertEqual(self.req("GET", "/fragment/overview?station=build")[0], 401)
+        self.assertIn("The floor", frag)
+        self.assertNotIn("<html", frag)
+        self.assertEqual(self.req("GET", "/fragment/overview")[0], 401)
 
     def test_floor_works_without_a_github_token(self):
         cookie, _ = self.session()
