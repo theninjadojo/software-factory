@@ -1,4 +1,4 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|pause|resume|screens baseline <owner/repo> <checkout>]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|pause|resume|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>]"""
 import os
 import sqlite3
 import sys
@@ -6,6 +6,45 @@ from pathlib import Path
 
 from . import pause, screens
 from .config import load
+from .github import GitHub
+
+
+def factory_labels(cfg) -> list[tuple[str, str, str]]:
+    """(name, colour, description) of every label the configured features use. Built from the config, so renamed labels follow."""
+    out = [(cfg.trigger_label, "0e8a16", "Build it: agents edit the repos and open PRs"),
+           (cfg.auto_label, "5319e7", "The classifier picks the next stage")]
+    for r in cfg.roles:
+        out += [(r.label, "1d76db", f"Run the {r.name} stage"), (r.done_label, "c5def5", f"The {r.name} stage is done")]
+    out += [(cfg.review.label, "1d76db", "Review this ticket's PRs"), (cfg.review.done_label, "c5def5", "Reviewed"),
+            (cfg.conflicts.label, "1d76db", "Resolve merge conflicts in this ticket's PRs"),
+            (cfg.pm.unblock_label, "bfdadc", "Ignore the project manager's blockers"),
+            (cfg.mockups.bypass_label, "bfdadc", "Build without design mockups"),
+            (cfg.mockups.approve_label, "0e8a16", "The design mockups are approved"),
+            (cfg.screens.label, "fbca04", "Screen baselines changed: review the images"),
+            ("factory:working", "fef2c0", "An agent is working on this"), ("factory:pr-open", "c5def5", "The factory opened a PR"),
+            ("factory:failed", "d93f0b", "The last factory run failed"), ("factory:needs-answers", "fbca04", "Open questions wait for a person"),
+            ("priority: high", "b60205", "Picked up first"), ("priority: low", "c2e0c6", "Picked up last")]
+    out += [(f"factory:working-{k}", "fef2c0", f"A {k} agent is working on this") for k in ("analyze", "design", "architect", "review", "conflicts")]
+    seen, uniq = set(), []
+    for n in out:
+        if n[0] and n[0] not in seen:
+            seen.add(n[0])
+            uniq.append(n)
+    return uniq
+
+
+def create_labels(cfg, gh, repos: list[str]) -> int:
+    """Create the factory labels in each repo (existing ones are left alone). Returns 1 if any repo could not be done."""
+    bad = 0
+    for repo in repos:
+        try:
+            for name, color, desc in factory_labels(cfg):
+                gh.create_label(repo, name, color, desc)
+            print(f"{repo}: labels ready")
+        except Exception as e:
+            bad = 1
+            print(f"{repo}: could not create labels ({type(e).__name__}: {e}). Does the token have Issues write on it?")
+    return bad
 
 
 def screens_baseline(cfg, repo: str, checkout: Path) -> int:
@@ -33,6 +72,12 @@ def main():
     state = Path(cfg.db_path).parent
     if cmd == "screens" and sys.argv[2:3] == ["baseline"] and len(sys.argv) == 5:
         sys.exit(screens_baseline(cfg, sys.argv[3], Path(sys.argv[4])))
+    if cmd == "labels":
+        token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else None
+        if not token:
+            print("no GitHub token: put it in", cfg.token_file)
+            sys.exit(1)
+        sys.exit(create_labels(cfg, GitHub(token), sys.argv[2:] or list(cfg.repos)))
     if cmd == "pause":
         (state / "PAUSED").write_text("")
         print("paused")

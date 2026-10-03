@@ -92,13 +92,23 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 - Optional: a **Telegram bot** (BotFather) and your numeric Telegram id; an **OpenRouter key** for Jev.
 - A container engine: **Podman** (recommended) or **Docker**.
 
-### Docker
+### Fastest: one script (Docker)
+
+```bash
+git clone <this repo> && cd software-factory
+./scripts/setup.sh      # asks for your repos, GitHub token and model key; builds the images; sets the UI password; creates the labels; starts in dry-run
+```
+
+It is non-interactive when you pass `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, `FACTORY_REPOS="org/a org/b"` and `FACTORY_UI_PASSWORD`. The manual steps it performs are below.
+Labels can be (re)created any time with `python3 -m factory.ctl labels [owner/repo ...]`.
+
+### Docker, step by step
 
 ```bash
 git clone <this repo> && cd software-factory
 sudo mkdir -p /srv/factory/{secrets,state,work,run} && sudo chown -R 1000:1000 /srv/factory
 
-mkdir config && cp config.example.toml config/config.toml   # edit: engine = "docker", image = "factory-agent:latest", your repos/projects
+mkdir config && cp config.example.toml config/config.toml   # edit: engine = "docker", your repos/projects (or just run ./scripts/setup.sh)
 cp .env.example .env                   # set DOCKER_GID=$(stat -c %g /var/run/docker.sock)
 
 # secrets: files, 0600, never in the repo (use `read -rs` so they stay out of shell history)
