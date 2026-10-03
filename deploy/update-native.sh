@@ -3,6 +3,8 @@
 # Run as the factory user on the host:
 #   sudo -n -u factory /srv/factory/app/deploy/update-native.sh            # the latest release
 #   sudo -n -u factory /srv/factory/app/deploy/update-native.sh v0.2.1     # a specific one (also how you go back)
+#   update-native.sh --auto          # for the optional timer (deploy/systemd/shikumi-update.timer): applies a newer PATCH release only,
+#                                    # and quietly does nothing while a run is in flight or when the release is a new minor/major version
 # It reads the release's source tarball from GitHub (a private repo needs a token: SHIKUMI_TOKEN_FILE, default
 # /srv/factory/secrets/github_token_bot, else github_token), refuses while an agent run is in flight, runs the tests on the new code,
 # rebuilds the sandbox images, restarts the services and checks they stay up. Docker-compose installs use scripts/update.sh instead.
@@ -26,6 +28,7 @@ for f in "${SHIKUMI_TOKEN_FILE:-}" "$ROOT/secrets/github_token_bot" "$ROOT/secre
 done
 api() { curl -fsSL ${TOKEN:+-H "Authorization: Bearer $TOKEN"} -H 'Accept: application/vnd.github+json' "$@"; }
 
+AUTO=""; [ "${1:-}" = "--auto" ] && { AUTO=1; shift; }
 HAVE="$(cat "$APP/VERSION" 2>/dev/null || echo none)"
 TAG="${1:-}"
 if [ -z "$TAG" ]; then
@@ -35,6 +38,13 @@ if [ -z "$TAG" ]; then
 fi
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "not a release tag: $TAG"
 [ "v$HAVE" = "$TAG" ] && { echo "Already on $TAG."; exit 0; }
+if [ -n "$AUTO" ]; then       # unattended: only a newer patch release of the version already running
+  python3 - "$HAVE" "$TAG" <<'PY' || { echo "Automatic update: $TAG is not a newer patch of v$HAVE, leaving it for a person (run update-native.sh by hand)."; exit 0; }
+import sys
+have, new = (tuple(int(x) for x in v.lstrip("v").split(".")) for v in sys.argv[1:3])
+sys.exit(0 if new[:2] == have[:2] and new[2] > have[2] else 1)
+PY
+fi
 echo "Updating: v$HAVE -> $TAG"
 
 if [ -z "${DRY_RUN:-}" ]; then            # never restart over a run in flight (a restart kills it)
@@ -48,7 +58,10 @@ except Exception:
     print(0)
 PY
 )"
-  [ "$N" = 0 ] && [ "$M" = 0 ] || die "An agent run is in flight ($N sandboxes, $M runs marked running). Try again when it finishes."
+  if [ "$N" != 0 ] || [ "$M" != 0 ]; then
+    [ -n "$AUTO" ] && { echo "An agent run is in flight ($N sandboxes, $M runs marked running): will try again at the next timer."; exit 0; }
+    die "An agent run is in flight ($N sandboxes, $M runs marked running). Try again when it finishes."
+  fi
 fi
 
 TMP="$(mktemp -d "$ROOT/state/update.XXXXXX")"; trap 'rm -rf "$TMP"' EXIT

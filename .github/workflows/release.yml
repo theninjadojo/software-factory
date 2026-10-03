@@ -1,9 +1,14 @@
 name: release
-# Push a tag like v0.2.0 (it must match the VERSION file). Runs the tests, publishes the images to GitHub's container registry and
-# creates a GitHub Release with the files an install needs. See docs/releasing.md.
+# Releases itself: merge a change to VERSION on main and this workflow tests, publishes the images to GitHub's container registry, and
+# creates the tag and the GitHub Release (with the files an install needs). Pushing a tag like v0.2.0 by hand still works (it must match VERSION).
+# On any other merge to main it exits in seconds: the tag for that VERSION already exists. See docs/releasing.md.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+concurrency:
+  group: release
+  cancel-in-progress: false
 permissions:
   contents: write
   packages: write
@@ -12,18 +17,31 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
-      - name: The tag must match VERSION
-        run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+      - name: Decide what to release
+        id: v
+        run: |
+          git fetch --tags --force -q
+          if [ "$GITHUB_REF_TYPE" = tag ]; then TAG="$GITHUB_REF_NAME"; else TAG="v$(cat VERSION)"; fi
+          [ "v$(cat VERSION)" = "$TAG" ] || { echo "the tag $TAG does not match VERSION ($(cat VERSION))"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" != tag ] && git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG is already released: nothing to do"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # a release from main must be higher than every version already tagged
+          python3 scripts/release_guard.py "$TAG" "$GITHUB_REF_TYPE"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"; echo "go=true" >> "$GITHUB_OUTPUT"
       # The runner's own python3 (3.12); see test.yml.
-      - run: python3 -m unittest discover -s tests
-      - uses: docker/login-action@v3
+      - if: steps.v.outputs.go == 'true'
+        run: python3 -m unittest discover -s tests
+      - if: steps.v.outputs.go == 'true'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push the images
+        if: steps.v.outputs.go == 'true'
         run: |
-          OWNER="${GITHUB_REPOSITORY_OWNER,,}"; TAG="$GITHUB_REF_NAME"
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"; TAG="${{ steps.v.outputs.tag }}"
           build() {  # name, dockerfile, context
             docker build -t "ghcr.io/$OWNER/$1:$TAG" -t "ghcr.io/$OWNER/$1:latest" -f "$2" "$3"
             docker push "ghcr.io/$OWNER/$1:$TAG"; docker push "ghcr.io/$OWNER/$1:latest"
@@ -34,8 +52,10 @@ jobs:
           build shikumi-screens sandbox/screens/Dockerfile sandbox/screens
           build shikumi-android sandbox/android/Dockerfile sandbox/android     # for verification workers (docs/workers.md)
       - name: Create the release
+        if: steps.v.outputs.go == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.v.outputs.tag }}
         run: |
           mkdir dist
           cp docker-compose.yml config.example.toml VERSION scripts/setup.sh scripts/update.sh scripts/install.sh deploy/update-native.sh dist/
