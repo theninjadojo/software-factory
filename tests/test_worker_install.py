@@ -122,7 +122,7 @@ class Release:
         return d.as_uri()
 
 
-class Install(Server):
+class InstallBase(Server):
     ENV = {"SKIP_SERVICE": "1", "SKIP_IMAGE": "1", "SETTLE_SECONDS": "0"}
 
     def install(self, base: str, **env):
@@ -134,6 +134,8 @@ class Install(Server):
         self.rel = Release(self.tmp)
         self.inst = self.tmp / "inst"
 
+
+class Install(InstallBase):
     def test_install_creates_a_working_worker(self):
         code, out = self.install(self.rel.make("v0.2.0"))
         self.assertEqual(code, 0, out)
@@ -332,3 +334,62 @@ class ReleaseWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IosSetup(InstallBase):
+    """setup-worker.sh with the ios recipe, using a stub tart."""
+    def stub_tart(self, have_image=False):
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir(exist_ok=True)
+        self.log = self.tmp / "tart.log"
+        t = self.bin / "tart"
+        t.write_text(f'#!/bin/sh\necho "$@" >> "{self.log}"\n[ "$1" = list ] && {{ echo "Source Name Disk Size State"; {"echo local shikumi-ios 50 50 stopped;" if have_image else ""} }}\nexit 0\n')
+        t.chmod(0o755)
+        return {"PATH": f"{self.bin}:{os.environ['PATH']}", "SKIP_IMAGE": ""}
+
+    IOS = {"WORKER_RECIPES": "ios", "WORKER_IOS_SCHEME": "App", "WORKER_IOS_PROJECT": "App.xcodeproj"}
+
+    def test_ios_recipe_is_written_with_its_arguments(self):
+        env = {**self.stub_tart(), **self.IOS}
+        code, out = self.install(self.rel.make("v0.2.0"), **env)
+        self.assertEqual(code, 0, out)
+        cmd = W.load_config(str(self.inst / "worker.toml")).recipes["ios-test"].command
+        self.assertEqual(cmd, [str(self.inst / "worker/recipes/ios-test.sh"), "--scheme", "App", "--project", "App.xcodeproj",
+                               "--destination", "platform=iOS Simulator,name=iPhone 15"])
+
+    def test_workspace_and_destination(self):
+        env = {**self.stub_tart(), **self.IOS, "WORKER_IOS_PROJECT": "", "WORKER_IOS_WORKSPACE": "App.xcworkspace", "WORKER_IOS_DESTINATION": "platform=iOS Simulator,name=iPhone 15 Pro"}
+        self.assertEqual(self.install(self.rel.make("v0.2.0"), **env)[0], 0)
+        cmd = W.load_config(str(self.inst / "worker.toml")).recipes["ios-test"].command
+        self.assertEqual(cmd[1:], ["--scheme", "App", "--workspace", "App.xcworkspace", "--destination", "platform=iOS Simulator,name=iPhone 15 Pro"])
+
+    def test_the_golden_image_is_never_downloaded_unless_asked(self):
+        base = self.rel.make("v0.2.0")
+        code, out = self.install(base, **{**self.stub_tart(), **self.IOS})
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("clone", self.log.read_text())
+        self.assertIn("No VM named shikumi-ios yet", out)
+        shutil.rmtree(self.inst)
+        self.log.unlink()
+        self.install(base, **{**self.stub_tart(), **self.IOS, "WORKER_IOS_PULL": "1"})
+        self.assertIn("clone ghcr.io/cirruslabs/macos-sonoma-xcode:latest shikumi-ios", self.log.read_text())
+        shutil.rmtree(self.inst)
+        self.log.unlink()
+        code, out = self.install(base, **{**self.stub_tart(have_image=True), **self.IOS, "WORKER_IOS_PULL": "1"})
+        self.assertNotIn("clone", self.log.read_text())                       # already there: left alone
+        self.assertIn("keeping it", out)
+
+    def test_ios_input_is_checked_before_anything_is_written(self):
+        base = self.rel.make("v0.2.0")
+        for extra in ({"WORKER_IOS_SCHEME": ""}, {"WORKER_IOS_SCHEME": "A b"}, {"WORKER_IOS_SCHEME": "A;rm"}, {"WORKER_IOS_PROJECT": "", "WORKER_IOS_WORKSPACE": ""},
+                      {"WORKER_IOS_WORKSPACE": "B.xcworkspace"}, {"WORKER_IOS_PROJECT": "../A.xcodeproj"}, {"WORKER_IOS_PROJECT": "/abs/A.xcodeproj"},
+                      {"WORKER_IOS_DESTINATION": "x'; rm -rf /"}, {"WORKER_IOS_DESTINATION": "$(id)"}):
+            shutil.rmtree(self.inst, ignore_errors=True)
+            code, out = self.install(base, **{**self.stub_tart(), **self.IOS, **extra})
+            self.assertEqual(code, 1, extra)
+            self.assertFalse((self.inst / "worker.toml").exists(), extra)
+
+    def test_ios_without_tart_is_refused(self):
+        code, out = self.install(self.rel.make("v0.2.0"), **self.IOS)
+        self.assertEqual(code, 1)
+        self.assertIn("needs Tart", out)
