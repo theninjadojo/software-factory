@@ -39,5 +39,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir dist
-          cp docker-compose.yml config.example.toml VERSION .env.example scripts/setup.sh scripts/update.sh scripts/install.sh dist/
-          gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "Shikumi $GITHUB_REF_NAME"
+          cp docker-compose.yml config.example.toml VERSION .env.example scripts/setup.sh scripts/update.sh scripts/install.sh deploy/update-native.sh dist/
+          python3 scripts/publish-release.py dist
