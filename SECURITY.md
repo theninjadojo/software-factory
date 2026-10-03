@@ -51,7 +51,7 @@ anything that matters.
   loopback or behind a VPN/TLS proxy, with a strong password.
 - **The UI can start work.** Its Tickets page applies labels as the factory's GitHub account, which the write-access check accepts, so a
   signed-in UI admin can trigger builds exactly as if they had applied the label on GitHub. The UI therefore also holds the GitHub token.
-- **A worker runs agent-written code on a networked machine.** Unlike the sandbox, a recipe can reach the network and anything its
+- **A worker runs agent-written code on a networked machine.** (The Android recipe confines it to a throwaway container; the web recipe does not.) Unlike the sandbox, a recipe can reach the network and anything its
   account can read. Use a dedicated unprivileged account or a throwaway VM, keep signing identities and other credentials off it, and
   give it only a read-only token for the repos it verifies. See docs/workers.md.
 - **Harness commands are shell commands you configure**, run inside the sandbox. They come from config, never from ticket text,

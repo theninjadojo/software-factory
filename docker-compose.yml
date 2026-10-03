@@ -87,6 +87,16 @@ services:
     profiles: ["build"]
     entrypoint: ["true"]
 
+  android-image:   # build-only, for verification workers on a Linux box: `docker compose --profile android build` (needs CMDLINE_TOOLS_SHA256, see sandbox/android/Dockerfile)
+    build:
+      context: ./sandbox/android
+      args:
+        CMDLINE_TOOLS_SHA256: ${CMDLINE_TOOLS_SHA256:-}      # required to build: the Dockerfile fails without it
+        WITH_EMULATOR: ${ANDROID_WITH_EMULATOR:-0}
+    image: factory-android:latest
+    profiles: ["android"]
+    entrypoint: ["true"]
+
   sandbox-image-codex:   # EXPERIMENTAL: `docker compose --profile codex build` produces factory-agent-codex:latest
     build: {context: ./sandbox, dockerfile: codex/Dockerfile}
     image: localhost/factory-agent-codex:latest
