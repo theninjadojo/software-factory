@@ -1,11 +1,11 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>]"""
 import os
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
-from . import pause, screens
+from . import pause, screens, version
 from .config import load
 from .github import GitHub
 
@@ -122,6 +122,9 @@ def main():
     state = Path(cfg.db_path).parent
     if cmd == "screens" and sys.argv[2:3] == ["baseline"] and len(sys.argv) == 5:
         sys.exit(screens_baseline(cfg, sys.argv[3], Path(sys.argv[4])))
+    if cmd == "version":
+        print(version.current())
+        return
     if cmd == "doctor":
         token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else None
         results = doctor(cfg, GitHub(token) if token else None)
@@ -144,7 +147,7 @@ def main():
         (state / "pause_until").unlink(missing_ok=True)
         print("resumed")
     else:
-        print("mode:", "dry-run" if cfg.dry_run else "LIVE", "| paused:", pause.paused(state) or "no")
+        print("version:", version.current(), "| mode:", "dry-run" if cfg.dry_run else "LIVE", "| paused:", pause.paused(state) or "no")
         c = sqlite3.connect(cfg.db_path)
         for repo, issue, outcome, detail, ts in c.execute(
             "select repo,issue,outcome,substr(detail,1,110),datetime(decided_at,'unixepoch','localtime') "

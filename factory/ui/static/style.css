@@ -268,3 +268,4 @@ a.button { display:inline-block; margin-top:.4rem; padding:.35rem .9rem; min-hei
 table.tickets td:first-child { overflow-wrap:anywhere; min-width:0; max-width:22rem; }
 @media (max-width:1100px) { table.tickets td.actions { white-space:normal; } table.tickets td.actions form { display:inline-block; margin:0 .25rem .3rem 0; } }
 .nd-row .nd-main, .nd-row .nd-t, .nd-row .nd-top > *, .nd-row .nd-low > *, .nd-grid > *, .nd-q-text, .nd-opt { min-width:0; overflow-wrap:anywhere; }
+.ver { margin-top:2rem; }

@@ -7,6 +7,7 @@ import logging
 import os
 import sqlite3
 import sys
+import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import db as dbm
 from .. import designfiles
-from .. import pause
+from .. import pause, updates, version
 from .. import questions as Q
 from ..config import load
 from . import admin, floor, views
@@ -46,6 +47,21 @@ class App:
 
     def cfg(self):
         return load(self.config_path)
+
+    def refresh_update_notice(self) -> None:
+        """Set the banner from the cached release check; a stale cache is refreshed in the background, never on the request."""
+        try:
+            c, have = self.cfg(), version.current()
+            if not c.updates.check or have == "dev":
+                views.UPDATE.update(tag="", url="")
+                return
+            state = self.state_dir()
+            if updates.due(state):
+                threading.Thread(target=updates.refresh, args=(state, c.updates.repo), daemon=True).start()
+            got = updates.available(state, have) or {}
+            views.UPDATE.update(tag=got.get("tag", ""), url=got.get("url", ""))
+        except Exception:
+            log.exception("update notice failed")
 
     def state_dir(self) -> Path:
         return Path(self.cfg().db_path).parent
@@ -225,6 +241,7 @@ class Handler(BaseHTTPRequestHandler):
         return views.doc_page(repo, n, stage, dbm.doc_stages(db, repo, n), doc, text, source, notice, "/needs")
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
+        self.app.refresh_update_notice()
         cached = L.needs_cached()                              # the nav count: never a GitHub call, only what the tray already read
         badges = {"/needs": len(cached)} if cached else None
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))

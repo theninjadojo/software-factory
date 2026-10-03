@@ -69,8 +69,13 @@ if [ -s "$HOME_DIR/secrets/claude.env" ]; then echo "claude.env exists: keeping 
     put_secret claude.env "CLAUDE_CODE_OAUTH_TOKEN=$K"; fi; fi
 
 if [ -z "${SKIP_BUILD:-}" ]; then
-  say "Building images (orchestrator, agent sandbox, design preview renderer, screen checker). This takes a few minutes."
-  docker compose --profile build build
+  if [ -f Dockerfile ]; then
+    say "Building images (orchestrator, agent sandbox, design preview renderer, screen checker). This takes a few minutes."
+    docker compose --profile build build
+  else
+    say "Fetching the release images"
+    ./scripts/update.sh --images-only
+  fi
 fi
 
 say "UI password"

@@ -92,7 +92,15 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 - Optional: a **Telegram bot** (BotFather) and your numeric Telegram id; an **OpenRouter key** for Jev.
 - A container engine: **Podman** (recommended) or **Docker**.
 
-### Fastest: one script (Docker)
+### Install from a release (no git, no build)
+
+```bash
+curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install.sh | bash
+```
+
+Then update any time with `./scripts/update.sh` (rolls back if the new version does not start). See [docs/releasing.md](docs/releasing.md).
+
+### Or from source: one script (Docker)
 
 ```bash
 git clone <this repo> && cd software-factory
