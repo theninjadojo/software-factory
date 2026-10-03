@@ -8,7 +8,7 @@ RUN useradd -m -u 1000 factory
 WORKDIR /app
 COPY factory ./factory
 COPY tests ./tests
-COPY config.example.toml ./
+COPY config.example.toml VERSION ./
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
 USER 1000:1000
 CMD ["python3", "-m", "factory.main", "--config", "/etc/factory/config.toml"]

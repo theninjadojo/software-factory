@@ -1,5 +1,5 @@
 [Unit]
-Description=Software factory admin UI
+Description=Shikumi admin UI
 After=factory.service
 
 [Service]

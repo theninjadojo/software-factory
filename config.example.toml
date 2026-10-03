@@ -1,4 +1,4 @@
-# software-factory example configuration. Copy to config.toml and edit. Paths assume the native install
+# Shikumi example configuration. Copy to config.toml and edit. Paths assume the native install
 # under /srv/factory; the docker-compose stack maps the same paths (see README).
 
 [general]
@@ -142,6 +142,11 @@ harness = "claude-code"
 [mockups]
 mode = "block"
 bypass_label = "factory:skip-mockup"
+
+# Tell the UI when a newer release exists (one cached read of the public GitHub releases API every few hours).
+# [updates]
+# check = true
+# repo = "theninjadojo/software-factory"
 
 # Other models through OpenCode (experimental; build the image with `docker compose --profile opencode build`).
 # Enable on the Harnesses page, paste the key there, then route a tier to it. Ticket text never chooses these.

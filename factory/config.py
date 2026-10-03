@@ -121,6 +121,13 @@ class MockupsCfg:
     approve_label: str = "factory:design-approved"
 
 
+@dataclass(frozen=True)
+class UpdatesCfg:
+    """Tell the person in the UI when a newer release exists (one cached read of GitHub's public releases API, every few hours)."""
+    check: bool = True
+    repo: str = "theninjadojo/software-factory"
+
+
 PROMPT_MAX = 4000
 
 
@@ -281,6 +288,7 @@ class Config:
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
+    updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
@@ -585,6 +593,9 @@ def parse(raw: dict) -> Config:
     mockups = MockupsCfg(**raw.get("mockups", {}))
     if mockups.mode not in ("block", "warn", "off") or not mockups.bypass_label.strip() or not mockups.approve_label.strip():
         raise ValueError("mockups.mode must be block, warn or off, and mockups.bypass_label and mockups.approve_label must not be empty")
+    updates = UpdatesCfg(**raw.get("updates", {}))
+    if not isinstance(updates.repo, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", updates.repo):
+        raise ValueError("updates.repo must look like owner/name")
     pm = PmCfg(**raw.get("pm", {}))
     if pm.effort not in ("low", "medium", "high"):
         raise ValueError("pm.effort must be low, medium or high")
@@ -624,6 +635,7 @@ def parse(raw: dict) -> Config:
         conflicts=conflicts,
         review=review,
         mockups=mockups,
+        updates=updates,
         pm=pm,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         prompts=_prompts(raw.get("prompts", {})),

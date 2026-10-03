@@ -184,7 +184,7 @@ def telegram_test(h, form, csrf: str) -> None:
     token = I.read_secret(cfg, "telegram")
     if not token or not cfg.telegram_chat_id:
         return _telegram(h, csrf, "Set the bot token and your chat id first.", "bad", 400)
-    r = I.telegram_send(token, cfg.telegram_chat_id, "Test message from the software-factory UI. Telegram is set up correctly.")
+    r = I.telegram_send(token, cfg.telegram_chat_id, "Test message from the Shikumi UI. Telegram is set up correctly.")
     _telegram(h, csrf, r["message"], "ok" if r["ok"] else "bad")
 
 

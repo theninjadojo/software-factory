@@ -44,7 +44,7 @@ class NeedsPerson(Exception):
 
 
 CONFLICT_MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
-IDENT = ["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
+IDENT = ["-c", "user.name=shikumi", "-c", "user.email=software-factory@users.noreply.github.com"]
 
 
 API_ERROR = re.compile(r"API Error: 5\d\d|overloaded_error|\bapi_error\b|internal server error|service unavailable", re.I)
@@ -339,7 +339,7 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
             notes.append(f"{short}: design files were not published ({str(e)[:160]})")
             continue
         branch = f"{BRANCH_PREFIX}design-{num}-{stamp}"
-        ident = ["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
+        ident = ["-c", "user.name=shikumi", "-c", "user.email=software-factory@users.noreply.github.com"]
         previews, pngs = {}, {}                            # file path -> preview path, for the canvases that rendered; preview path -> bytes
         if rn.render_previews:
             by_stem = {x.rpartition("/")[2][: -len(".dc.html")]: x for x in paths}
@@ -574,7 +574,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                     res.screen_failure = {"text": rep.text(), "diffs": rep.diffs, "built": rep.shots}
                 return res
         if fix_branch:                                  # a fix round adds a commit to the existing PR branch(es)
-            ident =["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
+            ident =["-c", "user.name=shikumi", "-c", "user.email=software-factory@users.noreply.github.com"]
             stray = [r for r in patches if r not in on_branch]
             if stray:
                 return RunResult("rejected", f"fix touched repos with no PR on {fix_branch}: {', '.join(stray)}")
@@ -585,7 +585,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 pushed.append(r)
             return RunResult("pr", f"fix pushed to {len(patches)} repo(s)")
         branch = f"{BRANCH_PREFIX}issue-{num}-{stamp}"
-        ident = ["-c", "user.name=software-factory", "-c", "user.email=software-factory@users.noreply.github.com"]
+        ident = ["-c", "user.name=shikumi", "-c", "user.email=software-factory@users.noreply.github.com"]
         urls: list[str] = []
         for r in patches:
             base = d / "base" / names[r]

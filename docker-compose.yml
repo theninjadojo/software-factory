@@ -1,6 +1,6 @@
-# software-factory: orchestrator + egress proxy, with sandboxes started on the host's container engine.
+# Shikumi: orchestrator + egress proxy, with sandboxes started on the host's container engine.
 #
-#   mkdir config && cp config.example.toml config/config.toml   # then edit it (set engine = "docker", image = "factory-agent:latest")
+#   mkdir config && cp config.example.toml config/config.toml   # then edit it (set engine = "docker"; the image names already match)
 #   cp .env.example .env                      # then edit it
 #   docker compose --profile build build      # builds the orchestrator image AND the agent sandbox image
 #   docker compose up -d
@@ -11,7 +11,7 @@
 name: software-factory
 
 x-common: &common
-  image: software-factory:latest
+  image: ${SHIKUMI_IMAGE:-software-factory:latest}   # a release install sets SHIKUMI_IMAGE in .env (scripts/update.sh)
   user: "1000:1000"
   read_only: true
   cap_drop: [ALL]
@@ -60,36 +60,36 @@ services:
 
   sandbox-image:  # build-only: `docker compose --profile build build` produces factory-agent:latest
     build: ./sandbox
-    image: factory-agent:latest
+    image: localhost/factory-agent:latest
     profiles: ["build"]
     entrypoint: ["true"]
 
   render-image:  # build-only: `docker compose --profile build build` also produces factory-render:latest (design previews)
     build: {context: ./sandbox/render}
-    image: factory-render:latest
+    image: localhost/factory-render:latest
     profiles: ["build"]
     entrypoint: ["true"]
 
   screens-image:  # build-only: `docker compose --profile build build` also produces factory-screens:latest (screen verification)
     build: {context: ./sandbox/screens}
-    image: factory-screens:latest
+    image: localhost/factory-screens:latest
     profiles: ["build"]
     entrypoint: ["true"]
 
   sandbox-image-codex:   # EXPERIMENTAL: `docker compose --profile codex build` produces factory-agent-codex:latest
     build: {context: ./sandbox, dockerfile: codex/Dockerfile}
-    image: factory-agent-codex:latest
+    image: localhost/factory-agent-codex:latest
     profiles: ["codex"]
     entrypoint: ["true"]
 
   sandbox-image-gemini:  # EXPERIMENTAL: `docker compose --profile gemini build` produces factory-agent-gemini:latest
     build: {context: ./sandbox, dockerfile: gemini/Dockerfile}
-    image: factory-agent-gemini:latest
+    image: localhost/factory-agent-gemini:latest
     profiles: ["gemini"]
     entrypoint: ["true"]
 
   sandbox-image-opencode:  # EXPERIMENTAL: `docker compose --profile opencode build` produces factory-agent-opencode:latest
     build: {context: ./sandbox, dockerfile: opencode/Dockerfile}
-    image: factory-agent-opencode:latest
+    image: localhost/factory-agent-opencode:latest
     profiles: ["opencode"]
     entrypoint: ["true"]

@@ -6,6 +6,7 @@ import time
 from urllib.parse import urlencode
 
 from .. import designfiles
+from .. import version
 from ..sanitize import md_render
 
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
@@ -81,6 +82,17 @@ def csrf_field(csrf: str) -> str:
     return f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
 
 
+UPDATE = {"tag": "", "url": ""}      # set by the server from the cached release check; the tag and url are validated there
+
+
+def update_banner() -> str:
+    tag, url = UPDATE.get("tag", ""), UPDATE.get("url", "")
+    if not tag or not url.startswith("https://github.com/") or not re.fullmatch(r"v?\d{1,4}\.\d{1,4}\.\d{1,4}", tag):
+        return ""
+    return (f'<div class="flash ok" role="status">Shikumi {esc(tag)} is available (you have {esc(version.current())}). '
+            f'<a href="{esc(url)}" rel="noopener noreferrer" target="_blank">Release notes</a>. To update, run <code>./scripts/update.sh</code> on the host.</div>')
+
+
 def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "") -> str:
     items = list(nav or NAV)
     count = lambda p: f' <span class="navbadge">{int(badges[p])}</span>' if badges and badges.get(p) else ""
@@ -94,18 +106,18 @@ def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | N
         body = f'<div class="with-side">{side}<div class="side-body">{body}</div></div>'
     note = f'<div class="flash {esc(flash_kind)}" role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
-            f'<meta name="color-scheme" content="dark"><title>{esc(title)} · software-factory</title>{ICON}<link rel="stylesheet" href="/static/style.css"></head><body>'
-            f'<header><strong class="brand"><i></i>software-factory</strong>{nav_html}'
+            f'<meta name="color-scheme" content="dark"><title>{esc(title)} · Shikumi</title>{ICON}<link rel="stylesheet" href="/static/style.css"></head><body>'
+            f'<header><strong class="brand"><i></i>Shikumi <span class="muted">仕組み</span></strong>{nav_html}'
             f'<form method="post" action="/logout" class="signout">{csrf_field(csrf)}<button class="link">Sign out</button></form></header>'
-            f'<main{" class=wide" if wide else ""}>{note}<h1>{esc(title)}</h1>{body}</main><script src="/static/app.js" defer></script></body></html>')
+            f'<main{" class=wide" if wide else ""}>{update_banner()}{note}<h1>{esc(title)}</h1>{body}<p class="muted ver">Shikumi {esc(version.current())}</p></main><script src="/static/app.js" defer></script></body></html>')
 
 
 def login_page(error: str | None = None, setup_hint: bool = False) -> str:
     err = f'<div class="flash bad">{esc(error)}</div>' if error else ""
     hint = '<p class="muted">No password is set yet. Run <code>python3 -m factory.ui --set-password</code> on the host.</p>' if setup_hint else ""
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
-            f'<title>Sign in · software-factory</title>{ICON}<link rel="stylesheet" href="/static/style.css"></head><body class="login"><main>'
-            f'<h1>software-factory</h1>{err}{hint}<form method="post" action="/login"><label>Password'
+            f'<title>Sign in · Shikumi</title>{ICON}<link rel="stylesheet" href="/static/style.css"></head><body class="login"><main>'
+            f'<h1>Shikumi <span class="muted">仕組み</span></h1>{err}{hint}<form method="post" action="/login"><label>Password'
             '<input type="password" name="password" autocomplete="current-password" autofocus required></label>'
             '<button>Sign in</button></form></main></body></html>')
 

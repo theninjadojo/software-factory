@@ -82,7 +82,7 @@ def _scrub(text: str, *secrets: str) -> str:
 
 
 def _http(url: str, token: str | None = None, data: dict | None = None, timeout: int = 15, bearer: bool = True) -> tuple[int, dict]:
-    headers = {"User-Agent": "software-factory-ui", "Accept": "application/json"}
+    headers = {"User-Agent": "shikumi-ui", "Accept": "application/json"}
     if token and bearer:
         headers["Authorization"] = f"Bearer {token}"
     if data is not None:

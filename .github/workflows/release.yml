@@ -1,0 +1,43 @@
+name: release
+# Push a tag like v0.2.0 (it must match the VERSION file). Runs the tests, publishes the images to GitHub's container registry and
+# creates a GitHub Release with the files an install needs. See docs/releasing.md.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  packages: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag must match VERSION
+        run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m unittest discover -s tests
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the images
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"; TAG="$GITHUB_REF_NAME"
+          build() {  # name, dockerfile, context
+            docker build -t "ghcr.io/$OWNER/$1:$TAG" -t "ghcr.io/$OWNER/$1:latest" -f "$2" "$3"
+            docker push "ghcr.io/$OWNER/$1:$TAG"; docker push "ghcr.io/$OWNER/$1:latest"
+          }
+          build shikumi Dockerfile .
+          build shikumi-agent sandbox/Dockerfile sandbox
+          build shikumi-render sandbox/render/Dockerfile sandbox/render
+          build shikumi-screens sandbox/screens/Dockerfile sandbox/screens
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir dist
+          cp docker-compose.yml config.example.toml VERSION .env.example scripts/setup.sh scripts/update.sh scripts/install.sh dist/
+          gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "Shikumi $GITHUB_REF_NAME"
