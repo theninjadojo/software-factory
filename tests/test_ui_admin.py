@@ -596,3 +596,26 @@ class Labels(AdminCase):
             self.assertNotIn("<script>", html.replace('<script src="/static/app.js" defer></script>', ""))
             self.assertIn("&lt;script&gt;", html)
             self.assertNotIn(TOKEN, html)
+
+
+class SettingsLayout(UiCase):
+    def test_nav_has_seven_items_and_moved_pages_render_in_settings(self):
+        from factory.ui import views
+        self.assertEqual([n for _, n in views.NAV], ["Factory", "Needs you", "Tickets", "Runs", "PRs & CI", "Events", "Settings"])
+        cookie, _ = self.session()
+        for path, side in (("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram"), ("/settings?section=labels", "Labels")):
+            s, _, html = self.req("GET", path, cookie=cookie)
+            self.assertEqual(s, 200, path)
+            nav = html.split('<nav aria-label="Main">')[1].split("</nav>")[0]
+            self.assertIn('<a href="/settings" class="active ">Settings</a>', nav, path)
+            self.assertNotIn('href="/harnesses"', nav)
+            self.assertIn(f'<a href="{path}" class=active aria-current=page>{side}</a>', html, path)
+            for item in ("General", "Routing", "Role agents", "Projects", "Harnesses", "Credentials", "Telegram", "Labels"):
+                self.assertIn(f">{item}</a>", html)
+
+    def test_general_is_rows_with_one_save_button(self):
+        cookie, _ = self.session()
+        _, _, html = self.req("GET", "/settings", cookie=cookie)
+        self.assertIn("Save changes", html)
+        self.assertIn("Changes apply the next time the factory is idle.", html)
+        self.assertEqual(html.count('class="srow"'), 6)

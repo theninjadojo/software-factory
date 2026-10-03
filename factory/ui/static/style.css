@@ -198,6 +198,17 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .doc-tabs a, .doc-tabs span, .nd-doc a { display: inline-block; min-height: 44px; line-height: 44px; }
 .doc-tabs a[aria-current] { font-weight: bold; }
 .nd-doc { margin: 0 0 .5rem; }
+.with-side { display:flex; gap:1.5rem; align-items:flex-start; } .side-body { flex:1; min-width:0; }
+.side { display:flex; flex-direction:column; gap:.2rem; flex:0 0 11rem; } .side a { padding:.4rem .7rem; border-radius:6px; color:var(--muted); text-decoration:none; }
+.side a:hover, .side a.active { background:var(--bg); color:var(--text); } .side a.active { box-shadow:inset 2px 0 0 var(--accent); }
+.side-h { margin:.8rem .7rem .2rem; font-size:.75rem; text-transform:uppercase; color:var(--muted); }
+.srow { display:flex; flex-wrap:wrap; gap:.5rem 1.5rem; justify-content:space-between; align-items:center; padding:.7rem 0; border-bottom:1px solid var(--line); }
+.srow .what { flex:1 1 16rem; } .srow .ctl { flex:0 1 20rem; } .srow .ctl input:not([type=checkbox]), .srow .ctl select, .srow .ctl textarea { width:100%; }
+.settings.rows button { margin-top:1rem; }
+@media (max-width:700px) { .with-side { flex-direction:column; gap:.5rem; } .side { flex-direction:row; flex-wrap:wrap; flex-basis:auto; gap:.4rem; } .side-h { display:none; }
+  .side a { display:inline-flex; align-items:center; min-height:44px; padding:0 .9rem; border:1px solid var(--line2); border-radius:22px; }
+  .side a.active { box-shadow:none; border-color:var(--accent); color:var(--text); background:#2a2112; }
+  .srow .ctl input[type=checkbox] { width:24px; height:24px; } }
 
 /* ---- home: summary bar, calmer floor, two columns ---- */
 .fl-title { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; margin:0 0 .8rem; } .fl-title p { margin:0; } .fl-title form { margin:0; }
@@ -238,3 +249,4 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .prcards { list-style:none; padding:0; margin:0; display:grid; gap:.8rem; } .prcard { background:var(--panel); border:1px solid var(--line); border-left:5px solid var(--line); border-radius:10px; padding:.7rem 1rem; }
 .prcard.good { border-left-color:var(--good); } .prcard.warn { border-left-color:var(--warn); } .prcard.bad { border-left-color:var(--bad); } .prcard h3 { margin:0 0 .2rem; } .prcard p { margin:.2rem 0; }
 a.button { display:inline-block; margin-top:.4rem; padding:.35rem .9rem; min-height:32px; border:1px solid var(--line); border-radius:8px; text-decoration:none; }
+.check.evt input { flex:none; } .check.evt strong { flex:none; white-space:nowrap; overflow-wrap:normal; }
