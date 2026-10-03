@@ -610,6 +610,12 @@ def journey(db, repo: str, issue: int, now: float | None = None) -> dict:
                           "tokens": run_tokens(x), "message": ""})
         elif x["kind"] == "decision":
             person = x["message"].startswith(("needs a person", "human:")) and not x["message"].endswith("[dry-run]")
+            prev = steps[-1] if steps else None
+            if not person and prev and prev["kind"] == "decision" and prev["message"] == x["message"]:
+                # the same decision again (a blocked ticket is re-checked every poll): one step that says how often
+                prev["repeat"] = prev.get("repeat", 1) + 1
+                prev["finished"] = x["ts"]
+                continue
             steps.append({"kind": "person" if person else "decision",
                           "station": "needs" if person else "trust" if x["message"].startswith("ignored") else "classify",
                           "state": "done", "started": x["ts"], "finished": x["ts"], "seconds": None, "message": x["message"]})

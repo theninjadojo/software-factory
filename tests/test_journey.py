@@ -191,6 +191,28 @@ class Journey(unittest.TestCase):
         self.run_(100, "build")                                                     # a person said build
         self.assertEqual(self.route()[1], [(1, "needs", "done"), (2, "build", "done")])
 
+    def test_the_same_decision_again_and_again_is_one_step(self):
+        for k in range(6):                                                          # a blocked ticket, re-checked every poll
+            self.event(k * 3600, "decision", "waiting: blocked by #921")
+        self.event(7 * 3600, "decision", "waiting: blocked by #921, #975")          # something changed: a new step
+        self.event(8 * 3600, "decision", "waiting: blocked by #921, #975")
+        j, steps = self.route(now=9 * 3600)
+        self.assertEqual(len(steps), 2)
+        self.assertEqual([s.get("repeat", 1) for s in j["steps"]], [6, 2])
+        self.assertEqual((j["steps"][0]["started"], j["steps"][0]["finished"]), (T0, T0 + 5 * 3600))
+        from factory.ui import board
+        html = board.steps_html(j, "o/r", 4)
+        self.assertIn("6 times over 5h 00m", html)
+        self.assertEqual(html.count("<tr"), 3)                                      # the head and two steps, not eight
+
+    def test_the_activity_list_folds_repeats(self):
+        from factory.ui import board
+        events = [{"ts": T0 + 9000 - k * 1000, "kind": "decision", "message": "waiting: blocked by #921"} for k in range(5)]
+        events.insert(0, {"ts": T0 + 9500, "kind": "decision", "message": "Stage designer started with sonnet (medium)"})
+        html = board.activity_html(events, T0 + 10_000)
+        self.assertEqual(html.count("<li>"), 2)
+        self.assertIn("5 times since", html)
+
     def test_failed_and_requeued_runs(self):
         self.run_(0, "build", status="rate-limited")
         self.assertEqual(self.route()[0]["status"], "queued")

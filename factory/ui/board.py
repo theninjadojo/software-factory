@@ -217,7 +217,7 @@ def ticket_extras(db, repo: str, issue: int, j: dict) -> tuple[list, list, list,
     files = [f for fs in dbm.design_files_for_runs(db, design_runs).values() for f in fs] if design_runs else []
     try:
         events = [dict(zip(("ts", "kind", "message"), x)) for x in
-                  db.execute("SELECT ts, kind, message FROM events WHERE repo=? AND issue=? ORDER BY id DESC LIMIT 8", (repo, issue))]
+                  db.execute("SELECT ts, kind, message FROM events WHERE repo=? AND issue=? ORDER BY id DESC LIMIT 60", (repo, issue))]
     except Exception:
         events = []
     runs = [s["run_id"] for s in j["steps"] if s["kind"] == "run"]
@@ -391,6 +391,8 @@ def steps_html(j: dict, repo: str, issue: int, docs=()) -> str:
     rows = ""
     for s in steps:
         label, note = _step_label(s)
+        if s.get("repeat", 1) > 1:
+            note += f' · {int(s["repeat"])} times over {secs(s["finished"] - s["started"])}'
         tone = _STEP.get(s["state"], "done")
         agent = f'{s["model"]} · {s["effort"]}' if s["kind"] == "run" and s.get("model") else "—"
         run = f'<a href="/runs/{int(s["run_id"])}">#{int(s["run_id"])}</a>' if s["kind"] == "run" else "—"
@@ -439,7 +441,15 @@ def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str) -
 def activity_html(events: list[dict], now: float) -> str:
     if not events:
         return ""
-    items = "".join(f'<li><span class="mono">{esc(ago(e["ts"], now))}</span> · {esc(plain(e.get("message"))[:160])}</li>' for e in events[:8])
+    groups: list[list[dict]] = []
+    for e in events:                                   # newest first; the same message again and again is one line
+        if groups and plain(groups[-1][0].get("message")) == plain(e.get("message")):
+            groups[-1].append(e)
+        else:
+            groups.append([e])
+    items = "".join(f'<li><span class="mono">{esc(ago(g[0]["ts"], now))}</span> · {esc(plain(g[0].get("message"))[:160])}'
+                    + (f' <span class="muted">· {len(g)} times since {esc(ago(g[-1]["ts"], now))}</span>' if len(g) > 1 else "") + "</li>"
+                    for g in groups[:8])
     return f'<section class="sd-activity" aria-labelledby="ev-h"><h3 id="ev-h">Activity</h3><ul>{items}</ul></section>'
 
 
