@@ -1,12 +1,15 @@
 """The Workers page: verification workers, the job queue and each job's log and screenshots. Read-only (the orchestrator's database is
 opened read-only). Everything a worker sent is untrusted text: it is escaped here, and screenshots are served only by the UI behind its login."""
+import socket
 import sqlite3
 import time
 from urllib.parse import urlencode
 
 from .. import jobs
 from ..verify import ONLINE_SECONDS
-from .views import badge, dur, esc, ago, ticket_link, ts
+from .views import badge, csrf_field, dur, esc, ago, ticket_link, ts
+
+INSTALL_URL = "https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh"
 
 JOB_BADGE = {"passed": "good", "queued": "warn", "claimed": "warn", "failed": "bad", "error": "bad", "cancelled": ""}
 
@@ -18,13 +21,52 @@ def _rows(db) -> tuple[list, list, bool]:
         return [], [], False                     # the orchestrator has not created the tables yet
 
 
-def workers_page(cfg, db, now: float | None = None) -> str:
+def api_up(listen: str) -> bool:
+    """Whether something accepts connections on the worker API address (a TCP connect, nothing is sent)."""
+    host, _, port = listen.rpartition(":")
+    try:
+        with socket.create_connection((host or "127.0.0.1", int(port)), timeout=1):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
+def install_command(listen: str, token: str, recipes: str = "web") -> str:
+    """The one-liner to run on the worker machine. The URL is the tunnel's local end when the API is loopback-only."""
+    port = listen.rpartition(":")[2]
+    return f'curl -fsSL {INSTALL_URL} | FACTORY_URL=http://127.0.0.1:{port} WORKER_TOKEN={token} WORKER_RECIPES="{recipes}" bash'
+
+
+def add_form(csrf: str) -> str:
+    return ('<h2>Add a worker</h2><form method="post" action="/workers/add" class="row">' + csrf_field(csrf) +
+            '<label>Name <input name="name" value="my-worker" pattern="[a-z0-9][a-z0-9-]{0,40}" required></label> '
+            '<label>Recipes <input name="recipes" value="web" pattern="[a-z ]{1,60}" title="web, android, ios"></label> '
+            '<button>Create token and show install command</button></form>')
+
+
+def created_page(cfg, name: str, token: str, recipes: str) -> str:
+    port = cfg.workers.listen.rpartition(":")[2]
+    up = api_up(cfg.workers.listen)
+    status = (badge("running", "good") + f' the worker API answers on <code>{esc(cfg.workers.listen)}</code>.' if up else
+              badge("not running", "bad") + f' nothing answers on <code>{esc(cfg.workers.listen)}</code>. Start the worker API service on this host '
+              '(<code>factory-workers.service</code>, or <code>docker compose up -d</code> with the <code>workers</code> profile).')
+    cmd = install_command(cfg.workers.listen, token, recipes)
+    return (f'<h2>Worker {esc(name)} created</h2><p><strong>Copy this now: the token is shown once.</strong></p>'
+            f'<p>Worker API: {status}</p>'
+            f'<p>1. On the worker machine, open a tunnel to this host (the API listens on loopback only):</p>'
+            f'<pre>ssh -N -L {esc(port)}:127.0.0.1:{esc(port)} &lt;user&gt;@&lt;this-host&gt;</pre>'
+            f'<p>2. On the worker machine, install and connect it:</p><pre>{esc(cmd)}</pre>'
+            f'<p class="muted">The worker appears in the list below within seconds of its first poll.</p>'
+            '<p><a href="/workers">← back to workers</a></p>')
+
+
+def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
     now = time.time() if now is None else now
     w = cfg.workers
     known, recent, ready = _rows(db)
     if not w.enabled:
         head = ('<p class="muted">Verification workers are off. A worker is a machine you own (a Mac, a networked Linux box) that builds and tests an agent\'s patch '
-                'before it is pushed. Turn it on with <code>[workers] enabled = true</code> in the config and see <code>docs/workers.md</code>.</p>')
+                'before it is pushed. <a href="/settings?section=workers">Turn them on in Settings</a> (see <code>docs/workers.md</code>).</p>')
     else:
         head = (f'<table class="meta"><tr><th>Mode</th><td>{badge(w.mode, "bad" if w.mode == "block" else "warn")} '
                 f'<span class="muted">{"a failing or missing check fails the run" if w.mode == "block" else "a failing check is noted on the PR, which is still opened"}</span></td></tr>'
@@ -45,8 +87,8 @@ def workers_page(cfg, db, now: float | None = None) -> str:
             online = ("<h2>Workers</h2><table class=stack><thead><tr><th>Worker</th><th>Platform</th><th>Recipes</th><th>Last seen</th><th>State</th></tr></thead>"
                       f"<tbody>{rows}</tbody></table>")
         else:
-            online = ('<h2>Workers</h2><p class="muted">No worker has connected yet. Create a token with <code>python3 -m factory.ctl workers add &lt;name&gt;</code>, '
-                      'then start <code>worker/worker.py</code> on the machine.</p>')
+            online = '<h2>Workers</h2><p class="muted">No worker has connected yet. Add one below.</p>'
+        online += add_form(csrf) + ("" if api_up(w.listen) else f'<p class="muted">{badge("not running", "bad")} the worker API is not answering on <code>{esc(w.listen)}</code>; start <code>factory-workers.service</code>.</p>')
     jobs_html = ""
     if recent:
         rows = "".join(

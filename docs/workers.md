@@ -70,6 +70,7 @@ The same way as the factory: a release one-liner, an environment-driven setup sc
    existing install, add `[workers]` and run `python3 -m factory.ctl workers add my-mac`). `setup.sh` writes `[workers]` and the checks, sets
    `COMPOSE_PROFILES=workers` in `.env` (so `docker compose up -d` and `scripts/update.sh` start and update the worker API like every other
    service), makes the token and prints it once. Native installs enable `deploy/systemd/factory-workers.service`; `scripts/deploy.sh` restarts it.
+   Or from the UI: Settings → Workers → enable, then Workers → **Add a worker**. It creates the token (shown once) and prints the install command for the worker machine.
 2. **Make the API reachable** from the worker: it listens on `127.0.0.1:8788`. Use `ssh -L 8788:127.0.0.1:8788 factory-host`, a VPN, or a TLS reverse
    proxy. Never expose it plainly: the token is the only credential.
 3. **Worker machine.** `curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh | bash`. This downloads

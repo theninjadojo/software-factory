@@ -138,20 +138,12 @@ def screens_baseline(cfg, repo: str, checkout: Path) -> int:
 
 def workers_add(cfg, name: str) -> int:
     """Create a token for a verification worker: appended to workers.tokens_file (mode 0600) and printed once. Never overwrites."""
-    from .config import WORKER_NAME
-    from .workerapi import read_tokens
-    if not WORKER_NAME.fullmatch(name):
-        print("a worker name is lowercase letters, digits and dashes (at most 41 characters)")
+    from .workerapi import add_token
+    try:
+        token = add_token(cfg.workers.tokens_file, name)
+    except ValueError as e:
+        print(e)
         return 1
-    path = Path(cfg.workers.tokens_file)
-    if name in read_tokens(str(path)):
-        print(f"a worker called {name} already exists; remove its line from {path} to replace it")
-        return 1
-    token = secrets.token_urlsafe(32)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "a") as f:
-        f.write(f"{name} {token}\n")
     print(f"Token for worker {name} (shown once; put it in the worker's token_file):\n{token}")
     return 0
 

@@ -1,5 +1,6 @@
 """Routes that show or change settings, credentials and Telegram. All POSTs arrive here already CSRF-checked."""
 import json
+import re
 from pathlib import Path
 
 from .. import db as dbm
@@ -220,10 +221,27 @@ def workers_get(h, q: dict, csrf: str) -> None:
             if body is None:
                 return _send_page(h, 404, "Workers", '<p class="muted">No such job.</p>', "/workers", csrf, section="workers")
             return _send_page(h, 200, f"Job #{int(q['id'])}", body, "/workers", csrf, section="workers")
-        _send_page(h, 200, "Workers", WK.workers_page(h.app.cfg(), db), "/workers", csrf, section="workers")
+        _send_page(h, 200, "Workers", WK.workers_page(h.app.cfg(), db, csrf=csrf), "/workers", csrf, section="workers")
     finally:
         if db is not None:
             db.close()
+
+
+def workers_add(h, form, csrf: str) -> None:
+    from ..workerapi import add_token
+    cfg = h.app.cfg()
+    if not cfg.workers.enabled:
+        return _send_page(h, 400, "Workers", '<p class="muted">Turn workers on in Settings first.</p>', "/workers", csrf, kind="bad", section="workers")
+    name, recipes = form.get("name", "").strip(), " ".join(form.get("recipes", "web").split()) or "web"
+    if not re.fullmatch(r"[a-z]+( [a-z]+)*", recipes):
+        return _send_page(h, 422, "Workers", "", "/workers", csrf, "Recipes are words like web, android, ios.", "bad", section="workers")
+    try:
+        token = add_token(cfg.workers.tokens_file, name)
+    except ValueError as e:
+        return _send_page(h, 422, "Workers", "", "/workers", csrf, str(e), "bad", section="workers")
+    except OSError as e:
+        return _send_page(h, 500, "Workers", "", "/workers", csrf, f"Could not write {cfg.workers.tokens_file}: {e.strerror}", "bad", section="workers")
+    _send_page(h, 200, "Worker created", WK.created_page(cfg, name, token, recipes), "/workers", csrf, section="workers")
 
 
 # ------------------------------------------------------------------ schedules
@@ -320,7 +338,7 @@ def schedules_delete(h, form, csrf: str) -> None:
 
 GET = {"/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get}
-POST = {"/mode/set": mode_set, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
+POST = {"/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
