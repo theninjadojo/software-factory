@@ -71,7 +71,10 @@ def _exec(rn: RunnerCfg, sc: ScreensCfg, mounts, args, run) -> str | None:
     try:
         res = run(_cmd(rn, sc, name, mounts, args), capture_output=True, text=True, timeout=sc.timeout_seconds, check=False)
     except subprocess.TimeoutExpired:
-        run([rn.engine, "rm", "-f", name], capture_output=True, check=False)
+        try:
+            run([rn.engine, "rm", "-f", name], capture_output=True, check=False)
+        except (OSError, subprocess.SubprocessError):
+            pass                                                # best effort: the verdict is already "unavailable"
         return f"timed out after {sc.timeout_seconds}s"
     except OSError:
         return f"could not start the container (is {rn.engine} installed?)"
