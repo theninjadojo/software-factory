@@ -9,7 +9,7 @@ from ..router import decide
 import time
 
 from .. import schedules as sched
-from . import forms, integrations as I, labels as L, schedules as SC, settings as S, views, workers as WK
+from . import forms, integrations as I, labels as L, review as RV, schedules as SC, settings as S, views, workers as WK
 from .views import esc
 
 FLASH = {
@@ -337,9 +337,10 @@ def schedules_delete(h, form, csrf: str) -> None:
 
 
 GET = {"/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
-       "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get}
+       "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/ticket/review": RV.review_get}
 POST = {"/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
-        "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace}
+        "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
+        "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send}

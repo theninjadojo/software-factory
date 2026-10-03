@@ -135,6 +135,17 @@ stage comment from GitHub when the stored text was cut short or is missing. It i
 shown as text, no images, links only to github.com) without the questions block. The ticket view (`/ticket`) and the run page link to it too.
 The repository must be configured and the document is read only from stored data, never from the request.
 
+**Reviewing the screens.** *Review the screens* (on the ticket, the design document and the images page) opens `/ticket/review?repo=&n=`:
+the latest design run's mockups and the latest run's screenshots, one at a time. Drag over an area to mark it, or click for a pin (on a
+phone, tap; the area can also be typed in percentages under *Set the area by numbers*), then write what should change and **Add note**.
+Notes are numbered and drawn on their screen; click one to highlight its area, or delete it while it is open. **Send N notes to the
+designer** queues a design run (the same approval as the stage's Run button; refused while the factory works on the ticket or when it is
+closed). Every design run takes the ticket's open notes, whether started here or not: the screens they are on are put in its task folder,
+it is told each area in the image's own pixels, and its document gets a *Review notes* section answering each note by number. Once the
+run has its document the notes are kept under *Sent earlier* and can no longer be deleted; a failed run leaves them open. A note can only
+name an image the ticket has, its text (up to 1000 characters, 30 open notes per ticket) reaches the agent as quoted data. Saving a note is a small write to the
+factory's database, like a queued approval.
+
 Everything is checked on the server like the Tickets page's answers: the repository must be configured, ticket numbers are validated,
 and each ticket's questions are re-read from GitHub, so a page that is out of date cannot record a stale answer.
 The page refreshes itself, but never while a popup is open, a field is focused, or an option is chosen.
