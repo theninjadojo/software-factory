@@ -80,7 +80,9 @@ max_wait_seconds = 3600
 repo = "your-org/shop-mobile"
 recipe = "ios-test"
 platform = "macos"        # a worker only claims a job whose platform it declares
+# required = false        # advisory: a failure is noted on the PR but never blocks
 ```
+`fix_rounds = 1` (in `[workers]`) gives the agent that many extra attempts, with the log, when a required check fails.
 
 Worker (`worker.toml` on the Mac, see `worker/worker.example.toml`): the server URL, a token file, the git URL template, and
 `[recipes.<name>]` with a fixed `command` (argv, no shell), `timeout_seconds`, `artifacts` globs (PNGs, relative to the
@@ -121,12 +123,29 @@ behind the login), screenshots from workers on the run page (`run_images` kind `
 and no worker polled for 2 minutes; once when it starts and once when it clears), `ctl workers add`, the systemd unit, the compose
 `workers` profile, and `deploy.sh` support.
 
-**Phase 3: close the loop.**
-One fix round when a check fails (the log goes to the agent, like screen diffs and CI), a per-check `required`/`advisory` flag,
-per-repo check lists editable in Settings.
+**Phase 3: close the loop (done).**
+- *Fix rounds* (`fix_rounds`, default 1, max 3): when a required check really **fails**, the agent runs again with the failing log in an
+  untrusted `<worker_check>` wrapper (implementers only), like screen diffs and CI logs. It starts from a fresh clone, so it redoes the work
+  knowing what failed. Only genuine test failures qualify: a missing worker, a timeout, an invalid result or a worker error is not something
+  the agent can fix and fails the run directly. The loop is in `main.dispatch` and ends when a round passes or the rounds run out.
+- *Advisory checks* (`required = false` on a `[[workers.checks]]` entry, or a fourth word `advisory` in the UI): a failure is noted on the
+  PR and never blocks or triggers a fix round. A check that never runs is also only a note.
+- *Settings -> Workers*: enabled, mode, fix rounds, the waits, and the checks list (`owner/name recipe platform [advisory]` per line).
+  Enabling, switching to `warn`, and any change to the checks need the confirmation box. The listen address and token file stay in
+  `config.toml` on purpose.
 
-**Phase 4: recipes.**
-Documented, tested recipes: web (`npm ci && npm test`, Playwright), Android (Gradle + AVD), iOS in a Tart VM (build, simulator
-tests, screenshots). Optionally route verification-heavy tickets to a worker earlier (before the review stage).
+**Phase 4: recipes (web done; Android and iOS next).**
+Recipes ship in `worker/recipes/` and are copied to the worker, outside any checkout, so the repo cannot alter them.
+
+- `web-test.sh` (done): installs with the lockfile (`npm ci`, `pnpm install --frozen-lockfile` or `yarn install --frozen-lockfile`; a missing
+  lockfile still runs, with a warning), runs `build` and `test` scripts when they exist (npm's placeholder `test` is ignored), then
+  `playwright install chromium` and `playwright test` if a Playwright config exists. Options: `--dir <subfolder>`, `--no-playwright`.
+  Exit 0 = every step that applied passed; exit 1 = a step failed (a *failure*, which gets a fix round); exit 2 = the recipe could not
+  tell what to run (no `package.json`, nothing to run, bad option), which the factory sees as a worker problem and never retries.
+  Tested with stub package managers (every branch) and with real npm against a cloned, patched repo.
+- Android (Gradle + emulator) and iOS (Xcode in a Tart VM, simulator tests, screenshots): next.
+
+The worker drops any returned PNG outside the orchestrator's size limits (16..1600 wide, up to 6000 high) rather than sending it:
+one oversize full-page screenshot would otherwise make the whole result invalid and turn a passing run into an error.
 
 **Phase 5 (only if needed):** parallel workers per platform with queue priorities; worker-side result caching by (repo, base_sha, patch hash).

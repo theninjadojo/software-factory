@@ -147,6 +147,9 @@ SCREEN_FIX_PROMPT = ("\nYour first attempt at this ticket was built and its scre
                      "ticket again. Keep every part of the pages the ticket does not ask you to change exactly as it was. If the "
                      "visual change is exactly what the ticket asks for, also regenerate the affected baseline images under the baseline "
                      "folder (a person reviews them); otherwise remove the unintended visual change.")
+VERIFY_FIX_PROMPT = ("\nYour first attempt at this ticket was built and then checked on a verification worker (a real build and test run), and the "
+                     "check FAILED (see worker_check below). Do the work again, avoiding what failed. Make the smallest change that "
+                     "satisfies the ticket and the failing check.")
 CI_FIX_PROMPT = ("\nA previous automated change for this ticket is already in the workspace and the repository's CI FAILED "
                  "(see ci_failure below). Fix those failures with the smallest change; do not redo the work.")
 CONFLICTS_PROMPT = ("\nA previous automated change for this ticket is already in the workspace, and the base branch has just been merged "

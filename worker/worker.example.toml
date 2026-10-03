@@ -14,5 +14,8 @@ artifacts = ["build/screens/*.png"]                # PNG globs relative to the c
 env_passthrough = []                               # the only extra environment variables the recipe can see
 
 [recipes.web-test]
-command = ["/usr/bin/env", "bash", "-c", "npm ci && npm test"]
+# Ships with the factory: installs with the lockfile, builds, tests, and runs Playwright if the project has it. Copy worker/recipes/ to
+# the worker (outside any checkout). Add "--dir", "web" for a project in a subfolder, "--no-playwright" to skip browser tests.
+command = ["/Users/factory/recipes/web-test.sh"]
 timeout_seconds = 1800
+artifacts = ["test-results/**/*.png"]              # Playwright failure screenshots; images over 1600x6000 are dropped, not fatal

@@ -58,7 +58,8 @@ def workers_page(cfg, db, now: float | None = None) -> str:
                      f"<tbody>{rows}</tbody></table>")
     elif w.enabled and ready:
         jobs_html = '<h2>Recent jobs</h2><p class="muted">No verification job has run yet.</p>'
-    return head + checks + online + jobs_html
+    edit = '<p><a href="/settings?section=workers">Edit these settings</a></p>'
+    return head + edit + checks + online + jobs_html
 
 
 def job_page(db, job_id: int) -> str | None:

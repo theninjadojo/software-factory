@@ -306,6 +306,7 @@ class WorkerCheck:
     repo: str
     recipe: str                          # a recipe name defined on the worker itself; never a command
     platform: str = "any"                # a worker claims the job only if it declares this platform
+    required: bool = True                # False: advisory. A failure is noted on the PR but never blocks the push or starts a fix round
 
 
 @dataclass(frozen=True)
@@ -319,6 +320,7 @@ class WorkersCfg:
     claim_wait_seconds: int = 900        # a job nobody claims within this long fails
     max_wait_seconds: int = 3600         # the orchestrator never waits longer than this for one check
     max_attempts: int = 2                # claims per job (a lost lease puts it back in the queue)
+    fix_rounds: int = 1                  # extra agent attempts, with the failing log, when a required check FAILS (0 = report only)
     checks: tuple[WorkerCheck, ...] = ()
 
 
@@ -609,7 +611,7 @@ def _workers(raw: dict, repos: list[str]) -> WorkersCfg:
     host, _, port = c.listen.rpartition(":")
     if not host or not port.isdigit() or not 1 <= int(port) <= 65535:
         raise ValueError("workers.listen must look like 127.0.0.1:8788")
-    for n, lo, hi in (("lease_seconds", 10, 3600), ("claim_wait_seconds", 10, 86400), ("max_wait_seconds", 30, 86400), ("max_attempts", 1, 5)):
+    for n, lo, hi in (("lease_seconds", 10, 3600), ("claim_wait_seconds", 10, 86400), ("max_wait_seconds", 30, 86400), ("max_attempts", 1, 5), ("fix_rounds", 0, 3)):
         v = getattr(c, n)
         if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
             raise ValueError(f"workers.{n} must be a whole number from {lo} to {hi}")
@@ -621,6 +623,8 @@ def _workers(raw: dict, repos: list[str]) -> WorkersCfg:
             raise ValueError(f"workers.checks: {k.repo} is not a configured repo")
         if not WORKER_NAME.fullmatch(str(k.recipe)) or not WORKER_NAME.fullmatch(str(k.platform)):
             raise ValueError("workers.checks: recipe and platform must match [a-z0-9-]")
+        if not isinstance(k.required, bool):
+            raise ValueError("workers.checks: required must be true or false")
         if (k.repo, k.recipe) in seen:
             raise ValueError(f"workers.checks: {k.repo} lists recipe {k.recipe!r} twice")
         seen.add((k.repo, k.recipe))

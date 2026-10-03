@@ -36,6 +36,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_PNG, MAX_ARTIFACTS, MAX_LOG = 3_000_000, 8, 150_000
+MIN_SIDE, MAX_W, MAX_H = 16, 1600, 6000          # the orchestrator rejects the WHOLE result for one PNG outside these (factory/render.py)
 MAX_PATCH = 4_000_000
 
 
@@ -116,6 +117,14 @@ def prepare(cfg: Config, job: dict, dest: Path) -> str:
     return ""
 
 
+def png_fits(data: bytes) -> bool:
+    """The same size limits the orchestrator applies. One oversize full-page screenshot must not turn a passing run into an invalid result."""
+    if len(data) < 33 or data[12:16] != b"IHDR":
+        return False
+    w, h = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    return MIN_SIDE <= w <= MAX_W and MIN_SIDE <= h <= MAX_H
+
+
 def collect_artifacts(recipe: Recipe, root: Path) -> list[dict]:
     """PNGs matching the recipe's globs, inside the checkout, not symlinks, size-limited. The orchestrator validates them again."""
     out, seen = [], set()
@@ -127,7 +136,7 @@ def collect_artifacts(recipe: Recipe, root: Path) -> list[dict]:
                     or p.stat().st_size > MAX_PNG):
                 continue
             data = p.read_bytes()
-            if not data.startswith(PNG_MAGIC) or not str(p.resolve()).startswith(str(root.resolve()) + os.sep):
+            if not data.startswith(PNG_MAGIC) or not str(p.resolve()).startswith(str(root.resolve()) + os.sep) or not png_fits(data):
                 continue
             seen.add(name)
             out.append({"name": name, "png_b64": base64.b64encode(data).decode()})

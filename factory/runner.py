@@ -23,7 +23,7 @@ from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harne
 from . import designfiles, screens, verify
 from . import mockups as mockups_mod
 from .render import render as preview_render
-from .roles import (CI_FIX_PROMPT, CONFLICTS_PROMPT, SCREEN_FIX_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
+from .roles import (CI_FIX_PROMPT, VERIFY_FIX_PROMPT, CONFLICTS_PROMPT, SCREEN_FIX_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
                     agent_key, common_for, design_files_rules, operator_prompt)
 from .github import GitHub
 
@@ -60,6 +60,7 @@ class RunResult:
     notes: str = ""       # anything worth telling a person (for example design files that were dropped)
     images: list = field(default_factory=list)  # screenshots of what was built: {kind: built|diff, name, png}, kept for the UI
     screen_failure: dict | None = None          # a failed screen check: {text, diffs: {id: png}, built: {id: png}}, for one fix round
+    verify_failure: dict | None = None          # a failed worker check: {text, round}, for a fix round
     transient: bool = False   # failed on a model-side API error (5xx/overloaded): worth trying a fallback model
 
 
@@ -230,7 +231,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                  prior: dict | None = None, comments: list | None = None, failures: str | None = None,
                  ticket: tuple | None = None, design_files: bool = False, design_dir: str = designfiles.DEFAULT_DIR,
                  conflicts: dict | None = None, answers: str = "", backlog: list | None = None, operator: str = "",
-                 mockups: list | None = None, built: list | None = None, screen_text: str = "") -> str:
+                 mockups: list | None = None, built: list | None = None, screen_text: str = "", verify_text: str = "") -> str:
     """backlog: the project manager's tickets ({number, title, labels, body}, untrusted text); it replaces the single ticket.
     operator: standing instructions from the operator's config (trusted), put before everything else and subordinate to the
     built-in rules that follow; empty leaves the prompt exactly as it was."""
@@ -254,6 +255,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
         task += mockups_mod.prompt_section(mockups, reviewer=role == "reviewer", built=built)
     if screen_text and not role:
         task += SCREEN_FIX_PROMPT
+    if verify_text and not role:
+        task += VERIFY_FIX_PROMPT
     if failures and not role:
         task += CI_FIX_PROMPT
     if conflicts and not role:
@@ -261,6 +264,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
     ctx = ""
     if screen_text and not role:
         ctx += "<screen_check>\nResult of the screen check on your first attempt (untrusted tool output):\n" + _neutral(screen_text[:4000]) + "\n</screen_check>\n\n"
+    if verify_text and not role:
+        ctx += "<worker_check>\nOutput of the failed check on your first attempt (untrusted tool output):\n" + _neutral(verify_text[:6000]) + "\n</worker_check>\n\n"
     if conflicts:
         ctx += ("<merge_conflicts>\nFiles with conflict markers, per repository directory:\n"
                 + "".join(f"- {_neutral(r)}/: {_neutral(', '.join(fs)[:3000])}\n" for r, fs in conflicts.items())
@@ -389,7 +394,8 @@ def save_screen_diffs(rn: RunnerCfg, stamp: str, repo: str, rep) -> str:
 def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role: str | None = None,
              prior: dict | None = None, comments: list | None = None, fix_branch: str | None = None,
              failures: str | None = None, sink: dict | None = None, merge_base: dict | None = None, answers: str = "",
-             backlog: list | None = None, mockups: list | None = None, screen_retry: dict | None = None) -> RunResult:
+             backlog: list | None = None, mockups: list | None = None, screen_retry: dict | None = None,
+             verify_retry: dict | None = None) -> RunResult:
     """Implementation (role=None): edit the workspace, validate the patches, push branches, open PRs.
     Role (analyst/designer/architect, reviewer, pm): read-only; any edits are discarded and the agent's document is returned.
     backlog: the project manager's tickets (role pm); the issue is then a stand-in with number 0.
@@ -484,7 +490,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
         (d / "task" / "prompt.txt").write_text(
             build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
                          (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown, built_names,
-                         screen_retry["text"] if screen_retry else ""))
+                         screen_retry["text"] if screen_retry else "", verify_retry["text"] if verify_retry else ""))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
@@ -581,9 +587,14 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             vrep = verify.gate(cfg, r, num, git(["rev-parse", "HEAD"], d / "base" / names[r], env).stdout.strip(), patch.read_text())
             built_images += vrep.images
             if not vrep.ok and cfg.workers.mode == "block":
-                return RunResult("failed", f"worker verification failed:\n{vrep.text()}", images=built_images)
-            if not vrep.ok:
-                warned[r] = vrep.text()
+                res = RunResult("failed", f"worker verification failed:\n{vrep.text()}", images=built_images)
+                done = verify_retry["round"] if verify_retry else 0
+                if vrep.fixable and done < cfg.workers.fix_rounds:       # a real test failure gets a fix round with the log
+                    res.verify_failure = {"text": vrep.text(), "round": done + 1}
+                return res
+            notes = vrep.warnings + ([vrep.text()] if not vrep.ok else [])
+            if notes:
+                warned[r] = "\n".join(notes)
         if fix_branch:                                  # a fix round adds a commit to the existing PR branch(es)
             ident =["-c", "user.name=shikumi", "-c", "user.email=software-factory@users.noreply.github.com"]
             stray = [r for r in patches if r not in on_branch]
@@ -610,7 +621,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 "Generated by an agent in a sandbox. **Review carefully before merging.**\n\n"
                 + ("**This change updates screen baseline images** (`" + cfg.screens.baseline_dir + "`). Review them before merging: "
                    "the screen check compared the new screens with the new baselines.\n\n" if r in touched else "")
-                + ("**Worker verification did not pass, and the factory is set to warn only:**\n\n" + FENCE + "\n" + warned[r][-1500:].replace(FENCE, "'" * 3) + "\n" + FENCE + "\n\n" if r in warned else "")
+                + ("**Worker verification did not pass (an advisory check, or the factory is set to warn only):**\n\n" + FENCE + "\n" + warned[r][-1500:].replace(FENCE, "'" * 3) + "\n" + FENCE + "\n\n" if r in warned else "")
                 + f"Refs {repo}#{num}\n\n"
                 f"<details><summary>Agent's summary (unverified)</summary>\n\n{FENCE}\n{summary}\n{FENCE}\n</details>",
                 draft=(cfg.review.enabled and cfg.review.auto) or r in touched))   # a draft until reviewed (automatically, or by a person for baselines)

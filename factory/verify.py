@@ -19,8 +19,10 @@ LOG_TAIL = 1500
 
 @dataclass
 class Report:
-    ok: bool = True
+    ok: bool = True                                        # every REQUIRED check passed
+    fixable: bool = False                                  # a required check genuinely FAILED (not "could not run"): a fix round can help
     lines: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)      # advisory checks that did not pass: noted on the PR, never block
     images: list[dict] = field(default_factory=list)      # {kind: "verify", name, png}: screenshots the worker returned (validated)
 
     def fail(self, line: str) -> "Report":
@@ -47,6 +49,7 @@ def gate(cfg: Config, repo: str, issue: int, base_sha: str, patch: str, db=None,
     if not checks:
         return rep
     db = db or dbm.local(cfg.db_path)
+    required = {c.recipe: c.required for c in checks}
     ids = {c.recipe: jobs.enqueue(db, repo, issue, base_sha, patch, c.recipe, c.platform, clock()) for c in checks}
     deadline = clock() + w.max_wait_seconds
     final: dict[str, dict] = {}
@@ -62,9 +65,11 @@ def gate(cfg: Config, repo: str, issue: int, base_sha: str, patch: str, db=None,
             for recipe, jid in ids.items():
                 if recipe not in final:
                     jobs.cancel(db, jid, clock(), f"The orchestrator stopped waiting after {w.max_wait_seconds}s.")
-                    rep.fail(f"{repo}: check {recipe!r} did not finish within {w.max_wait_seconds}s")
+                    line = f"{repo}: check {recipe!r} did not finish within {w.max_wait_seconds}s"
+                    rep.fail(line) if required[recipe] else rep.warnings.append(line)
             break
         sleep(POLL_SECONDS)
+    failed_for_real: list[bool] = []
     for recipe, job in final.items():
         for name, png in jobs.artifacts(db, job["id"]).items():
             rep.images.append({"kind": "verify", "name": f"{recipe}-{name}", "png": png})
@@ -73,7 +78,15 @@ def gate(cfg: Config, repo: str, issue: int, base_sha: str, patch: str, db=None,
             rep.lines.append(f"{repo}: check {recipe!r} passed{where}")
         else:
             why = {"failed": "failed", "error": "could not run", "cancelled": "was cancelled"}[job["status"]]
-            rep.fail(f"{repo}: check {recipe!r} {why}{where}.\n```\n{_tail(job['log'])}\n```")
+            line = f"{repo}: check {recipe!r} {why}{where}.\n```\n{_tail(job['log'])}\n```"
+            if required[recipe]:
+                rep.fail(line)
+                failed_for_real.append(job["status"] == "failed")
+            else:
+                rep.warnings.append(line)
+    # A fix round only helps when every required problem is a real test failure: not a missing worker, a timeout or a worker error.
+    rep.fixable = not rep.ok and bool(failed_for_real) and all(failed_for_real) and not any(
+        recipe not in final and required[recipe] for recipe in ids)
     return rep
 
 

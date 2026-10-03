@@ -6,6 +6,7 @@ from factory import db as dbm
 from factory import jobs, verify
 from factory.config import WorkersCfg
 from test_render import png
+from urllib.parse import urlencode
 from test_ui import UiCase
 
 WORKERS_TOML = '''
@@ -124,3 +125,62 @@ class Watch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkersSettings(UiCase):
+    REPO = "your-org/shop-mobile"
+
+    def setUp(self):
+        super().setUp()
+        import tomllib
+        from factory.config import overrides_path
+        self.ov = lambda: tomllib.loads(overrides_path(str(self.root / "config.toml")).read_text()) if overrides_path(str(self.root / "config.toml")).exists() else {}
+
+    def form(self, csrf, **over):
+        f = {"csrf": csrf, "section": "workers", "workers.enabled": "1", "workers.mode": "block", "workers.fix_rounds": "1",
+             "workers.claim_wait_seconds": "900", "workers.max_wait_seconds": "3600", "workers.lease_seconds": "120",
+             "workers.checks": f"{self.REPO} ios-test macos\n{self.REPO} lint any advisory",
+             "confirm__workers.enabled": "1", "confirm__workers.checks": "1", "confirm__workers.mode": "1"}
+        f.update(over)
+        return urlencode({k: v for k, v in f.items() if v is not None})
+
+    def test_page_renders_with_a_link_from_the_workers_page(self):
+        cookie, _ = self.session()
+        s, _, html = self.req("GET", "/settings?section=workers", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn("workers.checks", html)
+        self.assertIn("/settings?section=workers", self.req("GET", "/workers", cookie=cookie)[2])
+
+    def test_saving_writes_checks_with_the_advisory_flag(self):
+        cookie, csrf = self.session()
+        s, h, _ = self.req("POST", "/settings/save", self.form(csrf), cookie=cookie)
+        self.assertEqual(s, 303, h)
+        w = self.ov()["workers"]
+        self.assertEqual(w["enabled"], True)
+        self.assertEqual(w["checks"], [{"repo": self.REPO, "recipe": "ios-test", "platform": "macos"},
+                                       {"repo": self.REPO, "recipe": "lint", "platform": "any", "required": False}])
+        _, _, again = self.req("GET", "/settings?section=workers", cookie=cookie)
+        self.assertIn(f"{self.REPO} lint any advisory", again)            # round-trips into the form
+
+    def test_changes_need_the_confirmation_boxes(self):
+        cookie, csrf = self.session()
+        s, _, html = self.req("POST", "/settings/save", self.form(csrf, **{"confirm__workers.checks": None}), cookie=cookie)
+        self.assertIn(s, (400, 422))
+        self.assertIn("confirmation box", html)
+        self.assertEqual(self.ov(), {})
+        s, _, html = self.req("POST", "/settings/save", self.form(csrf, **{"confirm__workers.enabled": None}), cookie=cookie)
+        self.assertIn(s, (400, 422))
+
+    def test_bad_checks_are_rejected_and_nothing_is_written(self):
+        cookie, csrf = self.session()
+        for bad in (f"{self.REPO} ios-test", f"{self.REPO} ios-test macos maybe", "not-a-repo ios-test macos", f"{self.REPO} Bad_Name macos",
+                    f"{self.REPO} a macos\n{self.REPO} a linux", "other-org/unknown ios-test macos"):
+            s, _, _ = self.req("POST", "/settings/save", self.form(csrf, **{"workers.checks": bad}), cookie=cookie)
+            self.assertIn(s, (400, 422), bad)
+        self.assertEqual(self.ov(), {})
+
+    def test_numbers_are_bounded(self):
+        cookie, csrf = self.session()
+        for k, v in (("workers.fix_rounds", "9"), ("workers.lease_seconds", "1"), ("workers.claim_wait_seconds", "x")):
+            self.assertIn(self.req("POST", "/settings/save", self.form(csrf, **{k: v}), cookie=cookie)[0], (400, 422), k)
+        self.assertEqual(self.ov(), {})
