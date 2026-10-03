@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, designfiles, mockups, pause, pm, runner, schedules, subtasks, usage, verify
+from . import ci, conflicts, designfiles, mockups, pause, pm, reviewnotes, runner, schedules, subtasks, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -387,8 +387,16 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
     claim(gh, repo, num, trigger_label, role.name)
     comments = human_comments(gh, repo, num)
     before = question_state(gh, repo, num)
+    review = None
+    if role.name == "designer" and conn is not None:      # a person's notes on the screens go to the designer
+        try:
+            review = reviewnotes.for_designer(conn, repo, num)
+        except Exception:
+            log.exception("could not read the review notes of %s#%s", repo, num)
     res, route = run_chain(cfg, gh, "stage", repo, issue, route, c, role.name, role=role.name, prior=stage_outputs(gh, repo, num),
-                           comments=comments, answers=Q.summary(before))
+                           comments=comments, answers=Q.summary(before), **({"review": review} if review else {}))
+    if review and res.status == "stage":
+        reviewnotes.mark_sent(conn, review["ids"])
     gh.remove_label(repo, num, working_label(role.name))
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, role.name)

@@ -141,6 +141,87 @@
   });
   window.addEventListener("popstate", function () { location.reload(); });
 
+  // --- Review the screens: drag over a screen to mark an area, click (or tap) for a pin; the area goes into the form's number fields.
+  (function () {
+    var frame = document.querySelector("[data-review]"), form = document.getElementById("rv-new");
+    if (!frame || !form) return;
+    var NS = "http://www.w3.org/2000/svg", img = frame.querySelector("img"), svg = frame.querySelector("svg");
+    var where = form.querySelector("[data-where]"), text = form.querySelector("textarea"), idle = where.textContent;
+    var box = document.createElementNS(NS, "rect"), pin = document.createElementNS(NS, "circle"), f = {}, start = null, touch = false;
+    box.setAttribute("class", "rv-draft"); pin.setAttribute("class", "rv-draft-pin"); pin.setAttribute("r", "10");
+    ["x", "y", "w", "h"].forEach(function (k) { f[k] = form.querySelector("[data-area=" + k + "]"); });
+    function clamp(v) { return Math.max(0, Math.min(100, v)); }
+    function r1(v) { return Math.round(v * 10) / 10; }
+    function pt(e) {
+      var r = img.getBoundingClientRect();
+      return { x: clamp((e.clientX - r.left) / r.width * 100), y: clamp((e.clientY - r.top) / r.height * 100) };
+    }
+    function area(p, q) {
+      var w = Math.abs(q.x - p.x), h = Math.abs(q.y - p.y);
+      if (w < 1 && h < 1) return { x: r1(p.x), y: r1(p.y), w: 0, h: 0 };
+      return { x: r1(Math.min(p.x, q.x)), y: r1(Math.min(p.y, q.y)), w: Math.max(r1(w), 0.1), h: Math.max(r1(h), 0.1) };
+    }
+    function show(a) {
+      if (box.parentNode) svg.removeChild(box);
+      if (pin.parentNode) svg.removeChild(pin);
+      form.classList.toggle("drafting", !!a);
+      if (!a) { where.textContent = idle; return; }
+      if (a.w > 0) {
+        box.setAttribute("x", a.x + "%"); box.setAttribute("y", a.y + "%"); box.setAttribute("width", a.w + "%"); box.setAttribute("height", a.h + "%");
+        svg.appendChild(box);
+        where.textContent = "Area " + a.w + "% × " + a.h + "% at " + a.x + "%, " + a.y + "%";
+      } else {
+        pin.setAttribute("cx", a.x + "%"); pin.setAttribute("cy", a.y + "%");
+        svg.appendChild(pin);
+        where.textContent = "Pin at " + a.x + "%, " + a.y + "%";
+      }
+    }
+    function typed() {
+      var v = {}, ok = true;
+      ["x", "y", "w", "h"].forEach(function (k) {
+        var s = f[k].value.trim();
+        v[k] = s === "" && (k === "w" || k === "h") ? 0 : parseFloat(s);
+        if (!(v[k] >= 0 && v[k] <= 100)) ok = false;
+      });
+      return ok ? v : null;
+    }
+    function fill(a) { f.x.value = a.x; f.y.value = a.y; f.w.value = a.w; f.h.value = a.h; show(a); }
+    frame.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      touch = e.pointerType === "touch"; start = pt(e);
+      if (touch) return;                                   // a finger may be scrolling the page: wait for it to lift
+      e.preventDefault();
+      try { frame.setPointerCapture(e.pointerId); } catch (err) {}
+      show(area(start, start));
+    });
+    frame.addEventListener("pointermove", function (e) { if (start && !touch) show(area(start, pt(e))); });
+    frame.addEventListener("pointerup", function (e) {
+      if (!start) return;
+      var a = touch ? { x: r1(start.x), y: r1(start.y), w: 0, h: 0 } : area(start, pt(e));
+      start = null;
+      fill(a);
+      text.focus(touch ? undefined : { preventScroll: true });
+    });
+    frame.addEventListener("pointercancel", function () { start = null; show(typed()); });
+    form.addEventListener("input", function (e) { if (e.target.hasAttribute("data-area")) show(typed()); });
+    form.addEventListener("submit", function (e) {
+      if (typed()) return;
+      e.preventDefault();
+      where.textContent = "Mark an area on the screen first, or set it by numbers.";
+    });
+    document.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-show]");
+      if (!b) return;
+      var id = b.getAttribute("data-show"), li = b.closest("li"), was = li.classList.contains("on"), on = document.querySelectorAll(".rv .on");
+      for (var i = 0; i < on.length; i++) on[i].classList.remove("on");
+      if (was) return;
+      var hit = document.querySelectorAll('.rv-marks [data-note="' + id + '"]');
+      for (var j = 0; j < hit.length; j++) hit[j].classList.add("on");
+      li.classList.add("on");
+      if (hit.length && hit[0].scrollIntoView) hit[0].scrollIntoView({ block: "nearest" });
+    });
+  })();
+
   // --- Live refresh of the Floor, the Needs-you page and a running ticket (whichever #live is on the page now).
   function busy(live) {
     var a = document.activeElement;

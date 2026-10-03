@@ -15,7 +15,7 @@ REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 NAV = [("/", "Factory"), ("/tickets", "Tickets"), ("/events", "Events"), ("/settings", "Settings")]
 # Needs you, Runs and PRs & CI are part of Tickets: those pages light up the Tickets tab, and the needs count sits on it.
-TICKET_PAGES = {"/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/labels", "/labels/issue"}
+TICKET_PAGES = {"/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/ticket/review", "/labels", "/labels/issue"}
 ICON = '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 16 16\'%3E%3Ccircle cx=\'8\' cy=\'8\' r=\'6\' fill=\'%23e0a030\'/%3E%3C/svg%3E">'
 BRAND = ('<svg class="brand-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V10l6 4V10l6 4V6h6v15z"/></svg>')
 MENU_ICON = '<svg class="ph-menu-i" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>'
@@ -407,7 +407,8 @@ def ticket_images_page(repo: str, issue: int, files_by_run: dict, images_by_run:
         shots = run_images_html(rid, images_by_run.get(rid, []))
         if mock or shots:
             out += f'<h2><a href="/runs/{int(rid)}">Run #{int(rid)}</a></h2>' + (f'<div class="mockups">{mock}</div>' if mock else "") + shots
-    return out + f'<p><a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">← back to the ticket</a></p>'
+    review = f'<p><a class="btn" href="/ticket/review?{esc(urlencode({"repo": repo, "n": int(issue)}))}">Review the screens</a></p>'
+    return review + out + f'<p><a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">← back to the ticket</a></p>'
 
 
 def steps_cell(t: dict, counts: dict) -> str:
@@ -431,7 +432,8 @@ def doc_page(repo: str, issue: int, stage: str, have: list[str], doc: dict | Non
     meta = " · ".join(x for x in (esc(DOC_LABEL[stage]), f'<a href="/runs/{int(doc["id"])}">run #{int(doc["id"])}</a>' if doc else "",
                                   esc(ago(doc["started"])) if doc else "", esc(source)) if x)
     imgs = "".join(mockup_img(f) for f in previews or [])
-    shots = f'<div class="mockups">{imgs}</div>' if imgs else ""
+    shots = (f'<div class="mockups">{imgs}</div><p><a class="btn" href="/ticket/review?{esc(urlencode({"repo": repo, "n": int(issue)}))}">'
+             'Review the screens</a></p>') if imgs else ""
     toc = ("<details class=\"more\"><summary>Contents</summary><ul>" + "".join(f'<li><a href="#{i}">{esc(t)}</a></li>' for i, t in heads) + "</ul></details>") if heads else ""
     back_link = f'<p><a href="{esc(back)}">← Back to questions</a></p>'
     return (f'{head}<p class="muted">{meta}</p>{notice}{shots}{toc}<article class="docview">{body}</article>{back_link}')

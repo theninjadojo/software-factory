@@ -492,7 +492,8 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
     links = (f'<a href="{esc(gh)}" rel="noopener noreferrer" target="_blank">Open on GitHub ↗</a>{prs}'
              f'<a href="/labels/issue?{esc(_qs(repo=repo, n=n))}">Edit labels</a>'
              + "".join(f'<a href="{views.doc_url(repo, n, s)}">Read {esc(views.DOC_NOUN[s])}</a>' for s in docs)
-             + (f'<a href="/ticket/images?{esc(_qs(repo=repo, n=n))}">View images</a>' if images else ""))
+             + (f'<a href="/ticket/images?{esc(_qs(repo=repo, n=n))}">View images</a>'
+                f'<a href="/ticket/review?{esc(_qs(repo=repo, n=n))}">Review the screens</a>' if images else ""))
     body = live_part(r, files, docs, events, fix_rounds, now)
     if live and j["status"] in ("running", "waiting", "queued"):
         body = f'<div id="live" data-src="/fragment/ticket">{body}</div>'

@@ -22,6 +22,7 @@ from pathlib import Path
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
 from . import designfiles, screens, verify
 from . import mockups as mockups_mod
+from . import reviewnotes
 from .render import render as preview_render
 from .roles import (CI_FIX_PROMPT, VERIFY_FIX_PROMPT, CONFLICTS_PROMPT, SCREEN_FIX_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
                     agent_key, common_for, design_files_rules, operator_prompt)
@@ -231,8 +232,10 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                  prior: dict | None = None, comments: list | None = None, failures: str | None = None,
                  ticket: tuple | None = None, design_files: bool = False, design_dir: str = designfiles.DEFAULT_DIR,
                  conflicts: dict | None = None, answers: str = "", backlog: list | None = None, operator: str = "",
-                 mockups: list | None = None, built: list | None = None, screen_text: str = "", verify_text: str = "") -> str:
-    """backlog: the project manager's tickets ({number, title, labels, body}, untrusted text); it replaces the single ticket.
+                 mockups: list | None = None, built: list | None = None, screen_text: str = "", verify_text: str = "",
+                 review: dict | None = None) -> str:
+    """review: a person's notes on the screens (reviewnotes.for_designer), told to the designer only.
+    backlog: the project manager's tickets ({number, title, labels, body}, untrusted text); it replaces the single ticket.
     operator: standing instructions from the operator's config (trusted), put before everything else and subordinate to the
     built-in rules that follow; empty leaves the prompt exactly as it was."""
     repos = "\n".join(f"- {r.repo.split('/')[1]}/ : {r.role or 'part of the project'}" for r in project.repos)
@@ -249,6 +252,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
             task += design_files_rules(design_dir)
         if role in STAGE_TO_ROLE.values():
             task += QUESTIONS_RULES
+        if role == "designer" and review:
+            task += reviewnotes.PROMPT
     else:
         task = IMPLEMENTER_PROMPT
     if mockups and role in (None, "reviewer"):
@@ -291,6 +296,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                           for t in backlog)
                 + "</backlog>\n")
         return head + task + "\n\n" + ctx
+    if review and role == "designer":
+        ctx += reviewnotes.prompt_context(review, _neutral)
     if comments:
         ctx += "<discussion>\n" + "".join(f"<comment>\n{_neutral(c[:1500])}\n</comment>\n" for c in comments[:10]) + "</discussion>\n\n"
     if operator.strip():             # trusted config, so not neutralised: it comes before every wrapper that holds untrusted text
@@ -395,7 +402,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
              prior: dict | None = None, comments: list | None = None, fix_branch: str | None = None,
              failures: str | None = None, sink: dict | None = None, merge_base: dict | None = None, answers: str = "",
              backlog: list | None = None, mockups: list | None = None, screen_retry: dict | None = None,
-             verify_retry: dict | None = None) -> RunResult:
+             verify_retry: dict | None = None, review: dict | None = None) -> RunResult:
     """Implementation (role=None): edit the workspace, validate the patches, push branches, open PRs.
     Role (analyst/designer/architect, reviewer, pm): read-only; any edits are discarded and the agent's document is returned.
     backlog: the project manager's tickets (role pm); the issue is then a stand-in with number 0.
@@ -487,10 +494,14 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 (d / "task" / sub).mkdir(exist_ok=True)
                 for i, png in imgs.items():
                     (d / "task" / sub / (f"{i}-diff.png" if sub == "diffs" else f"{i}.png")).write_bytes(png)
+        if review and role == "designer":                       # the screens a person marked up, under the names for_designer chose
+            (d / "task" / "review").mkdir(exist_ok=True)
+            for fname, png in review["files"].items():
+                (d / "task" / "review" / fname).write_bytes(png)
         (d / "task" / "prompt.txt").write_text(
             build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
                          (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown, built_names,
-                         screen_retry["text"] if screen_retry else "", verify_retry["text"] if verify_retry else ""))
+                         screen_retry["text"] if screen_retry else "", verify_retry["text"] if verify_retry else "", review))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
@@ -516,11 +527,11 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 return RunResult("failed", f"{role} exited {code}. Log tail: {text[-600:]}", transient=looks_unavailable(text, code))
             result = RunResult("stage", f"{role} document ready", output=text.strip(), images=sink_images)
             if want_design:
-                made = {r.repo: d / "out" / f"{names[r.repo]}.diff" for r in project.repos
+                diffs = {r.repo: d / "out" / f"{names[r.repo]}.diff" for r in project.repos
                         if (d / "out" / f"{names[r.repo]}.diff").exists() and (d / "out" / f"{names[r.repo]}.diff").stat().st_size > 0}
-                if made:
+                if diffs:
                     try:
-                        files, notes, urls = publish_design_files(rn, gh, repo, num, issue["title"], d, names, made, env, stamp, design_dir)
+                        files, notes, urls = publish_design_files(rn, gh, repo, num, issue["title"], d, names, diffs, env, stamp, design_dir)
                         result.files, result.notes, result.pr_url = files, "; ".join(notes), urls or None
                     except Exception as e:             # publishing is a bonus: the written document is never lost to it
                         log.exception("design files could not be published")
