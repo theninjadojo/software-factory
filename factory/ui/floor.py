@@ -448,7 +448,10 @@ def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=No
     listing = " fl-listview" if view == "list" else ""
     floor = (f'<div class="fl-board{listing}"><div class="fl-wrap"><div class="fl-map" role="group" aria-label="Factory floor, live">'
              f'{belts(live)}{crates(live)}{nodes}</div></div>{rail(live, sel)}</div>')
-    legend = '<p class="muted fl-legend">Working · Idle · Needs you · Failing · Off. Select a station for details.</p>'
+    legend = ('<ul class="fl-legend" aria-label="Station colours">'
+              + "".join(f'<li><span class="fl-sw {k}" aria-hidden="true"></span>{esc(w)}</li>'
+                        for k, w in (("run", "Working"), ("idle", "Idle"), ("warn", "Needs you"), ("fail", "Failing"), ("off", "Off")))
+              + '<li class="muted">Select a station for details.</li></ul>')
     back = f"/?station={sel}" + ("&view=list" if view == "list" else "")
     desk = (mode_bar(d, csrf, ask) + title_row(live, needs, d, csrf, view) + summary_bar(d, needs, now) + floor + legend + inspector(sel, live[sel], d, now)
             + f'<div class="fl-cols">{needs_summary(needs, csrf, back)}{today_card(d, now)}</div>')
