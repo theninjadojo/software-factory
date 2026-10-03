@@ -20,7 +20,7 @@ class GitHub:
             f"https://api.github.com{path}",
             method=method,
             data=json.dumps(data).encode() if data is not None else None,
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "software-factory"},
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "shikumi"},
         )
         if self.token:
             req.add_header("Authorization", f"Bearer {self.token}")
@@ -32,7 +32,7 @@ class GitHub:
         """One file of a repository at a commit, as bytes (works for private repositories, with the token)."""
         req = urllib.request.Request(
             f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path)}?ref={urllib.parse.quote(ref)}",
-            headers={"Accept": "application/vnd.github.raw+json", "User-Agent": "software-factory"})
+            headers={"Accept": "application/vnd.github.raw+json", "User-Agent": "shikumi"})
         if self.token:
             req.add_header("Authorization", f"Bearer {self.token}")
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -145,7 +145,7 @@ class GitHub:
             def redirect_request(self, *a, **k): return None
         req = urllib.request.Request(f"https://api.github.com/repos/{repo}/actions/jobs/{job_id}/logs",
                                      headers={"Authorization": f"Bearer {self.token}", "Accept": "application/vnd.github+json",
-                                              "User-Agent": "software-factory"})
+                                              "User-Agent": "shikumi"})
         try:
             urllib.request.build_opener(NoRedirect).open(req, timeout=20)
             return None

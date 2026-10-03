@@ -1,4 +1,4 @@
-# software-factory: orchestrator + egress proxy, with sandboxes started on the host's container engine.
+# Shikumi: orchestrator + egress proxy, with sandboxes started on the host's container engine.
 #
 #   mkdir config && cp config.example.toml config/config.toml   # then edit it (set engine = "docker"; the image names already match)
 #   cp .env.example .env                      # then edit it

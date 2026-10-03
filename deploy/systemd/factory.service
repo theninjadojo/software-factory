@@ -1,5 +1,5 @@
 [Unit]
-Description=Software factory orchestrator
+Description=Shikumi orchestrator
 Requires=factory-proxy.service
 After=factory-proxy.service network-online.target
 

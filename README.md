@@ -1,6 +1,6 @@
-# software-factory
+# Shikumi (仕組み)
 
-Label a GitHub issue and sandboxed AI agents analyse it, design it, plan it, build it and open pull requests, with a
+*Shikumi* is Japanese for a mechanism, a way of building a system so that it works. Label a GitHub issue and sandboxed AI agents analyse it, design it, plan it, build it and open pull requests, with a
 person kept in the loop on Telegram.
 
 It is built around one assumption: **the agent will be prompt-injected by something it reads, so make that not matter.**

@@ -1,6 +1,6 @@
 # Security model
 
-software-factory runs AI agents on text written by other people (ticket bodies, comments, repo contents). Any of that
+Shikumi runs AI agents on text written by other people (ticket bodies, comments, repo contents). Any of that
 text can try to take over the agent. The design goal is not to detect that, it is to make a taken-over agent unable to do
 anything that matters.
 

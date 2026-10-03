@@ -1,4 +1,4 @@
-# software-factory example configuration. Copy to config.toml and edit. Paths assume the native install
+# Shikumi example configuration. Copy to config.toml and edit. Paths assume the native install
 # under /srv/factory; the docker-compose stack maps the same paths (see README).
 
 [general]

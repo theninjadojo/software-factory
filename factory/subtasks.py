@@ -28,7 +28,7 @@ def body(step: str, parent: int, s: dict) -> str:
     prs = [u for u in (s["pr_urls"] or "").split() if PR_URL.match(u)]
     if prs:
         lines.append("**Pull requests:** " + " ".join(prs))
-    return "\n".join(lines) + "\n\n_Updated by the software factory. Do not edit._"
+    return "\n".join(lines) + "\n\n_Updated by Shikumi. Do not edit._"
 
 
 def sync(gh, db, repo: str, issue: int, step: str | None) -> None:

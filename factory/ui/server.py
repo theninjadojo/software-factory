@@ -328,7 +328,7 @@ def serve(app: App, host: str, port: int) -> ThreadingHTTPServer:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="software-factory admin UI")
+    ap = argparse.ArgumentParser(description="Shikumi admin UI")
     ap.add_argument("--config", default="/srv/factory/config.toml")
     ap.add_argument("--listen", default="127.0.0.1:8787", help="host:port (default loopback only)")
     ap.add_argument("--allowed-host", action="append", default=[], help="extra Host header value to accept (repeatable)")
