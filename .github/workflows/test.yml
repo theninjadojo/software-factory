@@ -3,14 +3,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 jobs:
   unit:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      # The runner's own python3 (3.12). setup-python's tool-cache build cannot find libpython once a test strips the environment.
       - run: python3 -m unittest discover -s tests
   browser:
     runs-on: [self-hosted, Linux, X64]
