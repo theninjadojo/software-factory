@@ -287,6 +287,7 @@ table.tickets td:first-child { overflow-wrap:anywhere; min-width:0; max-width:22
 .jy-belt { fill:none; stroke-width:10; stroke-linecap:butt; } .jy-belt.dim { stroke:#2a3238; opacity:.7; }
 .jy-belt.ok { stroke:#52c7a1; } .jy-belt.fail { stroke:#ff6b5e; } .jy-belt.run { stroke:#f2a93b; stroke-dasharray:12 12; animation:jy-belt 1s linear infinite; }
 @keyframes jy-belt { to { stroke-dashoffset:-24; } }
+.jy-crate { fill:#f2a93b; stroke:#7a4d0a; stroke-width:2; }
 .jy-badge circle { fill:#12161a; stroke-width:2; } .jy-badge text { font:500 11px ui-monospace,Menlo,Consolas,monospace; }
 .jy-badge.ok circle { stroke:#52c7a1; } .jy-badge.ok text { fill:#52c7a1; } .jy-badge.fail circle { stroke:#ff6b5e; } .jy-badge.fail text { fill:#ff6b5e; }
 .jy-badge.run circle { stroke:#f2a93b; } .jy-badge.run text { fill:#f2a93b; }

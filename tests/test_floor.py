@@ -98,7 +98,7 @@ class Render(unittest.TestCase):
         d = data(running=[run(1, "stage", "architect", 18)], prs=[{"status": "passed", "repo": REPO, "number": 1}, {"status": "failed", "repo": REPO, "number": 2},
                  {"status": "watching", "repo": REPO, "number": 3}])
         html = floor.render(d, "t", None, [NEED, ASK], lambda n, c, b="/": "")
-        for needle in ("Healthy, last poll 5s ago", "<b>1</b> working", "<b>2</b> need you", "<b>3</b> PRs open", 'href="/needs"', 'href="/prs"', "LIVE",
+        for needle in ("Healthy, last poll 5s ago", "<b>1</b> working", "<b>2</b> need you", "<b>3</b> PRs open", 'href="/needs"', 'href="/tickets?stage=prs"', "LIVE",
                        "Poll 60s · CI on · Telegram on · Edit", "Architect is working on #18. 2 tickets need you.", "3 PRs · 1 passing · 1 CI failing",
                        "Show as list", "See all 2"):
             self.assertIn(needle, html)
@@ -199,12 +199,19 @@ class Phone(unittest.TestCase):
         self.assertNotIn("<script>", html)
 
     def test_the_tab_bar_keeps_the_four_destinations(self):
-        html = views.page("T", "", "/", "c", badges={"/needs": 3})
+        html = views.page("T", "", "/", "c", badges={"/tickets": 3})
         nav = html.split('<nav aria-label="Main">')[1].split("</nav>")[0]
         self.assertIn('<span class="navbadge">3</span>', nav)
-        self.assertEqual([p for p, _ in views.NAV[:views.PRIMARY]], ["/", "/needs", "/tickets"])
-        for label in ("Factory", "Needs you", "Tickets", "More", "Runs", "PRs &amp; CI", "Events", "Settings"):
+        self.assertEqual([p for p, _ in views.NAV[:views.PRIMARY]], ["/", "/tickets", "/events"])
+        for label in ("Factory", "Tickets", "More", "Events", "Settings"):
             self.assertIn(label, nav)
+        for gone in ("Needs you", "Runs", "PRs &amp; CI"):         # these live inside Tickets now
+            self.assertNotIn(gone, nav)
+
+    def test_ticket_pages_light_up_the_tickets_tab(self):
+        for path in ("/needs", "/runs", "/runs/7", "/prs", "/ticket", "/ticket/doc"):
+            nav = views.page("T", "", path, "c").split('<nav aria-label="Main">')[1].split("</nav>")[0]
+            self.assertIn('<a href="/tickets" class="active ">Tickets</a>', nav, path)
 
 
 class Ordering(unittest.TestCase):

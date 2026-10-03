@@ -22,12 +22,12 @@ A dashboard and settings editor, in the same standard-library-only style as the 
 | Overview | Health (is the orchestrator polling?), mode (dry-run or LIVE), pause/resume, what is running now, recent runs, watched PRs, the timeline. Refreshes itself. |
 | Runs | Every agent run: ticket, model and effort, classification, status, duration, token counts (in includes cache reads and writes; a dash when the harness reported none, with a total for today above the list), PR links. A run's page has the classifier's answer, the output document and the agent log tail. |
 | Tickets | The latest decision per ticket, including *ignored* ones and why (for example the label was applied by someone without write access), and a `done/total` pipeline-steps count. Each count opens the ticket's read-only pipeline view (stations for analyze, design, architect, implement, review, CI fix: status, agent, attempts, run and PR links, and the design files as GitHub links), built from the run history. A run page lists the design files it published (links to GitHub only; mockups are never served by the UI). |
-| PRs & CI | Pull requests being watched, CI status, fix rounds used. |
+| PRs & CI | Not a page of its own: the **PRs & CI** chip on Tickets lists the pull requests being watched (CI status, fix rounds used), and each ticket's page has its own *Pull requests and checks* section. `/prs` redirects there. |
 | Events | The full timeline: decisions, every alert (including ones Telegram did not send), run starts and ends, errors, restarts. |
 
 ## What you can change
 
-The top bar has seven tabs: Factory, Needs you (with a count badge), Tickets, Runs, PRs & CI, Events and Settings. Settings has a side list (General, Routing, Role agents, Projects, Harnesses, Credentials, Telegram, Labels, then the remaining sections); the Harnesses, Credentials and Telegram pages keep their URLs and forms and render inside it, with the Settings tab highlighted.
+The top bar has four tabs: Factory, Tickets (with the count of tickets that need you), Events and Settings. Needs you, Runs and PRs & CI are part of Tickets: those pages keep their URLs and light up the Tickets tab, the Tickets page has *Needs you* and *PRs & CI* chips, and a ticket's own page shows its open questions, its journey, every run and its pull requests with their checks in one place. Crates ride the belts on the journey map into the station that is working. Settings has a side list (General, Routing, Role agents, Projects, Harnesses, Credentials, Telegram, Labels, then the remaining sections); the Harnesses, Credentials and Telegram pages keep their URLs and forms and render inside it, with the Settings tab highlighted.
 
 | Page | Changes |
 |---|---|
@@ -102,7 +102,7 @@ survives the page's 5-second refresh). Under the map, **Needs you** lists the ti
 Telegram (Run <stage>, Build anyway, Skip, or Accept recommendations for stage questions).
 
 The map is read-only: stations are links, not controls, so pause and reroute can be added later without redrawing it. On a phone (under 760px, tested at 360-430px) the
-navigation becomes a bottom tab bar (Factory, Needs you with a count badge, Tickets, and **More** for Runs, PRs & CI, Events, Settings and the
+navigation becomes a bottom tab bar (Factory, Tickets with the needs-you count, Events, and **More** for Settings and the
 rest; every target is at least 44px) and the Factory page shows a phone screen instead of the map: health dot, a title and sentence, three
 tiles (working, need you, PRs open), a card for what is running with a progress bar, the pipeline as a vertical list (Intake, Analyst,
 Designer, Architect, Build, PRs and CI, each with a state dot and word) and the top Needs-you ticket with *Review →*. The belt diagram,

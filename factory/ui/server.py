@@ -260,7 +260,7 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self, path: str, q: dict, csrf: str) -> None:
         self.app.refresh_update_notice()
         cached = L.needs_cached()                              # the nav count: never a GitHub call, only what the tray already read
-        badges = {"/needs": len(cached)} if cached else None
+        badges = {"/tickets": len(cached)} if cached else None
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))
         flt = q.get("need", "") if q.get("need") in ("questions", "decisions") else ""
         if path in ("/", "/fragment/overview"):
@@ -277,7 +277,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/needs":
                 shown = L.flash_pop(csrf)
                 return self._send(200, views.page("Needs you", f'<p class="ph-only"><a href="/">← Factory</a></p><div id="live" data-src="/fragment/needs">{body}</div>', path, csrf, wide=True,
-                                                  badges={"/needs": len(rows)} if rows else None,
+                                                  badges={"/tickets": len(rows)} if rows else None,
                                                   flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             return self._send(200, body)
         route = admin.GET.get(path)
@@ -335,11 +335,12 @@ class Handler(BaseHTTPRequestHandler):
                     return page(f"Images · #{int(n)}", views.ticket_images_page(q["repo"], int(n), dbm.design_files_for_runs(db, all_runs), shots))
                 files = dbm.design_files_for_runs(db, [i for s in steps if s["step"] == "design" for i in s["run_ids"]])
                 has_images = bool(shots) or any(views.mockup_img(f) for fs in dbm.design_files_for_runs(db, all_runs).values() for f in fs)
+                tprs = [p for p in dbm.watched_prs(db, 300) if p["issue_repo"] == q["repo"] and p["issue_num"] == int(n)]
                 return page(f"Ticket #{int(n)}", views.ticket_detail(q["repo"], int(n), steps, files, dbm.doc_stages(db, q["repo"], int(n)), has_images,
-                                                                    journey_view.live_wrap(j, journey_view.journey_html(j)) if j["steps"] else ""), wide=True)
-            if path == "/prs":
-                prs = dbm.watched_prs(db)
-                return page("PRs & CI", views.prs_summary_line(prs) + views.prs_cards(prs, self.app.cfg().ci.fix_rounds))
+                                                                    journey_view.live_wrap(j, journey_view.journey_html(j)) if j["steps"] else "",
+                                                                    L.ticket_needs(self, q["repo"], int(n), csrf), views.ticket_prs(tprs, self.app.cfg().ci.fix_rounds)), wide=True)
+            if path == "/prs":                                   # now a filter of the Tickets page
+                return self._redirect("/tickets?stage=prs")
             if path == "/events":
                 before = int(q["before"]) if q.get("before", "").isdigit() else None
                 kind = q.get("kind") or "important"

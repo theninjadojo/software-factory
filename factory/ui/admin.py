@@ -27,7 +27,7 @@ def _send_page(h, status: int, title: str, body: str, active: str, csrf: str, fl
     """Every admin page renders inside the Settings layout: the Settings tab is lit and the side list marks the page."""
     cached = L.needs_cached()
     side = forms.side_list(section or active.lstrip("/"))
-    h._send(status, views.page(title, body, "/settings", csrf, nav=views.NAV, flash=flash, flash_kind=kind, badges={"/needs": len(cached)} if cached else None, side=side))
+    h._send(status, views.page(title, body, "/settings", csrf, nav=views.NAV, flash=flash, flash_kind=kind, badges={"/tickets": len(cached)} if cached else None, side=side))
 
 
 def _files(h):

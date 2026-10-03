@@ -64,6 +64,19 @@ def _path(segs) -> str:
     return " ".join(f"M{x1:.0f} {y1:.0f} L{x2:.0f} {y2:.0f}" for x1, y1, x2, y2 in segs)
 
 
+def _trail(segs) -> str:
+    """One continuous path along a route (the segments of a route join end to start), for a crate to ride."""
+    x0, y0 = segs[0][0], segs[0][1]
+    return f"M{x0:.0f} {y0:.0f} " + " ".join(f"L{x2:.0f} {y2:.0f}" for _, _, x2, y2 in segs)
+
+
+def _crates(segs) -> str:
+    """Two crates riding the belt into the station that is working now (SMIL motion: no inline style, so the page policy allows it)."""
+    d = _trail(segs)
+    return "".join(f'<rect class="jy-crate" x="-6" y="-6" width="12" height="12"><animateMotion dur="2.4s" begin="{b}s" repeatCount="indefinite" path="{d}"/></rect>'
+                   for b in (0, -1.2))
+
+
 def _visits(steps: list[dict]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     for s in steps:
@@ -97,7 +110,7 @@ def map_svg(j: dict) -> str:
             lane = lanes[key] = lanes.get(key, 0) + 1
             kind = "run" if s["state"] == "running" else "fail" if prev[1]["state"] == "failed" else "ok"
             segs = _route(prev[0], m, (lane - 1) % 3 + 1)
-            belts += f'<path class="jy-belt {kind}" d="{_path(segs)}"/>'
+            belts += f'<path class="jy-belt {kind}" d="{_path(segs)}"/>' + (_crates(segs) if kind == "run" else "")
             x1, y1, x2, y2 = max(segs, key=lambda q: abs(q[2] - q[0]) + abs(q[3] - q[1]))
             badges += (f'<g class="jy-badge {kind}"><circle cx="{(x1 + x2) / 2:.0f}" cy="{(y1 + y2) / 2:.0f}" r="11"/>'
                        f'<text x="{(x1 + x2) / 2:.0f}" y="{(y1 + y2) / 2 + 4:.0f}" text-anchor="middle">{int(s["n"])}</text></g>')

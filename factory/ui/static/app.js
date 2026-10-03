@@ -28,6 +28,14 @@
   });
   countAll();
 
+  // --- Reduced motion: the crates on the journey belts (SVG animation, which CSS cannot switch off) stay where they are.
+  function calm() {
+    if (!window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var maps = document.querySelectorAll("svg.jy-map");
+    for (var i = 0; i < maps.length; i++) if (maps[i].pauseAnimations) maps[i].pauseAnimations();
+  }
+  calm();
+
   // --- Tickets list: row buttons post in the background and swap the row, so the page keeps its scroll position.
   // The POST is the normal one (CSRF, checks and the 303 are unchanged); we read the list it redirects to and take the row and flash from it.
   function note(tr, text, kind) {

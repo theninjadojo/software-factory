@@ -37,10 +37,10 @@ STATIONS = {
     "build": ("Build", "Edits the code in a sandbox. The factory validates the change and opens a pull request.", "/runs", "Runs"),
     "needs": ("Needs you", "Tickets the factory will not decide alone: low confidence, open questions, or a build it is unsure about.", "/tickets", "Tickets"),
     "doc": ("Ticket comment", "Where stage documents and their open questions are posted.", "/tickets", "Tickets"),
-    "pr": ("PRs", "Pull requests the factory opened, tracked for CI and merge conflicts.", "/prs", "PRs and CI"),
+    "pr": ("PRs", "Pull requests the factory opened, tracked for CI and merge conflicts.", "/tickets?stage=prs", "PRs and CI"),
     "review": ("Review", "An independent read-only reviewer that comments on a pull request. Off unless enabled.", "/settings", "Settings"),
-    "ci": ("CI", "Watches the checks on each pull request and runs a fix round when they fail.", "/prs", "PRs and CI"),
-    "conflicts": ("Conflicts", "Merges the base branch into a conflicting pull request. Off unless enabled.", "/prs", "PRs and CI"),
+    "ci": ("CI", "Watches the checks on each pull request and runs a fix round when they fail.", "/tickets?stage=prs", "PRs and CI"),
+    "conflicts": ("Conflicts", "Merges the base branch into a conflicting pull request. Off unless enabled.", "/tickets?stage=prs", "PRs and CI"),
 }
 ORDER = tuple(STATIONS)
 ROLE_STATIONS = {"analyst", "designer", "architect"}
@@ -301,7 +301,7 @@ def summary_bar(d: dict, needs, now: float) -> str:
     return (f'<div class="fl-summary card"><span class="fl-dot {"bad" if stale else "good"}" aria-hidden="true"></span><span>{esc(health)}</span>'
             f'<a href="/runs?status=running"><b>{len(d["running"])}</b> working</a>'
             f'<a href="/needs"><b>{"?" if needs is None else len(needs)}</b> need you</a>'
-            f'<a href="/prs"><b>{len(d["prs"])}</b> PRs open</a>{mode}{usage_bits(d, now)}<span class="fl-grow"></span>'
+            f'<a href="/tickets?stage=prs"><b>{len(d["prs"])}</b> PRs open</a>{mode}{usage_bits(d, now)}<span class="fl-grow"></span>'
             f'<a class="muted" href="/settings">Poll {esc(cfg["poll_seconds"])}s · CI {esc(cfg["ci"])} · Telegram {tele} · Edit</a></div>'
             + (f'<p class="bad-text">last error: {esc(err)}</p>' if err else ""))
 
@@ -344,7 +344,7 @@ def today_card(d: dict, now: float) -> str:
     return ('<section class="fl-today" aria-labelledby="today"><h2 id="today">Today</h2>'
             f'<p>{len(recent)} runs · {passed} passed · {failed} failed</p>'
             f'<ul class="fl-list">{runs or "<li class=muted>No runs yet.</li>"}</ul>'
-            f'<p><a href="/prs">{len(prs)} PRs · {ok} passing · {bad} CI failing →</a></p></section>')
+            f'<p><a href="/tickets?stage=prs">{len(prs)} PRs · {ok} passing · {bad} CI failing →</a></p></section>')
 
 
 def needs_summary(needs, csrf: str, back: str) -> str:

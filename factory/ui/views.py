@@ -13,8 +13,9 @@ from ..sanitize import md_render
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
-NAV = [("/", "Factory"), ("/needs", "Needs you"), ("/tickets", "Tickets"), ("/runs", "Runs"), ("/prs", "PRs & CI"), ("/events", "Events"),
-       ("/settings", "Settings")]
+NAV = [("/", "Factory"), ("/tickets", "Tickets"), ("/events", "Events"), ("/settings", "Settings")]
+# Needs you, Runs and PRs & CI are part of Tickets: those pages light up the Tickets tab, and the needs count sits on it.
+TICKET_PAGES = {"/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/labels", "/labels/issue"}
 ICON = '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 16 16\'%3E%3Ccircle cx=\'8\' cy=\'8\' r=\'6\' fill=\'%23e0a030\'/%3E%3C/svg%3E">'
 PRIMARY = 3         # the first three stay on the phone tab bar (with More: four buttons); the rest sit behind "More"
 
@@ -108,6 +109,8 @@ def update_banner() -> str:
 
 def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "") -> str:
     items = list(nav or NAV)
+    if active in TICKET_PAGES or active.startswith("/runs/"):
+        active = "/tickets"
     count = lambda p: f' <span class="navbadge">{int(badges[p])}</span>' if badges and badges.get(p) else ""
     link = lambda p, n, extra="": f'<a href="{p}"{" class=\"" + ("active " if p == active else "") + extra + "\"" if (p == active or extra) else ""}>{esc(n)}{count(p)}</a>'
     links = "".join(link(p, n, "sec" if i >= PRIMARY else "") for i, (p, n) in enumerate(items))
@@ -444,13 +447,21 @@ def ticket_images_page(repo: str, issue: int, files_by_run: dict, images_by_run:
     return out + f'<p><a href="/ticket?repo={esc(repo)}&amp;n={int(issue)}">← back to the ticket</a></p>'
 
 
-def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=(), has_images: bool = False, journey: str = "") -> str:
+def ticket_detail(repo: str, issue: int, steps: list[dict], files_by_run: dict | None = None, docs=(), has_images: bool = False, journey: str = "",
+                  needs: str = "", prs: str = "") -> str:
     done = sum(s["status"] == "done" for s in steps)
     head = f'<p>{ticket_link(repo, issue)} <span class="step-count" role="status">{esc(step_summary((done, len(steps))))}</span></p>'
     if has_images and REPO.match(str(repo)):
         head += f'<p><a class="button" href="{esc(images_url(repo, issue))}">View images</a></p>'
-    return (head + (f"<h2>Journey</h2>{journey}" if journey else "") + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs)
-            + '<p><a href="/tickets">← all tickets</a></p>')
+    return (head + needs + (f"<h2>Journey</h2>{journey}" if journey else "") + "<h2>Pipeline</h2>" + pipeline(steps, files_by_run, repo, issue, docs)
+            + "<h2>Pull requests and checks</h2>" + prs + '<p><a href="/tickets">← all tickets</a> · <a href="/runs">all runs</a></p>')
+
+
+def ticket_prs(prs: list[dict], fix_rounds: int = 1) -> str:
+    """The pull requests the factory opened for one ticket, with their checks and fix rounds (what the PRs & CI page used to list)."""
+    if not prs:
+        return '<p class="muted">No pull request yet. When a build opens one, it appears here with its checks and fix rounds.</p>'
+    return prs_summary_line(prs) + prs_cards(prs, fix_rounds)
 
 
 def steps_cell(t: dict, counts: dict) -> str:

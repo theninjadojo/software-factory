@@ -17,7 +17,7 @@ from .views import badge, csrf_field, esc
 log = logging.getLogger("factory.ui")
 NUM = re.compile(r"^\d{1,9}$")
 STATES = ("open", "closed", "all")
-STAGE_FILTERS = ("progress", "needs", "done")
+STAGE_FILTERS = ("progress", "needs", "prs", "done")
 FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it is labelled again.", "started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced.",
          "answered": "Answer recorded on the ticket. Other questions still need an answer.",
          "continued": "Answers recorded on the ticket. The factory starts the next stage at its next poll."}
@@ -34,7 +34,7 @@ NO_TOKEN = "Save a GitHub token on the Credentials page first."
 # the server per session (never taken from the URL), so a link cannot make the page say something.
 _flash: dict = {}
 _flash_lock = threading.Lock()
-BACK = re.compile(r"^/(?:\?(?:station|need|view)=[a-z]{1,12}(?:&(?:station|need|view)=[a-z]{1,12}){0,2}|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?)?$")
+BACK = re.compile(r"^/(?:\?(?:station|need|view)=[a-z]{1,12}(?:&(?:station|need|view)=[a-z]{1,12}){0,2}|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?|ticket\?repo=[\w.%-]{1,150}&n=\d{1,9})?$")
 
 
 def flash_set(csrf: str, msg: str, kind: str = "ok") -> None:
@@ -246,6 +246,15 @@ def list_get(h, q: dict, csrf: str) -> None:
     label, text = (q.get("label") or "")[:50], (q.get("q") or "").strip()[:100]
     page_no = int(q["page"]) if (q.get("page") or "").isdigit() and 1 <= int(q["page"]) <= 1000 else 1
     stage = q.get("stage") if q.get("stage") in STAGE_FILTERS else ""
+    if stage == "prs":                      # the pull requests and checks the factory is watching, across every repository (this was the PRs & CI page)
+        db = h.app.ro_db()
+        try:
+            prs = dbm.watched_prs(db, 300) if db is not None else []
+        finally:
+            if db is not None:
+                db.close()
+        return _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, [], csrf, stage) + views.prs_summary_line(prs)
+                     + views.prs_cards(prs, cfg.ci.fix_rounds), csrf)
     gh = _gh(h)
     if gh is None:
         return _page(h, 200, "Tickets", views.tickets_page(_decisions(h, None)), csrf, NO_TOKEN + " Showing the factory's decisions only.", "bad")
@@ -292,7 +301,7 @@ def filters(cfg, repo, state, label, text, names, csrf: str = "", stage: str = "
 
     chip = lambda name, key: (f'<a href="/tickets?{esc(urlencode({"repo": repo, "state": state, "label": label, "q": text, **({"stage": key} if key else {})}))}"'
                               f'{" aria-current=page" if key == stage else ""}>{name}</a>')
-    chips = "".join(chip(n, k) for n, k in (("All", ""), ("In progress", "progress"), ("Needs you", "needs"), ("Done", "done")))
+    chips = "".join(chip(n, k) for n, k in (("All", ""), ("Needs you", "needs"), ("In progress", "progress"), ("PRs &amp; CI", "prs"), ("Done", "done")))
     return (new_ticket_form(cfg, repo, csrf) + '<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
             f'<form method="get" class="filters"><select name="repo" aria-label="Repository">{opts(cfg.repos, repo)}</select>'
             f'<select name="state" aria-label="State">{opts(STATES, state)}</select>'
@@ -907,3 +916,16 @@ def stage_comment(h, repo: str, issue: int, stage: str) -> str | None:
         return found
     except Exception:
         return None
+
+
+def ticket_needs(h, repo: str, n: int, csrf: str) -> str:
+    """What this ticket needs from a person, on its own page: the open questions or the decision, with the same forms as the Needs you list.
+    Empty when nothing is waiting (or the factory has no GitHub token to read the questions with)."""
+    from urllib.parse import quote
+    from . import floor
+    rows = needs_you(h) or []
+    mine = next((r for r in rows if r["repo"] == repo and r["issue"] == n), None)
+    if mine is None:
+        return ""
+    back = f"/ticket?repo={quote(repo, safe='')}&n={int(n)}"
+    return f'<h2>Needs you</h2><div class="nd-list">{floor._row(0, mine, csrf, back)}</div>'

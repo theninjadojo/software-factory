@@ -173,7 +173,8 @@ class Pages(UiCase):
         _, _, detail = self.req("GET", f"/runs/{rid}", cookie=cookie)
         for needle in ("# The design", "agent log tail", "designer", "&quot;stage&quot;: &quot;design&quot;"):
             self.assertIn(needle, detail)
-        self.assertIn("watching", self.req("GET", "/prs", cookie=cookie)[2])
+        self.assertEqual(self.req("GET", "/prs", cookie=cookie)[0], 303)            # PRs & CI is a filter of the Tickets page now
+        self.assertIn("watching", self.req("GET", "/tickets?stage=prs", cookie=cookie)[2])
         self.assertIn("run:stage", self.req("GET", "/tickets", cookie=cookie)[2])
         self.assertIn("PR ready", self.req("GET", "/events?kind=alert", cookie=cookie)[2])
         self.assertEqual(self.req("GET", "/runs/999", cookie=cookie)[0], 404)
@@ -327,7 +328,7 @@ class ImportantEvents(UiCase):
         self.assertIn("1 today · 1 passed · 0 failed", runs)
         self.assertIn("Build opened PR", runs)
         self.assertIn("status=passed", runs)
-        prs = self.req("GET", "/prs", cookie=cookie)[2]
+        prs = self.req("GET", "/tickets?stage=prs", cookie=cookie)[2]
         self.assertIn("2 open · 0 passing · 1 failing", prs)
         self.assertIn("Fix round 1 of ", prs)
         self.assertIn('href="https://github.com/o/web/pull/2"', prs)
