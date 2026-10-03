@@ -38,7 +38,9 @@ class Render(unittest.TestCase):
                        "Done today", "Failed", "The floor", "Running now", "Build it", "CI · PR #3 · checks running", "Claude plan usage", 'value="41"',
                        'href="/tickets?stage=needs"', 'href="/tickets?stage=prs"', 'action="/action/pause"', "Mode: live"):
             self.assertIn(needle, html)
-        self.assertEqual(sum(f"sd-mach p{i} " in html for i in range(10)), 10)
+        self.assertEqual(sum(f"sd-mach p{i} " in html for i in range(10)), 9)       # review is off in this config: no Review station
+        self.assertNotIn("Review: ", html)
+        self.assertIn('<svg class="fm"', html)
         self.assertIn("Not reporting", floor.render(data(status={}), "t", None, [], None))
         self.assertIn("Dry run", floor.render(data(cfg={**data()["cfg"], "live": False}), "t", None, [], None))
 

@@ -107,8 +107,9 @@ class App:
                    "telegram": f"{cfg.telegram_verbosity}" if cfg.telegram_chat_id else "not set up", "ci": "on" if cfg.ci.enabled else "off"}
         summary["max_parallel"] = cfg.runner.max_parallel
         summary["review"], summary["conflicts"] = cfg.review.enabled, cfg.conflicts.enabled
+        summary["roles"], summary["workers"] = [r.name for r in cfg.roles], cfg.workers.enabled
         d = {"cfg": summary, "paused": pause.paused(self.state_dir()) or "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": [],
-             "recent": [], "decided": {}, "conflicting": 0}
+             "recent": [], "decided": {}, "conflicting": 0, "workers": []}
         if db is not None:
             try:
                 d["status"] = dbm.get_status(db)
@@ -118,6 +119,10 @@ class App:
                 d["running"] = dbm.recent_runs(db, 20, status="running")      # every job in flight, newest first
                 d["recent"] = dbm.recent_runs(db, 200)                        # for each station's numbers today
                 d["decided"] = dict(db.execute("SELECT outcome, COUNT(*) FROM decisions WHERE decided_at > ? GROUP BY outcome", (time.time() - 86400,)))
+                try:
+                    d["workers"] = workers_seen(db, time.time())
+                except sqlite3.Error:
+                    pass                                                       # no worker tables yet
                 try:
                     d["conflicting"] = sum(1 for p in dbm.tracked_prs(db) if p["state"] == "conflicting")
                 except sqlite3.Error:
@@ -130,6 +135,15 @@ class App:
             finally:
                 db.close()
         return d
+
+
+def workers_seen(db, now: float) -> list[dict]:
+    """Every verification worker the factory has seen, whether it is online, and the job it holds now (for the floor's trains)."""
+    from .. import jobs
+    from ..verify import ONLINE_SECONDS
+    held = {w: {"issue": int(i), "recipe": r} for w, i, r in db.execute("SELECT worker, issue, recipe FROM verify_jobs WHERE status = 'claimed' ORDER BY claimed")}
+    return [{"name": w["name"], "online": w["last_seen"] >= now - ONLINE_SECONDS, "job": held.get(w["name"])}
+            for w in jobs.online_workers(db, 0, float("inf"))]
 
 
 class Handler(BaseHTTPRequestHandler):

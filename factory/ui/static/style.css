@@ -455,3 +455,58 @@ button.rv-del:hover { color:var(--bad); }
 .rv-sent summary { cursor:pointer; color:var(--muted); min-height:44px; display:flex; align-items:center; }
 .rv-sent .rv-list li { padding-right:14px; }
 @media (max-width:760px) { .rv-stage { padding:8px; } .rv-new > button, .rv-send button { width:100%; } }
+
+/* ---- The floor as a map (yard.py): stations on belts, the workers' railway, GitHub's drones. One SVG; motion is SMIL (app.js
+   pauses it for reduced motion) except the belts' flow, which is CSS. ---- */
+.fm-wrap { padding:0; border:1px solid #262d33; } .fm-phone { display:none; }
+.fm { display:block; width:100%; min-width:880px; height:auto; font-family:var(--sans); }
+.fm-ground { fill:#161b1f; }
+.fm-zone { fill:#12161a; stroke:var(--line); stroke-dasharray:6 6; }
+.fm-lab { fill:var(--lab); font:12px var(--sans); letter-spacing:.08em; }
+.fm-belt { fill:none; stroke:#262d33; stroke-width:16; } .fm-belt.thin { stroke-width:12; }
+.fm-flow { fill:none; stroke:#3a4046; stroke-width:2; stroke-dasharray:7 9; }
+.fm-flow.ok { stroke:#2f6b56; } .fm-flow.wait { stroke:var(--blue); } .fm-flow.fail { stroke:var(--bad); }
+.fm-flow.run { stroke:var(--accent); animation:fm-flow .3s linear infinite; }
+@keyframes fm-flow { to { stroke-dashoffset:-16; } }
+.fm-crate rect { fill:#c88a3c; stroke:#7a4f1c; stroke-width:2; } .fm-crate text { fill:var(--accent-ink); font:600 10px var(--mono); text-anchor:middle; dominant-baseline:middle; }
+.fm-crate.stuck rect { fill:#d9675b; stroke:#7d2a22; } .fm-crate.stuck { animation:fm-jit .25s linear infinite; }
+@keyframes fm-jit { 50% { transform:translateX(1px); } }
+.fm-box { fill:var(--panel2); stroke:var(--line2); stroke-width:2; }
+.fm-m .fm-box { fill:#1f262b; }
+.fm-m:hover .fm-box, .fm-w:hover .fm-box, .fm-add:hover rect { fill:#29313a; }
+.fm-m:focus-visible .fm-box, .fm-w:focus-visible .fm-box, .fm-add:focus-visible rect { stroke:var(--accent); stroke-width:4; }
+.fm-m:focus-visible, .fm-w:focus-visible, .fm-add:focus-visible { outline:none; }
+.fm-m.run .fm-box { stroke:var(--accent); filter:drop-shadow(0 0 10px rgba(242,169,59,.3)); }
+.fm-m.wait .fm-box { stroke:var(--blue); animation:fm-ping 1.8s ease-out infinite; } .fm-m.fail .fm-box { stroke:var(--bad); } .fm-m.done .fm-box { stroke:var(--good); }
+.fm-m.none .fm-box { fill:#1a2025; stroke-dasharray:6 4; }
+@keyframes fm-ping { 50% { stroke-width:4; } }
+.fm-i { fill:none; stroke:var(--muted); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.fm-m.run .fm-i { stroke:var(--accent); } .fm-m.wait .fm-i { stroke:var(--blue); } .fm-m.fail .fm-i { stroke:var(--bad); } .fm-m.done .fm-i { stroke:var(--good); }
+.fm-t { fill:var(--text); font:600 15px var(--sans); } .fm-m.none .fm-t { fill:var(--muted); }
+.fm-s { fill:var(--muted); font:700 11px var(--sans); letter-spacing:.05em; text-transform:uppercase; }
+.fm-m.run .fm-s { fill:var(--accent); } .fm-m.wait .fm-s { fill:var(--blue); } .fm-m.fail .fm-s { fill:var(--bad); } .fm-m.done .fm-s { fill:var(--good); }
+.fm-r { fill:var(--muted); font:11px var(--mono); }
+.fm-c { fill:var(--text); font:600 15px var(--mono); text-anchor:end; }
+.fm-prog { fill:var(--accent); }
+.fm-ballast path { fill:none; stroke:#20262b; stroke-width:24; } .fm-ties path { fill:none; stroke:#4a3d2e; stroke-width:16; stroke-dasharray:3 7; }
+.fm-rail path { fill:none; stroke:#8a949c; stroke-width:10; } .fm-rail-in path { fill:none; stroke:#20262b; stroke-width:6; }
+.fm-ties-in path { fill:none; stroke:#4a3d2e; stroke-width:6; stroke-dasharray:3 7; }
+.fm-ug { fill:#5c4a2a; stroke:#c99a32; stroke-width:2; } .fm-ugl { fill:none; stroke:#c99a32; stroke-width:2; stroke-dasharray:2 7; opacity:.2; }
+.fm-hood { fill:#c99a32; stroke:#6b5016; stroke-width:2; }
+.fm-stop rect { fill:#2a3036; stroke:var(--line2); stroke-width:2; } .fm-stop text { fill:#c9d1d7; font:500 11px var(--mono); }
+.fm-flag { fill:none; stroke:var(--muted); stroke-width:1.6; stroke-linejoin:round; }
+.fm-sig rect { fill:#0f1215; stroke:var(--line2); } .fm-sig .r { fill:var(--bad); } .fm-sig .g { fill:var(--good); } .fm-sig .off { opacity:.15; }
+.fm-wagon { fill:#2a3238; stroke:#1d2328; stroke-width:2; } .fm-load { fill:#c88a3c; stroke:#7a4f1c; }
+.fm-loco { fill:#3b464e; stroke:#1d2328; stroke-width:2; } .fm-head { fill:#ffe2a8; }
+.fm-unload { fill:#c88a3c; stroke:#7a4f1c; }
+.fm-w .fm-box { stroke:var(--good); } .fm-w .fm-on { fill:var(--good); } .fm-w .fm-s { fill:var(--good); }
+.fm-w.off .fm-box { stroke:var(--line2); stroke-dasharray:6 4; fill:#1a2025; } .fm-w.off .fm-on { fill:var(--line2); } .fm-w.off .fm-s, .fm-w.off .fm-t { fill:var(--muted); }
+.fm-depot .fm-box { stroke:var(--link); } .fm-depot .fm-i { stroke:var(--link); } .fm-depot .fm-s { fill:var(--link); }
+.fm-add rect { fill:transparent; stroke:var(--line2); stroke-width:2; stroke-dasharray:6 4; } .fm-add text { fill:var(--muted); font:13px var(--sans); text-anchor:middle; }
+.fm-rotor circle { fill:none; stroke:#9aa7b0; stroke-width:1.5; } .fm-dbody { fill:#3b464e; stroke:#1d2328; }
+.fm-dload.in { fill:#c88a3c; } .fm-dload.out { fill:var(--good); }
+.fm-drone { filter:drop-shadow(0 8px 3px rgba(0,0,0,.55)); } .fm-drone, .fm-ride, .fm-train { pointer-events:none; }
+.sd-dot.fm-train-key { width:16px; border-radius:2px; background:#3b464e; border:2px solid #8a949c; box-sizing:border-box; }
+.sd-dot.fm-drone-key { background:transparent; border:2px dotted #9aa7b0; box-sizing:border-box; }
+@media (max-width:760px) { .fm-wrap, .fm-key { display:none; } .fm-phone { display:block; } }
+@media (prefers-reduced-motion:reduce) { .fm-flow, .fm-crate, .fm-m .fm-box { animation:none !important; } }
