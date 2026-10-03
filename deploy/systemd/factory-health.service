@@ -1,0 +1,10 @@
+[Unit]
+Description=Software factory health check (alerts on Telegram when something would stop the factory)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -m factory.health --config /srv/factory/config.toml
+WorkingDirectory=/srv/factory/app
+TimeoutStartSec=300
+# No sandboxing options here either: it runs `podman info`, which needs the same user namespace as the orchestrator.

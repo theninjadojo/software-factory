@@ -188,6 +188,25 @@ class PmCfg:
 
 
 @dataclass(frozen=True)
+class HealthCfg:
+    """The health watchdog (factory.health, run by factory-health.timer): alerts on Telegram when something that would stop the
+    factory goes wrong. Free space is checked as a percentage and in GB; the lower of the two thresholds trips first."""
+    enabled: bool = True
+    disk_warn_percent: int = 15
+    disk_crit_percent: int = 5
+    disk_warn_gb: int = 5
+    disk_crit_gb: int = 2
+    extra_disk_paths: tuple[str, ...] = ()   # more directories whose filesystems to watch (state, work and container storage are automatic)
+    mem_warn_mb: int = 512
+    mem_crit_mb: int = 256
+    stale_poll_minutes: int = 10           # no completed poll for this long (and 3 x poll_seconds): the orchestrator is hung or down
+    failed_runs_warn: int = 5              # this many finished runs in a row all failed
+    github_rate_warn: int = 200            # API calls left this hour
+    repeat_hours: int = 6                  # remind this often while a problem persists
+    heartbeat_url: str = ""                # optional dead-man's switch (e.g. healthchecks.io): pinged each run while nothing is critical
+
+
+@dataclass(frozen=True)
 class SubtasksCfg:
     """Mirror each pipeline step of a ticket as a GitHub sub-issue. Off by default: it adds writes and notifications."""
     enabled: bool = False
@@ -292,6 +311,7 @@ class Config:
     pm: PmCfg = field(default_factory=PmCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
+    health: HealthCfg = field(default_factory=HealthCfg)
     prompts: PromptsCfg = field(default_factory=PromptsCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
@@ -596,6 +616,17 @@ def parse(raw: dict) -> Config:
     updates = UpdatesCfg(**raw.get("updates", {}))
     if not isinstance(updates.repo, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", updates.repo):
         raise ValueError("updates.repo must look like owner/name")
+    health = HealthCfg(**_tuples(raw.get("health", {})))
+    for name in ("disk_warn_percent", "disk_crit_percent", "disk_warn_gb", "disk_crit_gb", "mem_warn_mb", "mem_crit_mb",
+                 "stale_poll_minutes", "failed_runs_warn", "github_rate_warn", "repeat_hours"):
+        v = getattr(health, name)
+        if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 100000:
+            raise ValueError(f"health.{name} must be a whole number from 1 to 100000")
+    if health.disk_crit_percent > health.disk_warn_percent or health.disk_crit_gb > health.disk_warn_gb \
+            or health.mem_crit_mb > health.mem_warn_mb:
+        raise ValueError("health: each crit threshold must not exceed its warn threshold")
+    if health.heartbeat_url and not health.heartbeat_url.startswith("https://"):
+        raise ValueError("health.heartbeat_url must be an https:// address")
     pm = PmCfg(**raw.get("pm", {}))
     if pm.effort not in ("low", "medium", "high"):
         raise ValueError("pm.effort must be low, medium or high")
@@ -637,6 +668,7 @@ def parse(raw: dict) -> Config:
         mockups=mockups,
         updates=updates,
         pm=pm,
+        health=health,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         prompts=_prompts(raw.get("prompts", {})),
         harnesses=harnesses,
