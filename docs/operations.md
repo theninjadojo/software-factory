@@ -77,3 +77,11 @@ the orchestrator and the proxy, and the UI must be able to write the overrides, 
 The lock-down can be checked with the real command builder: construct `sandbox_cmd(...)`, replace the entrypoint with
 `sh -c '...'`, and confirm direct network access fails, the proxy denies unlisted hosts, the root filesystem is read-only,
 and `CapEff` is zero. Both engines were verified this way.
+
+## Claude plan usage
+
+With a subscription token in `claude.env`, the orchestrator asks `api.anthropic.com/api/oauth/usage` (at most every 5 minutes)
+for the 5-hour session and 7-day week utilization. The Factory page shows both percentages, Telegram's `/usage` shows them with
+reset times, and a `rate_limit` alert goes out once when either window reaches 90%. This endpoint is not a documented API and a
+`setup-token` may lack the scope for it: the meter then shows nothing (or the last numbers, marked `?`). An API key has no plan
+limits, so nothing is shown. Per-run token counts are on each run's page.

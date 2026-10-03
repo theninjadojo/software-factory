@@ -4,8 +4,10 @@ right now, with an inspector for the selected station and a tray of the tickets 
 Everything here is server-rendered and escaped; the page's content security policy forbids inline styles, so positions live
 in style.css (one class per station) and progress is a <progress> element. Nothing on this page changes state except the
 tray's buttons, which post to the same /tickets/start action as the Tickets page (CSRF, re-validated server-side)."""
+import json
 import time
 
+from .. import usage
 from . import views
 from .views import ago, badge, csrf_field, dur, esc
 
@@ -196,6 +198,8 @@ def phone_home(d: dict, live: dict, needs, now: float, csrf: str = "") -> str:
     tile = lambda label, value: f'<div class="ph-tile"><b>{value}</b><span>{label}</span></div>'
     tiles = ('<div class="ph-tiles">' + tile("working", len(running)) + tile("need you", "—" if needs is None else len(needs))
              + tile("PRs open", len(d["prs"])) + "</div>")
+    if bits := usage_bits(d, now):
+        tiles += f'<p class="ph-usage">{bits}</p>'
     if running:
         r = running[0]
         extra = f'<p class="muted">+{len(running) - 1} more running</p>' if len(running) > 1 else ""
@@ -273,6 +277,18 @@ def sentence(live: dict, needs) -> str:
     return " ".join(parts)
 
 
+def usage_bits(d: dict, now: float) -> str:
+    """Session and week percent used, from the orchestrator's stored numbers; empty when there are none."""
+    try:
+        u = json.loads(d["status"]["claude_usage"]["value"])
+    except (KeyError, ValueError, TypeError):
+        return ""
+    bits = [f'<span class="{"bad-text" if w["used"] >= usage.LOW_PERCENT else ""}" title="{esc(usage.summary(u, now))}">{esc(label)} <b>{w["used"]:.0f}%</b></span>'
+            for _, label in usage.WINDOWS if (w := u.get(label))]
+    stale = '<span class="muted" title="could not refresh">?</span>' if u.get("error") and bits else ""
+    return f'<span class="muted">Claude used:</span> {" ".join(bits)}{stale}' if bits else ""
+
+
 def summary_bar(d: dict, needs, now: float) -> str:
     cfg, st = d["cfg"], d["status"]
     last_ok = float(st["last_poll_ok"]["value"]) if "last_poll_ok" in st else None
@@ -285,7 +301,7 @@ def summary_bar(d: dict, needs, now: float) -> str:
     return (f'<div class="fl-summary card"><span class="fl-dot {"bad" if stale else "good"}" aria-hidden="true"></span><span>{esc(health)}</span>'
             f'<a href="/runs?status=running"><b>{len(d["running"])}</b> working</a>'
             f'<a href="/needs"><b>{"?" if needs is None else len(needs)}</b> need you</a>'
-            f'<a href="/prs"><b>{len(d["prs"])}</b> PRs open</a>{mode}<span class="fl-grow"></span>'
+            f'<a href="/prs"><b>{len(d["prs"])}</b> PRs open</a>{mode}{usage_bits(d, now)}<span class="fl-grow"></span>'
             f'<a class="muted" href="/settings">Poll {esc(cfg["poll_seconds"])}s · CI {esc(cfg["ci"])} · Telegram {tele} · Edit</a></div>'
             + (f'<p class="bad-text">last error: {esc(err)}</p>' if err else ""))
 

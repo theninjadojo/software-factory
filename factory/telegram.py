@@ -11,10 +11,10 @@ import urllib.request
 from pathlib import Path
 
 from . import db as dbm
-from . import pause
+from . import pause, usage
 
 log = logging.getLogger("factory.telegram")
-HELP = "Commands: /status /pause /resume /help"
+HELP = "Commands: /status /usage /pause /resume /help"
 
 
 def authorized(update: dict, chat_id: int) -> bool:
@@ -107,6 +107,10 @@ class Telegram:
             (self.state_dir / "PAUSED").unlink(missing_ok=True)
             (self.state_dir / "pause_until").unlink(missing_ok=True)
             self.send("resumed")
+        elif text == "/usage":
+            c = sqlite3.connect(self.db_path)
+            self.send(usage.summary(usage.load(c)))
+            c.close()
         elif text == "/status":
             self.send(self._status())
         elif text in ("/help", "/start"):

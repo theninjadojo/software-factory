@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, designfiles, mockups, pause, pm, runner, subtasks
+from . import ci, conflicts, designfiles, mockups, pause, pm, runner, subtasks, usage
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -942,6 +942,19 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         conflicts.watch(cfg, gh, conn, lambda text, event="conflict": alert(text, event=event))
 
 
+def check_usage(cfg: Config, conn) -> None:
+    """Refresh the plan-usage numbers (throttled) and alert once when a window crosses usage.LOW_PERCENT."""
+    if cfg.dry_run:
+        return
+    try:
+        was = set(usage.over_limit(usage.load(conn)))
+        cur = usage.refresh(conn, cfg.runner.claude_env_file)
+        if new := [w for w in usage.over_limit(cur) if w not in was]:
+            alert(f"Claude {' and '.join(new)} usage is at {usage.LOW_PERCENT}% or more.\n{usage.summary(cur)}", event="rate_limit")
+    except Exception:
+        log.exception("usage check failed")             # never stop the poll loop for a meter
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="/srv/factory/config.toml")
@@ -994,6 +1007,7 @@ def main() -> None:
             dbm.set_status(conn, "mode", "dry-run" if cfg.dry_run else "LIVE")
             dbm.set_status(conn, "paused", pause.paused(Path(cfg.db_path).parent) or "")
             dbm.set_status(conn, "poll_started", str(time.time()))
+            check_usage(cfg, conn)
             poll_once(cfg, gh, conn, clf)
             dbm.set_status(conn, "pool", pool_status())
             dbm.set_status(conn, "last_poll_ok", str(time.time()))

@@ -72,7 +72,7 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   and Telegram, and applies `factory:fix-conflicts`. The orchestrator merges the base branch into the PR branch on its own clone; if git
   cannot finish, an agent edits only the conflicted files, every marker must be gone, and the merge commit is pushed. Never a rebase or a
   force-push; at most 10 attempts per PR. Off by default.
-- **Telegram.** Alerts with a verbosity setting, `/status /pause /resume`, and Run/Skip buttons for tickets that need a
+- **Telegram.** Alerts with a verbosity setting, `/status /usage /pause /resume`, and Run/Skip buttons for tickets that need a
   person. Only your Telegram user id is obeyed.
 - **Recovery.** If the orchestrator restarts mid-task, leftovers are cleared and the ticket is requeued.
 - **Admin UI.** See what is happening and what happened (runs, decisions, PRs and CI, an event timeline), and change settings,
