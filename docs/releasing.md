@@ -44,8 +44,30 @@ are optional, so a **minor** release needs no action. Scheduled jobs (`[[schedul
 nothing runs until a schedule is added, the orchestrator reads its keys from the mounted `secrets` directory and writes snapshots under `state/`, and
 the UI container saves keys and queues "Run now" through the same two mounts.
 
+## Native installs (Podman + systemd)
+
+```bash
+sudo -n -u factory /srv/factory/app/deploy/update-native.sh            # the latest release
+sudo -n -u factory /srv/factory/app/deploy/update-native.sh v0.2.0     # a specific one, also how you go back
+```
+
+`update-native.sh` is a release file. The first time on a host that does not have it yet, fetch it from the latest release and run it (a private
+repo needs a token that can read it, here the bot token):
+
+```bash
+sudo -n -u factory bash -c 'T=$(cat /srv/factory/secrets/github_token_bot); R=theninjadojo/software-factory
+  ID=$(curl -fsSL -H "Authorization: Bearer $T" https://api.github.com/repos/$R/releases/latest | python3 -c "import json,sys; print([a[\"id\"] for a in json.load(sys.stdin)[\"assets\"] if a[\"name\"]==\"update-native.sh\"][0])")
+  curl -fsSL -H "Authorization: Bearer $T" -H "Accept: application/octet-stream" https://api.github.com/repos/$R/releases/assets/$ID -o /tmp/update-native.sh
+  bash /tmp/update-native.sh'
+```
+
+After that first update it is part of the install (`/srv/factory/app/deploy/update-native.sh`). It downloads the release's source tarball (a private repo needs a token: `SHIKUMI_TOKEN_FILE`, else `secrets/github_token_bot`, else
+`github_token`, whichever can read the repo), refuses while an agent run is in flight, **runs the tests on the new code first** (nothing
+changes if they fail), rebuilds the sandbox images, restarts the services and checks they stay up, and rolls back (previous code and
+images) if they do not. For the UI banner on a private repo set `[updates] token_file` to a token that can read it.
+`scripts/deploy.sh user@host` still deploys the working tree you have checked out (for development).
+
 ## Not covered
 
 - **Source checkouts** update with `git pull` and `docker compose --profile build build`.
-- **Native Podman installs** use `scripts/deploy.sh user@host` (it tars the checkout, including `VERSION`).
 - **Config or database changes** between versions are not migrated automatically: read the release notes before a major update.
