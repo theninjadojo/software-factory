@@ -533,3 +533,110 @@ button.rv-del:hover { color:var(--bad); }
 .fm-jv.run { fill:var(--accent); } .fm-jv.done { fill:var(--good); } .fm-jv.fail { fill:var(--bad); }
 .sd-segs i.run { background:repeating-linear-gradient(90deg,var(--accent) 0 6px,var(--accent-dark) 6px 12px); background-size:24px 100%; animation:sd-beltR 1s linear infinite; }
 @media (prefers-reduced-motion:reduce) { .sd-segs i.run { animation:none !important; } }
+
+/* ---- The floor's buildings (buildings.py): one per station; .on powers it ---- */
+@keyframes ma-spin{to{transform:rotate(360deg)}}
+@keyframes ma-spin-r{to{transform:rotate(-360deg)}}
+@keyframes ma-sweep{0%,100%{transform:rotate(-35deg)}50%{transform:rotate(35deg)}}
+@keyframes ma-swing{0%,100%{transform:rotate(-14deg)}50%{transform:rotate(16deg)}}
+@keyframes ma-arm-a{0%,45%{transform:rotate(0)}55%,100%{transform:rotate(-38deg)}}
+@keyframes ma-arm-b{0%,45%{transform:rotate(-38deg)}55%,100%{transform:rotate(0)}}
+@keyframes ma-hook{0%,100%{transform:translateY(0)}50%{transform:translateY(14px)}}
+@keyframes ma-piston{0%,100%{transform:translateY(0)}50%{transform:translateY(16px)}}
+@keyframes ma-rise{0%{transform:translate(0,0) scale(.5);opacity:0}20%{opacity:.6}100%{transform:translate(6px,-22px) scale(1.7);opacity:0}}
+@keyframes ma-blink{0%,60%{opacity:1}80%{opacity:.25}}
+@keyframes ma-chk{0%,100%{fill:#3b464e}20%,60%{fill:#52c7a1}}
+@keyframes ma-flame{0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.4)}}
+@keyframes ma-beam{0%,100%{transform:rotate(-12deg);opacity:.25}50%{transform:rotate(12deg);opacity:.5}}
+@keyframes ma-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+@keyframes ma-glow{0%,100%{fill:#f2a93b}50%{fill:#ffcb73}}
+.ma{display:block;overflow:visible}
+.ma .ground{fill:#22282d}
+.ma .body{fill:#2c333a;stroke:#1a1f24;stroke-width:1.5}
+.ma .roof{fill:#3b464e;stroke:#1a1f24;stroke-width:1.5}
+.ma .panel{fill:#161b1f;stroke:#1a1f24}
+.ma .strut,.ma .arm-l{stroke:#7d8890;stroke-width:2;fill:none;stroke-linecap:round}
+.ma .dish{fill:#59636b;stroke:#1a1f24}
+.ma .tip,.ma .rod{fill:#7d8890}
+.ma .win{fill:#20262b}
+.ma .pl{fill:#4a535b}
+.ma .cog-b{fill:#4a545c;stroke:#1a1f24;stroke-width:1}
+.ma .cog-h{fill:#2c333a}.ma .cog-a{fill:#7d8890}
+.ma .cog,.ma .sweep,.ma .swing,.ma .arm,.ma .scan,.ma .beamg,.ma .flame,.ma .sweep{transform-origin:92px 20px}.ma .arm.a{transform-origin:110px 14px}.ma .arm.b{transform-origin:110px 30px}.ma .scan{transform-origin:70px 22px}.ma .swing{transform-origin:104px 30px}.ma .beamg{transform-origin:70px 13px}
+.ma .smoke{transform-box:fill-box;transform-origin:center}.ma .smoke.s1{animation-delay:-.8s}.ma .smoke.s2{animation-delay:-1.6s}
+.ma .chk.c1{animation-delay:.35s}.ma .chk.c2{animation-delay:.7s}.ma .chk.c3{animation-delay:1.05s}.ma .chk.c4{animation-delay:1.4s}
+.ma .padh{fill:none;stroke:#59636b;stroke-width:1.5}.ma .padl{fill:#4a535b}.ma.on .padl{fill:#8fd3e6;animation:ma-blink 1s infinite}.ma.on .padl.p1{animation-delay:.5s}
+.ma .cog{transform-box:fill-box;transform-origin:center}
+.ma .chute{fill:#3b464e}.ma .sig{fill:#59636b}
+.ma .lens{fill:#20262b;stroke:#7d8890;stroke-width:2}
+.ma .pen{fill:#7d8890}
+.ma .blueprint{fill:#1e2b3a;stroke:#2f4258}.ma .bp-l{fill:none;stroke:#2f4258;stroke-width:1.5}
+.ma .hazard{fill:#3b3320}
+.ma .eye{fill:#20262b;stroke:#7d8890;stroke-width:1.5}.ma .pupil{fill:#4a535b}
+.ma .beam{fill:#f2a93b;opacity:0}
+.ma .chk{fill:#3b464e}
+.ma .door{fill:#22282d}.ma .pad{fill:#3b464e}
+.ma .rk{fill:#8a949c;stroke:#1a1f24}.ma .fin{fill:#59636b}.ma .flame{fill:#f2a93b;opacity:0;transform-box:fill-box;transform-origin:top center}
+.ma .smoke{fill:#6b737c;opacity:0}
+/* powered */
+.ma.on .win{animation:ma-glow 1.6s ease-in-out infinite;fill:#f2a93b}
+.ma.on .pl{fill:#52c7a1;animation:ma-blink 1.4s infinite}
+.ma.on .cog-b{fill:#6b5a3a}
+.ma.on .cog{animation:ma-spin 2.4s linear infinite}
+.ma.on .cog.ccw{animation:ma-spin-r 1.7s linear infinite}
+.ma.on .sweep{animation:ma-sweep 3s ease-in-out infinite}
+.ma.on .swing{animation:ma-swing 1.6s ease-in-out infinite}
+.ma.on .arm.a{animation:ma-arm-a 2.4s ease-in-out infinite}.ma.on .arm.b{animation:ma-arm-b 2.4s ease-in-out infinite}
+.ma.on .sig{fill:#f2a93b}
+.ma.on .scan{animation:ma-swing 2.2s ease-in-out infinite}
+.ma.on .lens{fill:#f2a93b;stroke:#ffcb73}
+.ma.on .hook{animation:ma-hook 2s ease-in-out infinite}
+.ma.on .blueprint{fill:#24476b;stroke:#8fd3e6}.ma.on .bp-l{stroke:#8fd3e6}
+.ma.on .hazard{fill:#c99a32}
+.ma.on .beam{animation:ma-beam 2s ease-in-out infinite}
+.ma.on .pupil{fill:#f2a93b}
+.ma.on .chk{animation:ma-chk 1.75s linear infinite}
+.ma.on .piston{animation:ma-piston .9s ease-in-out infinite}
+.ma.on .flame{opacity:1;animation:ma-flame .25s ease-in-out infinite}
+.ma.on .rocket{animation:ma-bob .5s ease-in-out infinite}
+.ma.on .smoke{animation:ma-rise 2.4s ease-out infinite}
+.ma.on .tip.blink{animation:ma-blink .8s infinite;fill:#ff6b5e}
+/* waiting for a person: lit, but blue and still */
+.ma.hold .win{fill:#8fa8ff;animation:ma-blink 1.6s infinite}.ma.hold .pl{fill:#8fa8ff}
+/* failed: dark, a red light, grey smoke */
+.ma.fault .pl{fill:#ff6b5e;animation:ma-blink .7s infinite}.ma.fault .win{fill:#3a2422}
+.ma.fault .smoke{animation:ma-rise 3.2s ease-out infinite;fill:#4a3532}
+@media (prefers-reduced-motion:reduce) { .ma * { animation:none !important; } }
+
+/* ---- The floor's belt network (yard.py): the loop, splitters, undergrounds, inserters, pipes, the queue, the power plant ---- */
+.fn-belt { fill:none; stroke:#262d33; stroke-width:18; } .fn-belt.bus { stroke-width:20; } .fn-belt.thin { stroke-width:12; }
+.fn-flow { fill:none; stroke:#c99a32; stroke-width:2; stroke-dasharray:7 9; animation:fm-flow .35s linear infinite; }
+.fn-ghost { fill:none; stroke:#c99a32; stroke-width:2; stroke-dasharray:3 7; opacity:.35; animation:fm-flow .5s linear infinite; }
+.fn-ug rect { fill:#3b3320; stroke:#c99a32; stroke-width:2; } .fn-ug .fn-ugm { fill:#1a1f24; stroke:none; }
+.fn-ugflow { stroke:#c99a32; stroke-width:2; stroke-dasharray:3 4; animation:fm-flow .35s linear infinite; }
+.fn-arrow { fill:none; stroke:#c99a32; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+.fn-split rect { fill:#2c333a; stroke:#c99a32; stroke-width:2; } .fn-split-s { stroke:#c99a32; stroke-width:1.5; opacity:.5; }
+.fn-split .cog-b { fill:#6b5a3a; }
+.fn-cog, .fn-power .smoke { transform-box:fill-box; transform-origin:center; }
+.fn-crate rect { fill:#c88a3c; stroke:#7a4f1c; stroke-width:2; } .fn-crate text { fill:var(--accent-ink); font:600 8px var(--mono); text-anchor:middle; dominant-baseline:middle; }
+.fn-crate.stuck rect { fill:#d9675b; stroke:#7d2a22; } .fn-crate.stuck { animation:fm-jit .25s linear infinite; }
+.fn-ins-base { fill:#3b3320; stroke:#c99a32; stroke-width:1.5; } .fn-ins-l { stroke:#c99a32; stroke-width:3.5; stroke-linecap:round; }
+.fn-ins-h { fill:#7d8890; stroke:#1a1f24; } .fn-ins-p { fill:#1a1f24; stroke:#c99a32; stroke-width:1.5; } .fn-ins-c { fill:#c88a3c; stroke:#7a4f1c; }
+.fn-pipe { fill:none; stroke:#2f3a44; stroke-width:9; stroke-linejoin:round; } .fn-pipe-h { fill:none; stroke:#59636b; stroke-width:3; stroke-dasharray:14 4; stroke-linejoin:round; }
+.fn-ptg rect { fill:#2f3a44; stroke:#7d8890; stroke-width:2; } .fn-ptg path { fill:none; stroke:#9aa7b0; stroke-width:2; stroke-linecap:round; }
+.fn-chest { fill:#7a4f1c; stroke:#3d2710; stroke-width:2; } .fn-band { fill:none; stroke:#c9a46a; stroke-width:2; } .fn-lock { fill:#c9a46a; }
+.fn-queue { cursor:default; }
+.fn-tag { fill:#7d8890; font:600 9px var(--mono); letter-spacing:.1em; }
+.fn-compound { fill:#13181c; } .fn-wall { fill:#3a4148; stroke:#22282d; stroke-width:2; }
+.fn-plate { fill:#1a2025; }
+.fn-n { fill:var(--text); font:600 13px var(--sans); } .fm-m.none .fn-n { fill:var(--muted); }
+.fn-c { fill:var(--text); font:600 13px var(--mono); text-anchor:end; }
+.fn-s { fill:var(--muted); font:700 10px var(--sans); letter-spacing:.05em; text-transform:uppercase; }
+.fm-m.run .fn-s, .fm-m.run .fn-c { fill:var(--accent); } .fm-m.wait .fn-s, .fm-m.wait .fn-c { fill:var(--blue); } .fm-m.fail .fn-s, .fm-m.fail .fn-c { fill:var(--bad); }
+.fn-r { fill:var(--muted); font:10px var(--mono); text-anchor:end; }
+.fn-depot .fn-s { fill:var(--link); } .fn-depot .fm-box { stroke:var(--link); filter:none; }
+.fn-cab { fill:#20262b; stroke:#59636b; }
+.fn-car, .fn-crate, .fn-ins { pointer-events:none; }
+.ma .rod { fill:#7d8890; }
+@keyframes fm-jit { 50% { transform:translateX(1px); } }
+@media (prefers-reduced-motion:reduce) { .fn-flow, .fn-ghost, .fn-ugflow, .fn-crate { animation:none !important; } }

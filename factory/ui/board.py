@@ -616,8 +616,13 @@ def floor_card(d: dict, rows: list[dict], now: float) -> str:
     fl = floor_stations(rows)
     for sid, _, _ in order:
         fl.setdefault(sid, {"state": "none", "refs": [], "count": 0})
+    roles = d["cfg"].get("roles") or ["analyst", "designer", "architect"]
+    working = [r for r in rows if r["at"] == "build" and r["stations"].get("build") == "run"]
+    extras = {"bypass": [f'#{r["issue"]}' for r in working if all(r["stations"].get(x, "none") == "none" for x in roles)],
+              "fix": [f'#{r["issue"]}' for r in working if r["stations"].get("ci") == "fail"],
+              "queued": [f'#{int(q["issue"])}' for q in d.get("queued") or []]}
     svg = yard.floor_map(order, fl, d.get("workers") or [], bool(d["cfg"].get("workers")), now, _floor_word,
-                         lambda sid: f"/tickets?{_qs(stage='all', at=sid)}")
+                         lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras)
     return snake(fl, [sid for sid, _, _ in order], svg)
 
 
