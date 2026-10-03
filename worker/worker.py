@@ -143,6 +143,27 @@ def collect_artifacts(recipe: Recipe, root: Path) -> list[dict]:
     return out
 
 
+GRACE_SECONDS = 20          # a recipe that owns a VM or a container needs this long to clean up after SIGTERM
+
+
+def stop_group(proc: subprocess.Popen, grace: float | None = None) -> None:
+    """Ask the recipe's whole process group to stop (SIGTERM, so its cleanup trap can delete a VM or container), then kill what is left.
+    SIGKILL alone cannot be trapped and would leak whatever the recipe had started."""
+    grace = GRACE_SECONDS if grace is None else grace
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    end = time.monotonic() + grace
+    while proc.poll() is None and time.monotonic() < end:
+        time.sleep(0.1)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)         # also reaps any child that ignored SIGTERM
+    except ProcessLookupError:
+        pass
+    proc.wait()
+
+
 def run_recipe(recipe: Recipe, cwd: Path, logfile: Path, cancelled: threading.Event) -> tuple[int | None, str]:
     """Run the recipe's argv with a minimal environment. (exit code or None, note). Kills the whole process group on timeout or cancel."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp"), "LANG": "en_US.UTF-8", "CI": "true"}
@@ -153,8 +174,7 @@ def run_recipe(recipe: Recipe, cwd: Path, logfile: Path, cancelled: threading.Ev
         deadline = time.monotonic() + recipe.timeout
         while proc.poll() is None:
             if cancelled.is_set() or time.monotonic() > deadline:
-                os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait()
+                stop_group(proc)
                 return None, "cancelled by the orchestrator" if cancelled.is_set() else f"timed out after {recipe.timeout}s"
             time.sleep(0.5)
         return proc.returncode, ""

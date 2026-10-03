@@ -422,3 +422,52 @@ class ModeSwitch(UiCase):
         s, _, _ = self.req("POST", "/mode/set", "csrf=wrong&dry_run=0&confirm=1", cookie=cookie)
         self.assertIn(s, (400, 403))
         self.assertNotIn("dry_run", self.overrides())
+
+
+class JourneyPage(UiCase):
+    """The ticket page shows the journey: tiles, the route map, and the steps in order, with a live fragment while it runs."""
+    def seed(self, running=False):
+        T = 1_800_000_000
+        dbm.add_event(self.db, "decision", "auto: build (build, 0.91, rules); skipped analyst, designer, architect <b>x</b>", "o/r", 4)
+        self.db.execute("UPDATE events SET ts=?", (T,))
+        a = dbm.start_run(self.db, "build", "o/r", 4, "t", "claude-code", "opus", "high")
+        self.db.execute("UPDATE runs SET started=? WHERE id=?", (T + 10, a))
+        dbm.finish_run(self.db, a, "pr", usage={"tokens_in": 1000, "tokens_out": 500})
+        self.db.execute("UPDATE runs SET finished=? WHERE id=?", (T + 310, a))
+        dbm.add_event(self.db, "ci:failed", "o/r#5: failing: unit", "o/r", 4)
+        self.db.execute("UPDATE events SET ts=? WHERE kind='ci:failed'", (T + 400,))
+        b = dbm.start_run(self.db, "fix", "o/r", 4, "t", "claude-code", "sonnet", "medium")
+        self.db.execute("UPDATE runs SET started=? WHERE id=?", (T + 410, b))
+        if not running:
+            dbm.finish_run(self.db, b, "pr", usage={"tokens_in": 300, "tokens_out": 100})
+            self.db.execute("UPDATE runs SET finished=? WHERE id=?", (T + 500, b))
+        self.db.commit()
+
+    def test_ticket_page_shows_tiles_map_and_ordered_steps_escaped(self):
+        self.seed()
+        cookie, _ = self.session()
+        s, _, html = self.req("GET", "/ticket?repo=o/r&n=4", cookie=cookie)
+        self.assertEqual(s, 200)
+        for want in ("<h2>Journey</h2>", "jy-tiles", 'class="jy-map"', "Steps in order", "Total", "CI fix round", "Finished", "Numbers show the order"):
+            self.assertIn(want, html)
+        self.assertIn("1× opus · 1× sonnet", html)                             # the models used and how many times
+        self.assertNotIn("<b>x</b>", html)                                     # the decision text is escaped
+        self.assertNotIn("style=", html.split("<h2>Journey</h2>")[1].split("<h2>Pipeline</h2>")[0])   # the CSP forbids inline styles
+        self.assertNotIn('id="live"', html)                                    # a finished ticket does not poll
+
+    def test_a_running_ticket_refreshes_through_the_fragment(self):
+        self.seed(running=True)
+        cookie, _ = self.session()
+        _, _, html = self.req("GET", "/ticket?repo=o/r&n=4", cookie=cookie)
+        self.assertIn('id="live" data-src="/fragment/journey"', html)
+        self.assertIn("so far", html)
+        s, _, frag = self.req("GET", "/fragment/journey?repo=o/r&n=4", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn("jy-tiles", frag)
+        self.assertEqual(self.req("GET", "/fragment/journey?repo=o/r&n=4")[0], 401)      # needs a session, as a status code
+        self.assertEqual(self.req("GET", "/fragment/journey?repo=bad&n=x", cookie=cookie)[0], 404)
+
+    def test_a_ticket_with_no_work_says_so(self):
+        cookie, _ = self.session()
+        _, _, html = self.req("GET", "/ticket?repo=o/r&n=77", cookie=cookie)
+        self.assertNotIn("jy-map", html)
