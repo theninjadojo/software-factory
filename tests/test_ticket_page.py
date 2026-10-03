@@ -150,6 +150,15 @@ class Detail(unittest.TestCase):
         self.assertIn("Not started", html)
 
 
+class Words(unittest.TestCase):
+    def test_the_classifiers_tags_become_words(self):
+        self.assertEqual(board.plain("human: classifier flagged needs_human (cls=feature/medium/human=True/conf=0.68/stage=design)"),
+                         "The classifier asked for a person")
+        self.assertEqual(board.plain("needs a person: low confidence (cls=feature/medium/human=False/conf=0.84/stage=implement)"), "Low confidence")
+        self.assertEqual(board.plain("run: cls=feature/deep; analyst first"), "Run: analyst first")
+        self.assertEqual(board.plain(""), "")
+
+
 class Nav(unittest.TestCase):
     def test_ticket_pages_light_up_tickets_and_a_phone_gets_the_menu(self):
         for path in ("/needs", "/runs", "/runs/7", "/prs", "/ticket", "/ticket/doc"):
@@ -159,3 +168,32 @@ class Nav(unittest.TestCase):
         self.assertIn('<details class="ph-menu">', html)
         self.assertEqual(html.count('<span class="navbadge">3</span>'), 2)      # the tab and the phone menu
         self.assertNotIn("<h1>", views.page("T", "x", "/", "c", bare=True))
+
+
+class Styled(unittest.TestCase):
+    """Every class the two screens put on the page has a rule in style.css. Class names built in code (p0..p9, a state word)
+    do not appear literally in the source, so a clean-up that looks for unused CSS cannot see them: this test can."""
+
+    def test_every_emitted_class_has_a_rule(self):
+        import re
+        from pathlib import Path
+        css = (Path(board.__file__).parent / "static" / "style.css").read_text()
+        defined = set(re.findall(r"\.([a-zA-Z][\w-]*)", re.sub(r"\{[^}]*\}", "", css)))
+        q1 = Q.Question("q1", "Contrast?", (("a", "Darker"), ("b", "Keep")), "a", "low", Q.PERSON)
+        need = {"repo": REPO, "issue": 5, "title": "T", "st": Q.StageQuestions("designer", [q1]), "acts": []}
+        states = ("done", "run", "wait", "fail", "none")
+        rows = [row(i, s, {sid: states[(i + k) % 5] for k, (sid, _) in enumerate(board.STATIONS)}, at=board.STATIONS[i][0]) for i, s in enumerate(board.ORDER)]
+        fl = {sid: {"state": states[k % 5], "refs": ["#1"], "count": 1} for k, (sid, _) in enumerate(board.STATIONS)}
+        r = row(5, "needs", board.stations(journey(WAITING, "waiting")), steps=WAITING, prs=[{"repo": REPO, "number": 9, "status": "failed", "rounds": 1}])
+        r["journey"] = journey(WAITING, "waiting")
+        html = (board.snake(fl) + board.tickets_page(rows, rows[0], True, "all", "", "", "latest", "", "", time.time(), "tok")
+                + board.detail_html(r, board.needs_card(need, "tok", "/"), [], ["designer"], [], 2, time.time(), True) + board.phone_journey(r, [], []))
+        used = {c for attr in re.findall(r'class="([^"]+)"', html) for c in attr.split()}
+        generic = {"muted", "mono", "lab", "btn", "secondary", "blue", "wide", "link", "num", "live", "dim", "two", "big", "hot", "on", "down", "left",
+                   "nd-form", "inline", "scroll", "stack", "mockups", "sd-floor", "sd-journey", "sd-cl", "sd-pjl", "sd-said", "sd-agents", "sd-q", *states, "ok"}
+        missing = sorted(c for c in used - generic if c not in defined)
+        self.assertEqual(missing, [])
+        for i in range(10):                                              # the snake's places
+            self.assertIn(f".p{i} {{ grid-area:", css)
+        for i in range(9):
+            self.assertIn(f".q{i} {{ grid-area:", css)
