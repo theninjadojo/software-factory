@@ -265,7 +265,7 @@ class FactorySetup(unittest.TestCase):
 
     def run_setup(self, **env):
         e = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FACTORY_HOME": str(self.home), "GITHUB_TOKEN": "t" * 30, "ANTHROPIC_API_KEY": "k" * 20,
-             "FACTORY_REPOS": "o/web o/ios", "FACTORY_UI_PASSWORD": "pw", "SKIP_BUILD": "1", "SKIP_LABELS": "1", **env}
+             "FACTORY_REPOS": "o/web o/ios", "FACTORY_UI_PASSWORD": "pw", "SKIP_BUILD": "1", "SKIP_LABELS": "1", "SKIP_CHECKS": "1", **env}
         return sh(["bash", str(self.app / "scripts" / "setup.sh")], cwd=self.app, env=e)
 
     def test_workers_are_off_unless_asked(self):

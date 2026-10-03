@@ -99,8 +99,17 @@ curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/down
 ```
 
 This creates `./shikumi`, downloads the release files, pulls the prebuilt images (`ghcr.io/theninjadojo/shikumi*`) and runs
-`scripts/setup.sh`, which asks for your repos, GitHub token and model key, sets the UI password, creates the labels in your repos
-and starts everything in **dry-run**. It is non-interactive when you pass `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`,
+`scripts/setup.sh`, a guided setup that:
+
+1. asks which repos to work on and writes the config;
+2. walks you through the GitHub token (the exact permissions, with a link) and **checks it works and can write to each repo**;
+3. helps you choose Claude credentials (an Anthropic API key, checked live, or a subscription token from `claude setup-token`);
+4. asks you to choose and confirm a UI password;
+5. asks whether you will open the UI on this machine or from other computers on your network;
+6. creates the labels in your repos, starts everything in **dry-run**, waits for the UI, and runs a health check.
+
+At the end it prints the URL. Nothing is written to GitHub until you press **Go live** on the UI's home screen.
+It is non-interactive when you pass `GITHUB_TOKEN`, `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`),
 `FACTORY_REPOS="org/a org/b"` and `FACTORY_UI_PASSWORD`.
 
 This needs the repository's release files and the four container packages to be readable by you: public, or you are signed in to
@@ -120,7 +129,7 @@ docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml orchestrator 
 ```
 
 Open the UI at http://127.0.0.1:8787 (remote access: [docs/ui.md](docs/ui.md)) and follow [docs/first-ticket.md](docs/first-ticket.md).
-Setting `dry_run = false` (in the UI or `config/config.toml`) and `docker compose up -d` makes it live.
+When the dry-run log looks right, tick the box and press **Go live** on the home screen (it is one click back to dry run).
 
 ### Updating
 

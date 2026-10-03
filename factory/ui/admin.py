@@ -18,6 +18,8 @@ FLASH = {
     "run": "Run requested. The factory runs it within a poll (up to a minute) and opens a real ticket, whatever dry-run says.",
     "sched_saved": "Schedule saved. The factory applies it at its next idle moment (never mid-task).",
     "sched_deleted": "Schedule deleted. Snapshots already on disk were kept.",
+    "live": "Going live. The factory applies it at its next idle moment (never mid-task); after that it starts agents and opens PRs for labeled issues.",
+    "dry": "Back to dry run. The factory applies it at its next idle moment: it only logs decisions and writes nothing.",
 }
 
 
@@ -61,6 +63,18 @@ def settings_get(h, q: dict, csrf: str) -> None:
     if section != "projects" and section not in S.SECTIONS:
         return h._send(404, "no such section", "text/plain")
     _send_page(h, 200, "Settings", render_settings(h, section, csrf), "/settings", csrf, FLASH.get(q.get("ok", "")), section=section)
+
+
+def mode_set(h, form, csrf: str) -> None:
+    """The Floor page's dry-run switch. Going live needs the confirmation box; going back to dry run never does."""
+    want_dry = form.get("dry_run") == "1"
+    if not want_dry and form.get("confirm") != "1":
+        return h._redirect("/?mode=confirm")
+    try:
+        changed = S.set_dry_run(h.app.config_path, h.app.state_dir(), want_dry)
+    except S.SettingsError as e:
+        return _send_page(h, 422, "Settings", "", "/settings", csrf, " · ".join(e.messages), "bad", section="general")
+    h._redirect("/?ok=" + ("dry" if want_dry else "live") if changed else "/")
 
 
 def settings_save(h, form, csrf: str) -> None:
@@ -306,7 +320,7 @@ def schedules_delete(h, form, csrf: str) -> None:
 
 GET = {"/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get}
-POST = {"/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
+POST = {"/mode/set": mode_set, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,

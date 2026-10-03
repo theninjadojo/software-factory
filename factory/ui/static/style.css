@@ -269,3 +269,5 @@ table.tickets td:first-child { overflow-wrap:anywhere; min-width:0; max-width:22
 @media (max-width:1100px) { table.tickets td.actions { white-space:normal; } table.tickets td.actions form { display:inline-block; margin:0 .25rem .3rem 0; } }
 .nd-row .nd-main, .nd-row .nd-t, .nd-row .nd-top > *, .nd-row .nd-low > *, .nd-grid > *, .nd-q-text, .nd-opt { min-width:0; overflow-wrap:anywhere; }
 .ver { margin-top:2rem; }
+.fl-mode { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem; margin:0 0 .8rem; padding:.7rem 1rem; }
+.fl-mode.dry { border-color:var(--warn, #c9a227); } .fl-mode form { margin:0; } .fl-mode-form { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem; } .fl-mode .check { margin:0; }

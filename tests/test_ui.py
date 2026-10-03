@@ -358,3 +358,43 @@ class Images(UiCase):
         for bad in ("/mockup?repo=o%2Fr&path=..%2F..%2Fetc%2Fpasswd", "/mockup?repo=o%2Fr&path=docs%2Fdesign%2Fpreviews%2Ffactory-6-x.png",
                     f"/runimg?run={rid}&kind=built&name=nope", f"/runimg?run=x&kind=built&name=home-desktop", f"/runimg?run={rid}&kind=zip&name=home-desktop"):
             self.assertEqual(self.req("GET", bad, cookie=cookie)[0], 404, bad)
+
+
+class ModeSwitch(UiCase):
+    """The dry-run switch on the home screen."""
+    def overrides(self):
+        p = self.root / "config.overrides.toml"
+        return p.read_text() if p.exists() else ""
+
+    def test_home_shows_the_mode_and_going_live_needs_the_box(self):
+        cookie, csrf = self.session()
+        _, _, home = self.req("GET", "/", cookie=cookie)
+        self.assertIn("Dry run.", home)
+        self.assertIn('action="/mode/set"', home)
+        # no confirmation: nothing is written, the page asks again
+        s, h, _ = self.req("POST", "/mode/set", f"csrf={csrf}&dry_run=0", cookie=cookie)
+        self.assertEqual((s, h["Location"]), (303, "/?mode=confirm"))
+        self.assertNotIn("dry_run", self.overrides())
+        _, _, again = self.req("GET", "/?mode=confirm", cookie=cookie)
+        self.assertIn("Tick the box to confirm", again)
+
+    def test_go_live_then_back_to_dry_run(self):
+        cookie, csrf = self.session()
+        s, h, _ = self.req("POST", "/mode/set", f"csrf={csrf}&dry_run=0&confirm=1", cookie=cookie)
+        self.assertEqual((s, h["Location"]), (303, "/?ok=live"))
+        self.assertIn("dry_run = false", self.overrides())
+        _, _, home = self.req("GET", "/?ok=live", cookie=cookie)
+        self.assertIn("Shikumi is live", home)
+        self.assertIn("Switch to dry run", home)
+        self.assertIn("Going live.", home)                                   # the flash
+        s, h, _ = self.req("POST", "/mode/set", f"csrf={csrf}&dry_run=1", cookie=cookie)   # back needs no confirmation
+        self.assertEqual((s, h["Location"]), (303, "/?ok=dry"))
+        self.assertNotIn("dry_run = false", self.overrides())
+        self.assertTrue((self.state / "RESTART").exists())
+
+    def test_needs_a_session_and_csrf(self):
+        self.assertEqual(self.req("POST", "/mode/set", "dry_run=0&confirm=1")[0], 303)
+        cookie, csrf = self.session()
+        s, _, _ = self.req("POST", "/mode/set", "csrf=wrong&dry_run=0&confirm=1", cookie=cookie)
+        self.assertIn(s, (400, 403))
+        self.assertNotIn("dry_run", self.overrides())

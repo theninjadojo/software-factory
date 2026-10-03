@@ -446,6 +446,17 @@ def save_section(cfg_path: str, state_dir: Path, section: str, form: Form) -> li
     return notes
 
 
+def set_dry_run(cfg_path: str, state_dir: Path, dry: bool) -> bool:
+    """Switch between dry run and live (the Floor page's switch). Returns True when the value changed. The factory applies it at its next idle moment."""
+    base, ov = base_raw(cfg_path), overrides_raw(cfg_path)
+    if bool(effective(deep_merge(base, ov), "general.dry_run")) == dry:
+        return False
+    new_ov = copy.deepcopy(ov)
+    _store(new_ov, base, "general.dry_run", dry)
+    _commit(cfg_path, state_dir, new_ov)
+    return True
+
+
 def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
     projects = []
     for i in range(20):

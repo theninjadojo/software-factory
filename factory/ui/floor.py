@@ -311,6 +311,20 @@ def pause_form(paused, csrf: str) -> str:
             f'<button class="secondary">{"Resume" if paused else "Pause"}</button></form>')
 
 
+def mode_bar(d: dict, csrf: str, ask: bool = False) -> str:
+    """Dry run versus live, on the home screen. Going live needs the confirmation box ticked; going back to dry run is one click."""
+    if d["cfg"]["live"]:
+        return (f'<div class="fl-mode live card"><span>{badge("LIVE", "warn")} Shikumi is live: it starts agents and opens PRs for labeled issues.</span><span class="fl-grow"></span>'
+                f'<form method="post" action="/mode/set" class="inline">{csrf_field(csrf)}<input type="hidden" name="dry_run" value="1">'
+                '<button class="secondary">Switch to dry run</button></form></div>')
+    note = ' <strong class="bad-text">Tick the box to confirm.</strong>' if ask else ""
+    return (f'<div class="fl-mode dry card" role="status"><div><strong>Dry run.</strong> Shikumi is only logging what it would do. Nothing is built, and nothing is written to GitHub. '
+            f'When the decisions in the log look right, go live.{note}</div>'
+            f'<form method="post" action="/mode/set" class="fl-mode-form">{csrf_field(csrf)}<input type="hidden" name="dry_run" value="0">'
+            '<label class="check"><input type="checkbox" name="confirm" value="1"> I understand it will start agents and open PRs</label>'
+            '<button>Go live</button></form></div>')
+
+
 def title_row(live: dict, needs, d: dict, csrf: str, view: str) -> str:
     paused = d["paused"]
     btn = pause_form(paused, csrf)
@@ -426,7 +440,7 @@ def tray(needs, csrf: str, forms=None, back: str = "/", flt: str = "", heading: 
     return f'<section class="fl-tray" aria-labelledby="needs">{top}{bulk}<div class="nd-list">{rows or "<p class=muted>Nothing in this filter.</p>"}</div>{more}</section>'
 
 
-def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None, flt: str = "", view: str = "") -> str:
+def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=None, flt: str = "", view: str = "", ask: bool = False) -> str:
     now = time.time()
     live = gather(d, needs, now)
     sel = selected if selected in STATIONS else default_station(live)
@@ -436,6 +450,6 @@ def render(d: dict, csrf: str, selected: str | None = None, needs=None, forms=No
              f'{belts(live)}{crates(live)}{nodes}</div></div>{rail(live, sel)}</div>')
     legend = '<p class="muted fl-legend">Working · Idle · Needs you · Failing · Off. Select a station for details.</p>'
     back = f"/?station={sel}" + ("&view=list" if view == "list" else "")
-    desk = (title_row(live, needs, d, csrf, view) + summary_bar(d, needs, now) + floor + legend + inspector(sel, live[sel], d, now)
+    desk = (mode_bar(d, csrf, ask) + title_row(live, needs, d, csrf, view) + summary_bar(d, needs, now) + floor + legend + inspector(sel, live[sel], d, now)
             + f'<div class="fl-cols">{needs_summary(needs, csrf, back)}{today_card(d, now)}</div>')
-    return f'<div class="fl-desk">{desk}</div>' + phone_home(d, live, needs, now, csrf)
+    return f'<div class="fl-desk">{desk}</div>' + f'<div class="ph-only">{mode_bar(d, csrf, ask)}</div>' + phone_home(d, live, needs, now, csrf)
