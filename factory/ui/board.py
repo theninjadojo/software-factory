@@ -134,15 +134,20 @@ def _belt(into: str, extra: str = "") -> str:
     return f'<span class="sd-belt {kind}{extra}" aria-hidden="true">{_crates(kind)}</span>'
 
 
-def strip(st: dict) -> str:
-    """One ticket's route as a row of stations joined by belts (the Journey card)."""
-    out = ""
-    for i, (sid, _) in enumerate(STATIONS):
-        if i:
-            out += _belt(st[sid])
-        out += (f'<div class="sd-cell {st[sid]}" role="listitem" aria-label="{esc(LABEL[sid])}: {esc(STATE_WORD[st[sid]])}">{_svg(sid)}'
-                f'<b class="sd-cl">{esc(SHORT[sid])}</b><span>{esc(STATE_WORD[st[sid]])}</span></div>')
-    return f'<div class="sd-scroll"><div class="sd-strip" role="list" aria-label="Stations">{out}</div></div>'
+def strip(st: dict, verify: dict | None = None, now: float | None = None) -> str:
+    """One ticket's route as a row of small machines joined by belts (the Journey card), with the railway to the worker that checks
+    its build when there is one."""
+    rows = [(sid, SHORT[sid], ICON[sid], st[sid]) for sid, _ in STATIONS]
+    return f'<div class="sd-scroll"><div class="sd-strip fm-jwrap">{yard.journey(rows, verify, time.time() if now is None else now)}</div></div>'
+
+
+def ticket_verify(db, repo: str, issue: int) -> dict | None:
+    """The ticket's latest verification job (status and worker), or None (no job, or no worker tables yet)."""
+    try:
+        row = db.execute("SELECT status, worker FROM verify_jobs WHERE repo=? AND issue=? ORDER BY id DESC LIMIT 1", (repo, issue)).fetchone()
+    except Exception:
+        return None
+    return {"status": row[0], "worker": row[1] or ""} if row else None
 
 
 def progress(st: dict) -> str:
@@ -468,9 +473,9 @@ def phone_journey(r: dict, files: list, docs) -> str:
     return f'<section class="sd-phj" aria-labelledby="pj-h"><h3 id="pj-h" class="lab">Journey</h3><ol>{items}</ol></section>'
 
 
-def journey_card(st: dict) -> str:
+def journey_card(st: dict, verify: dict | None = None, now: float | None = None) -> str:
     return (f'<section class="sd-card sd-journey" aria-labelledby="j-h"><div class="sd-cardhead"><h3 id="j-h">Journey</h3>'
-            f'<span class="muted sd-fine">The same stations as the Factory floor</span></div>{strip(st)}</section>')
+            f'<span class="muted sd-fine">The same stations as the Factory floor</span></div>{strip(st, verify, now)}</section>')
 
 
 def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float) -> str:
@@ -478,7 +483,7 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float) -
     repo, n, j = r["repo"], r["issue"], r["journey"]
     design_prs = sorted({f.get("pr") for f in files if f.get("pr")})
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
-    return (journey_card(r["stations"]) + design_html(files, repo, n, docs, design_link) + steps_html(j, repo, n, docs) + phone_journey(r, files, docs)
+    return (journey_card(r["stations"], r.get("verify"), now) + design_html(files, repo, n, docs, design_link) + steps_html(j, repo, n, docs) + phone_journey(r, files, docs)
             + prs_html(r["prs"], fix_rounds) + activity_html(events, now))
 
 
@@ -751,22 +756,58 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
             f'<div class="sd-cols">{slot("/fragment/needs-tray", "Asking GitHub what needs you", "sd-card sd-flush sd-needs", '<h2 class="sd-bar-h">Needs you</h2>') if d.get("needs_loading") else needs_tray(needs, csrf)}<div class="sd-side">{running_card(d, rows, now)}{usage_card(d, now)}</div></div></div>')
 
 
-# ---------------------------------------------------------------- loading: a small belt network while GitHub answers
-# Five machines joined by belts that fork and merge; crates take three different routes at their own pace (SVG motion, so the page
-# policy allows it; app.js holds it still for people who ask for reduced motion). Machines are drawn last, so a crate passes behind them.
-_ROUTES = (("M30 70 H80 V28 H178 V70 H302", "3.2s", "0s"), ("M30 70 H80 V112 H178 V70 H302", "4.1s", "-1.4s"),
-           ("M30 70 H80 V28 H128 V112 H178 V70 H302", "5s", "-2.6s"), ("M30 70 H80 V112 H178 V70 H302", "4.1s", "-3.4s"))
-_BELTS = ("M48 70 H80 V28 H110", "M48 70 H80 V112 H110", "M146 28 H178 V70 H208", "M146 112 H178 V70 H208", "M128 42 V98", "M244 70 H284")
-_MACHINES = ((12, 56), (110, 14), (110, 98), (208, 56), (284, 56))
+# ---------------------------------------------------------------- loading: a small factory line while GitHub answers
+# A drill mines ore, a furnace smelts it into plates, a splitter sends them to two assemblers that make tickets, and the tickets merge
+# into a chest. SVG motion, so the page policy allows it; app.js holds it still for people who ask for reduced motion. Machines are
+# drawn after the items, so an item goes into a machine and comes out as the next thing.
+_LD_BELTS = ("M64 130 H120", "M184 130 H236", "M236 130 V50", "M236 130 V210", "M236 50 H300", "M236 210 H300",
+             "M364 50 H420", "M420 50 V130", "M364 210 H420", "M420 210 V130", "M420 130 H470")
+_LD_ORE = "M32 130 H152"
+_LD_PLATE = ("M152 130 H236 V50 H332", "M152 130 H236 V210 H332")
+_LD_TICKET = ("M332 50 H420 V130 H510", "M332 210 H420 V130 H510")
+_LD_GEAR = "M12 2.5V6M21.5 12H18M12 21.5V18M2.5 12H6M18.7 5.3L16.2 7.8M18.7 18.7L16.2 16.2M5.3 18.7L7.8 16.2M5.3 5.3L7.8 7.8"
+LD_QUIPS = ("Mining issue ore", "Smelting markdown into plates", "Splitting the belt", "Assembling comments", "Inserting labels",
+            "Balancing the bus", "The factory must grow")
+
+
+def _ld_items(cls: str, paths, dur: float, count: int, size: tuple[int, int]) -> str:
+    w, h = size
+    return "".join(f'<rect class="{cls}" x="{-w / 2:g}" y="{-h / 2:g}" width="{w}" height="{h}" rx="2"><animateMotion path="{paths[i % len(paths)]}" '
+                   f'dur="{dur:g}s" begin="{-i * dur / count:.3f}s" repeatCount="indefinite"/></rect>' for i in range(count))
+
+
+def _ld_gear(cx: int, cy: int, dur: str) -> str:
+    return (f'<g class="ld-gear"><g transform="translate({cx - 15} {cy - 15}) scale(1.25)"><circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="1.8"/>'
+            f'<path d="{_LD_GEAR}"/></g><animateTransform attributeName="transform" type="rotate" from="0 {cx} {cy}" to="{"-" if dur[0] == "-" else ""}360 {cx} {cy}" '
+            f'dur="{dur[1:]}" repeatCount="indefinite"/></g>')
 
 
 def loader(what: str = "Loading") -> str:
-    belts = "".join(f'<path class="ld-belt" d="{d}"/><path class="ld-flow" d="{d}"/>' for d in _BELTS)
-    crates = "".join(f'<rect class="ld-crate" x="-5" y="-5" width="10" height="10"><animateMotion path="{d}" dur="{t}" begin="{b}" repeatCount="indefinite"/></rect>'
-                     for d, t, b in _ROUTES)
-    machines = "".join(f'<rect class="ld-m m{i}" x="{x}" y="{y}" width="36" height="28"/>' for i, (x, y) in enumerate(_MACHINES))
-    return (f'<div class="ld" role="status" aria-live="polite"><svg class="ld-net" viewBox="0 0 332 140" aria-hidden="true">{belts}{crates}{machines}</svg>'
-            f'<p class="muted sd-fine">{esc(what)}…</p></div>')
+    belts = "".join(f'<path class="ld-belt" d="{d}"/><path class="ld-flow" d="{d}"/>' for d in _LD_BELTS)
+    items = (_ld_items("ld-ore", (_LD_ORE,), 3, 4, (10, 10)) + _ld_items("ld-plate", _LD_PLATE, 6, 8, (11, 11))
+             + "".join(f'<rect class="ld-tk" x="-6" y="-7.5" width="12" height="15" rx="2"><animateMotion path="{_LD_TICKET[i % 2]}" dur="6s" '
+                       f'begin="{-(i * .75 + .375):.3f}s" repeatCount="indefinite"/></rect>' for i in range(8)))
+    puffs = "".join(f'<circle class="ld-puff" cx="160" cy="92" r="5"><animate attributeName="cy" values="92;46" dur="2.4s" begin="{-k * .8:.1f}s" '
+                    f'repeatCount="indefinite"/><animate attributeName="opacity" values="0;.55;0" dur="2.4s" begin="{-k * .8:.1f}s" repeatCount="indefinite"/>'
+                    f'<animate attributeName="r" values="3;9" dur="2.4s" begin="{-k * .8:.1f}s" repeatCount="indefinite"/></circle>' for k in range(3))
+    bar = lambda x, y, delay: (f'<rect class="ld-track" x="{x + 9}" y="{y + 50}" width="46" height="3"/><rect class="ld-bar" x="{x + 9}" y="{y + 50}" width="0" height="3">'
+                               f'<animate attributeName="width" from="0" to="46" dur="1.5s" begin="{delay}" repeatCount="indefinite"/></rect>')
+    machines = ('<rect class="ld-m" x="0" y="98" width="64" height="64" rx="4"/>'
+                '<g class="ld-bit"><path d="M32 127V117l4 4M35 132l9 5-5 1M29 132l-9 5 2-6"/><circle cx="32" cy="130" r="3"/>'
+                '<animateTransform attributeName="transform" type="rotate" from="0 32 130" to="360 32 130" dur=".75s" repeatCount="indefinite"/></g>'
+                '<rect class="ld-m" x="120" y="98" width="64" height="64" rx="4"/><path class="ld-grate" d="M137 118H167M137 124H167"/>'
+                '<rect class="ld-fire" x="138" y="134" width="28" height="12" rx="2"/>'
+                '<rect class="ld-m" x="300" y="18" width="64" height="64" rx="4"/>' + _ld_gear(332, 46, "+1.5s") + bar(300, 18, "0s")
+                + '<rect class="ld-m" x="300" y="178" width="64" height="64" rx="4"/>' + _ld_gear(332, 206, "-1.5s") + bar(300, 178, "-.75s")
+                + '<rect class="ld-m ld-chest" x="470" y="90" width="80" height="80" rx="4"/><path class="ld-grate" d="M476 112H544"/>'
+                '<text class="ld-chest-t" x="510" y="146">TICKETS</text>')
+    n, step = len(LD_QUIPS), 2.25
+    shown = lambda i: ("1;0", f"0;{1 / n:.4f}") if i == 0 else ("0;1;0", f"0;{i / n:.4f};{(i + 1) / n:.4f}")   # each joke in its turn
+    quips = "".join(f'<text class="ld-quip" x="280" y="292" opacity="{1 if i == 0 else 0}">› {esc(q)}<animate attributeName="opacity" '
+                    f'values="{shown(i)[0]}" keyTimes="{shown(i)[1]}" calcMode="discrete" dur="{n * step:g}s" repeatCount="indefinite"/></text>'
+                    for i, q in enumerate(LD_QUIPS))
+    return (f'<div class="ld" role="status" aria-live="polite"><svg class="ld-net" viewBox="0 0 560 300" aria-hidden="true">'
+            f'{belts}{items}{puffs}{machines}{quips}</svg><p class="muted sd-fine">{esc(what)}…</p></div>')
 
 
 def slot(src: str, what: str, cls: str = "", head: str = "") -> str:

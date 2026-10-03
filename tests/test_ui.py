@@ -444,7 +444,7 @@ class JourneyPage(UiCase):
         cookie, _ = self.session()
         s, _, html = self.req("GET", "/ticket?repo=o/r&n=4", cookie=cookie)
         self.assertEqual(s, 200)
-        for want in ('id="j-h">Journey', 'class="sd-tiles"', 'class="sd-strip"', "Steps in order", "CI fix round", "Pull requests and checks"):
+        for want in ('id="j-h">Journey', 'class="sd-tiles"', 'class="sd-strip fm-jwrap"', "Steps in order", "CI fix round", "Pull requests and checks"):
             self.assertIn(want, html)
         self.assertIn("1× opus · 1× sonnet", html)                             # the models used and how many times
         self.assertNotIn("<b>x</b>", html)                                     # the decision text is escaped
