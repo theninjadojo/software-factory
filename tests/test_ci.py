@@ -234,6 +234,14 @@ class Watch(unittest.TestCase):
     def test_merged_or_closed_pr_stops_being_watched(self):
         self.assertEqual(self.go(FakeGH(state="closed"))[0], "closed")
 
+    def test_failed_pr_is_cleared_when_it_later_passes_or_is_merged(self):
+        self.conn.execute("update prs set status='failed'"); self.conn.commit()
+        self.assertEqual(self.go(FakeGH([run("unit", conclusion="failure")]))[0], "failed")    # still failing: stays, no new fix round
+        self.assertEqual(self.fixes, [])
+        self.assertEqual(self.go(FakeGH([run("unit")]))[0], "passed")                          # a person fixed it
+        self.conn.execute("update prs set status='failed'"); self.conn.commit()
+        self.assertEqual(self.go(FakeGH(state="closed"))[0], "closed")
+
     def test_no_access_alerts_once(self):
         err = urllib.error.HTTPError("u", 403, "forbidden", {}, None)
         self.go(FakeGH(error=err)); self.go(FakeGH(error=err))
