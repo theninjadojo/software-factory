@@ -23,9 +23,11 @@ echo "tart $*" >> "$CALLS"
 sub="$1"; shift
 case "$sub" in
   list)
-    echo "Source Name Disk Size State"
-    [ -n "${NO_IMAGE:-}" ] || echo "local shikumi-ios 50 50 stopped"
-    echo "local some-other-vm 20 20 stopped"
+    # the real shape (Tart 2.40.1): a header, the local VMs, and an OCI row for every image pulled from a registry
+    echo "Source Name Disk Size Accessed State"
+    [ -n "${NO_IMAGE:-}" ] || echo "local shikumi-ios 140 GB 83 GB 3 seconds ago stopped"
+    echo "local some-other-vm 20 GB 20 GB 3 seconds ago stopped"
+    echo "OCI ghcr.io/cirruslabs/macos-sonoma-xcode:latest 140 GB 83 GB 3 seconds ago stopped"
     [ -z "${LEFTOVER:-}" ] || echo "local shikumi-job-1-1 50 50 stopped"
     ;;
   clone) exit "${CLONE_CODE:-0}" ;;
@@ -38,8 +40,9 @@ case "$sub" in
     case "$cmd" in
       true) exit "${AGENT_CODE:-0}" ;;
       *"tar -xf -"*) cat > "$TARFILE"; exit "${COPY_CODE:-0}" ;;
+      *"grep -Eq"*) exit "${XCLOG_MATCH:-1}" ;;     # is there a "no such scheme / no such device" message in the xcodebuild log?
       *xcodebuild*) echo "XCODE: $cmd" >> "$CALLS"; [ -z "${XCODE_SLEEP:-}" ] || sleep "$XCODE_SLEEP"; exit "${XCODE_CODE:-0}" ;;
-      *simctl*) [ -n "${NO_SHOT:-}" ] || printf PNGDATA; exit 0 ;;
+      "/bin/sh -s") cat > "$SHOTSCRIPT"; [ -n "${NO_SHOT:-}" ] || printf PNGDATA; exit 0 ;;
       *) exit "${PREP_CODE:-0}" ;;
     esac ;;
   stop|delete) exit 0 ;;
@@ -63,7 +66,7 @@ class IosRecipe(unittest.TestCase):
         (self.proj / ".git" / "config").write_text("secret remote")
 
     def env(self, **extra):
-        return {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.tmp), "CALLS": str(self.calls), "TARFILE": str(self.tarfile), "BOOT_POLL": "0", **extra}
+        return {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.tmp), "CALLS": str(self.calls), "TARFILE": str(self.tarfile), "SHOTSCRIPT": str(self.tmp / "shot.sh"), "BOOT_POLL": "0", **extra}
 
     def run_recipe(self, *args, env=None, cwd=None, bare=False):
         args = args or (() if bare else ("--scheme", "App", "--project", "App.xcodeproj"))
@@ -78,15 +81,21 @@ class IosRecipe(unittest.TestCase):
         code, out, calls = self.run_recipe()
         self.assertEqual(code, 0, out)
         v = self.verbs(calls)
-        order = [v.index(x) for x in ("clone", "run", "ip")] + [v.index("exec")]
+        order = [v.index(x) for x in ("clone", "ip")] + [v.index("exec")]      # `run` is backgrounded, so its line may land before or after `ip`
         self.assertEqual(order, sorted(order))
+        self.assertIn("run", v)
+        self.assertLess(v.index("clone"), v.index("run"))
         self.assertEqual(v[-2:], ["stop", "delete"])
         self.assertIn("tart clone shikumi-ios shikumi-job-", calls[next(i for i, c in enumerate(calls) if " clone " in c)])
         xc = next(c for c in calls if c.startswith("XCODE:"))
-        for piece in ("xcodebuild test -project App.xcodeproj", "-scheme App", "-destination 'platform=iOS Simulator,name=iPhone 15'",
+        for piece in ("xcodebuild test -project App.xcodeproj", "-scheme App", "-destination 'platform=iOS Simulator,name=iPhone 16'",
                       "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath /tmp/dd"):
             self.assertIn(piece, xc)
+        self.assertIn("xcrun simctl list devices >/dev/null 2>&1; cd /Users/admin/work", xc)       # warm-up: a cold VM's first xcodebuild sees no simulators
         self.assertEqual((self.proj / "build" / "screens" / "final.png").read_bytes(), b"PNGDATA")
+        shot = (self.tmp / "shot.sh").read_text()                       # xcodebuild shuts the simulator down, so the script boots it again
+        for piece in ("name=iPhone 16", "bootstatus", "simctl install", "simctl launch", "screenshot"):
+            self.assertIn(piece, shot)
         self.assertIn("tart run --no-graphics shikumi-job-", "\n".join(calls))
 
     def test_the_checkout_is_copied_without_git_history_or_credentials(self):
@@ -114,6 +123,13 @@ class IosRecipe(unittest.TestCase):
         for xcode, want in ((0, 0), (65, 1), (1, 1), (137, 1), (64, 2), (66, 2), (70, 2), (73, 2)):
             self.calls.unlink(missing_ok=True)
             self.assertEqual(self.run_recipe(env=self.env(XCODE_CODE=str(xcode)))[0], want, f"xcodebuild exit {xcode}")
+
+    def test_a_missing_scheme_or_device_is_the_environment_not_the_patch(self):
+        # xcodebuild exits 65 for those too (measured), so the log decides: a match means exit 2, never a fix round
+        code, out, calls = self.run_recipe(env=self.env(XCODE_CODE="65", XCLOG_MATCH="0"))
+        self.assertEqual(code, 2, out)
+        self.assertIn("no such scheme", out)
+        self.assertEqual(self.verbs(calls)[-2:], ["stop", "delete"])
 
     def test_failure_keeps_the_screenshot_and_still_deletes_the_vm(self):
         code, out, calls = self.run_recipe(env=self.env(XCODE_CODE="65"))

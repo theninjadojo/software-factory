@@ -207,7 +207,7 @@ You also need Python 3.11+ and git on the worker, and git credentials that can *
 |---|---|---|
 | `web-test` | `npm ci` / `pnpm` / `yarn`, build, test, Playwright | Node |
 | `android-test` | `./gradlew` in a throwaway container (`--emulator` on Linux with KVM) | Docker or Podman (the image is pulled, or built once from `sandbox/android`) |
-| `ios-test` | `xcodebuild test` on a simulator inside a throwaway macOS VM (stub-tested only so far) | A Mac (Apple Silicon), [Tart](https://tart.run), and an Xcode VM image (about 30 GB, one-time); set `WORKER_IOS_SCHEME` and `WORKER_IOS_PROJECT` or `WORKER_IOS_WORKSPACE` |
+| `ios-test` | `xcodebuild test` on a simulator inside a throwaway macOS VM (run by hand on one Mac; worker install and a full job not yet tested) | A Mac (Apple Silicon), [Tart](https://tart.run), and an Xcode VM image (about 63 GB download, one-time); set `WORKER_IOS_SCHEME` and `WORKER_IOS_PROJECT` or `WORKER_IOS_WORKSPACE` |
 
 Update with `./scripts/update-worker.sh` (refuses while a job runs, rolls back if the new version fails its check). `worker.toml`, the token and your
 git setup are never touched. Check it any time: `python3 worker/worker.py --config worker.toml --check`, and on the factory `python3 -m factory.ctl doctor`.
