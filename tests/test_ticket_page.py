@@ -74,11 +74,37 @@ class Stations(unittest.TestCase):
 class Belts(unittest.TestCase):
     def test_crates_move_into_a_running_station_and_back_up_at_a_waiting_one(self):
         st = board.stations(journey(WAITING, "waiting"))
-        html = board.strip(st)
-        self.assertEqual(html.count('<span class="sd-belt '), 9)
-        self.assertIn('<span class="sd-belt wait" aria-hidden="true"><i class="sd-crate"></i><i class="sd-crate two"></i></span>', html)
-        self.assertEqual(html.count("sd-crate two"), 1)                   # finished and unreached belts carry no crates
+        html = board.strip(st, now=100.0)
+        self.assertEqual(html.count('class="fm-belt thin"'), 9)
+        self.assertEqual(html.count('class="fm-jc"'), 2)                   # two crates wait at the designer's door, none ride elsewhere
+        self.assertNotIn("<animateMotion", html)
         self.assertIn('aria-label="Designer: Needs you"', html)
+        self.assertNotIn("style=", html)
+        running = {**st, "designer": "done", "architect": "run"}
+        self.assertEqual(board.strip(running, now=100.0).count("<animateMotion"), 1)   # a crate rides into the working station
+
+    def test_the_build_is_checked_on_a_worker_by_train(self):
+        st = {**board.stations(journey([])), "build": "run"}
+        self.assertNotIn("fm-train", board.strip(st, None, 1.0))
+        out = board.strip(st, {"status": "claimed", "worker": "my-mac"}, 1.0)
+        self.assertIn('aria-label="Verification: checking on my-mac"', out)
+        self.assertIn('<g class="fm-train"><rect', out)                        # it drives while the worker has the job
+        parked = board.strip(st, {"status": "passed", "worker": "<b>x</b>"}, 1.0)
+        self.assertIn('<g class="fm-train" transform=', parked)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", parked)
+        self.assertNotIn("<b>x</b>", parked)
+
+    def test_the_verify_job_is_read_for_the_ticket(self):
+        import sqlite3
+        from factory import jobs
+        db = sqlite3.connect(":memory:")
+        self.assertIsNone(board.ticket_verify(db, REPO, 4))                     # no tables yet
+        jobs.ensure_tables(db)
+        self.assertIsNone(board.ticket_verify(db, REPO, 4))
+        for status, worker in (("failed", "a"), ("claimed", "b")):
+            db.execute("INSERT INTO verify_jobs (repo, issue, base_sha, patch, recipe, status, worker, created) VALUES (?,?,?,?,?,?,?,?)",
+                       (REPO, 4, "s", "", "web", status, worker, 1.0))
+        self.assertEqual(board.ticket_verify(db, REPO, 4), {"status": "claimed", "worker": "b"})   # the latest
 
     def test_the_floor_snake_places_ten_machines_and_nine_belts(self):
         rows = [row(1, "working", {**board.stations(journey([])), "build": "run"}, at="build"),
@@ -214,12 +240,15 @@ class Styled(unittest.TestCase):
 
 
 class Loading(unittest.TestCase):
-    def test_the_loader_is_a_belt_network_with_crates_on_different_routes(self):
+    def test_the_loader_is_a_factory_line(self):
         html = board.loader("Loading <x>")
         self.assertIn('role="status"', html)
-        self.assertEqual(html.count("<animateMotion"), 4)
-        self.assertGreaterEqual(len({p for p in __import__("re").findall(r'animateMotion path="([^"]+)"', html)}), 3)   # different routes
-        self.assertEqual(html.count('class="ld-belt"'), 6)
+        self.assertEqual(html.count('class="ld-ore"'), 4)                       # ore from the drill
+        self.assertEqual(html.count('class="ld-plate"'), 8)                     # plates split to two assemblers
+        self.assertEqual(html.count('class="ld-tk"'), 8)                        # tickets merge into the chest
+        self.assertGreaterEqual(len(set(__import__("re").findall(r'animateMotion path="([^"]+)"', html))), 5)
+        self.assertEqual(html.count('class="ld-belt"'), 11)
+        self.assertEqual(html.count('class="ld-quip"'), len(board.LD_QUIPS))
         self.assertIn("Loading &lt;x&gt;", html)
         self.assertNotIn("style=", html)
 

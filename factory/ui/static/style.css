@@ -392,18 +392,26 @@ meter.sd-meter.bad::-webkit-meter-optimum-value { background:var(--bad); } meter
 
 /* Loading: a small belt network (board.loader). Belts fork and merge; crates take different routes; machines light up in turn. */
 .ld { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; min-height:260px; padding:28px 24px; }
-.ld-net { width:100%; max-width:460px; height:auto; }
-.ld-belt { fill:none; stroke:#2a3238; stroke-width:9; }
-.ld-flow { fill:none; stroke:var(--accent-dark); stroke-width:3; stroke-dasharray:6 10; animation:ld-flow .8s linear infinite; opacity:.8; }
-.ld-crate { fill:var(--accent); stroke:#7a4d0a; stroke-width:2; }
-.ld-m { fill:var(--panel2); stroke:var(--line2); stroke-width:2; animation:ld-lit 2.4s ease-in-out infinite; }
-.ld-m.m0 { animation-delay:0s; } .ld-m.m1 { animation-delay:.5s; } .ld-m.m2 { animation-delay:1s; } .ld-m.m3 { animation-delay:1.5s; } .ld-m.m4 { animation-delay:2s; }
+.ld-net { width:100%; max-width:520px; height:auto; }
+.ld-belt { fill:none; stroke:#2a3238; stroke-width:14; }
+.ld-flow { fill:none; stroke:var(--accent-dark); stroke-width:2; stroke-dasharray:7 9; animation:ld-flow .4s linear infinite; }
+.ld-ore { fill:#8a4f35; stroke:#5a301f; stroke-width:2; } .ld-plate { fill:var(--accent); stroke:#9c6420; stroke-width:2; }
+.ld-tk { fill:#ece6d6; stroke:#b9b09a; }
+.ld-m { fill:var(--panel2); stroke:var(--line2); stroke-width:2; } .ld-chest { stroke:var(--accent); animation:ld-lit .75s ease-out infinite; }
+.ld-chest-t { fill:var(--muted); font:600 9px var(--mono); letter-spacing:.12em; text-anchor:middle; }
+.ld-bit path, .ld-bit circle, .ld-gear circle, .ld-gear path { fill:none; stroke:#9aa7b0; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+.ld-gear circle, .ld-gear path { stroke:#c9ced6; }
+.ld-grate { fill:none; stroke:var(--line2); stroke-width:2; }
+.ld-fire { fill:var(--accent); animation:ld-fire .9s ease-in-out infinite; } .ld-puff { fill:#5b6270; }
+.ld-track { fill:#12161a; } .ld-bar { fill:var(--accent); }
+.ld-quip { fill:var(--accent); font:12px var(--mono); text-anchor:middle; }
 @keyframes ld-flow { to { stroke-dashoffset:-16; } }
-@keyframes ld-lit { 0%, 60%, 100% { stroke:var(--line2); } 25% { stroke:var(--accent); } }
+@keyframes ld-lit { 0%, 100% { stroke-width:2; } 15% { stroke-width:4; } }
+@keyframes ld-fire { 0%, 100% { opacity:1; } 30% { opacity:.7; } 60% { opacity:.92; } }
 .ld p { margin:0; text-align:center; }
 .ld-slot.sd-detail, .sd-detail.sd-loading { background:var(--panel); border:1px solid var(--line); }
 .ld-slot.sd-card { padding:0; }
-@media (prefers-reduced-motion:reduce) { .ld-flow, .ld-m { animation:none !important; } }
+@media (prefers-reduced-motion:reduce) { .ld-flow, .ld-chest, .ld-fire { animation:none !important; } }
 /* Review the screens: mark areas on a ticket's screens and leave notes for the designer (ui/review.py). */
 .rv { display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start; }
 .rv-main { flex:999 1 560px; min-width:0; display:flex; flex-direction:column; gap:12px; }
@@ -510,3 +518,18 @@ button.rv-del:hover { color:var(--bad); }
 .sd-dot.fm-drone-key { background:transparent; border:2px dotted #9aa7b0; box-sizing:border-box; }
 @media (max-width:760px) { .fm-wrap, .fm-key { display:none; } .fm-phone { display:block; } }
 @media (prefers-reduced-motion:reduce) { .fm-flow, .fm-crate, .fm-m .fm-box { animation:none !important; } }
+
+/* ---- One ticket's journey (yard.journey) and the list's progress strip: the floor's belts, small ---- */
+.sd-strip.fm-jwrap { display:block; min-width:0; }
+.fm-journey { min-width:640px; }
+.fm-jl { fill:var(--text); font:600 12px var(--sans); text-anchor:middle; } .fm-m.none .fm-jl { fill:var(--muted); }
+.fm-js { fill:var(--muted); font:700 9px var(--sans); letter-spacing:.05em; text-transform:uppercase; text-anchor:middle; }
+.fm-m.run .fm-js { fill:var(--accent); } .fm-m.wait .fm-js { fill:var(--blue); } .fm-m.fail .fm-js { fill:var(--bad); } .fm-m.done .fm-js { fill:var(--good); }
+.fm-jc { fill:#c88a3c; stroke:#7a4f1c; stroke-width:1.5; }
+.fm-ballast.j path { stroke-width:18; } .fm-ties.j path { stroke-width:12; } .fm-rail.j path { stroke-width:8; } .fm-rail-in.j path, .fm-ties-in.j path { stroke-width:4; }
+.fm-jw .fm-box { fill:#1f262b; } .fm-jw.run .fm-box { stroke:var(--accent); } .fm-jw.done .fm-box { stroke:var(--good); } .fm-jw.fail .fm-box { stroke:var(--bad); }
+.fm-jw .fm-jl, .fm-jw .fm-js { text-anchor:middle; }
+.fm-jv { fill:var(--muted); font:700 10px var(--sans); letter-spacing:.08em; text-transform:uppercase; text-anchor:middle; }
+.fm-jv.run { fill:var(--accent); } .fm-jv.done { fill:var(--good); } .fm-jv.fail { fill:var(--bad); }
+.sd-segs i.run { background:repeating-linear-gradient(90deg,var(--accent) 0 6px,var(--accent-dark) 6px 12px); background-size:24px 100%; animation:sd-beltR 1s linear infinite; }
+@media (prefers-reduced-motion:reduce) { .sd-segs i.run { animation:none !important; } }

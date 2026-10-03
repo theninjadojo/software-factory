@@ -304,6 +304,7 @@ class Handler(BaseHTTPRequestHandler):
             detail = ""
             if sel is not None:
                 files, docs, events, images = board.ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
+                sel["verify"] = board.ticket_verify(db, sel["repo"], sel["issue"])
                 if path == "/fragment/ticket":
                     return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now))
                 back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}"

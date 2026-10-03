@@ -377,3 +377,77 @@ def _rail(g: dict, shown: list[dict], workers_on: bool, order, spots, now: float
         add = (f'<a class="fm-add" href="/workers"><rect x="40" y="{_f(g["plat"][0] + 80)}" width="180" height="44" rx="2"/>'
                f'<text x="130" y="{_f(g["plat"][0] + 107)}">+ Connect a worker</text></a>')
     return f'<g aria-hidden="true">{layers}{under}</g>{home}{sig}{parts}<g aria-hidden="true">{trains}</g>{add}'
+
+
+# ---------------------------------------------------------------- one ticket's journey: the same stations, small, in a row
+J_M, J_STEP, J_TOP = 56, 82, 8
+J_WORD = {"done": "Done", "run": "Running", "wait": "Needs you", "fail": "Failed", "none": "Not yet"}
+J_TRAIN = ('<rect class="fm-wagon" x="-24" y="-6" width="22" height="12" rx="2"/><rect class="fm-load" x="-20" y="-3" width="14" height="6"/>'
+           '<rect class="fm-loco" x="1" y="-6" width="20" height="12" rx="3"/><circle class="fm-head" cx="18" cy="0" r="1.8"/>')
+VERIFY_SHORT = {"queued": "Waiting", "claimed": "Checking", "passed": "Passed", "failed": "Failed", "error": "Could not run", "cancelled": "Cancelled"}
+VERIFY_WORD = {"queued": "waiting for a worker", "claimed": "checking on {w}", "passed": "passed on {w}", "failed": "failed on {w}",
+               "error": "could not run on {w}", "cancelled": "cancelled"}
+
+
+def journey(stations: list[tuple[str, str, str, str]], verify: dict | None, now: float) -> str:
+    """stations: (id, short label, icon path, state) in route order. verify: the ticket's latest verification job ({"status", "worker"})
+    or None. A crate rides into the station that is working and crates wait at the one that needs a person; when the build is checked
+    on a worker, a small railway runs from Build to it (the train only drives while the worker has the job)."""
+    n = len(stations)
+    width = 8 + (n - 1) * J_STEP + J_M
+    cx = [4 + i * J_STEP + J_M / 2 for i in range(n)]
+    cy = J_TOP + J_M / 2
+    belts, machines = "", ""
+    for i in range(n - 1):
+        into = stations[i + 1][3] if stations[i + 1][3] != "none" else ("done" if stations[i][3] != "none" else "none")
+        kind = {"done": "ok", "none": "dim"}.get(into, into)
+        d = f"M {_f(cx[i])} {_f(cy)} L {_f(cx[i + 1])} {_f(cy)}"
+        belts += f'<path class="fm-belt thin" d="{d}"/><path class="fm-flow {kind}" d="{d}"/>'
+        if kind == "run":
+            belts += (f'<rect class="fm-jc" x="-7" y="-5" width="14" height="10"><animateMotion path="{d}" dur="1.3s" '
+                      f'begin="{-(now % 1.3):.2f}s" repeatCount="indefinite"/></rect>')
+        elif kind == "wait":
+            door = cx[i + 1] - J_M / 2
+            belts += "".join(f'<rect class="fm-jc" x="{_f(door - 11 - k * 16)}" y="{_f(cy - 5)}" width="14" height="10"/>' for k in range(2))
+    for i, (sid, label, icon, state) in enumerate(stations):
+        x = cx[i] - J_M / 2
+        prog = ""
+        if state == "run":
+            prog = (f'<rect class="fm-prog" x="{_f(x + 7)}" y="{_f(J_TOP + J_M - 9)}" width="0" height="3">'
+                    f'<animate attributeName="width" from="0" to="{J_M - 14}" dur="1.4s" begin="{-(now % 1.4):.2f}s" repeatCount="indefinite"/></rect>')
+        machines += (f'<g class="fm-m {state}" role="listitem" aria-label="{esc(label)}: {J_WORD[state]}">'
+                     f'<rect class="fm-box" x="{_f(x)}" y="{J_TOP}" width="{J_M}" height="{J_M}" rx="3"/>'
+                     f'<svg class="fm-i" x="{_f(x + 16)}" y="{J_TOP + 13}" width="24" height="24" viewBox="0 0 24 24"><path d="{icon}"/></svg>{prog}'
+                     f'<text class="fm-jl" x="{_f(cx[i])}" y="{J_TOP + J_M + 17}">{esc(label[:11])}</text>'
+                     f'<text class="fm-js" x="{_f(cx[i])}" y="{J_TOP + J_M + 31}">{J_WORD[state]}</text></g>')
+    height, rail = J_TOP + J_M + 40, ""
+    ids = [s[0] for s in stations]
+    if verify and "build" in ids:
+        rail, height = _spur(cx[ids.index("build")], min(width - 110, cx[ids.index("build")] + 190), J_TOP + J_M + 52, verify, now)
+    return (f'<svg class="fm fm-journey" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="list" '
+            f'aria-label="Stations">{rail}<g aria-hidden="true">{belts}</g>{machines}</svg>')
+
+
+def _spur(xb: float, xe: float, y: float, verify: dict, now: float) -> tuple[str, float]:
+    """An oval of track under Build: out along the top, round, the worker's stop on the way back, round again to Build."""
+    r, y2 = 14, y + 28
+    loop = Path(xb, y).L(xe, y).A(r, 1, xe, y2).L(xb, y2).A(r, 1, xb, y)
+    at_worker = (xe - xb) + math.pi * r + 24
+    status, worker = verify.get("status") or "queued", verify.get("worker") or "a worker"
+    tracks = "".join(f'<g class="{c}"><path d="{loop.d}"/></g>' for c in ("fm-ballast j", "fm-ties j", "fm-rail j", "fm-rail-in j", "fm-ties-in j"))
+    feed = f'<path class="fm-belt thin" d="M {_f(xb + 22)} {J_TOP + J_M} L {_f(xb + 22)} {_f(y - 10)}"/>'
+    wx = xe - 24                                             # the worker's stop sits on the lower track, just past the far turn
+    tone = {"passed": "done", "failed": "fail", "error": "fail", "claimed": "run"}.get(status, "none")
+    box = (f'<g class="fm-jw {tone}"><rect class="fm-box" x="{_f(wx - 50)}" y="{_f(y2 + 18)}" width="124" height="38" rx="3"/>'
+           f'<text class="fm-jl" x="{_f(wx + 12)}" y="{_f(y2 + 34)}">{esc(worker[:16])}</text>'
+           f'<text class="fm-js" x="{_f(wx + 12)}" y="{_f(y2 + 48)}">{esc(VERIFY_SHORT.get(status, status))}</text></g>')
+    if status == "claimed":
+        T, f = 8.0, at_worker / loop.len
+        train = (f'<g class="fm-train">{J_TRAIN}<animateMotion path="{loop.d}" dur="{T}s" begin="{-(now % T):.2f}s" rotate="auto" '
+                 f'calcMode="spline" keyTimes="0;.1;.4;.6;.95;1" keyPoints="0;0;{f:.4f};{f:.4f};1;1" '
+                 f'keySplines="{SPLINE};{SPLINE};{SPLINE};{SPLINE};{SPLINE}" repeatCount="indefinite"/></g>')
+    else:
+        train = f'<g class="fm-train" transform="translate({_f(xb + 20)} {_f(y)})">{J_TRAIN}</g>'
+    word = VERIFY_WORD.get(status, status).format(w=worker)
+    label = f'<g role="listitem" aria-label="Verification: {esc(word)}"><text class="fm-jv {tone}" x="{_f(xb - 42)}" y="{_f((y + y2) / 2 + 4)}">Verify</text></g>'
+    return f'<g aria-hidden="true">{tracks}{feed}{train}</g>{box}{label}', y2 + 66
