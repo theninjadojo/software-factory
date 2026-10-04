@@ -177,7 +177,7 @@ def test_a_saved_credential_is_never_shown_back(page, server, viewport):
 
 def test_local_tickets_are_turned_on_from_new_ticket(page, server, viewport):
     page.goto(server.url + "/tickets")
-    page.locator("summary", has_text="New ticket").click()
+    page.get_by_role("button", name="New ticket").click()
     page.get_by_role("link", name="Turn them on").click()
     strip = page.get_by_role("region", name="The settings that shape Tickets")
     expect(strip.get_by_role("button", name="Turn on")).to_be_visible()          # the confirmation, already open
@@ -185,7 +185,7 @@ def test_local_tickets_are_turned_on_from_new_ticket(page, server, viewport):
     expect(page.locator(".flash")).to_contain_text("Local tickets turned on")
     assert tomllib.loads((server.root / "config.overrides.toml").read_text())["local"]["enabled"] is True
     expect(page.get_by_role("region", name="The settings that shape Tickets")).to_contain_text("GitHub and the factory")
-    page.locator("summary", has_text="New ticket").click()
+    page.get_by_role("button", name="New ticket").click()
     expect(page.get_by_label("Keep it in")).to_be_visible()
 
 
