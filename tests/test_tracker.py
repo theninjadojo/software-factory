@@ -234,6 +234,21 @@ class Import(Base):
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM local_tickets").fetchone()[0], 1)
         self.assertIn(("add", 5, (tracker.MOVED_LABEL,)), gh2.calls)
 
+    def test_an_issue_waiting_for_answers_is_imported(self):
+        gh = FakeGH({5: issue(5, labels=("factory:needs-answers",))})
+        tracker.request_import(self.path, self.repo, [5], close=True)
+        self.run_imports(gh)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM local_tickets").fetchone()[0], 1)
+        self.assertIn(("state", 5, "closed"), gh.calls)
+
+    def test_taken_lists_moved_and_queued_issues(self):
+        gh = FakeGH({5: issue(5)})
+        tracker.request_import(self.path, self.repo, [5], close=False)
+        self.run_imports(gh)
+        tracker.request_import(self.path, self.repo, [7], close=False)
+        self.assertEqual(tracker.taken(self.path, self.repo), {5, 7})
+        self.assertEqual(tracker.taken(self.path, "other/repo"), set())
+
     def test_bulk_is_capped(self):
         tracker.request_import(self.path, self.repo, list(range(1, 60)), close=False)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM import_requests").fetchone()[0], tracker.MAX_BULK)

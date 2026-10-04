@@ -117,3 +117,36 @@ class Settings(AdminCase):
         self.assertEqual((cfg.local_enabled, cfg.github_poll_seconds), (True, 300))
         self.post(cookie, csrf, "/settings/save", self.general_form(**{"local.enabled": "1", "github.poll_seconds": str(cfg.poll_seconds)}))
         self.assertNotIn("poll_seconds", self.overrides().get("github", {}))         # back to following the poll interval
+
+
+class ImportAll(LocalTickets):
+    def queued(self):
+        return sorted(r[0] for r in self.db.execute("SELECT gh_number FROM import_requests"))
+
+    def submit(self, gh, **f):
+        from unittest import mock
+        with mock.patch.object(L, "_gh", return_value=gh):
+            return self.post(self.cookie, self.csrf, "/tickets/import", {"repo": REPO, **f})
+
+    def test_every_open_issue_is_queued_in_batches_and_a_close_needs_confirmation(self):
+        from unittest import mock
+        gh = mock.MagicMock()
+        total = tracker.MAX_BULK + 5
+        gh.issues.return_value = ([{"number": n, "labels": []} for n in range(1, total + 1)], False)
+        self.submit(gh, all="1", close="1")
+        self.assertEqual(self.queued(), [])                          # not confirmed: nothing queued
+        self.submit(gh, all="1", close="1", confirm="1")
+        self.assertEqual(self.queued(), list(range(1, tracker.MAX_BULK + 1)))
+        self.assertEqual(self.db.execute("SELECT MIN(close) FROM import_requests").fetchone()[0], 1)
+        self.submit(gh, all="1")                                     # the next batch skips the queued ones
+        self.assertEqual(self.queued(), list(range(1, total + 1)))
+
+    def test_all_cannot_be_mixed_with_a_number_or_label_and_needs_a_valid_session(self):
+        from unittest import mock
+        gh = mock.MagicMock()
+        gh.issues.return_value = ([{"number": 1, "labels": []}], False)
+        self.submit(gh, all="1", n="3")
+        self.submit(gh, all="1", label="bug")
+        self.assertEqual(self.queued(), [])
+        self.assertEqual(self.req("POST", "/tickets/import", "repo=" + quote(REPO, safe="") + "&all=1", cookie=self.cookie)[0], 403)
+        self.assertEqual(self.queued(), [])
