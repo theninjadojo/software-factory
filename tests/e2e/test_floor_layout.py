@@ -41,7 +41,7 @@ def cell(pg) -> float:
 def drag(pg, selector, dx, dy, at=(0.5, 0.5)):
     """Press on the element (at a fraction of its box), move by dx, dy pixels in steps, release."""
     el = pg.locator(selector).first
-    el.scroll_into_view_if_needed()
+    el.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")    # room to drag every way, on screen
     b = el.bounding_box()
     x, y = b["x"] + b["width"] * at[0], b["y"] + b["height"] * at[1]
     o, c = pg.locator(".fe-svg").bounding_box(), cell(pg)              # press on a grid point, so the move rounds to whole cells
@@ -298,4 +298,41 @@ def test_workers_by_rail_lay_track_to_a_worker_and_back(wide, server):
     assert pg.locator("svg.fm .ry-yard").count() == 1 and pg.locator("svg.fm .ry-depot").count() == 1
     assert pg.locator('svg.fm a.fm-w').count() == 2
     assert pg.locator("svg.fm .ry-junction").count() == 2
+    assert pg.errors == []
+
+
+def test_the_editor_says_what_is_selected_and_shows_the_sea_the_trains_and_the_legend(wide, server):
+    """The status line names the tool and the selection, with a Remove button; deliveries are light blue; the sea has its coast with
+    the harbor at the shore; with workers, a train runs each loop in the editor and the junctions have signals. The Factory page
+    draws the same default layout when none is saved."""
+    import time as _t
+    from factory import jobs
+    for name in ("linux-box", "my-mac"):
+        jobs.touch_worker(server.db, name, "linux", ["web"], 1, _t.time())
+    server.db.commit()
+    pg = wide
+    pg.goto(server.url + "/")
+    assert pg.locator("svg.fm .ry-yard").count() == 1 and pg.locator("svg.fm .sh-water").count() == 1   # the dashboard, nothing saved
+    open_editor(pg, server)
+    assert pg.locator(".fe-svg .sh-water").count() == 1
+    assert pg.locator(".fe-belt.in").count() == 2
+    assert pg.locator(".fe-train").count() == 2
+    assert pg.locator(".fe-trains .fm-sig").count() >= 3
+    assert [t.strip() for t in pg.locator(".fe-legend li").all_inner_texts()] == ["Belt", "Deliveries in", "Rail", "Notifier, wireless"]
+    assert pg.inner_text(".fe-msg").startswith("Move:")
+    assert not pg.locator(".fe-remove").is_visible()
+    # a belt clicked: named, orange, with its handle and a Remove belt button that removes it (and undo brings it back)
+    pts = plan(pg)["belts"]["harbor>receiving"]
+    (ax, ay), (bx, by) = max(zip(pts, pts[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
+    pg.locator('[data-hop="harbor>receiving"]').scroll_into_view_if_needed()
+    pg.mouse.click(*grid_to_client(pg, (ax + bx) / 2, (ay + by) / 2))
+    assert pg.inner_text(".fe-msg").startswith("Belt The harbor → Receiving")
+    assert pg.locator(".fe-belt.sel").count() == 1 and pg.locator(".fe-handle").count() == 1
+    pg.click(".fe-remove")
+    assert "harbor>receiving" not in plan(pg)["belts"] and "No belt from The harbor to Receiving" in problems(pg)
+    pg.keyboard.press("Control+z")
+    assert "harbor>receiving" in plan(pg)["belts"]
+    # a tool says what it does; a refused belt says why in the status line
+    pg.click('[data-tool="rail"]')
+    assert pg.inner_text(".fe-msg").startswith("Draw track:")
     assert pg.errors == []

@@ -21,8 +21,8 @@ the Train station to the yard or a junction). Every worker needs its loop: track
 and from the Train station back to the yard (through junctions as needed); each rail building has a turnaround loop, so a train only
 ever drives forwards round the circuit, and a junction's signals let one train onto the shared track at a time.
 
-Without a saved layout the floor is drawn as before (plant.floor_map). A saved layout that cannot be read falls back to that; one
-that is stale (the config gained or lost a station, an agent or the workers) is merged: what is gone is dropped, and what is new
+Without a saved layout the Factory page draws the default layout (default_plan), as the editor opens it, so the two always agree;
+a saved layout that cannot be read falls back to that. One that is stale (the config gained or lost a station, an agent or the workers) is merged: what is gone is dropped, and what is new
 gets a default spot and an auto-routed belt."""
 import hashlib
 import heapq
@@ -57,7 +57,7 @@ KINDS = ("splitter", "merger", "sideload", "underground")
 NAMES = {"mainland": "The mainland", "sea": "The sea", "sources": "Sources", "receiving": "Receiving", "queue": "The queue",
          "airfield": "The airfield", "yard": "The Verify yard", "harbor": "The harbor", "depot": "The Train station",
          "outside": "Outside the factory"}
-FREE = ("outside",)                          # areas other buildings may stand in, and belts and track may cross
+FREE = ("outside", "sea")                    # areas other buildings may stand in (the harbor in the sea), and belts and track may cross
 DISTRICTS = ("INTAKE", "PLANNING", "PRODUCTION", "QUALITY", "SHIPPING")
 YARD_TOP = 590                             # the yard's feeder top in yard.py's coordinates (yard.BOT_Y + yard.MH + 30)
 
@@ -184,6 +184,24 @@ def label(nid: str) -> str:
     return NAMES.get(nid, nid)
 
 
+ICONS = {"sources": "M4 3h6v18H4zM14 3h6v18h-6zM7 7v.01M7 11v.01M17 7v.01M17 11v.01",
+         "receiving": "M2 10l10-6 10 6M4 10v10h16V10M8 14h8M8 17h8",
+         "harbor": "M12 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 7v14M5 14a7 7 0 0 0 14 0M8 10h8",
+         "airfield": "M2 13l9-2 3-7 2 1-1 6 6 1v2l-6 1 1 6-2 1-3-7-9-2z", "queue": "M3 8h18v12H3zM3 12h18M11 10h2v4h-2z",
+         "notify": "M5 11a10 10 0 0 1 14 0M8 14a6 6 0 0 1 8 0M12 18v.01", "power": "M13 2L4 14h7l-1 8 9-12h-7z",
+         "yard": "M5 17h14M7 17V7h10v10M9 21l-2-4M15 21l2-4", "depot": "M4 6h12l4 4v7H4zM4 11h16M8 20h.01M16 20h.01",
+         "worker": "M4 3h16v7H4zM4 14h16v7H4zM8 6.5h.01M8 17.5h.01", "junction": "M12 3v7M12 10l-6 11M12 10l6 11",
+         "mainland": "M3 20h18M6 20V10l6-6 6 6v10", "sea": "M2 8c3-2 5 2 8 0s5 2 8 0 3 0 4 0M2 14c3-2 5 2 8 0s5 2 8 0 3 0 4 0",
+         "outside": "M3 12h18M12 3v18"}
+
+
+def icon(nid: str) -> str:
+    """The tray's small picture of a building: a station's own icon, else one per kind."""
+    from .board import ICON
+    kind, _, name = nid.partition(":")
+    return ICON.get(name, ICONS["queue"]) if kind == "station" else ICONS.get(kind, ICONS["queue"])
+
+
 def group(nid: str) -> str:
     """Where the editor's parts tray lists a building."""
     kind = nid.split(":")[0]
@@ -253,7 +271,7 @@ def cells(pts):
 # ---------------------------------------------------------------- the default layout: today's arrangement on the grid
 def _default_pos(ctx: Ctx) -> dict:
     roles = ctx.roles
-    P = {"mainland": (0, 0), "sea": (12, 0), "sources": (28, 2), "receiving": (28, 10), "harbor": (31, 19), "queue": (50, 12), "airfield": (28, 33)}
+    P = {"mainland": (0, 0), "sea": (12, 0), "sources": (28, 2), "receiving": (28, 10), "harbor": (19, 13), "queue": (50, 12), "airfield": (28, 33)}
     for s, x in zip(INTAKE, (37, 45, 53)):
         P[f"station:{s}"] = (x, 2)
     for i, r in enumerate(roles):
@@ -331,9 +349,9 @@ def port(nid: str, way: str, other: str, nodes: dict, ctx: Ctx):
     if nid == "yard":
         return (nodes[nid]["x"], nodes[nid]["y"] - 1)
     if nid == "receiving":
-        return (x + w + 1, y + 2) if way == "out" else (x + 5, y + h + 1) if other == "harbor" else (x + 2, y + h + 1)
+        return (x + w + 1, y + 2) if way == "out" else (x - 1, y + 3) if other == "harbor" else (x + 2, y + h + 1)
     if nid == "harbor":
-        return (x + 2, y - 1)
+        return (x + w + 1, y + h // 2)
     if nid == "airfield":
         return (x + 2, y - 1)
     if nid == "queue":
@@ -974,7 +992,7 @@ def meta(ctx: Ctx) -> dict:
             (dx, dy), (w, h) = (0, 0), SIZE[nid.split(":")[0]]
         kind = nid.split(":")[0]
         out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h, "min": None if nid in ("yard",) or kind == "junction" else MIN[kind],
-                    "group": group(nid), **({"optional": True} if nid in ctx.optional() else {}), **({"rail": True} if nid in ctx.rail() else {})}
+                    "group": group(nid), "icon": icon(nid), **({"optional": True} if nid in ctx.optional() else {}), **({"rail": True} if nid in ctx.rail() else {})}
     dist = ctx.districts
     return {"grid": G, "w": W, "h": H, "nodes": out, "hops": [[a, b, f"{label(a)} → {label(b)}"] for a, b in ctx.hops()],
             "tracks": [[a, b] for a, b in ctx.tracks()], "workers": [f"worker:{w}" for w in ctx.workers], "free": list(FREE),

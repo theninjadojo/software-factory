@@ -654,6 +654,7 @@ def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
     workers = d.get("workers") or []
     ctx = floor_ctx(d["cfg"], workers)
     plan, _ = floorplan.usable(*d["floor_layout"], ctx) if d.get("floor_layout") else (None, "")
+    plan = plan or floorplan.default_plan(ctx)                       # no layout saved (or none usable): the default one, as the editor shows it
     svg = plant.floor_map(order, fl, workers, bool(d["cfg"].get("workers")), now, _floor_word,
                           lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras, floorplan.compile_plan(plan, ctx) if plan else None)
     edit = '<a class="btn secondary fm-edit" href="/floor/edit">Edit layout</a>' if csrf else ""

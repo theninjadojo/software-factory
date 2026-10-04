@@ -20,7 +20,8 @@
   if (!doc.tracks) doc.tracks = {};
   if (!doc.districts) doc.districts = {};
   var past = [], future = [], tool = "move", drawing = null, drag = null, pan = null, ugFrom = null, focused = null, focusedDist = null;
-  var link = null, slide = null, carryIn = null, carried = false, note = "", selTrack = null;
+  var link = null, slide = null, carryIn = null, carried = false, note = "", selTrack = null, selBelt = null;
+  var msg = root.querySelector(".fe-msg"), removeBtn = root.querySelector(".fe-remove");
   var zoom = 1, AREAS = {mainland: 1, sea: 1, airfield: 1, outside: 1};
   var GROUND = {mainland: "ap-land", sea: "sh-sea", airfield: "ap-field"};    // what fills a resized area round its picture
   var details = document.querySelector(".fe-data");
@@ -261,6 +262,7 @@
     res.problems.slice(0, 12).forEach(function (p) { var li = document.createElement("li"); li.textContent = p; list.appendChild(li); });
     drawTray();
     drawChecklist(res);
+    drawStatus();
     if (!res.problems.length) { var ok = document.createElement("li"); ok.className = "ok"; ok.textContent = "Every station is reachable on its route."; list.appendChild(ok); }
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     var W = meta.w * G, H = meta.h * G;
@@ -313,7 +315,8 @@
     Object.keys(doc.belts).forEach(function (id) {
       var pts = doc.belts[id];
       if (!pts || pts.length < 2) return;
-      var cls = "fe-belt" + (res.bad[id] ? " bad" : "") + (id === hopSel.value ? " sel" : "");
+      var src = id.split(">")[0];
+      var cls = "fe-belt" + (src === "airfield" || src === "harbor" ? " in" : "") + (res.bad[id] ? " bad" : "") + (id === selBelt ? " sel" : "");
       el("polyline", {points: poly(pts), "class": cls, "data-hop": id}, svg);
       el("circle", {"class": "fe-end", cx: pts[0][0] * G, cy: pts[0][1] * G, r: 4}, svg);
       var z = pts[pts.length - 1], y = pts[pts.length - 2], dx = Math.sign(z[0] - y[0]), dy = Math.sign(z[1] - y[1]);
@@ -331,6 +334,15 @@
         el("text", {x: p.at[0] * G, y: p.at[1] * G + 4}, g, {splitter: "S", merger: "M", sideload: "L"}[p.kind]);
       }
     });
+    // the selected belt or track: a diamond on its longest run, where it can be dragged sideways
+    var selPts = selBelt ? doc.belts[selBelt] : selTrack ? doc.tracks[selTrack] : null;
+    if (selPts && selPts.length >= 2) {
+      var best = 1, bl = -1;
+      for (var si = 1; si < selPts.length; si++) { var ln = Math.abs(selPts[si][0] - selPts[si - 1][0]) + Math.abs(selPts[si][1] - selPts[si - 1][1]); if (ln > bl) { bl = ln; best = si; } }
+      var mx = (selPts[best][0] + selPts[best - 1][0]) / 2 * G, my = (selPts[best][1] + selPts[best - 1][1]) / 2 * G;
+      el("rect", {"class": "fe-handle", x: mx - 6, y: my - 6, width: 12, height: 12, transform: "rotate(45 " + mx + " " + my + ")"}, svg);
+    }
+    railAnim(res);
     if (drawing) el("polyline", {points: poly(drawing), "class": (tool === "wall" ? "fp-wall" : "fe-belt") + " drawing"}, svg);
     if (link && link.pts) el("polyline", {points: poly(link.pts), "class": (link.rail ? "fe-track-draw" : "fe-belt drawing") + (link.to && !link.hop ? " bad" : "")}, svg);
     if (carryIn && carryIn.at) {
@@ -340,6 +352,184 @@
     if (ugFrom) el("circle", {"class": "fe-end drawing", cx: ugFrom[0] * G, cy: ugFrom[1] * G, r: 6}, svg);
     if (focusedDist && !focused) { var fd = svg.querySelector('[data-district="' + focusedDist + '"]'); if (fd && document.activeElement !== fd && svg.contains(document.activeElement || null)) fd.focus(); }
     if (focused) { var f = svg.querySelector('[data-node="' + focused + '"]'); if (f && document.activeElement !== f && svg.contains(document.activeElement || null)) f.focus(); }
+  }
+
+  // ---- the status line over the canvas: what the tool does, what is selected, why something was refused
+  var TOOL_SAYS = {
+    move: "Move: drag a building to move it, or a belt or track to slide it. Select a building and drag a corner to resize it. Drag the ground to pan.",
+    belt: "Draw belt: drag from the building a ticket leaves onto the one it goes to.",
+    rail: "Draw track: the yard to a worker, the worker to the Train station, the Train station back to the yard. Run tracks into a junction to join them; its signals take turns.",
+    erase: "Erase: click a building to put it back in the tray, or a belt, track, piece, wall or tree to remove it.",
+    wall: "Wall: click the corners of a wall; click the last point again (or press Enter) to finish it.", tree: "Tree: click to plant one.",
+    underground: "Underground: click where the belt goes under, then where it comes up.",
+    splitter: "Splitter: click a belt to place one.", merger: "Merger: click a belt to place one.", sideload: "Side-load: click a belt to place one."};
+  function drawStatus() {
+    if (!msg) return;
+    var text = note || TOOL_SAYS[tool] || "", rm = "";
+    if (!note && selBelt && doc.belts[selBelt]) {
+      var ab = selBelt.split(">");
+      text = "Belt " + label(ab[0]) + " → " + label(ab[1]) + ". Drag it sideways to slide it; it stays joined to both buildings.";
+      rm = "Remove belt";
+    } else if (!note && selTrack && doc.tracks[selTrack]) {
+      var tb = selTrack.split(">");
+      text = "Track " + label(tb[0]) + " → " + label(tb[1]) + ". Drag it sideways to slide it; it stays joined to both.";
+      rm = "Remove track";
+    } else if (!note && focused && doc.nodes[focused]) {
+      if (focused.indexOf("notify:") === 0) text = label(focused) + " is wireless: it hears every station wherever it stands.";
+      else {
+        var ins = [], outs = [];
+        meta.hops.forEach(function (h) { if (doc.belts[h[0] + ">" + h[1]]) { if (h[1] === focused) ins.push(label(h[0])); if (h[0] === focused) outs.push(label(h[1])); } });
+        text = label(focused) + " · in from " + (ins.join(", ") || "nothing yet") + " · out to " + (outs.join(", ") || "nothing yet") + ".";
+      }
+      rm = "Back to the tray";
+    }
+    msg.textContent = text;
+    msg.className = "fe-msg" + (note ? " note" : "");
+    if (removeBtn) { removeBtn.hidden = !rm; removeBtn.textContent = rm || "Remove"; }
+  }
+  if (removeBtn) removeBtn.addEventListener("click", function () {
+    if (selBelt && doc.belts[selBelt]) { remember(); delete doc.belts[selBelt]; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); selBelt = null; draw(); }
+    else if (selTrack && doc.tracks[selTrack]) { remember(); delete doc.tracks[selTrack]; selTrack = null; draw(); }
+    else if (focused && doc.nodes[focused]) erase(focused);
+  });
+
+  // ---- the trains in the editor, on the same timetable as the floor (plant.timetable): one train at a time on shared track
+  var SPEED = 150, DWELL = 3, HOME_DWELL = 2.5, GAP = 31;
+  function legOf(a, b) {
+    var prev = {}, todo = [a], ks = Object.keys(doc.tracks);
+    prev[a] = "";
+    while (todo.length) {
+      var n = todo.shift();
+      for (var i = 0; i < ks.length; i++) {
+        var ab = ks[i].split(">");
+        if (ab[0] !== n || ab[1] in prev || !box(ab[1])) continue;
+        prev[ab[1]] = ks[i];
+        if (ab[1] === b) { var out = [], c = b; while (prev[c]) { out.unshift(prev[c]); c = prev[c].split(">")[0]; } return out; }
+        if (ab[1].indexOf("junction:") === 0) todo.push(ab[1]);
+      }
+    }
+    return null;
+  }
+  function ringRoute(id, p, q) {
+    var b = box(id), L = (b[0] - 1) * G, T = (b[1] - 1) * G, R = (b[0] + b[2] + 1) * G, B = (b[1] + b[3] + 1) * G, Wd = R - L, Ht = B - T, per = 2 * (Wd + Ht);
+    var t = function (pt) {
+      if (Math.abs(pt[1] - T) < 1) return pt[0] - L;
+      if (Math.abs(pt[0] - R) < 1) return Wd + (pt[1] - T);
+      if (Math.abs(pt[1] - B) < 1) return Wd + Ht + (R - pt[0]);
+      return 2 * Wd + Ht + (B - pt[1]);
+    };
+    var ta = t(p), span = ((t(q) - ta) % per + per) % per || per, hits = [];
+    [[Wd, [R, T]], [Wd + Ht, [R, B]], [2 * Wd + Ht, [L, B]], [per, [L, T]]].forEach(function (c) {
+      var d = ((c[0] - ta) % per + per) % per;
+      if (d > 0 && d < span) hits.push([d, c[1]]);
+    });
+    return hits.sort(function (x, y) { return x[0] - y[0]; }).map(function (h) { return h[1]; });
+  }
+  function circuitOf(w) {
+    var legs = [legOf("yard", w), legOf(w, "depot"), legOf("depot", "yard")];
+    if (!legs[0] || !legs[1] || !legs[2] || !legs[0].length || !legs[1].length || !legs[2].length) return null;
+    var pts = [], run = 0, marks = {tracks: {}}, stops = {};
+    var add = function (q) { if (pts.length) { var l = pts[pts.length - 1]; if (l[0] === q[0] && l[1] === q[1]) return; run += Math.hypot(q[0] - l[0], q[1] - l[1]); } pts.push(q); };
+    var px = function (q) { return [q[0] * G, q[1] * G]; };
+    var rings = [w, "depot", "yard"];
+    legs.forEach(function (edges, k) {
+      edges.forEach(function (tid, i) {
+        if (i) { var jb = box(tid.split(">")[0]); add([(jb[0] + jb[2] / 2) * G, (jb[1] + jb[3] / 2) * G]); }
+        var q = doc.tracks[tid];
+        add(px(q[0]));
+        var start = run;
+        for (var j = 1; j < q.length; j++) add(px(q[j]));
+        marks.tracks[tid] = [start, run];
+      });
+      var next = px(doc.tracks[legs[(k + 1) % 3][0]][0]), before = run;
+      ringRoute(rings[k], pts[pts.length - 1], next).forEach(add);
+      add(next);
+      stops[rings[k]] = (before + run) / 2;
+    });
+    marks.stop = stops[w]; marks.off = stops.depot; marks.len = run;
+    return {pts: pts, m: marks, legs: legs};
+  }
+  function railAnim(res) {
+    var ws = (meta.workers || []).filter(function (w) { return res.loops[w]; });
+    if (!ws.length) return;
+    var cs = {}, uses = {};
+    ws.forEach(function (w) { cs[w] = circuitOf(w); if (cs[w]) Object.keys(cs[w].m.tracks).forEach(function (t) { uses[t] = (uses[t] || 0) + 1; }); });
+    ws = ws.filter(function (w) { return cs[w]; });
+    if (!ws.length) return;
+    var shared = {}, plan = {}, free = 0, t0 = 0, tail = 3 * GAP / SPEED + 0.6;
+    Object.keys(uses).forEach(function (k) { if (uses[k] > 1) shared[k] = 1; });
+    ws.forEach(function (w) {
+      var c = cs[w], m = c.m, outEnd = 0, home = m.off, prev = null;
+      c.legs[0].forEach(function (tid) { if (shared[tid]) outEnd = Math.max(outEnd, m.tracks[tid][1]); });
+      var back = c.legs[1].concat(c.legs[2]);
+      for (var i = 0; i < back.length; i++) {
+        var tid = back[i];
+        if (shared[tid] && m.tracks[tid][0] > m.stop) {
+          if (prev && prev.split(">")[1].indexOf("junction:") === 0) { var se = m.tracks[prev]; home = se[1] - Math.min(26, (se[1] - se[0]) / 2); }
+          else home = m.tracks[tid][0];
+          break;
+        }
+        prev = tid;
+      }
+      var r = plan[w] = {homeAt: home};
+      r.depart = Math.max(t0, free); r.arrive = r.depart + m.stop / SPEED; r.leave = r.arrive + DWELL;
+      r.signal = r.leave + (home - m.stop) / SPEED;
+      free = r.depart + outEnd / SPEED + tail; t0 = r.depart;
+    });
+    ws.slice().sort(function (a, b) { return plan[a].signal - plan[b].signal; }).forEach(function (w) {
+      var r = plan[w], m = cs[w].m;
+      r.go = Math.max(r.signal, free); r.atOff = r.go + (m.off - r.homeAt) / SPEED; r.offLeave = r.atOff + DWELL;
+      r.home = r.offLeave + (m.len - m.off) / SPEED; free = r.home + tail;
+    });
+    var T = Math.round((Math.max.apply(null, ws.map(function (w) { return plan[w].home; })) + HOME_DWELL) * 10) / 10;
+    var g = el("g", {"class": "fe-trains"}, svg);
+    ws.forEach(function (w) {
+      var r = plan[w], m = cs[w].m;
+      var pts = [[0, 0], [r.depart, 0], [r.arrive, m.stop], [r.leave, m.stop], [r.signal, r.homeAt], [r.go, r.homeAt], [r.atOff, m.off], [r.offLeave, m.off], [r.home, m.len], [T, m.len]];
+      r.pts = pts;
+      var kt = [], kp = [];
+      pts.forEach(function (q) { var k = Math.round(q[0] / T * 10000) / 10000; if (kt.length && k <= kt[kt.length - 1]) return; kt.push(k); kp.push(Math.round(q[1] / m.len * 10000) / 10000); });
+      kt[0] = 0; kt[kt.length - 1] = 1;
+      var tr = el("g", {"class": "fe-train", opacity: 0}, g);
+      var out = Math.round(r.depart / T * 10000) / 10000, back = (r.home / T).toFixed(4);     // shown from leaving the yard until back in it
+      el("animate", out > 0 ? {attributeName: "opacity", values: "0;1;0", keyTimes: "0;" + out.toFixed(4) + ";" + back, calcMode: "discrete", dur: T + "s", repeatCount: "indefinite"}
+                            : {attributeName: "opacity", values: "1;0", keyTimes: "0;" + back, calcMode: "discrete", dur: T + "s", repeatCount: "indefinite"}, tr);
+      [-62, -36].forEach(function (x) {
+        el("rect", {"class": "fm-wagon", x: x, y: -7, width: 22, height: 14, rx: 2}, tr);
+        el("rect", {"class": "fm-load", x: x + 4, y: -4, width: 14, height: 8}, tr);
+      });
+      el("rect", {"class": "fm-loco", x: -10, y: -7, width: 22, height: 14, rx: 3}, tr);
+      el("circle", {"class": "fm-head", cx: 9, cy: 0, r: 2}, tr);
+      el("animateMotion", {path: "M " + cs[w].pts.map(function (q) { return q[0] + " " + q[1]; }).join(" L "), dur: T + "s", rotate: "auto", calcMode: "linear",
+                           keyTimes: kt.join(";"), keyPoints: kp.join(";"), repeatCount: "indefinite"}, tr);
+    });
+    // a signal on every track into a junction, green as it lets its train through
+    Object.keys(doc.tracks).forEach(function (tid) {
+      var dst = tid.split(">")[1];
+      if (dst.indexOf("junction:") !== 0 || !box(dst)) return;
+      var q = doc.tracks[tid], a = q[q.length - 2], z = q[q.length - 1], d = Math.hypot(z[0] - a[0], z[1] - a[1]) * G || 1;
+      var ux = (z[0] - a[0]) * G / d, uy = (z[1] - a[1]) * G / d, back = Math.min(26, d / 2);
+      var sx = z[0] * G - ux * back - uy * 14, sy = z[1] * G - uy * back + ux * 14, times = [];
+      ws.forEach(function (w) {
+        var m = cs[w].m, r = plan[w];
+        if (!m.tracks[tid]) return;
+        var at = m.tracks[tid][1] - back;
+        for (var i = 1; i < r.pts.length; i++) { var p0 = r.pts[i - 1], p1 = r.pts[i]; if (p1[1] > p0[1] && p0[1] <= at && at <= p1[1]) { times.push(p0[0] + (p1[0] - p0[0]) * (at - p0[1]) / (p1[1] - p0[1])); break; } }
+      });
+      var s = el("g", {"class": "fm-sig", transform: "translate(" + sx + " " + sy + ")"}, g);
+      el("rect", {x: -4.5, y: -8.5, width: 9, height: 17, rx: 2}, s);
+      var red = el("circle", {"class": "r", cx: 0, cy: -4, r: 2.4}, s), green = el("circle", {"class": "g", cx: 0, cy: 4, r: 2.4, opacity: 0.15}, s);
+      if (!times.length) return;
+      var keys = [0], gv = [0.15];
+      times.sort(function (x, y) { return x - y; }).forEach(function (tm) {
+        var a1 = Math.max(0, tm - 0.5) / T, b1 = Math.min(T, tm + 0.9) / T;
+        if (a1 <= keys[keys.length - 1]) gv[gv.length - 1] = 1; else { keys.push(a1); gv.push(1); }
+        if (b1 < 1) { keys.push(b1); gv.push(0.15); }
+      });
+      var ks = keys.map(function (k) { return k.toFixed(4); }).join(";");
+      el("animate", {attributeName: "opacity", values: gv.join(";"), keyTimes: ks, calcMode: "discrete", dur: T + "s", repeatCount: "indefinite"}, green);
+      el("animate", {attributeName: "opacity", values: gv.map(function (v) { return v === 1 ? 0.15 : 1; }).join(";"), keyTimes: ks, calcMode: "discrete", dur: T + "s", repeatCount: "indefinite"}, red);
+    });
   }
 
   // ---- the parts tray: every building of this factory, the ones not on the floor ready to be dragged in (or clicked in)
@@ -386,7 +576,11 @@
         b.setAttribute("data-part", id);
         b.setAttribute("aria-label", on ? label(id) + ", on the floor" : "Place " + label(id));
         if (on) b.setAttribute("aria-disabled", "true"); else if (!meta.nodes[id].optional) left++;
-        b.textContent = label(id);
+        var ic = el("svg", {viewBox: "0 0 24 24", "class": "fe-part-ico", "aria-hidden": "true"}, b);
+        el("path", {d: meta.nodes[id].icon || ""}, ic);
+        var nm = document.createElement("span");
+        nm.textContent = label(id);
+        b.appendChild(nm);
         if (on) { var t = document.createElement("small"); t.textContent = "On floor"; b.appendChild(t); }
         else if (meta.nodes[id].optional) { var o = document.createElement("small"); o.className = "opt"; o.textContent = "Optional"; b.appendChild(o); }
         tray.appendChild(b);
@@ -641,7 +835,7 @@
     draw();
   }
   function setTool(t) {
-    tool = t; drawing = null; ugFrom = null;
+    tool = t; drawing = null; ugFrom = null; selBelt = selTrack = null; note = "";
     var bs = root.querySelectorAll("[data-tool]");
     for (var i = 0; i < bs.length; i++) bs[i].setAttribute("aria-pressed", bs[i].getAttribute("data-tool") === t ? "true" : "false");
     svg.setAttribute("data-tool", t);
@@ -664,7 +858,7 @@
     if (tool === "move") {
       if (trk && !node) {
         var tid = trk.getAttribute("data-track");
-        selTrack = tid;
+        selTrack = tid; selBelt = null; focused = null;
         slide = {track: tid, run: nearestRun(doc.tracks[tid], p), start: p, from: doc.tracks[tid], before: JSON.stringify(doc), id: e.pointerId};
         if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
         e.preventDefault();
@@ -674,7 +868,7 @@
       if (hop && !node) {
         // a belt: picked to draw again, and dragged sideways it slides
         var hid = hop.getAttribute("data-hop");
-        hopSel.value = hid;
+        hopSel.value = hid; selBelt = hid; selTrack = null; focused = null;
         slide = {hop: hid, run: nearestRun(doc.belts[hid], p), start: p, from: doc.belts[hid], before: JSON.stringify(doc), id: e.pointerId};
         if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
         e.preventDefault();
@@ -684,7 +878,8 @@
       var grip = t.closest && t.closest("[data-resize]"), ngrip = t.closest && t.closest("[data-grip]");
       var name = !node && dist ? dist.getAttribute("data-district") : null;
       var ids = node ? [node.getAttribute("data-node")] : name ? meta.districts[name].slice() : null;
-      if (!ids) return startPan(e);                                        // the bare ground: drag to pan
+      if (!ids) { selBelt = selTrack = focused = null; draw(); return startPan(e); }   // the bare ground: drag to pan
+      selBelt = selTrack = null;
       focused = node ? ids[0] : null;
       focusedDist = name;
       drag = {ids: ids, dists: name ? [name] : [], resize: grip ? grip.getAttribute("data-resize") : null,
@@ -776,8 +971,8 @@
     if (link && e.pointerId === link.id) {
       var done = link;
       link = null;
-      if (done.hop && done.pts && done.rail) { remember(); doc.tracks[done.hop] = done.pts; selTrack = done.hop; }
-      else if (done.hop && done.pts) { remember(); doc.belts[done.hop] = done.pts; hopSel.value = done.hop; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); }
+      if (done.hop && done.pts && done.rail) { remember(); doc.tracks[done.hop] = done.pts; selTrack = done.hop; selBelt = null; }
+      else if (done.hop && done.pts) { remember(); doc.belts[done.hop] = done.pts; hopSel.value = done.hop; selBelt = done.hop; selTrack = null; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); }
       else if (done.to && done.rail) note = "Track cannot run from " + label(done.from) + " to " + label(done.to) + ": trains go from the yard to the workers, on to the Train station and back to the yard, through junctions.";
       else if (done.to && RAIL[done.from + ">" + done.to]) note = "Between " + label(done.from) + " and " + label(done.to) + " trains run on track: use Draw track.";
       else if (done.to) note = "No hop from " + label(done.from) + " to " + label(done.to) + ": a belt carries tickets along the route, from the station a ticket leaves to the one it goes to.";

@@ -471,30 +471,65 @@ CARGO = '<rect class="sh-load" x="-10" y="-4" width="12" height="8"/><rect class
 DOCK = (276, 250)
 
 
-def _shore(height: float) -> str:
-    """The sea's east edge: a sandy shore with foam where the waves break, up to the sea wall."""
-    pts, y, k = [], 0.0, 0
-    while y < height:
-        pts.append((SEA_W - 26 - (8 if k % 2 else 0) - (5 if k % 3 == 0 else 0), y))
-        y += 60
-        k += 1
-    pts.append((SEA_W - 26, height))
-    line = "M " + " L ".join(f"{_f(x)} {_f(y)}" for x, y in pts)
-    curve = "M " + f"{_f(pts[0][0])} {_f(pts[0][1])}" + "".join(
-        f" Q {_f(a[0] - 10)} {_f((a[1] + b[1]) / 2)} {_f(b[0])} {_f(b[1])}" for a, b in zip(pts, pts[1:]))
-    return (f'<path class="sh-sand" d="{curve} L {SEA_W} {_f(height)} L {SEA_W} 0 Z"/>'
-            f'<path class="sh-foam" d="{curve}" transform="translate(-4 0)"/>') if line else ""
+# The coast, as the design draws it on a sea 200 wide and 400 tall (y from -20 to 420): five curves, water to the west of them.
+COAST = ((138, -20), ((160, 10), (176, 38), (160, 72)), ((146, 102), (182, 128), (178, 168)), ((175, 200), (150, 222), (164, 258)),
+         ((178, 292), (192, 318), (170, 350)), ((156, 372), (168, 396), (176, 420)))
 
 
-def sea(trips: list[dict], height: float, dock_y: float = DOCK[1]) -> str:
-    """In the sea's own coordinates (x 0..300; Receiving's sea wall is at x 300). dock_y: the height of the dock and the crane, which
-    a saved layout sets to Receiving's."""
-    dock = (DOCK[0], dock_y)
-    out = [f'<rect class="sh-sea" x="0" y="0" width="{SEA_W}" height="{_f(height)}"/>', _shore(height), f'<text class="fm-lab" x="16" y="24">THE SEA · SCHEDULED JOBS</text>']
-    out += [f'<path class="sh-wave w{i % 3}" d="M {20 + (i * 61) % 250} {60 + (i * 137) % int(height - 80)} q 6 -4 12 0 t 12 0"/>' for i in range(30)]
+def _coast(w: float, h: float) -> list:
+    """The coastline of a sea w by h, as points from top to bottom."""
+    sx, sy = w / 200, h / 400
+    p0, out = COAST[0], []
+    for c1, c2, p3 in COAST[1:]:
+        for i in range(12):
+            t = i / 12
+            x = (1 - t) ** 3 * p0[0] + 3 * (1 - t) ** 2 * t * c1[0] + 3 * (1 - t) * t ** 2 * c2[0] + t ** 3 * p3[0]
+            y = (1 - t) ** 3 * p0[1] + 3 * (1 - t) ** 2 * t * c1[1] + 3 * (1 - t) * t ** 2 * c2[1] + t ** 3 * p3[1]
+            out.append((x * sx, y * sy))
+        p0 = p3
+    return out + [(p0[0] * sx, p0[1] * sy)]
+
+
+def coast_x(w: float, h: float, y: float) -> float:
+    """Where the coast of a sea w by h is at height y."""
+    pts = _coast(w, h)
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if y0 <= y <= y1:
+            return x0 + (x1 - x0) * ((y - y0) / (y1 - y0) if y1 > y0 else 0)
+    return pts[-1][0] if y > pts[-1][1] else pts[0][0]
+
+
+def sea_water(w: float, h: float) -> str:
+    """The sea's water, w by h: deep to the west and lighter towards a winding coast with a sandy beach and foam where the waves
+    break; east of the beach is land (the floor shows through)."""
+    pts = _coast(w, h)
+    line = " ".join(f"L {_f(x)} {_f(y)}" for x, y in pts[1:])
+    shore = f"M {_f(pts[0][0])} {_f(pts[0][1])} {line}"
+    body = f"M 0 {_f(pts[0][1])} L {_f(pts[0][0])} {_f(pts[0][1])} {line} L 0 {_f(pts[-1][1])} Z"
+    return (f'<defs><linearGradient id="sh-depth" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a1a26"/>'
+            f'<stop offset=".65" stop-color="#0f2c3d"/><stop offset="1" stop-color="#1b4a5e"/></linearGradient></defs>'
+            f'<clipPath id="sh-clip"><rect x="0" y="0" width="{_f(w)}" height="{_f(h)}"/></clipPath><g clip-path="url(#sh-clip)">'
+            f'<path class="sh-sand" d="{body}" transform="translate({_f(7 * w / 200)} 0)"/><path class="sh-water" d="{body}"/>'
+            f'<path class="sh-foam" d="{shore}" transform="translate({_f(-4 * w / 200)} 0)"/></g>')
+
+
+def sea(trips: list[dict], height: float, dock_y: float = DOCK[1], water: bool = True, coast=None, pier: bool = False) -> str:
+    """In the sea's own coordinates (x 0..300). dock_y: the height of the dock and the crane, at the coast (a saved layout sets it to
+    the harbor's). water: draw the water here (a saved layout draws it under the whole box instead; coast then says where its coast
+    is in these coordinates). pier: a quay from the crane east to x 300, where Receiving stands on the default floor."""
+    cx = (coast or (lambda y: coast_x(SEA_W, height, y)))
+    wall = cx(dock_y)
+    dock = (wall - 24, dock_y)
+    out = ([sea_water(SEA_W, height)] if water else []) + [f'<text class="fm-lab sh-lab" x="16" y="24">THE SEA · SCHEDULED JOBS</text>']
+    for i in range(30):
+        x, y = 20 + (i * 61) % 250, 60 + (i * 137) % int(height - 80)
+        if x + 34 < cx(y):                                           # waves only on the water
+            out.append(f'<path class="sh-wave w{i % 3}" d="M {x} {y} q 6 -4 12 0 t 12 0"/>')
+    low = min(cx(y) for y in range(0, int(height), 20))
+    step = max(20.0, min(66.0, (low - 100) / 3))                     # the ships' lanes stay off the beach
     lines = marks = ships = ""
     for k, t in enumerate(trips[:4]):
-        xo, xr = 26 + 66 * k, 60 + 66 * k
+        xo, xr = 26 + step * k, 60 + step * k
         yf = height - 200 - 40 * k
         p = (Path(*dock).L(xo + 14, dock[1] - 14).A(14, 0, xo, dock[1]).L(xo, yf).A(17, 0, xr, yf).L(xr, dock[1] + 28)
              .A(14, 1, xr + 14, dock[1] + 14).L(*dock))
@@ -508,17 +543,18 @@ def sea(trips: list[dict], height: float, dock_y: float = DOCK[1]) -> str:
         place = f'<animateMotion path="{p.d}" keyPoints="{f:.4f};{f:.4f}" keyTimes="0;1" calcMode="linear" dur="1s" rotate="auto" fill="freeze"/>'
         ships += (f'<g class="sh-ship{" due" if due else ""}" role="img" aria-label="Schedule {esc(t["name"])}: {esc(t["when"])}">{place}'
                   f'<g class="sh-rock">{SHIP}{CARGO if f >= 0.5 else ""}</g></g>')
-    crane = f'<g class="sh-crane"><line class="sh-jib" x1="{SEA_W}" y1="{_f(dock[1])}" x2="{SEA_W - 22}" y2="{_f(dock[1])}"/><circle class="sh-base" cx="{SEA_W}" cy="{_f(dock[1])}" r="7"/></g>'
+    crane = f'<g class="sh-crane"><line class="sh-jib" x1="{_f(wall)}" y1="{_f(dock[1])}" x2="{_f(wall - 22)}" y2="{_f(dock[1])}"/><circle class="sh-base" cx="{_f(wall)}" cy="{_f(dock[1])}" r="7"/></g>'
     if any(t["due"] for t in trips):
         Tc = 4.0
-        crane = (f'<g class="sh-crane"><g><animateTransform attributeName="transform" type="rotate" values="0 {SEA_W} {_f(dock[1])};0 {SEA_W} {_f(dock[1])};180 {SEA_W} {_f(dock[1])};180 {SEA_W} {_f(dock[1])};0 {SEA_W} {_f(dock[1])}" '
-                 f'keyTimes="0;.15;.5;.6;1" dur="{Tc}s" repeatCount="indefinite"/><line class="sh-jib" x1="{SEA_W}" y1="{_f(dock[1])}" x2="{SEA_W - 22}" y2="{_f(dock[1])}"/>'
-                 f'<rect class="sh-cargo" x="{SEA_W - 27}" y="{_f(dock[1] - 5)}" width="10" height="10" opacity="0"><animate attributeName="opacity" values="0;1;0" keyTimes="0;.15;.5" '
-                 f'calcMode="discrete" dur="{Tc}s" repeatCount="indefinite"/></rect></g><circle class="sh-base" cx="{SEA_W}" cy="{_f(dock[1])}" r="7"/></g>')
+        crane = (f'<g class="sh-crane"><g><animateTransform attributeName="transform" type="rotate" values="0 {_f(wall)} {_f(dock[1])};0 {_f(wall)} {_f(dock[1])};180 {_f(wall)} {_f(dock[1])};180 {_f(wall)} {_f(dock[1])};0 {_f(wall)} {_f(dock[1])}" '
+                 f'keyTimes="0;.15;.5;.6;1" dur="{Tc}s" repeatCount="indefinite"/><line class="sh-jib" x1="{_f(wall)}" y1="{_f(dock[1])}" x2="{_f(wall - 22)}" y2="{_f(dock[1])}"/>'
+                 f'<rect class="sh-cargo" x="{_f(wall - 27)}" y="{_f(dock[1] - 5)}" width="10" height="10" opacity="0"><animate attributeName="opacity" values="0;1;0" keyTimes="0;.15;.5" '
+                 f'calcMode="discrete" dur="{Tc}s" repeatCount="indefinite"/></rect></g><circle class="sh-base" cx="{_f(wall)}" cy="{_f(dock[1])}" r="7"/></g>')
     if not trips:
         lines = (f'<text class="sh-when" x="20" y="60">No scheduled jobs yet.</text>'
                  f'<a class="sh-add" href="/schedules"><text x="20" y="76">Add one in Settings, Schedules</text></a>')
-    return "".join(out) + lines + marks + ships + f'<rect class="sh-wall" x="{SEA_W - 4}" y="{_f(dock[1] - 54)}" width="8" height="108"/>' + crane
+    quay = f'<rect class="sh-wall" x="{_f(wall)}" y="{_f(dock_y - 6)}" width="{_f(SEA_W - wall)}" height="12"/>' if pier and wall < SEA_W else ""
+    return "".join(out) + lines + marks + ships + quay + f'<rect class="sh-wall" x="{_f(wall - 4)}" y="{_f(dock[1] - 54)}" width="8" height="108"/>' + crane
 
 
 def harbor(x, y, due: bool = False) -> str:
@@ -722,7 +758,7 @@ def floor_map(order: list[tuple[str, str, str]], fl: dict, workers: list[dict], 
     flights = "".join(flight(f["age"], f["label"]) for f in (extras.get("flights") or []) if 0 <= f["age"] < FLIGHT_SECONDS)
     return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor">'
             f'<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>'
-            f'<g aria-hidden="true">{mainland(height)}</g><g transform="translate({LAND_W} 0)">{sea(extras.get("schedules") or [], height)}</g>'
+            f'<g aria-hidden="true">{mainland(height)}</g><g transform="translate({LAND_W} 0)">{sea(extras.get("schedules") or [], height, pier=True)}</g>'
             f'<g transform="translate({FX} 0)">{plant}</g><g aria-hidden="true">{flights}</g></svg>')
 
 
@@ -1098,11 +1134,12 @@ def railway(C: dict, workers: list[dict], now: float) -> tuple[str, str]:
             pts, m = circuit_marks(C, w)
             p, _ = trace(pts)
             scale = p.len / m["len"] if m["len"] else 1.0              # the drawn line rounds its corners, a little shorter
-            out, back = motion[w][1][0] / T, motion[w][-2][0] / T       # it leaves the yard, and is back in it
-            seen = lambda vals: (f'<animate attributeName="opacity" values="{vals}" keyTimes="0;{out:.4f};{back:.4f}" calcMode="discrete" '
+            out, back = round(motion[w][1][0] / T, 4), round(motion[w][-2][0] / T, 4)    # it leaves the yard, and is back in it
+            keys, out_vals = (f"0;{back:.4f}", ("1;0", "0;1")) if out <= 0 else (f"0;{out:.4f};{back:.4f}", ("0;1;0", "1;0;1"))
+            seen = lambda vals: (f'<animate attributeName="opacity" values="{vals}" keyTimes="{keys}" calcMode="discrete" '
                                  f'dur="{_f(T)}s" begin="{begin}" repeatCount="indefinite"/>')
-            moving += f'<g opacity="0">{seen("0;1;0")}{yard._train(p, [(t, d * scale) for t, d in motion[w]], T, begin, cars)}</g>'
-            moving += berth(parked, cars, seen("1;0;1")) if parked < 6 else ""
+            moving += f'<g opacity="0">{seen(out_vals[0])}{yard._train(p, [(t, d * scale) for t, d in motion[w]], T, begin, cars)}</g>'
+            moving += berth(parked, cars, seen(out_vals[1])) if parked < 6 else ""
             parked += 1
         elif parked < 6:                                             # waiting in the yard
             moving += berth(parked, cars)
@@ -1198,13 +1235,18 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     trips = extras.get("schedules") or []
     dock = bx.get("harbor") or bx["receiving"]
     dock_y = max(100.0, min(1320 - 420.0, (dock[1] + dock[3] / 2 - top("sea")[1]) / S("sea")[0]))
+    # the water fills the sea's whole box; the picture (ships, labels, the crane) is drawn over it at its own scale
+    sbx, sby, sbw, sbh = bx["sea"]
+    (stx, sty), ss = top("sea"), S("sea")[0]
+    water = f'<g transform="translate({_f(sbx)} {_f(sby)})">{sea_water(sbw, sbh)}</g>'
+    coast = lambda y: (sbx + coast_x(sbw, sbh, sty + y * ss - sby) - stx) / ss
     harbor_svg = node("harbor", lambda x, y: harbor(x, y, any(t["due"] for t in trips))) if "harbor" in at else ""
     told = {n["name"]: n for n in extras.get("notify") or []}
     radios = "".join(node(nid, lambda x, y, n=nid.split(":", 1)[1]: notifier(x, y, told.get(n, {"name": n})))
                      for nid in at if nid.startswith("notify:"))
     # the ground: the mainland and the sea, the districts, the buildings that are not stations
     back = (ground("mainland", "ap-land") + f'<g aria-hidden="true" transform="{tr("mainland", 0, 0)}">{mainland(1320)}</g>'
-            + ground("sea", "sh-sea") + f'<g transform="{tr("sea", 0, 0)}">{sea(trips, 1320, dock_y)}</g>' + _plan_districts(C.get("districts") or {})
+            + water + f'<g transform="{tr("sea", 0, 0)}">{sea(trips, 1320, dock_y, water=False, coast=coast)}</g>' + _plan_districts(C.get("districts") or {})
             + ground("airfield", "ap-field", 6) + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
             + f'<text class="fm-lab" x="{_f(at["sources"][0])}" y="{_f(at["sources"][1] - 8)}">SOURCES</text>'
             + f'<g transform="{tr("sources", *SRC)}">{github()}</g><g transform="{tr("receiving", 12, 200)}">{receiving(len(queued))}</g>'
