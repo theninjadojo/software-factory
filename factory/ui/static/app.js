@@ -32,6 +32,15 @@
     var close = e.target.closest("[data-close]");
     if (close) { var dd = close.closest("dialog"); if (dd) dd.close(); }
   });
+  // Backdrop click closes a ticket popup only while its fields are empty, so typed text is never lost.
+  document.addEventListener("click", function (e) {
+    var d = e.target; if (!(d.matches && d.matches("dialog[data-backdrop]"))) return;
+    var r = d.getBoundingClientRect();
+    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
+    var used = false;
+    Array.prototype.forEach.call(d.querySelectorAll("input[name=title],textarea"), function (x) { if (x.value) used = true; });
+    if (!used) d.close();
+  });
   countAll();
 
 
