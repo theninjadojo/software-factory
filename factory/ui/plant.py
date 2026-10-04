@@ -178,7 +178,7 @@ def districts(lay) -> str:
     if "pr" in pos:
         boxes.append(("SHIPPING", 184, BOT - 18, 196, 140))
     for n, x, y, w, h in boxes:
-        out.append(f'<rect class="f3-dist" x="{_f(x)}" y="{y}" width="{_f(w)}" height="{h}" rx="4"/><text class="f3-dlab" x="{_f(x + 8)}" y="{y + 14}">{n}</text>')
+        out.append(f'<rect class="f3-dist d-{n.lower()}" x="{_f(x)}" y="{y}" width="{_f(w)}" height="{h}" rx="4"/><text class="f3-dlab d-{n.lower()}" x="{_f(x + 8)}" y="{y + 14}">{n}</text>')
     return "".join(out)
 
 
@@ -471,11 +471,26 @@ CARGO = '<rect class="sh-load" x="-10" y="-4" width="12" height="8"/><rect class
 DOCK = (276, 250)
 
 
+def _shore(height: float) -> str:
+    """The sea's east edge: a sandy shore with foam where the waves break, up to the sea wall."""
+    pts, y, k = [], 0.0, 0
+    while y < height:
+        pts.append((SEA_W - 26 - (8 if k % 2 else 0) - (5 if k % 3 == 0 else 0), y))
+        y += 60
+        k += 1
+    pts.append((SEA_W - 26, height))
+    line = "M " + " L ".join(f"{_f(x)} {_f(y)}" for x, y in pts)
+    curve = "M " + f"{_f(pts[0][0])} {_f(pts[0][1])}" + "".join(
+        f" Q {_f(a[0] - 10)} {_f((a[1] + b[1]) / 2)} {_f(b[0])} {_f(b[1])}" for a, b in zip(pts, pts[1:]))
+    return (f'<path class="sh-sand" d="{curve} L {SEA_W} {_f(height)} L {SEA_W} 0 Z"/>'
+            f'<path class="sh-foam" d="{curve}" transform="translate(-4 0)"/>') if line else ""
+
+
 def sea(trips: list[dict], height: float, dock_y: float = DOCK[1]) -> str:
     """In the sea's own coordinates (x 0..300; Receiving's sea wall is at x 300). dock_y: the height of the dock and the crane, which
     a saved layout sets to Receiving's."""
     dock = (DOCK[0], dock_y)
-    out = [f'<rect class="sh-sea" x="0" y="0" width="{SEA_W}" height="{_f(height)}"/>', f'<text class="fm-lab" x="16" y="24">THE SEA · SCHEDULED JOBS</text>']
+    out = [f'<rect class="sh-sea" x="0" y="0" width="{SEA_W}" height="{_f(height)}"/>', _shore(height), f'<text class="fm-lab" x="16" y="24">THE SEA · SCHEDULED JOBS</text>']
     out += [f'<path class="sh-wave w{i % 3}" d="M {20 + (i * 61) % 250} {60 + (i * 137) % int(height - 80)} q 6 -4 12 0 t 12 0"/>' for i in range(30)]
     lines = marks = ships = ""
     for k, t in enumerate(trips[:4]):
@@ -805,8 +820,8 @@ def _plan_districts(dist: dict) -> str:
     for name in ("INTAKE", "PLANNING", "PRODUCTION", "QUALITY", "SHIPPING"):
         if name in dist:
             x, y, w, h = dist[name]
-            out += (f'<rect class="f3-dist" x="{_f(x)}" y="{_f(y)}" width="{_f(w)}" height="{_f(h)}" rx="4"/>'
-                    f'<text class="f3-dlab" x="{_f(x + 8)}" y="{_f(y + 14)}">{name}</text>')
+            out += (f'<rect class="f3-dist d-{name.lower()}" x="{_f(x)}" y="{_f(y)}" width="{_f(w)}" height="{_f(h)}" rx="4"/>'
+                    f'<text class="f3-dlab d-{name.lower()}" x="{_f(x + 8)}" y="{_f(y + 14)}">{name}</text>')
     return out
 
 
@@ -818,17 +833,179 @@ def scenery(walls, trees) -> str:
     return f'<g aria-hidden="true">{out}</g>' if out else ""
 
 
+# ---------------------------------------------------------------- the railway of a saved layout: the yard, workers, junctions, track
+RING = 20                                   # a rail building's turnaround loop runs one cell outside it, through the points beside it
+
+
+def loading_yard(x, y, trains: int = 0) -> str:
+    """The yard, 200 by 100 at (x, y): where Build's work comes down the feeder and is loaded into the workers' trains."""
+    return (f'<g class="ry-yard" role="img" aria-label="The Verify yard: Build\'s work is loaded into the workers\' trains here">'
+            f'<rect class="fm-box" x="{_f(x)}" y="{_f(y)}" width="200" height="100" rx="3"/>'
+            f'<rect class="ry-plat" x="{_f(x + 12)}" y="{_f(y + 14)}" width="176" height="14" rx="2"/><rect class="ry-plat" x="{_f(x + 12)}" y="{_f(y + 40)}" width="176" height="14" rx="2"/>'
+            f'<path class="ry-crane" d="M {_f(x + 100)} {_f(y + 4)} V {_f(y + 58)} M {_f(x + 86)} {_f(y + 10)} H {_f(x + 130)}"/>'
+            f'<text class="fn-n" x="{_f(x + 12)}" y="{_f(y + 78)}">Verify yard</text>'
+            f'<text class="fn-s" x="{_f(x + 12)}" y="{_f(y + 92)}">{int(trains)} train{"s" if trains != 1 else ""} · loading</text></g>')
+
+
+def train_station(x, y) -> str:
+    """The Train station, 160 by 80 at (x, y): trains offload the checked builds here and go back to the yard empty."""
+    return (f'<g class="ry-depot" role="img" aria-label="The Train station: trains offload the checked builds here">'
+            f'<rect class="fm-box" x="{_f(x)}" y="{_f(y)}" width="160" height="80" rx="3"/>'
+            f'<path class="ry-roof" d="M {_f(x + 10)} {_f(y + 30)} L {_f(x + 40)} {_f(y + 10)} H {_f(x + 120)} L {_f(x + 150)} {_f(y + 30)} Z"/>'
+            f'<rect class="ry-plat" x="{_f(x + 16)}" y="{_f(y + 32)}" width="128" height="10" rx="2"/>'
+            f'<text class="fn-n" x="{_f(x + 10)}" y="{_f(y + 60)}">Train station</text><text class="fn-s" x="{_f(x + 10)}" y="{_f(y + 73)}">Trains offload here</text></g>')
+
+
+def worker_stop(x, y, w: dict) -> str:
+    """A worker, 180 by 80 at (x, y): a train stop outside the factory, reached over the SSH tunnel."""
+    on = w.get("online")
+    job = w.get("job")
+    state = ("Online · " + (f'job {job["recipe"]}' if job else "idle")) if on else "Offline"
+    ref = f'#{int(job["issue"])}' if job else "stop on the yard's railway"
+    return (f'<a class="fm-w{"" if on else " off"}" href="/workers" aria-label="Worker {esc(w["name"])}: {esc(state)}">'
+            f'<rect class="fm-box" x="{_f(x)}" y="{_f(y)}" width="180" height="80" rx="3"/>'
+            f'<circle class="fm-on" cx="{_f(x + 164)}" cy="{_f(y + 18)}" r="4"/>'
+            f'<text class="fm-t" x="{_f(x + 12)}" y="{_f(y + 24)}">{esc(w["name"][:18])}</text>'
+            f'<text class="fm-s" x="{_f(x + 12)}" y="{_f(y + 46)}">{esc(state[:26])}</text>'
+            f'<text class="fm-r" x="{_f(x + 12)}" y="{_f(y + 64)}">{esc(ref[:26])}</text></a>')
+
+
+def junction(x, y, name: str) -> str:
+    """A junction, 40 by 40 at (x, y): tracks join or split here."""
+    return (f'<g class="ry-junction" role="img" aria-label="Junction {esc(name.upper())}"><circle cx="{_f(x + 20)}" cy="{_f(y + 20)}" r="19"/>'
+            f'<path d="M {_f(x + 20)} {_f(y + 8)} v 9 M {_f(x + 20)} {_f(y + 17)} l -7 14 M {_f(x + 20)} {_f(y + 17)} l 7 14"/></g>')
+
+
+def outside(x, y, w, h) -> str:
+    return (f'<rect class="fm-zone" x="{_f(x)}" y="{_f(y)}" width="{_f(w)}" height="{_f(h)}"/>'
+            f'<text class="fm-lab" x="{_f(x + 16)}" y="{_f(y + 22)}">OUTSIDE THE FACTORY · WORKERS BY TRAIN OVER THE SSH TUNNEL</text>')
+
+
+def ring_box(b):
+    x, y, w, h = b
+    return (x - RING, y - RING, x + w + RING, y + h + RING)
+
+
+def ring_d(b) -> str:
+    L, T, R, B = ring_box(b)
+    r = RING
+    return (f"M {_f(L + r)} {_f(T)} H {_f(R - r)} A {r} {r} 0 0 1 {_f(R)} {_f(T + r)} V {_f(B - r)} A {r} {r} 0 0 1 {_f(R - r)} {_f(B)} "
+            f"H {_f(L + r)} A {r} {r} 0 0 1 {_f(L)} {_f(B - r)} V {_f(T + r)} A {r} {r} 0 0 1 {_f(L + r)} {_f(T)} Z")
+
+
+def ring_route(b, p, q) -> list:
+    """Round a rail building's loop clockwise from point p to point q (both on the loop): the corners passed on the way."""
+    L, T, R, B = ring_box(b)
+    W, H = R - L, B - T
+    per = 2 * (W + H)
+
+    def t(pt):
+        x, y = pt
+        if abs(y - T) < 1:
+            return x - L
+        if abs(x - R) < 1:
+            return W + (y - T)
+        if abs(y - B) < 1:
+            return W + H + (R - x)
+        return 2 * W + H + (B - y)
+    ta, tb = t(p), t(q)
+    span = (tb - ta) % per or per
+    corners = [(W, (R, T)), (W + H, (R, B)), (2 * W + H, (L, B)), (per, (L, T))]
+    hits = sorted(((c - ta) % per, pt) for c, pt in corners if 0 < (c - ta) % per < span)
+    return [pt for _, pt in hits]
+
+
+def rails(ds: list[str]) -> str:
+    return "".join(f'<g class="{c}">' + "".join(f'<path d="{d}"/>' for d in ds) + "</g>"
+                   for c in ("fm-ballast", "fm-ties", "fm-rail", "fm-rail-in", "fm-ties-in"))
+
+
+def circuit(C: dict, w: str) -> list:
+    """The points of a worker's train loop: out of the yard to the worker, round its loop, on to the Train station, round its loop,
+    back to the yard and round the yard's loop to the start."""
+    tr, bx = C["tracks"], C["box"]
+    legs = []
+    for edges in C["circuits"][w]:
+        pts = []
+        for i, tid in enumerate(edges):
+            if i:
+                jx, jy, jw, jh = bx[tr[tid]["src"]]
+                pts.append((jx + jw / 2, jy + jh / 2))               # through the junction
+            pts += [tuple(p) for p in tr[tid]["pts"]]
+        legs.append(pts)
+    out, back, home = legs
+    return (out + ring_route(bx[w], out[-1], back[0]) + back + ring_route(bx["depot"], back[-1], home[0]) + home
+            + ring_route(bx["yard"], home[-1], out[0]) + [out[0]])
+
+
+def railway(C: dict, workers: list[dict], now: float) -> tuple[str, str]:
+    """(track, loops and signals; the trains): a worker's train runs its loop while the worker has a job, otherwise it waits at the
+    yard. A junction's signals give each track into it a turn."""
+    at, bx = C["at"], C["box"]
+    ds = [trace(t["pts"])[0].d for t in C["tracks"].values()]
+    for t in C["tracks"].values():                                  # into the middle of a junction
+        for nid, (px_, py_) in ((t["src"], t["pts"][0]), (t["dst"], t["pts"][-1])):
+            if nid.startswith("junction:"):
+                jx, jy, jw, jh = bx[nid]
+                ds.append(f"M {_f(px_)} {_f(py_)} L {_f(jx + jw / 2)} {_f(jy + jh / 2)}")
+    ds += [ring_d(bx[n]) for n in bx if n in ("yard", "depot") or n.startswith("worker:")]
+    still = rails(ds)
+    moving = ""
+    live = {f'worker:{w["name"]}': w for w in workers}
+    parked = 0
+    for k, w in enumerate(sorted(C["circuits"])):
+        p, _ = trace(circuit(C, w))
+        T = max(4.0, p.len / yard.SPEED)
+        cars = yard.CARS[k % len(yard.CARS)]
+        wk = live.get(w) or {}
+        if wk.get("online") and wk.get("job"):
+            b0 = -(now % T) - T - k * T / 3
+            moving += "".join(f'<g class="fn-car">{yard.LOCO if c == 0 else yard.WAGON}<animateMotion path="{p.d}" dur="{_f(T)}s" '
+                              f'begin="{b0 + c * yard.GAP / yard.SPEED:.2f}s" rotate="auto" repeatCount="indefinite"/></g>' for c in range(cars))
+        elif parked < 4:                                             # waiting in the yard, side by side on its two platforms
+            yx, yy, _, _ = bx["yard"]
+            px_, py_ = yx + 22 + 90 * (parked % 2), yy + 21 + 26 * (parked // 2)
+            moving += f'<g transform="translate({_f(px_)} {_f(py_)}) scale(.6)">' + "".join(
+                f'<g class="fn-car" transform="translate({_f((cars - 1 - c) * yard.GAP)} 0)">{yard.LOCO if c == 0 else yard.WAGON}</g>' for c in range(cars)) + "</g>"
+            parked += 1
+    for j in (n for n in bx if n.startswith("junction:")):
+        ins = [t for t in C["tracks"].values() if t["dst"] == j]
+        n = len(ins)
+        P = 4.0 * max(1, n)
+        begin = f"{-(now % P):.2f}s"
+        for i, t in enumerate(ins):
+            (ax, ay), (zx, zy) = t["pts"][-2], t["pts"][-1]
+            d = math.dist((ax, ay), (zx, zy)) or 1
+            ux, uy = (zx - ax) / d, (zy - ay) / d
+            back = min(26.0, d / 2)
+            sx, sy = zx - ux * back - uy * 14, zy - uy * back + ux * 14
+            if n == 1:
+                lamps = '<circle class="r off" cx="0" cy="-4" r="2.4"/><circle class="g" cx="0" cy="4" r="2.4"/>'
+            else:
+                a, b = i / n, (i + 1) / n
+                keys = f"0;{a:.4f};{b:.4f}" if a > 0 else f"0;{b:.4f}"
+                gv, rv = ("0.15;1;0.15", "1;0.15;1") if a > 0 else ("1;0.15", "0.15;1")
+                lamps = (f'<circle class="r" cx="0" cy="-4" r="2.4"><animate attributeName="opacity" values="{rv}" keyTimes="{keys}" calcMode="discrete" dur="{_f(P)}s" begin="{begin}" repeatCount="indefinite"/></circle>'
+                         f'<circle class="g" cx="0" cy="4" r="2.4"><animate attributeName="opacity" values="{gv}" keyTimes="{keys}" calcMode="discrete" dur="{_f(P)}s" begin="{begin}" repeatCount="indefinite"/></circle>')
+            still += yard._signal(sx, sy, f"Signal into {j.split(':')[1].upper()}", lamps)
+    return still, moving
+
+
 def node_art(nid: str, label: str, trains: int = 0) -> str:
     """The picture of a building or an area as the floor draws it, idle, with its top left at the origin and at its own size (the
     layout editor stretches it to the box a person gives it). The yard is drawn with its trains, or not at all without any."""
     kind, _, name = nid.partition(":")
     if nid == "yard":
-        if trains <= 0:
-            return ""
-        from .floorplan import G, yard_box
-        g = yard.yard_geometry(trains, 0)
-        still, _ = yard._yard(g, [{"name": f"worker {k + 1}", "online": False} for k in range(trains)], 0)
-        return f'<g transform="translate({-yard_box(trains)[0] * G} {-(yard.BOT_Y + yard.MH + 30)})">{still}</g>'
+        return loading_yard(0, 0, trains)
+    if nid == "depot":
+        return train_station(0, 0)
+    if nid == "outside":
+        from .floorplan import G, SIZE
+        return outside(0, 0, SIZE["outside"][0] * G, SIZE["outside"][1] * G)
+    if kind == "worker":
+        return worker_stop(0, 0, {"name": name, "online": True})
+    if kind == "junction":
+        return junction(0, 0, name)
     idle = {"state": "idle", "refs": [], "count": 0}
     if kind == "station":
         return _station(name, label, idle, "idle", "#", (0, 0, True), name)
@@ -905,21 +1082,23 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
         belts += [belt(trace(q)[0].d, cls) for q in _visible(pts, hb["under"])]
         hoods |= set(hb["under"])
     belts += [underground(u, v) for u, v in sorted(hoods)] + [_piece(p) for p in C["pieces"]]
-    # the yard, under the feeder from Build
+    # the railway: the yard under the feeder from Build, the Train station, the workers outside, junctions, track and trains
     yard_still = yard_moving = ""
     if "yard" in at:
-        ax, ay = at["yard"]
-        x, y, w, h = bx["yard"]
-        if shown:
-            g = yard.yard_geometry(len(shown), 0)
-            still, moving = yard._yard(g, shown, now)
-            move = f'translate({_f(ax)} {_f(ay - yard.BOT_Y - yard.MH - 30)})'
-            yard_still = (f'<rect class="fm-zone" x="{_f(x)}" y="{_f(y)}" width="{_f(w)}" height="{_f(h)}"/>'
-                          f'<text class="fm-lab" x="{_f(x + 16)}" y="{_f(y + 22)}">WORKERS BY TRAIN OVER THE SSH TUNNEL</text><g transform="{move}">{still}</g>')
-            yard_moving = f'<g transform="{move}">{moving}</g>'
-        elif workers_on:
-            yard_still = (f'<a class="fm-add" href="/workers"><rect x="{_f(ax - 90)}" y="{_f(ay + 8)}" width="180" height="44" rx="2"/>'
-                          f'<text x="{_f(ax)}" y="{_f(ay + 35)}">+ Connect a worker</text></a>')
+        live = {f'worker:{w["name"]}': w for w in shown}
+        area = f'<g transform="{tr("outside", 0, 0)}">{outside(0, 0, *bx["outside"][2:])}</g>' if "outside" in at and "outside" not in sc else (
+            outside(*bx["outside"]) if "outside" in at else "")
+        track, yard_moving = railway(C, shown, now)
+        parts_ = [loading_yard(*bx["yard"][:2], len(C.get("circuits") or {}))]
+        parts_ += [node("depot", train_station)] if "depot" in at else []
+        parts_ += [node(n, lambda x, y, n=n: worker_stop(x, y, live.get(n) or {"name": n.split(":", 1)[1], "online": False})) for n in at if n.startswith("worker:")]
+        parts_ += [node(n, lambda x, y, n=n: junction(x, y, n.split(":", 1)[1])) for n in at if n.startswith("junction:")]
+        back += area                                                 # the outside area under everything that stands in it
+        yard_still = track + "".join(parts_)
+        if workers_on and not any(n.startswith("worker:") for n in at):
+            x, y, w, h = bx["yard"]
+            yard_still += (f'<a class="fm-add" href="/workers"><rect x="{_f(x + 10)}" y="{_f(y + h + 30)}" width="180" height="44" rx="2"/>'
+                           f'<text x="{_f(x + 100)}" y="{_f(y + h + 57)}">+ Connect a worker</text></a>')
     # power: a station per harness where it was put, with a line to each station that uses it
     pw = ""
     for k, h in enumerate(harnesses):

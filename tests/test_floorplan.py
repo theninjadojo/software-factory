@@ -23,7 +23,8 @@ def moved(doc, nid, dx, dy):
     d = json.loads(json.dumps(doc))
     d["nodes"][nid]["x"] += dx
     d["nodes"][nid]["y"] += dy
-    keep = {k: v for k, v in d["belts"].items() if nid not in k.split(">")}
+    B = F.boxes(d["nodes"], CTX)
+    keep = {k: v for k, v in d["belts"].items() if nid not in k.split(">") and not F._belt_problem(k, v, B, d["nodes"])}
     d["belts"] = F._route_all(d["nodes"], keep, CTX)
     d["pieces"] = []
     if nid.startswith("station:"):                                   # its district is drawn round it again, as the editor would grow it
@@ -106,7 +107,7 @@ class Districts(unittest.TestCase):
         self.assertEqual(F.validate(d, CTX), [])
         x, y, w, h = (v * F.G for v in (d["districts"]["QUALITY"][k] for k in ("x", "y", "w", "h")))
         svg = Drawn().draw(d)
-        self.assertIn(f'<rect class="f3-dist" x="{x}" y="{y}" width="{w}" height="{h}"', svg)
+        self.assertIn(f'<rect class="f3-dist d-quality" x="{x}" y="{y}" width="{w}" height="{h}"', svg)
 
     def test_a_layout_without_districts_draws_them_round_the_stations(self):
         d = json.loads(json.dumps(F.default_plan(CTX)))
@@ -325,7 +326,7 @@ class Drawn(unittest.TestCase):
             art = plant.node_art(nid, F.label(nid), CTX.trains)
             self.assertTrue(art, nid)
             self.assertNotIn("style=", art)
-        self.assertEqual(plant.node_art("yard", "The Verify yard", 0), "")
+        self.assertIn('class="ry-yard"', plant.node_art("yard", "The Verify yard", 0))    # a building of its own on a layout
 
     def test_the_default_floor_is_unchanged_without_a_layout(self):
         order = board.floor_order(ROLES)
@@ -412,3 +413,81 @@ class Editing(AdminCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+WORKERS = ["linux-box", "my-mac", "win-pc"]
+RAIL = F.Ctx([s for s, _, _ in board.floor_order(ROLES)], [h["name"] for h in ROLES.get("power") or []], True, 3, workers=WORKERS)
+
+
+class Railway(unittest.TestCase):
+    def test_the_default_lays_a_loop_for_every_worker_through_two_junctions(self):
+        d = F.default_plan(RAIL)
+        self.assertEqual(F.validate(d, RAIL), [])
+        self.assertTrue({"depot", "junction:a", "junction:b", "worker:my-mac"} <= set(d["nodes"]))
+        self.assertEqual(F.loops(d["tracks"], RAIL), {f"worker:{w}": True for w in WORKERS})
+        self.assertIn("depot>station:ci", d["belts"])                    # the Train station hands the checked builds to CI
+
+    def test_track_follows_the_rules_and_every_worker_needs_its_loop(self):
+        good = F.default_plan(RAIL)
+
+        def errs(change):
+            d = json.loads(json.dumps(good))
+            change(d)
+            return " | ".join(F.validate(d, RAIL))
+        self.assertIn("No track loop for my-mac", errs(lambda d: d["tracks"].pop("junction:a>worker:my-mac")))
+        self.assertIn("No track loop for linux-box", errs(lambda d: d["tracks"].pop("depot>yard")))
+        self.assertIn("Track cannot run from The Verify yard to The Train station", errs(lambda d: d["tracks"].update({"yard>depot": [[1, 1], [1, 3]]})))
+        self.assertIn("must start beside", errs(lambda d: d["tracks"].update({"depot>yard": [[1, 1], [1, 3]]})))
+        self.assertIn("Missing buildings: The Train station", errs(lambda d: d["nodes"].pop("depot")))
+        self.assertNotIn("Missing", errs(lambda d: d["nodes"].pop("outside")))    # the outside area and unused junctions are optional
+        self.assertIn("Unknown keys", errs(lambda d: d.update(rails={})))
+
+    def test_track_through_a_building_is_refused(self):
+        d = json.loads(json.dumps(F.default_plan(RAIL)))
+        b = F.boxes(d["nodes"], RAIL)
+        x, y, w, h = b["station:build"]
+        d["nodes"]["depot"] = {"x": x + w + 3, "y": y}
+        db = F.boxes(d["nodes"], RAIL)["depot"]
+        yx, yy, yw, yh = b["yard"]
+        d["tracks"]["depot>yard"] = [[db[0] - 1, y + 1], [x + 2, y + 1], [x + 2, yy - 2], [yx - 1, yy - 2], [yx - 1, yy + 2]]
+        self.assertTrue(any("runs through Build" in e for e in F.validate(d, RAIL)), F.validate(d, RAIL))
+
+    def test_a_new_worker_gets_a_stop_and_its_loop(self):
+        small = F.Ctx(RAIL.ids, RAIL.harnesses, True, 2, workers=WORKERS[:2])
+        m = F.merge(F.default_plan(small), RAIL)
+        self.assertIsNotNone(m)
+        self.assertIn("worker:win-pc", m["nodes"])
+        self.assertTrue(F.loops(m["tracks"], RAIL)["worker:win-pc"])
+        self.assertEqual(F.validate(m, RAIL), [])
+
+    def test_an_older_layout_without_the_railway_gains_it(self):
+        old = json.loads(json.dumps(F.default_plan(RAIL)))
+        for k in [k for k in old["nodes"] if k.split(":")[0] in ("depot", "worker", "junction", "outside")]:
+            del old["nodes"][k]
+        old.pop("tracks")
+        old["belts"].pop("depot>station:ci")
+        m = F.merge(old, RAIL)
+        self.assertIsNotNone(m)
+        self.assertEqual(F.validate(m, RAIL), [])
+
+    def test_trains_run_their_loops_while_their_worker_has_a_job_and_junctions_have_signals(self):
+        d = F.default_plan(RAIL)
+        order = board.floor_order(ROLES)
+        fl = {sid: {"state": "none", "refs": [], "count": 0} for sid, _, _ in order}
+        ws = [{"name": "linux-box", "online": True, "job": {"issue": 7, "recipe": "web"}}, {"name": "my-mac", "online": True, "job": None},
+              {"name": "win-pc", "online": False}]
+        svg = plant.floor_map(order, fl, ws, True, 1000.0, board._floor_word, lambda s: "#", {"power": []}, F.compile_plan(d, RAIL))
+        self.assertIn('class="ry-yard"', svg)
+        self.assertIn('class="ry-depot"', svg)
+        self.assertEqual(svg.count('class="ry-junction"'), 2)
+        self.assertIn('aria-label="Worker linux-box: Online · job web"', svg)
+        moving = re.findall(r'<g class="fn-car">', svg)
+        self.assertEqual(len(moving), plant.yard.CARS[0])                # only linux-box's train drives; the others wait at the yard
+        self.assertEqual(svg.count('class="fm-sig"'), 1 + 3)             # a signal on every track into each junction: one into A, three into B
+        self.assertNotIn("style=", svg)
+
+    def test_the_editor_offers_track_only_with_the_workers_on(self):
+        self.assertIn(["yard", "junction:a"], F.meta(RAIL)["tracks"])
+        self.assertEqual(F.meta(CTX if not CTX.yard_on else F.Ctx(RAIL.ids))["tracks"], [])
+        self.assertTrue(F.meta(RAIL)["nodes"]["junction:c"]["optional"])
+        self.assertEqual(F.meta(RAIL)["nodes"]["worker:win-pc"]["group"], "Workers and rail")

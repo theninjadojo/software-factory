@@ -14,7 +14,7 @@ LOCK = threading.Lock()                    # the server is threaded: the revisio
 FLASH = {"layout_reset": "Back to the default layout. The floor is drawn as it was before any layout was saved."}
 STALE = ("The layout was saved by someone else since you opened it. Save again to replace it with yours, or open the page again to "
          "start from theirs.")
-TOOLS = (("move", "Move"), ("belt", "Draw belt"), ("splitter", "Splitter"), ("merger", "Merger"), ("sideload", "Side-load"),
+TOOLS = (("move", "Move"), ("belt", "Draw belt"), ("rail", "Draw track"), ("splitter", "Splitter"), ("merger", "Merger"), ("sideload", "Side-load"),
          ("underground", "Underground"), ("wall", "Wall"), ("tree", "Tree"), ("erase", "Erase"))
 
 
@@ -27,8 +27,9 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
     _, why = floorplan.current(h.app.state_dir(), ctx)
     note = (f'<p class="flash bad">The saved layout is not used: {esc(why)}. The floor shows the default arrangement until a layout is '
             'saved again.</p>') if why else ""
+    shown = [(t, n) for t, n in TOOLS if t != "rail" or ctx.yard_on]
     tools = "".join(f'<button type="button" class="secondary" data-tool="{t}" aria-pressed="{"true" if t == "move" else "false"}">{esc(n)}</button>'
-                    for t, n in TOOLS)
+                    for t, n in shown)
     dirs = "".join(f'<option value="{d}">{n}</option>' for d, n in (("e", "Facing east"), ("w", "Facing west"), ("s", "Facing south"), ("n", "Facing north")))
     art = "".join(f'<g data-art="{esc(nid)}">{plant.node_art(nid, m["label"], ctx.trains)}</g>'
                   for nid, m in floorplan.meta(ctx)["nodes"].items())
@@ -37,7 +38,9 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'floor, or click it. Move the buildings on the grid and drag a corner to resize one. With Draw belt, drag from the building a '
             'ticket leaves onto the one it goes to (or click the belt\'s points); with Move, drag a belt sideways to slide it. Place '
             'splitters, mergers, side-loads and underground belts, walls and trees. The harbor goes anywhere: its belt takes the ships\' '
-            'tickets to Receiving. Notifiers are wireless: put them anywhere, nothing to connect. Drag the ground to pan; zoom with the '
+            'tickets to Receiving. Notifiers are wireless: put them anywhere, nothing to connect. Workers are train stops outside the factory: '
+            'with Draw track, lay track from the yard to each worker, on to the Train station and back to the yard; tracks can join at a '
+            'junction, whose signals let one train onto the shared track at a time. Drag the ground to pan; zoom with the '
             'buttons or Ctrl and the mouse wheel. Every hop of the route needs its belt, so every station stays reachable. Moving a station '
             'changes the picture, not the workflow. New stations, agents or workers get a default spot until you place them.</p>' + note
             + '<p class="fe-phone muted">Editing the layout is for wider screens. On a phone the floor is the column of its stations.</p>'
@@ -58,7 +61,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             '<div class="fe-work"><aside class="fe-tray" aria-label="Parts"><h2>Parts <span class="fe-tray-left muted"></span></h2>'
             '<p class="muted">Drag onto the floor, or click to drop in a free spot. Erase puts a building back.</p><div class="fe-tray-list"></div></aside>'
             '<div class="fe-canvas"><svg class="fe-svg" role="application" aria-label="The floor layout: drag a building, or focus one and use the arrow keys"></svg></div></div>'
-            '<ul class="fe-problems" aria-live="polite">' + "".join(f"<li>{esc(p)}</li>" for p in problems) + '</ul></div>'
+            '<div class="fe-check" aria-live="polite"></div><ul class="fe-problems" aria-live="polite">' + "".join(f"<li>{esc(p)}</li>" for p in problems) + '</ul></div>'
             f'<form method="post" action="/floor/layout/save" class="fe-save field">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
             '<details class="fe-data" open><summary>The layout as data</summary>'
             f'<p class="muted">Positions and belt points are grid cells of {floorplan.G}px. A belt is a list of points, each run straight across '

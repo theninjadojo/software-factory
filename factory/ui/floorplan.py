@@ -14,6 +14,13 @@ points) are scenery: they block nothing.
 Districts are boxes of their own (optional: one left out is drawn round its stations). Moving a district moves its stations with it,
 it can be resized, and it must always hold its stations: the editor grows it when one of them is moved out.
 
+Workers are train stops outside the factory. With the workers on, the layout also holds the Train station (where trains offload),
+optional junctions, and track: one line of grid points per stretch, from beside one rail building to beside the next (the yard to a
+junction or a worker, a junction to a worker, a junction, the Train station or the yard, a worker to the Train station or a junction,
+the Train station to the yard or a junction). Every worker needs its loop: track from the yard to it, from it to the Train station
+and from the Train station back to the yard (through junctions as needed); each rail building has a turnaround loop, so a train only
+ever drives forwards round the circuit, and a junction's signals let one train onto the shared track at a time.
+
 Without a saved layout the floor is drawn as before (plant.floor_map). A saved layout that cannot be read falls back to that; one
 that is stale (the config gained or lost a station, an agent or the workers) is merged: what is gone is dropped, and what is new
 gets a default spot and an auto-routed belt."""
@@ -35,16 +42,22 @@ MAX_WALLS, MAX_WALL_CELLS, MAX_TREES = 60, 4000, 400
 FILE = "floor-layout.json"
 INTAKE, LATER = ("poll", "classify", "route"), ("build", "review", "ci", "pr")
 SIZE = {"station": (7, 5), "power": (10, 5), "sources": (7, 6), "receiving": (7, 5), "queue": (3, 3), "airfield": (34, 11),
-        "mainland": (12, 66), "sea": (15, 66), "harbor": (6, 4), "notify": (6, 4)}
+        "mainland": (12, 66), "sea": (15, 66), "harbor": (6, 4), "notify": (6, 4), "yard": (10, 5), "depot": (8, 4), "worker": (9, 4),
+        "junction": (2, 2), "outside": (60, 12)}
 MIN = {"station": (5, 4), "power": (7, 4), "sources": (5, 5), "receiving": (5, 4), "queue": (2, 2), "airfield": (17, 6),
-       "mainland": (6, 20), "sea": (6, 20), "harbor": (5, 3), "notify": (5, 3)}           # the smallest a resized building may be, in cells
+       "mainland": (6, 20), "sea": (6, 20), "harbor": (5, 3), "notify": (5, 3), "depot": (6, 3), "worker": (7, 3), "junction": (2, 2),
+       "outside": (10, 4)}                     # the smallest a resized building may be, in cells
+JUNCTIONS = ("a", "b", "c", "d")             # optional: where tracks join or split
+YARD_DX = -5                                 # the yard's box starts five cells left of its anchor, the top of Build's feeder
 SINGLE = ("mainland", "sea", "sources", "receiving", "harbor", "queue", "airfield")
 NOTIFIERS = ("telegram", "slack")          # the channels that tell a person what the factory needs: wireless, so they take no belt
 NOTIFY_NAMES = {"telegram": "Telegram", "slack": "Slack"}
 DIRS = {"n": (0, -1), "e": (1, 0), "s": (0, 1), "w": (-1, 0)}
 KINDS = ("splitter", "merger", "sideload", "underground")
 NAMES = {"mainland": "The mainland", "sea": "The sea", "sources": "Sources", "receiving": "Receiving", "queue": "The queue",
-         "airfield": "The airfield", "yard": "The Verify yard", "harbor": "The harbor"}
+         "airfield": "The airfield", "yard": "The Verify yard", "harbor": "The harbor", "depot": "The Train station",
+         "outside": "Outside the factory"}
+FREE = ("outside",)                          # areas other buildings may stand in, and belts and track may cross
 DISTRICTS = ("INTAKE", "PLANNING", "PRODUCTION", "QUALITY", "SHIPPING")
 YARD_TOP = 590                             # the yard's feeder top in yard.py's coordinates (yard.BOT_Y + yard.MH + 30)
 
@@ -54,10 +67,12 @@ class Ctx:
     """What the factory has now: the stations in route order, the enabled agent harnesses, whether the yard is shown and with how many
     trains (its size follows them), and the notifiers (every channel the factory can talk on, set up or not)."""
 
-    def __init__(self, ids, harnesses=(), yard_on: bool = False, trains: int = 0, notifiers=NOTIFIERS):
+    def __init__(self, ids, harnesses=(), yard_on: bool = False, trains: int = 0, notifiers=NOTIFIERS, workers=None):
         self.ids, self.harnesses, self.yard_on, self.trains = tuple(ids), tuple(harnesses), bool(yard_on), max(0, min(5, int(trains)))
         self.notifiers = tuple(n for n in notifiers if n in NOTIFY_NAMES)
-        self.key = (self.ids, self.harnesses, self.yard_on, self.trains, self.notifiers)
+        names = list(workers) if workers is not None else [f"worker {k + 1}" for k in range(self.trains)]
+        self.workers = tuple(dict.fromkeys(str(n)[:40] for n in names))[:5] if self.yard_on else ()
+        self.key = (self.ids, self.harnesses, self.yard_on, self.trains, self.notifiers, self.workers)
         self.roles = [s for s in self.ids if s not in INTAKE + LATER]
         self.districts: dict[str, list[str]] = {}
         for s in self.ids:
@@ -65,7 +80,18 @@ class Ctx:
 
     def nodes(self) -> list[str]:
         return (list(SINGLE) + [f"station:{s}" for s in self.ids] + [f"power:{h}" for h in self.harnesses]
-                + [f"notify:{n}" for n in self.notifiers] + (["yard"] if self.yard_on else []))
+                + [f"notify:{n}" for n in self.notifiers] + (["yard", "depot"] + [f"worker:{w}" for w in self.workers] if self.yard_on else []))
+
+    def optional(self) -> list[str]:
+        """Buildings a layout may leave out: the junctions and the outside area (with the workers on)."""
+        return ["outside"] + [f"junction:{j}" for j in JUNCTIONS] if self.yard_on else []
+
+    def rail(self) -> list[str]:
+        return (["yard", "depot"] + [f"worker:{w}" for w in self.workers] + [f"junction:{j}" for j in JUNCTIONS]) if self.yard_on else []
+
+    def tracks(self) -> list[tuple[str, str]]:
+        """Every stretch of track a layout may lay, as (from, to) node ids."""
+        return [(a, b) for a in self.rail() for b in self.rail() if rail_ok(a, b)]
 
     def hops(self) -> list[tuple[str, str]]:
         """Every hop a ticket can ride, as (from, to) node ids."""
@@ -90,7 +116,28 @@ class Ctx:
             out.append((s("ci"), s("build")))                        # CI's fix rounds
         if self.yard_on and "build" in has:
             out.append((s("build"), "yard"))
+        if self.yard_on:
+            off = next((x for x in ("ci", "review", "pr", "build") if x in has), None)
+            if off:
+                out.append(("depot", s(off)))                        # the Train station hands the checked builds on
         return out
+
+
+def rail_ok(a: str, b: str) -> bool:
+    """May track run from a to b? Trains leave the yard for the workers, go on to the Train station and come back to the yard."""
+    kind = lambda n: n.split(":")[0]
+    ka, kb = kind(a), kind(b)
+    if a == b:
+        return False
+    if ka == "yard":
+        return kb in ("worker", "junction")
+    if ka == "junction":
+        return kb in ("worker", "junction", "depot", "yard")
+    if ka == "worker":
+        return kb in ("depot", "junction")
+    if ka == "depot":
+        return kb in ("yard", "junction")
+    return False
 
 
 def district_of(sid: str) -> str:
@@ -130,24 +177,25 @@ def label(nid: str) -> str:
         return "Power: " + POWER.get(name, name)
     if kind == "notify":
         return NOTIFY_NAMES.get(name, name)
+    if kind == "worker":
+        return name
+    if kind == "junction":
+        return "Junction " + name.upper()
     return NAMES.get(nid, nid)
 
 
 def group(nid: str) -> str:
     """Where the editor's parts tray lists a building."""
     kind = nid.split(":")[0]
-    return {"station": "Stations", "queue": "Stations", "power": "Power and workers", "yard": "Power and workers", "notify": "Notifiers",
-            "mainland": "Areas", "sea": "Areas"}.get(kind, "Arrivals")
+    return {"station": "Stations", "queue": "Stations", "power": "Power", "yard": "Workers and rail", "depot": "Workers and rail",
+            "worker": "Workers and rail", "junction": "Workers and rail", "notify": "Notifiers", "mainland": "Areas", "sea": "Areas",
+            "outside": "Areas"}.get(kind, "Arrivals")
 
 
-def yard_box(trains: int) -> tuple[int, int, int, int]:
-    """The yard's box relative to its anchor (the top of its feeder), in cells: (dx, dy, w, h)."""
-    from . import yard
-    if trains <= 0:
-        return (-5, 0, 10, 3)                                        # only the "+ Connect a worker" button
-    g = yard.yard_geometry(trains, 0)
-    left, right = min(min(g["xs"]) - 90, -320), g["tx"] + 70
-    return (math.floor(left / G), 0, math.ceil((right - left) / G) + 1, math.ceil((g["bottom"] - YARD_TOP) / G))
+def yard_box(trains: int = 0) -> tuple[int, int, int, int]:
+    """The yard's box relative to its anchor (the top of its feeder), in cells: (dx, dy, w, h). On a saved layout the yard is where
+    trains are loaded; the workers are buildings of their own, joined to it by track."""
+    return (YARD_DX, 0, *SIZE["yard"])
 
 
 def box(nid: str, at, ctx: Ctx, wh=None) -> tuple[int, int, int, int]:
@@ -167,6 +215,11 @@ def boxes(nodes: dict, ctx: Ctx) -> dict:
     return {nid: box(nid, (p["x"], p["y"]), ctx, size_of(p)) for nid, p in nodes.items()}
 
 
+def solid(B: dict) -> dict:
+    """The boxes belts and track may not run through (every building but the areas others stand in)."""
+    return {k: v for k, v in B.items() if k not in FREE}
+
+
 def _inside(p, b) -> bool:
     return b[0] <= p[0] <= b[0] + b[2] and b[1] <= p[1] <= b[1] + b[3]
 
@@ -179,6 +232,12 @@ def beside(p, nid: str, B: dict, nodes: dict) -> bool:
     x, y, w, h = B[nid]
     px, py = p
     return ((x <= px <= x + w and py in (y - 1, y + h + 1)) or (y <= py <= y + h and px in (x - 1, x + w + 1)))
+
+
+def near(p, b) -> bool:
+    """Is grid point p one cell outside box b?"""
+    x, y, w, h = b
+    return (x <= p[0] <= x + w and p[1] in (y - 1, y + h + 1)) or (y <= p[1] <= y + h and p[0] in (x - 1, x + w + 1))
 
 
 def cells(pts):
@@ -209,7 +268,41 @@ def _default_pos(ctx: Ctx) -> dict:
     for k, n in enumerate(ctx.notifiers):
         P[f"notify:{n}"] = (px + 7 * k, 2 + 6 * len(ctx.harnesses))
     P["yard"] = (79, 46)
-    return {n: {"x": P[n][0], "y": P[n][1]} for n in ctx.nodes() if n in P}
+    P["depot"] = (112, 47)
+    n = len(ctx.workers)
+    for k, w in enumerate(ctx.workers):                              # a column of stops, joined by a junction either side
+        P[f"worker:{w}"] = (95, 56 + 7 * k)
+    mid = 56 + (7 * (n - 1) + 4) // 2 - 1
+    if n:
+        P["junction:a"], P["junction:b"] = (89, mid), (108, mid)
+    out = {k: {"x": P[k][0], "y": P[k][1]} for k in ctx.nodes() + ctx.optional() if k in P}
+    if n:
+        out["outside"] = {"x": 86, "y": 53, "w": 28, "h": 7 * n + 4}
+    return out
+
+
+def default_tracks(ctx: Ctx) -> list[tuple[str, str]]:
+    """The default railway: out of the yard to junction A, a branch to each worker, all joining at junction B for the Train station,
+    and back to the yard."""
+    if not ctx.yard_on:
+        return []
+    out = [("yard", "junction:a")] if ctx.workers else []
+    for w in ctx.workers:
+        out += [("junction:a", f"worker:{w}"), (f"worker:{w}", "junction:b")]
+    return out + ([("junction:b", "depot")] if ctx.workers else []) + [("depot", "yard")]
+
+
+def track_port(nid: str, other, B: dict):
+    """Where track leaves or reaches a rail building: the middle of the side facing the other end (never the yard's top, where its
+    feeder comes in)."""
+    x, y, w, h = B[nid]
+    ox, oy = other
+    cx, cy = x + w / 2, y + h / 2
+    sides = {"e": (x + w + 1, y + h // 2), "w": (x - 1, y + h // 2), "s": (x + w // 2, y + h + 1), "n": (x + w // 2, y - 1)}
+    if nid == "yard":
+        del sides["n"]
+    order = sorted(sides, key=lambda k: -((ox - cx) * DIRS[k][0] + (oy - cy) * DIRS[k][1]) / (w if k in "ew" else h))
+    return sides[order[0]]
 
 
 LOW = ("station:review", "station:ci", "station:pr")                 # the quality and shipping row, flowing west
@@ -234,6 +327,10 @@ def port(nid: str, way: str, other: str, nodes: dict, ctx: Ctx):
         return (x + w + 1, y + 2) if other == "yard" else (x + 1, y + h + 1)
     if nid == "station:ci" and other == "station:build":
         return (x + 3, y + h + 1)
+    if other == "depot":
+        return (x + 3, y - 1)
+    if nid == "depot":
+        return (x + 1, y - 1)
     low = nid in LOW
     if way == "in":
         return (x + w - 1, y - 1) if low else (x + 1, y + h + 1)
@@ -344,7 +441,10 @@ def default_plan(ctx: Ctx) -> dict:
         return json.loads(json.dumps(_DEFAULTS[ctx.key]))
     nodes = _default_pos(ctx)
     belts = _route_all(nodes, {}, ctx)
+    tracks = route_tracks(nodes, {}, default_tracks(ctx), ctx, belts or {})
     doc = {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts or {}, "pieces": _pieces_for(belts or {}), "walls": [], "trees": []}
+    if tracks:
+        doc["tracks"] = tracks
     doc["districts"] = district_boxes(doc, ctx, boxes(nodes, ctx))
     if len(_DEFAULTS) > 32:
         _DEFAULTS.clear()
@@ -355,7 +455,7 @@ def default_plan(ctx: Ctx) -> dict:
 def _route_all(nodes: dict, keep: dict, ctx: Ctx) -> dict | None:
     """Belts for every hop: the kept ones as they are, the rest routed. None when a hop cannot be routed."""
     B = boxes(nodes, ctx)
-    blocked = blocked_cells(B)
+    blocked = blocked_cells(solid(B))
     out, used = {}, set()
     for pts in keep.values():
         used |= set(cells(pts))
@@ -372,6 +472,72 @@ def _route_all(nodes: dict, keep: dict, ctx: Ctx) -> dict | None:
     return out
 
 
+def route_tracks(nodes: dict, keep: dict, pairs, ctx: Ctx, belts: dict) -> dict:
+    """Track for each (from, to) pair: the kept stretches as they are, the rest routed round the buildings (a stretch that cannot be
+    routed is left out; the layout's check then names the loop it breaks)."""
+    B = boxes(nodes, ctx)
+    blocked = blocked_cells(solid(B))
+    used = {c for pts in list(belts.values()) + list(keep.values()) for c in cells(pts)}
+    out = dict(keep)
+    for a, b in pairs:
+        tid = hop_id(a, b)
+        if tid in out or a not in B or b not in B:
+            continue
+        ca, cb = (B[a][0] + B[a][2] / 2, B[a][1] + B[a][3] / 2), (B[b][0] + B[b][2] / 2, B[b][1] + B[b][3] / 2)
+        pts = autoroute(track_port(a, cb, B), track_port(b, ca, B), blocked, used)
+        if pts and len(pts) >= 2:
+            out[tid] = [list(p) for p in pts]
+            used |= set(cells(pts))
+    return out
+
+
+def loops(tracks: dict, ctx: Ctx) -> dict:
+    """{worker node: does a train have its whole loop?}: track from the yard to the worker, from it to the Train station and from the
+    Train station back to the yard, through junctions only."""
+    edges = {}
+    for tid in tracks:
+        a, _, b = tid.partition(">")
+        edges.setdefault(a, set()).add(b)
+
+    def reach(a, b):
+        seen, todo = {a}, [a]
+        while todo:
+            n = todo.pop()
+            for m in edges.get(n, ()):
+                if m == b:
+                    return True
+                if m.startswith("junction:") and m not in seen:
+                    seen.add(m)
+                    todo.append(m)
+        return False
+    home = reach("depot", "yard")
+    return {f"worker:{w}": home and reach("yard", f"worker:{w}") and reach(f"worker:{w}", "depot") for w in ctx.workers}
+
+
+def leg(tracks: dict, a: str, b: str):
+    """The stretches of track from a to b through junctions (the fewest), or None."""
+    edges = {}
+    for tid in tracks:
+        x, _, y = tid.partition(">")
+        edges.setdefault(x, []).append(y)
+    prev, todo = {a: None}, [a]
+    while todo:
+        n = todo.pop(0)
+        for m in edges.get(n, ()):
+            if m in prev:
+                continue
+            prev[m] = n
+            if m == b:
+                out, c = [], b
+                while prev[c] is not None:
+                    out.append(hop_id(prev[c], c))
+                    c = prev[c]
+                return out[::-1]
+            if m.startswith("junction:"):
+                todo.append(m)
+    return None
+
+
 # ---------------------------------------------------------------- checking a layout
 def _int(v) -> bool:
     return type(v) is int
@@ -386,7 +552,7 @@ def structure(doc) -> list[str]:
     if not isinstance(doc, dict):
         return ["The layout must be a JSON object."]
     errs = []
-    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces", "districts", "walls", "trees"}
+    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces", "districts", "walls", "trees", "tracks"}
     if extra:
         errs.append("Unknown keys: " + ", ".join(sorted(str(k)[:30] for k in extra)[:5]) + ".")
     if doc.get("version") != VERSION or doc.get("grid") != G:
@@ -426,14 +592,18 @@ def structure(doc) -> list[str]:
             errs.append(f"Too many trees ({len(trees)}; at most {MAX_TREES}).")
         elif not all(_pt(t) for t in trees):
             errs.append("A tree is a grid point inside the floor.")
+    tracks = doc.get("tracks", {})
+    if not isinstance(tracks, dict):
+        errs.append("The tracks are an object of lines.")
+        tracks = {}
     total = 0
-    for k, pts in belts.items():
+    for what, k, pts in [("Belt", k, v) for k, v in belts.items()] + [("Track", k, v) for k, v in tracks.items()]:
         if not (isinstance(pts, list) and 2 <= len(pts) <= MAX_POINTS and all(_pt(p) for p in pts)):
-            errs.append(f"Belt {str(k)[:60]}: it needs 2 to {MAX_POINTS} grid points inside the floor.")
+            errs.append(f"{what} {str(k)[:60]}: it needs 2 to {MAX_POINTS} grid points inside the floor.")
             continue
         for p, q in zip(pts, pts[1:]):
             if (p[0] != q[0]) == (p[1] != q[1]):
-                errs.append(f"Belt {str(k)[:60]}: each run goes straight across or down the grid and is at least one cell long.")
+                errs.append(f"{what} {str(k)[:60]}: each run goes straight across or down the grid and is at least one cell long.")
                 break
         total += sum(abs(p[0] - q[0]) + abs(p[1] - q[1]) for p, q in zip(pts, pts[1:]))
     if total > MAX_CELLS:
@@ -459,9 +629,22 @@ def _belt_problem(hid: str, pts, B: dict, nodes: dict) -> str:
     if not beside(pts[-1], b, B, nodes):
         return (f"The belt from {label(a)} to {label(b)} must end " + ("at the top of the yard's feeder." if b == "yard" else f"beside {label(b)}."))
     for c in cells(pts):
-        for nid, bx in B.items():
+        for nid, bx in solid(B).items():
             if _inside(c, bx):
                 return f"The belt from {label(a)} to {label(b)} runs through {label(nid)}."
+    return ""
+
+
+def _track_problem(tid: str, pts, B: dict) -> str:
+    a, b = tid.split(">")
+    if not near(pts[0], B[a]):
+        return f"The track from {label(a)} to {label(b)} must start beside {label(a)}."
+    if not near(pts[-1], B[b]):
+        return f"The track from {label(a)} to {label(b)} must end beside {label(b)}."
+    for c in cells(pts):
+        for nid, bx in solid(B).items():
+            if _inside(c, bx):
+                return f"The track from {label(a)} to {label(b)} runs through {label(nid)}."
     return ""
 
 
@@ -480,7 +663,7 @@ def _same_run(pts, u, v) -> bool:
 def placement(B: dict) -> list[str]:
     """Every building inside the floor and no two overlapping."""
     errs = [f"{label(nid)} is outside the floor." for nid, (x, y, w, h) in B.items() if x < 0 or y < 0 or x + w > W or y + h > H]
-    ids = list(B)
+    ids = list(solid(B))
     for i, a in enumerate(ids):
         for b in ids[i + 1:]:
             (ax, ay, aw, ah), (bx, by, bw, bh) = B[a], B[b]
@@ -497,7 +680,7 @@ def validate(doc, ctx: Ctx) -> list[str]:
         return errs
     want = ctx.nodes()
     nodes = doc["nodes"]
-    unknown = [k for k in nodes if k not in want]
+    unknown = [k for k in nodes if k not in want + ctx.optional()]
     if unknown:
         errs.append("Unknown buildings: " + ", ".join(str(k)[:40] for k in unknown[:5]) + ".")
     missing = [k for k in want if k not in nodes]
@@ -534,6 +717,21 @@ def validate(doc, ctx: Ctx) -> list[str]:
         problem = _belt_problem(hid, pts, B, nodes)
         if problem:
             errs.append(problem)
+    tracks = doc.get("tracks") or {}
+    allowed = {hop_id(a, b) for a, b in ctx.tracks()}
+    for tid, pts in tracks.items():
+        a, _, b = tid.partition(">")
+        if tid not in allowed:
+            errs.append(f"Track cannot run from {label(a)[:40]} to {label(b)[:40]}: trains go from the yard to the workers, on to the Train station and back.")
+        elif a not in B or b not in B:
+            errs.append(f"The track from {label(a)} to {label(b)} needs both on the floor.")
+        else:
+            problem = _track_problem(tid, pts, B)
+            if problem:
+                errs.append(problem)
+    for w, ok in loops(tracks, ctx).items():
+        if not ok:
+            errs.append(f"No track loop for {label(w)}: lay track from the yard to it, from it to the Train station, and from the Train station back to the yard.")
     belts = [p for k, p in doc["belts"].items() if k in hops]
     for p in doc["pieces"]:
         if p["kind"] == "underground":
@@ -550,9 +748,9 @@ def merge(doc: dict, ctx: Ctx) -> dict | None:
     """Fit a saved layout to what the factory has now: buildings that are gone are dropped, new ones get their default spot (or the
     nearest free one), belts that no longer fit are routed again. None when it cannot be made whole (the caller draws the default)."""
     want = ctx.nodes()
-    nodes = {k: dict(v) for k, v in doc["nodes"].items() if k in want}
+    nodes = {k: dict(v) for k, v in doc["nodes"].items() if k in want + ctx.optional()}
     if "yard" in nodes:
-        nodes["yard"] = {"x": nodes["yard"]["x"], "y": nodes["yard"]["y"]}         # its size follows the trains
+        nodes["yard"] = {"x": nodes["yard"]["x"], "y": nodes["yard"]["y"]}         # it is never resized
     default = _default_pos(ctx)
     for nid in want:
         if nid in nodes:
@@ -573,6 +771,14 @@ def merge(doc: dict, ctx: Ctx) -> dict | None:
     belts = _route_all(nodes, keep, ctx)
     if belts is None:
         return None
+    allowed = {hop_id(a, b) for a, b in ctx.tracks()}
+    tracks = {k: v for k, v in (doc.get("tracks") or {}).items() if k in allowed and all(n in B for n in k.split(">"))
+              and not _track_problem(k, v, B)}
+    need = []
+    for w, ok in loops(tracks, ctx).items():                         # a new worker (or a broken loop) gets track of its own
+        if not ok:
+            need += [(a, b) for a, b in (("yard", w), (w, "depot"), ("depot", "yard")) if not leg(tracks, a, b)]
+    tracks = route_tracks(nodes, tracks, list(dict.fromkeys(need)), ctx, belts)
     on = list(belts.values())
     pieces = [p for p in doc["pieces"] if (p["kind"] == "underground" and any(_same_run(bp, p["from"], p["to"]) for bp in on))
               or (p["kind"] != "underground" and any(_on_line(bp, p["at"]) for bp in on))]
@@ -585,12 +791,15 @@ def merge(doc: dict, ctx: Ctx) -> dict | None:
         x1, y1 = max(d["x"] + d["w"], f["x"] + f["w"]), max(d["y"] + d["h"], f["y"] + f["h"])
         if x0 >= 0 and y0 >= 0 and x1 <= W and y1 <= H:
             dists[name] = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
-    return {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts, "pieces": pieces, "districts": dists,
-            "walls": list(doc.get("walls") or []), "trees": list(doc.get("trees") or [])}
+    out = {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts, "pieces": pieces, "districts": dists,
+           "walls": list(doc.get("walls") or []), "trees": list(doc.get("trees") or [])}
+    if tracks:
+        out["tracks"] = tracks
+    return out
 
 
 def _free_spot(nid, at, nodes, ctx):
-    taken = list(boxes(nodes, ctx).values())
+    taken = list(solid(boxes(nodes, ctx)).values())
     x0, y0 = at["x"], at["y"]
     for r in range(0, 60):
         for dx in range(-r, r + 1):
@@ -683,7 +892,8 @@ def canonical(doc: dict) -> dict:
     return {"version": VERSION, "grid": G, "nodes": {k: pos(v) for k, v in doc["nodes"].items()},
             "belts": {k: [list(p) for p in v] for k, v in doc["belts"].items()}, "pieces": doc.get("pieces", []),
             "districts": {k: {c: v[c] for c in ("x", "y", "w", "h")} for k, v in (doc.get("districts") or {}).items()},
-            "walls": [[list(p) for p in w] for w in doc.get("walls") or []], "trees": [list(t) for t in doc.get("trees") or []]}
+            "walls": [[list(p) for p in w] for w in doc.get("walls") or []], "trees": [list(t) for t in doc.get("trees") or []],
+            **({"tracks": {k: [list(p) for p in v] for k, v in doc["tracks"].items()}} if doc.get("tracks") else {})}
 
 
 def save(state_dir, doc: dict) -> None:
@@ -716,9 +926,16 @@ def compile_plan(doc: dict, ctx: Ctx) -> dict:
         hops[hid] = {"src": a, "dst": b, "pts": [px(p) for p in pts], "under": under}
     dist = {n: (d["x"] * G, d["y"] * G, d["w"] * G, d["h"] * G) for n, d in district_boxes(doc, ctx, B).items()}
     scale = {k: fit_art(k, B[k]) for k, v in nodes.items() if "w" in v}
+    tracks = doc.get("tracks") or {}
+    rails = {tid: {"src": tid.split(">")[0], "dst": tid.split(">")[1], "pts": [px(p) for p in pts]} for tid, pts in tracks.items()}
+    circuits = {}
+    for w, ok in loops(tracks, ctx).items():
+        if ok:
+            circuits[w] = [leg(tracks, "yard", w), leg(tracks, w, "depot"), leg(tracks, "depot", "yard")]
     return {"at": {k: px((v["x"], v["y"])) for k, v in nodes.items()}, "box": {k: tuple(c * G for c in v) for k, v in B.items()}, "districts": dist,
             "hops": hops, "pieces": [{**p, "at": px(p["at"])} for p in doc["pieces"] if p["kind"] != "underground"], "scale": scale,
-            "walls": [[px(p) for p in w] for w in doc.get("walls") or []], "trees": [px(t) for t in doc.get("trees") or []]}
+            "walls": [[px(p) for p in w] for w in doc.get("walls") or []], "trees": [px(t) for t in doc.get("trees") or []],
+            "tracks": rails, "circuits": circuits}
 
 
 def fit_art(nid: str, b) -> tuple[float, float, float]:
@@ -732,13 +949,15 @@ def fit_art(nid: str, b) -> tuple[float, float, float]:
 def meta(ctx: Ctx) -> dict:
     """What the editor needs besides the layout: each building's label and size, the hops, the districts, the default layout."""
     out = {}
-    for nid in ctx.nodes():
+    for nid in ctx.nodes() + ctx.optional():
         if nid == "yard":
             dx, dy, w, h = yard_box(ctx.trains)
         else:
             (dx, dy), (w, h) = (0, 0), SIZE[nid.split(":")[0]]
-        out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h, "min": None if nid == "yard" else MIN[nid.split(":")[0]],
-                    "group": group(nid)}
+        kind = nid.split(":")[0]
+        out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h, "min": None if nid in ("yard",) or kind == "junction" else MIN[kind],
+                    "group": group(nid), **({"optional": True} if nid in ctx.optional() else {}), **({"rail": True} if nid in ctx.rail() else {})}
     dist = ctx.districts
     return {"grid": G, "w": W, "h": H, "nodes": out, "hops": [[a, b, f"{label(a)} → {label(b)}"] for a, b in ctx.hops()],
+            "tracks": [[a, b] for a, b in ctx.tracks()], "workers": [f"worker:{w}" for w in ctx.workers], "free": list(FREE),
             "districts": dist, "under": MAX_UNDER, "default": default_plan(ctx)}
