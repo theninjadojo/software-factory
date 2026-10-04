@@ -156,7 +156,9 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 40
 
 
 class Attachments(AdminCase):
-    setUp = LocalTickets.setUp
+    def setUp(self):
+        LocalTickets.setUp(self)
+
     cfg = LocalTickets.cfg
     create = LocalTickets.create
     page = LocalTickets.page
