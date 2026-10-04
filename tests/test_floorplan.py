@@ -255,8 +255,9 @@ class Drawn(unittest.TestCase):
         x, y, w, h = C["box"]["harbor"]
         self.assertIn(f'<rect class="hb-box" x="{plant._f(x)}" y="{plant._f(y)}"', svg)
         self.assertIn('class="hb due"', svg)                               # a run is due: a ship lies at the quay
-        dock = y + h / 2 - C["at"]["sea"][1]
-        self.assertIn(f'<circle class="sh-base" cx="{plant.SEA_W}" cy="{plant._f(min(900.0, max(100.0, dock)))}"', svg)
+        dock = min(900.0, max(100.0, y + h / 2 - C["at"]["sea"][1]))
+        wall = plant.coast_x(plant.SEA_W, 1320, dock)                       # the crane stands on the coast at the harbor's height
+        self.assertIn(f'<circle class="sh-base" cx="{plant._f(wall)}" cy="{plant._f(dock)}"', svg)
         hop = C["hops"]["harbor>receiving"]
         self.assertIn(plant.belt(plant.trace(hop["pts"])[0].d, "fn-belt thin"), svg)
         self.assertNotIn("H " + plant._f(C["at"]["receiving"][0]) + '"', svg)    # no quay drawn by itself any more
@@ -307,12 +308,14 @@ class Drawn(unittest.TestCase):
         svg = self.draw(d)
         p = d["nodes"]["power:claude-code"]
         self.assertIn(f'transform="translate({p["x"] * F.G + 100} {p["y"] * F.G}) scale(1) translate(0 0)"', svg)
-        self.assertIn(f'<rect class="sh-sea" x="240" y="0" width="300" height="660" rx="0"/>', svg)
+        self.assertIn('<g transform="translate(240 0)"><defs><linearGradient id="sh-depth"', svg)    # the water fills the whole box
+        self.assertIn(plant.sea_water(300, 660), svg)
         self.assertIn('transform="translate(315 0) scale(0.5) translate(0 0)"', svg)
         C = F.compile_plan(d, CTX)
         x, y, w, h = C["box"]["harbor"]
-        dock = (y + h / 2) / 0.5                                            # the crane at the harbor's height, in the sea's own units
-        self.assertIn(f'<circle class="sh-base" cx="{plant.SEA_W}" cy="{plant._f(max(100.0, min(900.0, dock)))}"', svg)
+        dock = max(100.0, min(900.0, (y + h / 2) / 0.5))                    # the crane at the harbor's height, in the sea's own units,
+        wall = (240 + plant.coast_x(300, 660, dock * 0.5) - 315) / 0.5      # on the coast of the water drawn under it
+        self.assertIn(f'<circle class="sh-base" cx="{plant._f(wall)}" cy="{plant._f(dock)}"', svg)
         self.assertNotRegex(svg, r'scale\([\d.]+ [\d.]+\)')                 # never a stretch that squashes the text
 
     def test_inserters_stand_between_the_building_and_its_belt_and_have_hands(self):

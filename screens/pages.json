@@ -1,0 +1,32 @@
+[
+ {
+  "name": "factory",
+  "path": "screens/pages/factory.html",
+  "viewports": [
+   "desktop",
+   "mobile"
+  ]
+ },
+ {
+  "name": "floor-editor",
+  "path": "screens/pages/floor-editor.html",
+  "viewports": [
+   "desktop",
+   "mobile"
+  ]
+ },
+ {
+  "name": "floor-editor-scratch",
+  "path": "screens/pages/floor-editor-scratch.html",
+  "viewports": [
+   "desktop"
+  ]
+ },
+ {
+  "name": "floor-editor-belt",
+  "path": "screens/pages/floor-editor-belt.html",
+  "viewports": [
+   "desktop"
+  ]
+ }
+]
