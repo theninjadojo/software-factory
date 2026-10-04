@@ -9,9 +9,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
+from ..schedules import parse_every
 from ..tomlw import dumps
 
 REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
@@ -30,7 +31,7 @@ class SettingsError(Exception):
 class Field:
     key: str                 # dotted path in the config
     label: str
-    kind: str                # int float bool text select checks repos hosts kv models prompt wchecks
+    kind: str                # int float bool text select checks repos hosts kv models prompt wchecks every viewports
     help: str = ""
     choices: tuple = ()
     lo: float | None = None
@@ -176,8 +177,20 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               "The recipe is a name defined on the worker; platform is macos, linux ... or any.",
               danger="Removing or loosening a check lets changes through that would have been verified."),
     ]),
+    "screens": ("Screens", [
+        Field("screens.board_every", "Refresh the Screens board every", "every",
+              "6h, 1d or 1w. Empty: only when someone presses Refresh now."),
+        Field("screens.viewports", "Viewports", "viewports",
+              "One per line: name widthxheight, for example desktop 1440x900. Every screen is shot at each one unless it picks some."),
+        Field("screens.baseline_dir", "Baseline folder", "text", "Where each repository keeps its approved shots, as <name>-<viewport>.png."),
+        Field("screens.threshold", "Pixel tolerance", "float", "Colour distance (0 to 1) above which a pixel counts as different.", lo=0, hi=1),
+        Field("screens.max_diff_ratio", "Share of pixels allowed to differ", "float", "0.001 is 0.1 %.", lo=0, hi=1),
+        Field("screens.timeout_seconds", "Shoot timeout (seconds)", "int", lo=10, hi=3600),
+        Field("screens.label", "Screens-changed label", "text", "Put on a draft PR whose patch changes baseline images."),
+    ]),
     "prompts": ("Agent prompts", _prompt_fields()),
 }
+VIEWPORT_LINE = re.compile(r"([a-z0-9][a-z0-9-]{0,60})\s+(\d{1,5})\s*[x×]\s*(\d{1,5})")
 
 
 def harness_choices(eff: dict) -> tuple:
@@ -254,6 +267,9 @@ def default_for(key: str):
         return getattr(PromptsCfg(), name, None)
     if section == "pm":
         return getattr(PmCfg(), name, None)
+    if section == "screens":
+        v = getattr(ScreensCfg(), name, None)
+        return [{"name": x.name, "width": x.width, "height": x.height} for x in v] if name == "viewports" else v
     if section == "roles":
         role, _, field = name.partition(".")
         v = next((getattr(r, field) for r in DEFAULT_ROLES if r.name == role), None)
@@ -263,8 +279,15 @@ def default_for(key: str):
             "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
+def canon(key: str, v):
+    """Viewports are a table in a hand-written config.toml and a list in the overrides; compare and show them as the list."""
+    if key == "screens.viewports" and isinstance(v, dict):
+        return [{"name": k, "width": x.get("width"), "height": x.get("height")} for k, x in v.items()]
+    return v
+
+
 def effective(raw: dict, key: str):
-    v = get_in(raw, key)
+    v = canon(key, get_in(raw, key))
     return default_for(key) if v is None else v
 
 
@@ -374,6 +397,22 @@ def parse_value(f: Field, form: Form):
             if len(out) > 50:
                 raise ValueError
             return out
+        if f.kind == "every":
+            v = raw.strip()
+            if v and (len(v) > 10 or parse_every(v) is None):
+                raise ValueError
+            return v
+        if f.kind == "viewports":
+            out, seen = [], set()
+            for line in _lines(raw):
+                m = VIEWPORT_LINE.fullmatch(line)
+                if not m or m.group(1) in seen or m.group(1) == "design":
+                    raise ValueError
+                seen.add(m.group(1))
+                out.append({"name": m.group(1), "width": int(m.group(2)), "height": int(m.group(3))})
+            if not out or len(out) > 10:
+                raise ValueError
+            return out
         if f.kind == "kv":
             out = {}
             for line in _lines(raw):
@@ -388,6 +427,8 @@ def parse_value(f: Field, form: Form):
     hint = {"int": f"a whole number between {f.lo} and {f.hi}", "float": f"a number between {f.lo} and {f.hi}",
             "select": "one of " + ", ".join(f.choices), "checks": "at least one choice", "repos": "owner/name per line",
             "hosts": "valid host names, one per line, at least one", "kv": "label=kind per line, kind one of " + ", ".join(sorted(KINDS)),
+            "every": "like 6h, 1d or 1w, or empty",
+            "viewports": "name widthxheight per line, 1 to 10 of them, distinct names of lowercase letters, digits and dashes (not design)",
             "wchecks": "owner/name recipe platform [advisory] per line, names of lowercase letters, digits and dashes, no repeated repo and recipe",
             "models": f"up to {MAX_FALLBACKS} distinct model ids, one per line (may be empty)",
             "text": "a short single-line value",
@@ -407,7 +448,7 @@ def _commit(cfg_path: str, state_dir: Path, new_overrides: dict) -> None:
 
 def _store(new_ov: dict, base: dict, key: str, value) -> None:
     """Keep an override only when it differs from what the file (or the built-in default) already gives."""
-    current = get_in(base, key)
+    current = canon(key, get_in(base, key))
     if current is None:
         current = default_for(key)
     if current == value or (isinstance(current, tuple) and list(current) == value):

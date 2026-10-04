@@ -709,6 +709,8 @@ main.full { max-width:none; }
 .sb-step { flex:0 0 auto; max-width:calc(100vw - 32px); background:var(--panel); border:1px solid var(--line); padding:.7rem .8rem; scroll-snap-align:start; min-width:0; }
 .sb-step h3 { display:flex; align-items:center; gap:.5rem; margin:0 0 .2rem; font-size:1rem; overflow-wrap:anywhere; }
 .sb-num { display:inline-grid; place-items:center; min-width:1.6rem; height:1.6rem; border:1px solid var(--line2); color:var(--muted); font-size:.85rem; }
+.sb-top { display:flex; align-items:baseline; gap:.8rem; }
+.sb-edit { margin-left:auto; font-size:.85rem; }
 .sb-pair { display:flex; gap:.6rem; margin-top:.5rem; }
 .sb-shot { margin:0; width:16rem; max-width:calc((100vw - 32px - 2.2rem) / 2); }
 .sb-shot figcaption { color:var(--lab); font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; margin:0 0 .3rem; }
