@@ -83,6 +83,17 @@ class Board(unittest.TestCase):
         self.assertIn("design canvas missing or refused: docs/design/pay.dc.html", st["repos"][REPO]["problem"])
         self.assertFalse(any(str(c).startswith("localhost/factory-render") for cmd in fake.cmds for c in cmd))
 
+    def test_the_renderer_output_is_logged_not_shown(self):
+        class Fails(Fake):
+            def __call__(self, cmd, **kw):
+                res = super().__call__(cmd, **kw)
+                return subprocess.CompletedProcess(cmd, 1, "", "page.goto: <b>evil</b> net::ERR") if "/app/shoot.js" in cmd else res
+        with self.assertLogs("factory.screenboard", "WARNING") as logs:
+            st = self.refresh(Fails(shots={}))
+        self.assertIn("the screenshots could not be taken", st["repos"][REPO]["problem"])
+        self.assertNotIn("evil", st["repos"][REPO]["problem"])
+        self.assertIn("evil", "".join(logs.output))
+
     def test_unusable_pngs_are_dropped(self):
         self.refresh(Fake(shots={"basket-desktop": b"not a png"}, canvases={"pay": b"\x89PNG nope"}))
         self.assertEqual(SB.latest(self.db), {})

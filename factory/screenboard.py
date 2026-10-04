@@ -141,6 +141,9 @@ def shoot_repo(cfg: Config, repo: str, src_dir: Path, sha: str, db, run=subproce
         for v in (p.viewports or tuple(x.name for x in sc.viewports)):
             view_of[f"{p.name}-{v}"] = (p.name, v)
     got, problem = screens.capture(cfg.runner, sc, repo, src_dir, run)
+    if problem.startswith("rendering "):                         # the container's own output: logged, not shown
+        log.warning("screens board: %s: %s", repo, problem)
+        problem = "the screenshots could not be taken (the orchestrator log has the renderer's output)"
     if problem:
         problems.append(problem)
     for sid, png in got.items():
