@@ -33,6 +33,11 @@ def problems(pg) -> str:
     return " | ".join(pg.locator(".fe-problems li").all_inner_texts())
 
 
+def cell(pg) -> float:
+    """One grid cell in screen pixels: the editor opens zoomed to fit the floor, so a drag is measured in cells, not in the layout's pixels."""
+    return pg.locator(".fe-svg").bounding_box()["width"] / F.W
+
+
 def drag(pg, selector, dx, dy, at=(0.5, 0.5)):
     """Press on the element (at a fraction of its box), move by dx, dy pixels in steps, release."""
     el = pg.locator(selector).first
@@ -59,7 +64,7 @@ def test_arrange_save_and_reset_the_floor(wide, server):
     start = plan(pg)
 
     # a station: dragged two cells right and three down, its belts follow and every station stays reachable
-    drag(pg, '[data-node="station:pr"]', 2 * F.G, 3 * F.G)
+    drag(pg, '[data-node="station:pr"]', 2 * cell(pg), 3 * cell(pg))
     after = plan(pg)
     assert (after["nodes"]["station:pr"]["x"] - start["nodes"]["station:pr"]["x"], after["nodes"]["station:pr"]["y"] - start["nodes"]["station:pr"]["y"]) == (2, 3)
     assert "Every station is reachable" in problems(pg), problems(pg)
@@ -75,7 +80,7 @@ def test_arrange_save_and_reset_the_floor(wide, server):
 
     # a district: dragged by its name, its stations go with it
     before = plan(pg)
-    drag(pg, '[data-district="PRODUCTION"] > rect', 0, 2 * F.G, at=(0.1, 0.05))
+    drag(pg, '[data-district="PRODUCTION"] > rect', 0, 2 * cell(pg), at=(0.1, 0.05))
     moved = plan(pg)
     assert moved["districts"]["PRODUCTION"]["y"] == before["districts"]["PRODUCTION"]["y"] + 2
     assert moved["nodes"]["station:build"]["y"] == before["nodes"]["station:build"]["y"] + 2
@@ -83,7 +88,7 @@ def test_arrange_save_and_reset_the_floor(wide, server):
 
     # and resized by its corner
     w0 = moved["districts"]["QUALITY"]["w"]
-    drag(pg, '[data-resize="QUALITY"]', 3 * F.G, 0)
+    drag(pg, '[data-resize="QUALITY"]', 3 * cell(pg), 0)
     assert plan(pg)["districts"]["QUALITY"]["w"] == w0 + 3
 
     # save: the floor is drawn from the layout
@@ -123,7 +128,7 @@ def test_a_broken_route_is_shown_and_refused_on_save(wide, server):
     svg = pg.locator(".fe-svg")
     svg.scroll_into_view_if_needed()
     for x, y in ((2, 2), (2, 6), (2, 6)):                                 # a belt far from both stations; the repeated point finishes it
-        pg.locator('.fe-svg').click(position={"x": x * F.G, "y": y * F.G})
+        pg.locator('.fe-svg').click(position={"x": x * cell(pg), "y": y * cell(pg)})
     assert "must start beside Build" in problems(pg), problems(pg)
     assert pg.locator(".fe-belt.bad").count() == 1
     pg.click(".fe-save button")
