@@ -96,6 +96,12 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("github.trusted_permissions", "Who may apply labels", "checks", "A label counts only if its author has one of these repository roles.",
               choices=("admin", "maintain", "write", "triage")),
         Field("github.repos", "Standalone repositories", "repos", "owner/name, one per line. Repos of a project (see Projects) are added automatically."),
+        Field("local.enabled", "Keep tickets in the factory", "bool",
+              "On: tickets can live in the factory's own database (L-1, L-2 ...) instead of GitHub issues. New ticket offers both, and Import "
+              "moves GitHub issues across. Pull requests still go to GitHub."),
+        Field("github.poll_seconds", "Read GitHub every (seconds)", "int",
+              "Local tickets are handled at every poll; GitHub issues can be read less often to spare API calls. "
+              "The same as the poll interval reads GitHub at every poll.", lo=5, hi=86400),
     ]),
     "routing": ("Routing", _routing_fields()),
     "roles": ("Role agents", _role_fields()),     # the harness choices are filled in by fields_for()
@@ -276,7 +282,7 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     return {"auto.label": "factory:auto", "routing.low.fallback_models": [], "routing.medium.fallback_models": [], "routing.high.fallback_models": [],
             "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
-            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "auto.confirm_stages": False, "auto.chain": True}.get(key)
+            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "local.enabled": False, "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
 def canon(key: str, v):
@@ -286,8 +292,15 @@ def canon(key: str, v):
     return v
 
 
+def fallback(raw: dict, key: str):
+    """A setting whose default is another setting: GitHub is read at every poll unless told otherwise."""
+    return get_in(raw, "general.poll_seconds") if key == "github.poll_seconds" else None
+
+
 def effective(raw: dict, key: str):
     v = canon(key, get_in(raw, key))
+    if v is None:
+        v = fallback(raw, key)
     return default_for(key) if v is None else v
 
 
@@ -450,6 +463,8 @@ def _store(new_ov: dict, base: dict, key: str, value) -> None:
     """Keep an override only when it differs from what the file (or the built-in default) already gives."""
     current = canon(key, get_in(base, key))
     if current is None:
+        current = fallback(base, key)
+    if current is None:
         current = default_for(key)
     if current == value or (isinstance(current, tuple) and list(current) == value):
         del_in(new_ov, key)
@@ -483,6 +498,8 @@ def save_section(cfg_path: str, state_dir: Path, section: str, form: Form) -> li
         if value != effective(eff, key):
             notes.append(key)
         _store(new_ov, base, key, value)
+    if get_in(base, "github.poll_seconds") is None and "github.poll_seconds" in values and values["github.poll_seconds"] == values.get("general.poll_seconds"):
+        del_in(new_ov, "github.poll_seconds")          # equal to the poll interval: keep following it
     _commit(cfg_path, state_dir, new_ov)
     return notes
 

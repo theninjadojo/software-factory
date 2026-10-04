@@ -124,7 +124,7 @@ class TicketList(unittest.TestCase):
     ROWS = [row(1, "needs", {}, "Alpha <b>", at="designer"), row(2, "working", {}, "Beta", at="build"), row(3, "done", {}, "Gamma", at="pr")]
 
     def test_filters_counts_search_and_station(self):
-        self.assertEqual(board.counts(self.ROWS), {"needs": 1, "working": 1, "prs": 0, "failed": 0, "done": 1, "all": 3})
+        self.assertEqual(board.counts(self.ROWS), {"needs": 1, "working": 1, "prs": 0, "failed": 0, "new": 0, "done": 1, "all": 3})
         self.assertEqual([r["issue"] for r in board.pick(self.ROWS, "all")], [1, 2, 3])
         self.assertEqual([r["issue"] for r in board.pick(self.ROWS, "working")], [2])
         self.assertEqual([r["issue"] for r in board.pick(self.ROWS, "all", "pr")], [3])

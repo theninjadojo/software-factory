@@ -356,17 +356,19 @@ def new_ticket_form(cfg, repo: str, csrf: str) -> str:
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="5" maxlength="{MAX_BODY}"></textarea></label>'
-            f'{start_field([r.name for r in cfg.roles])}'
+            + ('<label>Keep it in<select name="where"><option value="local">The factory (local ticket)</option>'
+               '<option value="github">GitHub issues</option></select></label>' if cfg.local_enabled else "")
+            + f'{start_field([r.name for r in cfg.roles])}'
             '<button>Create ticket</button></form></details>')
 
 
 def close_form(repo: str, i: dict, csrf: str, back: str) -> str:
     n = int(i["number"])
     title = (i.get("title") or "")[:60]
-    return (f'<details class="disclose"><summary aria-label="Close ticket #{n}">Close</summary>'
+    return (f'<details class="disclose"><summary aria-label="Close ticket {esc(tracker.display(n))}">Close</summary>'
             f'<form method="post" action="/tickets/close" class="inline">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}">'
             f'<input type="hidden" name="n" value="{n}"><input type="hidden" name="back" value="{esc(back)}">'
-            f'<p>Close #{n} “{esc(title)}”? This closes the issue on GitHub and adds a comment. You can reopen it there.</p>'
+            f'<p>Close {esc(tracker.display(n))} “{esc(title)}”? This closes the issue on GitHub and adds a comment. You can reopen it there.</p>'
             '<button class="secondary">Close ticket</button></form></details>')
 
 
@@ -377,7 +379,7 @@ def action_forms(repo: str, n: int, acts, csrf: str, back: str = "/tickets") -> 
     return "".join(
         f'<form method="post" action="/tickets/start" class="inline">{hidden}'
         f'<button name="action" value="{esc(a)}" class="{"" if k == 0 else "secondary"}" title="{esc("Removes the trigger labels" if lab is None else "Applies " + lab)}" '
-        f'aria-label="{esc(text)} #{int(n)}">{esc(text)}</button></form> ' for k, (a, text, lab) in enumerate(acts))
+        f'aria-label="{esc(text)} {esc(tracker.display(n))}">{esc(text)}</button></form> ' for k, (a, text, lab) in enumerate(acts))
 
 
 def action_forms_for(need: dict, csrf: str, back: str = "/") -> str:
@@ -525,7 +527,7 @@ def question_popup(repo: str, i: dict, st, csrf: str, back: str, alone: bool = F
     """The Answer… button and the dialog holding the question form, as on the Floor. Without scripts the button cannot open the
     dialog, so the link narrows the list to this ticket, where (alone) the form is shown in the page."""
     n = int(i["number"])
-    ref = f'{esc(repo.split("/")[-1])}#{n}'
+    ref = esc(views.ref(repo, n, short=True))
     total = len(st.questions)
     form = question_form(repo, n, st, csrf, back)
     meta = f'The {esc(st.stage)} asked {total} question{"s" if total != 1 else ""}'
@@ -640,7 +642,7 @@ def pager(repo, state, label, text, page_no, more, stage: str = "") -> str:
 def _edit_body(cfg, repo: str, n: int, issue: dict, all_labels: list[str], csrf: str) -> str:
     have = _names(issue)
     hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{n}">'
-    ref = f"{repo}#{n}"
+    ref = views.ref(repo, n)
     chips = "".join(
         f'<li>{chip(name, cfg)} <form method="post" action="/labels/remove" class="inline">{hidden}<input type="hidden" name="label" value="{esc(name)}">'
         f'<button aria-label="Remove label {esc(name)} from {esc(ref)}">Remove</button></form></li>' for name in have)
@@ -668,7 +670,7 @@ def _render_issue(h, csrf: str, repo: str, n: int, flash=None, kind="ok", status
         return _page(h, 404 if isinstance(e, urllib.error.HTTPError) and e.code == 404 else 502, "Tickets", "", csrf, _github_error(e), "bad")
     if "pull_request" in issue:
         return h._send(404, "no such issue", "text/plain")
-    _page(h, status, f"Edit labels · {repo}#{n}", _edit_body(cfg, repo, n, issue, names, csrf), csrf, flash, kind)
+    _page(h, status, f"Edit labels · {views.ref(repo, n)}", _edit_body(cfg, repo, n, issue, names, csrf), csrf, flash, kind)
 
 
 def issue_get(h, q: dict, csrf: str) -> None:
@@ -818,8 +820,13 @@ def create(h, form, csrf: str) -> None:
         if chosen is None:
             raise Refused("That start action is not available.")
         labels = [chosen[2]] if chosen[2] else []
+        where = form.get("where") or ("local" if cfg.local_enabled else "github")
+        if where not in ("local", "github") or (where == "local" and not cfg.local_enabled):
+            raise Refused("Local tickets are turned off. Turn them on under Settings → General.")
     except Refused as e:
         return _done(h, form, csrf, str(e), "bad")
+    if where == "local":
+        return _create_local(h, form, csrf, cfg, repo, title, body, labels, chosen[1])
     gh = _gh(h)
     if gh is None:
         return _done(h, form, csrf, NO_TOKEN, "bad")
@@ -844,6 +851,23 @@ def create(h, form, csrf: str) -> None:
         del _flights[:-5]
     _done(h, form, csrf, f"Created {repo}#{int(n)} and started {chosen[1]}. The factory picks it up on its next poll." if labels
           else f"Created {repo}#{int(n)}. Nothing started.")
+
+
+def _create_local(h, form, csrf: str, cfg, repo: str, title: str, body: str, labels: list[str], verb: str) -> None:
+    from . import localtickets as LT
+    now = time.time()
+    with _recent_lock:
+        if now - _recent.get((repo, title), 0) < DUP_SECONDS:
+            return _done(h, form, csrf, "That ticket was just created.", "bad")
+        _recent[(repo, title)] = now
+    n = LT.create(cfg, repo, title, body, labels)
+    log.info("tickets: created local %s %s from the UI%s", repo, tracker.display(n), f" with {labels[0]}" if labels else "")
+    with _flights_lock:
+        _flights.append((time.time(), tracker.display(n)))
+        del _flights[:-5]
+    ref = views.ref(repo, n)
+    _done(h, form, csrf, f"Created {ref} and started {verb}. The factory picks it up on its next poll." if labels
+          else f"Created {ref}. Nothing started.")
 
 
 def close(h, form, csrf: str) -> None:
@@ -875,8 +899,8 @@ def close(h, form, csrf: str) -> None:
         return _done(h, form, csrf, _github_error(e), "bad")
     with _needs_lock:
         _needs_cache["rows"] = None
-    log.info("tickets: closed %s#%d from the UI", repo, n)
-    _done(h, form, csrf, f"Closed {repo}#{n}.")
+    log.info("tickets: closed %s %s from the UI", repo, tracker.display(n))
+    _done(h, form, csrf, f"Closed {views.ref(repo, n)}.")
 
 
 def import_issues(h, form, csrf: str) -> None:

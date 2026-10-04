@@ -3,12 +3,13 @@ import html
 import json
 import re
 import time
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from .. import db as dbm
 from .. import designfiles
 from .. import version
 from ..sanitize import md_render
+from ..tracker import display, is_local
 
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
@@ -85,7 +86,15 @@ def design_links(files) -> str:
                        for f in files or [] if designfiles.link_ok(f))
 
 
+def ref(repo: str, issue, short: bool = False) -> str:
+    """How a ticket is named on screen: repo#12 for a GitHub issue, repo L-3 for a local ticket (never repo#100000003)."""
+    name = str(repo).split("/")[-1] if short else str(repo)
+    return f"{name} {display(int(issue))}" if is_local(int(issue)) else f"{name}#{int(issue)}"
+
+
 def ticket_link(repo: str, issue) -> str:
+    if is_local(int(issue)):                    # a local ticket has no GitHub page: link to its page here
+        return f'<a href="/ticket?repo={quote(str(repo), safe="")}&amp;n={int(issue)}">{esc(ref(repo, issue))}</a>'
     label = f"{repo}#{issue}"
     return gh_link(f"https://github.com/{repo}/issues/{int(issue)}", label) if REPO.match(str(repo)) else esc(label)
 

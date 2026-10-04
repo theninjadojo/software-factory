@@ -12,7 +12,7 @@ from ..router import decide
 import time
 
 from .. import schedules as sched
-from . import flooredit as FE, forms, integrations as I, labels as L, review as RV, schedules as SC, screens as SB, settings as S, views, workers as WK
+from . import flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, review as RV, schedules as SC, screens as SB, settings as S, views, workers as WK
 from .views import esc
 
 FLASH = {
@@ -413,5 +413,5 @@ POST = {"/backup/download": backup_download, "/floor/layout/save": FE.save, "/fl
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
-        "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/import": L.import_issues, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
+        "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/local/comment": LT.comment, "/tickets/local/edit": LT.edit, "/tickets/local/state": LT.set_state, "/tickets/import": L.import_issues, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
         "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/save": SB.save, "/screens/delete": SB.delete, "/screens/issue": RV.board_issue}

@@ -25,7 +25,8 @@ class AdminCase(UiCase):
     def general_form(self, **over):
         cfg = load(str(self.root / "config.toml"))
         f = {"section": "general", "general.poll_seconds": str(cfg.poll_seconds), "general.confidence_threshold": str(cfg.confidence_threshold),
-             "github.trigger_label": cfg.trigger_label, "github.repos": "\n".join(["your-org/standalone-service"])}
+             "github.trigger_label": cfg.trigger_label, "github.repos": "\n".join(["your-org/standalone-service"]),
+             "github.poll_seconds": str(cfg.github_poll_seconds)}
         f.update(over)
         pairs = list(f.items()) + [("github.trusted_permissions", p) for p in ("admin", "maintain", "write")]
         if f.pop("dry_run_on", True) is not False:
@@ -629,4 +630,4 @@ class SettingsLayout(UiCase):
         _, _, html = self.req("GET", "/settings", cookie=cookie)
         self.assertIn("Save changes", html)
         self.assertIn("Changes apply the next time the factory is idle.", html)
-        self.assertEqual(html.count('class="srow"'), 6)
+        self.assertEqual(html.count('class="srow"'), 8)

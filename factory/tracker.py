@@ -159,6 +159,11 @@ class LocalTracker:
                             "ORDER BY id DESC LIMIT 1", (repo, number, label)).fetchone()
         return r[0] if r else None
 
+    def edit(self, repo: str, number: int, title: str, body: str) -> None:
+        self.db.execute("UPDATE local_tickets SET title=?, body=? WHERE repo=? AND number=?", (title, body, repo, number))
+        self._touch(repo, number)
+        self.db.commit()
+
     def set_state(self, repo: str, number: int, state: str) -> None:
         self.db.execute("UPDATE local_tickets SET state=? WHERE repo=? AND number=?", (state, repo, number))
         self._touch(repo, number)
