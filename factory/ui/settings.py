@@ -282,7 +282,7 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     return {"auto.label": "factory:auto", "routing.low.fallback_models": [], "routing.medium.fallback_models": [], "routing.high.fallback_models": [],
             "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
-            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "local.enabled": False, "auto.confirm_stages": False, "auto.chain": True}.get(key)
+            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
 def canon(key: str, v):
@@ -573,6 +573,51 @@ def set_chat_id(cfg_path: str, state_dir: Path, chat_id: int) -> None:
         raise SettingsError(["Chat id must not be negative."])
     base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
     _store(new_ov, base, "telegram.chat_id", chat_id)
+    _commit(cfg_path, state_dir, new_ov)
+
+
+def save_slack(cfg_path: str, state_dir: Path, form: Form) -> None:
+    base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
+    channel, user = (form.get("slack.channel") or "").strip(), (form.get("slack.user_id") or "").strip()
+    if channel and not re.fullmatch(r"[CGD][A-Z0-9]{6,20}", channel):
+        raise SettingsError(["The channel must be a Slack id such as C0123ABCDEF (empty turns Slack off)."])
+    if user and not re.fullmatch(r"[UW][A-Z0-9]{6,20}", user):
+        raise SettingsError(["Your user id must be a Slack member id such as U0123ABCDEF (empty turns Slack off)."])
+    verbosity = form.get("slack.verbosity", "")
+    if verbosity not in ("quiet", "normal", "verbose"):
+        raise SettingsError(["Choose quiet, normal or verbose."])
+    ui_url = (form.get("slack.ui_url") or "").strip()
+    if ui_url and not re.fullmatch(r"https?://[^\s\"'<>|]{1,200}", ui_url):
+        raise SettingsError(["The address of this UI must be an http(s) URL (or empty)."])
+    _store(new_ov, base, "slack.channel", channel)
+    _store(new_ov, base, "slack.user_id", user)
+    if ui_url or "ui_url" in base.get("slack", {}):
+        _store(new_ov, base, "slack.ui_url", ui_url.rstrip("/"))
+    else:
+        del_in(new_ov, "slack.ui_url")
+    _store(new_ov, base, "slack.verbosity", verbosity)
+    if form.get("slack.mode") == "events":
+        chosen = [e for e in form.getall("slack.events") if e in ALL_EVENTS]
+        if not chosen:
+            raise SettingsError(["Pick at least one event, or choose the verbosity level instead."])
+        _store(new_ov, base, "slack.events", sorted(chosen))
+    elif "events" in base.get("slack", {}):
+        set_in(new_ov, "slack.events", "level")
+    else:
+        del_in(new_ov, "slack.events")
+    _commit(cfg_path, state_dir, new_ov)
+
+
+def set_slack_user(cfg_path: str, state_dir: Path, user_id: str, channel: str = "") -> None:
+    """Obey this member, and send to the channel they typed /factory in (when one was recorded)."""
+    if not re.fullmatch(r"[UW][A-Z0-9]{6,20}", user_id):
+        raise SettingsError(["That is not a Slack member id."])
+    if channel and not re.fullmatch(r"[CGD][A-Z0-9]{6,20}", channel):
+        raise SettingsError(["That is not a Slack channel id."])
+    base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
+    _store(new_ov, base, "slack.user_id", user_id)
+    if channel:
+        _store(new_ov, base, "slack.channel", channel)
     _commit(cfg_path, state_dir, new_ov)
 
 

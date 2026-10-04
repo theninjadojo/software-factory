@@ -21,15 +21,18 @@ from .pool import Pool, key as jobkey
 from .roles import MARKER, STAGE_TO_ROLE
 from .router import behind, decide, pick_stage
 from .sanitize import sanitize_markdown
+from .slack import Slack
 from .telegram import Telegram
 
 log = logging.getLogger("factory")
 WORKING, DONE, FAILED = "factory:working", "factory:pr-open", "factory:failed"
 tg: Telegram | None = None
+sl: Slack | None = None                    # Slack works alongside Telegram: an alert goes to each channel whose verbosity allows it
 ev = None                                  # sqlite connection for runs/events/status when ev_path is not set (tests)
 ev_path: str | None = None                 # set in main(): each thread opens its own connection to this database
 step_gh = None                             # GitHub client used to mirror pipeline steps as sub-issues; None = off
 alert_filter = lambda event: True      # set from config in main(); read-only afterwards, so safe from every thread
+slack_filter = lambda event: True      # the same for Slack
 pool = Pool()                              # inline (one job at a time, in the caller's thread); main() starts worker threads
 queued: list[dict] = []                    # tickets the last poll left waiting for a free slot (or, with a reason, blocked), for the UI
 held: dict[tuple[str, int], tuple] = {}    # poll thread only: (repo, ticket) -> its open blockers, to report each change once
@@ -102,9 +105,9 @@ def stages_done(cfg: Config, labels: list[str]) -> list[str]:
 
 
 def picked(route, c) -> str:
-    """Human-readable record of what was chosen and by whom, for Telegram."""
+    """Human-readable record of what was chosen and by whom, for the chat message."""
     how = (f"classified {c.kind}/{c.complexity}, confidence {c.confidence:.2f}, by {c.source}" if c
-           else "approved via Telegram (default medium route)")
+           else "approved from chat (default medium route)")
     return f"Agent: {route.model}, effort {route.effort} ({route.harness})\n{how}"
 
 
@@ -114,7 +117,7 @@ def human_buttons(cfg: Config, repo: str, num: int, c, done=()) -> list:
     role = next((r for r in cfg.roles if r.name == STAGE_TO_ROLE.get(c.stage or "") and r.name not in done), None)
     out = ([(f"Run {role.name}", f"stage:{role.name}|{repo}|{num}")] if role else [])
     out += [("Build anyway (medium)" if role else "Run (medium)", f"run|{repo}|{num}"), ("Skip", f"skip|{repo}|{num}")]
-    return [b for b in out if len(b[1].encode()) <= 64]          # Telegram rejects callback data over 64 bytes
+    return [b for b in out if len(b[1].encode()) <= 64]          # Telegram rejects callback data over 64 bytes (Slack allows more, but one message serves both)
 
 
 def suggestion(c) -> str:
@@ -122,11 +125,13 @@ def suggestion(c) -> str:
 
 
 def alert(text: str, buttons=None, event: str = "info") -> None:
-    """Send a Telegram message if this event category is enabled by the configured verbosity."""
-    sent = bool(tg and alert_filter(event))
-    if sent:
-        tg.send(text, buttons)
-    emit(f"alert:{event}", text + ("" if sent else "  [not sent to Telegram]"))
+    """Send a chat message (Telegram and/or Slack) to each channel whose configured verbosity enables this event category."""
+    sent = False
+    for chat, allowed in ((tg, alert_filter), (sl, slack_filter)):
+        if chat and allowed(event):
+            chat.send(text, buttons)
+            sent = True
+    emit(f"alert:{event}", text + ("" if sent else "  [not sent]"))
 
 
 def _ev():
@@ -501,36 +506,36 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
 
 
 def question_message(cfg: Config, repo: str, num: int, pending: list) -> tuple[str, list]:
-    """The Telegram message for questions that need a person: Accept recommendations, Open in UI (when its address is
+    """The chat message for questions that need a person: Accept recommendations, Open in UI (when its address is
     configured), and one button per option only when there are one or two questions. A button's data is parsed strictly when
-    it comes back (telegram.parse_callback) and then checked against the questions on the ticket (questions.record)."""
+    it comes back (telegram.parse_callback, shared by Slack) and then checked against the questions on the ticket (questions.record)."""
     text = "Questions for you:\n" + "\n".join(
         f"{q.id}. {q.text[:300]}\n  recommended: {q.label(q.recommended)[:120]} ({q.reason[:150]})" for q in pending)
     rows = [[("Accept recommendations", f"accept|{repo}|{num}")]]
-    if cfg.telegram_ui_url:
+    if (ui_url := cfg.telegram_ui_url or cfg.slack_ui_url):
         from urllib.parse import urlencode
-        rows[0].append(("Open in UI", "url:" + cfg.telegram_ui_url + "/tickets?" + urlencode({"repo": repo, "q": f"#{num}"})))
+        rows[0].append(("Open in UI", "url:" + ui_url + "/tickets?" + urlencode({"repo": repo, "q": f"#{num}"})))
     if len(pending) <= 2:
         rows += [[(f"{q.id}: {lab[:40]}", f"q:{q.id}:{oid}|{repo}|{num}") for oid, lab in q.options] for q in pending]
     return text, [[b for b in row if b[1].startswith("url:") or len(b[1].encode()) <= 64] for row in rows]
 
 
-def answer_from_telegram(cfg: Config, gh: GitHub, conn, repo: str, num: int, action: str) -> None:
-    """Accept recommendations, or one option of one question, chosen by the allowlisted Telegram user. Recorded like an
+def answer_from_chat(cfg: Config, gh: GitHub, conn, repo: str, num: int, action: str) -> None:
+    """Accept recommendations, or one option of one question, chosen by the allowlisted Telegram or Slack user. Recorded like an
     answer from the UI; when nothing needing a person is left, the auto label continues the ticket through the normal gates."""
     try:
         if action == "accept":
-            stage, done = Q.record(gh, repo, num, None, None, "Telegram", accept_all=True)
+            stage, done = Q.record(gh, repo, num, None, None, "chat", accept_all=True)
         else:
             _, qid, oid = action.split(":")
-            stage, done = Q.record(gh, repo, num, None, {qid: ("option", oid)}, "Telegram")
+            stage, done = Q.record(gh, repo, num, None, {qid: ("option", oid)}, "chat")
     except Q.Refused as e:
         alert(f"Not recorded for {repo}#{num}: {e}", event="needs_human")
         return
     if done:
         dbm.set_questions(conn, repo, num, stage, 0)
         gh.add_labels(repo, num, [cfg.auto_label])
-    emit("answers", f"answers to the {stage}'s questions recorded from Telegram", repo, num)
+    emit("answers", f"answers to the {stage}'s questions recorded from chat", repo, num)
     alert(f"Answers recorded for {repo}#{num}." + (" Continuing with the next stage." if done else " Other questions still need you."),
           event="needs_human")
 
@@ -688,7 +693,7 @@ def resolve_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, lab
             requeue_rate_limited(cfg, gh, repo, num, label, "conflicts")          # the attempt is not counted
             return "rate-limited"
         pushed, links = res.status == "pr", "\n".join(u for _, _, _, u, _ in prs)
-        # Our own validation messages are safe to show; an agent's log tail (in failed / no-change) only goes to Telegram and the UI.
+        # Our own validation messages are safe to show; an agent's log tail (in failed / no-change) only goes to the chat and the UI.
         why = res.detail[:300] if res.status in ("pr", "needs-person", "rejected") else res.status
         for r, n, base, url, attempts in prs:
             if pushed:                                   # GitHub re-checks the new head; a conflict that remains is reported again
@@ -713,7 +718,7 @@ def resolve_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, lab
 
 
 def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
-    """Run/Skip decisions made by the allowlisted Telegram chat."""
+    """Run/Skip decisions made by the allowlisted Telegram chat or Slack user."""
     if pause.paused(Path(cfg.db_path).parent):
         return
     for repo, num, action in dbm.approvals(conn):
@@ -730,7 +735,7 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
             if issue["state"] != "open" or "pull_request" in issue:
                 continue
             if action == "accept" or action.startswith("q:"):
-                answer_from_telegram(cfg, gh, conn, repo, num, action)
+                answer_from_chat(cfg, gh, conn, repo, num, action)
                 continue
             role = next((r for r in cfg.roles if action == f"stage:{r.name}"), None)
             if action != "run" and role is None:
@@ -742,7 +747,7 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
                     res = dispatch_stage(cfg, gh, classifier, repo, issue, role, conn=db)
                 else:
                     res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=db)
-                dbm.record(db, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved via telegram; {res.detail}; {res.pr_url or ''}")
+                dbm.record(db, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved from chat; {res.detail}; {res.pr_url or ''}")
             start(cfg, conn, repo, num, role.name if role else "build", approved, gh)
         except Exception:
             log.exception("approval failed for %s#%s", repo, num)
@@ -1071,8 +1076,9 @@ def main() -> None:
     if cfg.classifier_backend == "jev" and cfg.openrouter_key_file and Path(cfg.openrouter_key_file).exists():
         clf = JevClassifier(Path(cfg.openrouter_key_file).read_text().strip(), cfg.jev_model, kind_aliases=cfg.kind_aliases)
     log.info("classifier: %s", type(clf).__name__)
-    global alert_filter
+    global alert_filter, slack_filter
     alert_filter = lambda event: event_enabled(cfg.telegram_verbosity, event, cfg.telegram_events)
+    slack_filter = lambda event: event_enabled(cfg.slack_verbosity, event, cfg.slack_events)
     global ev_path, pool, step_gh
     ev_path = cfg.db_path
     conn, gh = dbm.local(cfg.db_path), tracker.Hub(token, cfg.db_path)     # the poll thread's connection; every worker opens its own
@@ -1087,13 +1093,22 @@ def main() -> None:
         if restored:
             emit("restore", f"restored from a backup made by factory {restored.get('factory_version') or '?'}; the factory is paused until you resume it "
                             f"(the previous database is state/{restored['previous']})")
-    global tg
+    global tg, sl
     tf = cfg.telegram_token_file
     if tf and cfg.telegram_chat_id and Path(tf).exists() and not args.once:
         tg = Telegram(Path(tf).read_text().strip(), cfg.telegram_chat_id, str(Path(cfg.db_path).parent),
                       cfg.db_path, cfg.repos)
         tg.start()
-        alert(f"Factory started ({'dry-run' if cfg.dry_run else 'LIVE'}). {len(cfg.repos)} repo(s). /help", event="startup")
+    sb, sa = cfg.slack_bot_token_file, cfg.slack_app_token_file
+    if sb and sa and Path(sb).exists() and Path(sa).exists() and not args.once:
+        # Connected as soon as both tokens are saved, so /factory can be typed while setting up and the UI can offer 'use this';
+        # nobody is obeyed and nothing is sent until the channel and the member id are set.
+        listener = Slack(Path(sb).read_text().strip(), Path(sa).read_text().strip(), cfg.slack_channel, cfg.slack_user_id,
+                         str(Path(cfg.db_path).parent), cfg.db_path, cfg.repos)
+        listener.start()
+        sl = listener if cfg.slack_channel and cfg.slack_user_id else None
+    if (tg or sl) and not args.once:
+        alert(f"Factory started ({'dry-run' if cfg.dry_run else 'LIVE'}). {len(cfg.repos)} repo(s).", event="startup")
     if (warning := resource_warning(cfg.runner)) and not args.once:
         log.warning("%s", warning)
         alert(warning, event="startup")

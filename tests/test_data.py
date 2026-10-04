@@ -145,7 +145,7 @@ class Instrumentation(unittest.TestCase):
             m.alert("quiet please", event="started")
         e = dbm.recent_events(self.conn)[0]
         self.assertEqual(e["kind"], "alert:started")
-        self.assertIn("[not sent to Telegram]", e["message"])
+        self.assertIn("[not sent]", e["message"])
 
     def test_observability_failures_never_break_the_orchestrator(self):
         with mock.patch.object(dbm, "add_event", side_effect=RuntimeError("db locked")):

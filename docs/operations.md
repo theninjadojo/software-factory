@@ -6,7 +6,7 @@
 /srv/factory/
   app/        the code (this repo's factory/, tests/, sandbox/, config.example.toml)
   config.toml your configuration
-  secrets/    0600 files: github_token, claude.env, telegram_token, openrouter_key
+  secrets/    0600 files: github_token, claude.env, telegram_token, slack_bot_token, slack_app_token, openrouter_key
   state/      factory.db, lock, PAUSED / pause_until
   work/       per-task workspaces (cleared on startup)
   run/        proxy.sock
@@ -30,7 +30,7 @@ Run `systemctl --user ...` as that user with `XDG_RUNTIME_DIR=/run/user/<uid>` s
 orchestrator is hung or dead. Install and start it like the other units:
 `systemctl --user enable --now factory-health.timer`.
 
-It sends a Telegram alert (event `health`, shown even at `quiet` verbosity) when a check turns bad or worse, repeats it every
+It sends a Telegram and/or Slack alert (event `health`, shown even at `quiet` verbosity) when a check turns bad or worse, repeats it every
 `repeat_hours` while the problem lasts, and says so once when it recovers. Checks:
 
 | Check | Warns / critical when |
@@ -87,7 +87,7 @@ installs used). For the Docker install, `FACTORY_WORKERS=1 ./scripts/setup.sh` d
 ## Day to day
 
 - Status: `python3 -m factory.ctl status` (mode, paused?, last decisions). Pause/resume: `ctl pause|resume`, or `/pause`
-  and `/resume` on Telegram. A pause stops new work; it does not interrupt a running task.
+  and `/resume` on Telegram, or `/factory pause` and `/factory resume` on Slack. A pause stops new work; it does not interrupt a running task.
 - Fallback models: a route, role or `[review]` may list `fallback_models` (up to 3, same harness and effort). When the model hits a
   limit or a 5xx/overloaded API error, the next model is tried in a fresh run and a `fallback` alert is sent. Only the admin config
   sets the list; ticket text and the classifier cannot.

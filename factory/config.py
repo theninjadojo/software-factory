@@ -405,6 +405,13 @@ class Config:
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
     telegram_ui_url: str | None = None          # the admin UI's address, for an "Open in UI" button on open-question messages
+    slack_bot_token_file: str | None = None     # xoxb- token: posts messages
+    slack_app_token_file: str | None = None     # xapp- token: opens the Socket Mode connection that carries button clicks and /factory
+    slack_channel: str | None = None            # channel or DM id (C..., G..., D...) alerts go to and buttons are accepted from
+    slack_user_id: str | None = None            # the only Slack user (U... / W...) the factory obeys
+    slack_verbosity: str = "normal"
+    slack_events: tuple[str, ...] | None = None
+    slack_ui_url: str | None = None
     github_poll_seconds: int = 0                # how often GitHub is read (0: every poll); local tickets are handled every poll
     local_enabled: bool = False                 # the local ticket tracker and the GitHub import
     kind_aliases: dict = field(default_factory=lambda: dict(KIND_ALIASES))   # label -> kind (bug/feature/docs/chore/question)
@@ -569,21 +576,39 @@ def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "Rev
             raise ValueError(f"{where} uses the harness {harness!r}, which does not exist or is not enabled")
 
 
-def _verbosity(v: str) -> str:
+def _verbosity(v: str, section: str = "telegram") -> str:
     from .events import LEVELS
     if v not in LEVELS:
-        raise ValueError(f"telegram.verbosity must be one of {sorted(LEVELS)}, got {v!r}")
+        raise ValueError(f"{section}.verbosity must be one of {sorted(LEVELS)}, got {v!r}")
     return v
 
 
-def _events(v):
+def _events(v, section: str = "telegram"):
     from .events import ALL_EVENTS
     if v is None or v == "level":
         return None
     unknown = set(v) - ALL_EVENTS
     if unknown:
-        raise ValueError(f"unknown telegram events: {sorted(unknown)}")
+        raise ValueError(f"unknown {section} events: {sorted(unknown)}")
     return tuple(v)
+
+
+def _slack_secret(raw: dict, key: str, github_token_file, name: str):
+    """Where a Slack token is kept: as configured, else next to the GitHub token, so an install made before Slack existed can
+    still save the tokens from the UI (Slack stays off until the channel and user are set)."""
+    v = raw.get("slack", {}).get(key)
+    if v or not github_token_file:
+        return v
+    return str(Path(github_token_file).parent / name)
+
+
+def _slack_id(v, kinds: str, what: str):
+    """A Slack id: an upper-case letter from `kinds`, then letters and digits (U0123ABCD, C0123ABCD). None/'' means unset."""
+    if not v:
+        return None
+    if not isinstance(v, str) or not re.fullmatch(rf"[{kinds}][A-Z0-9]{{6,20}}", v):
+        raise ValueError(f"slack.{what} must be a Slack id such as {'U' if what == 'user_id' else 'C'}0123ABCDEF, got {v!r}")
+    return v
 
 
 def _github_poll(gh: dict, default: int) -> int:
@@ -602,11 +627,11 @@ def _local_enabled(loc: dict) -> bool:
     return v
 
 
-def _ui_url(v):
+def _ui_url(v, section: str = "telegram"):
     if not v:
         return None
     if not isinstance(v, str) or not re.fullmatch(r"https?://[^\s\"'<>|]{1,200}", v):
-        raise ValueError("telegram.ui_url must be an http(s) URL")
+        raise ValueError(f"{section}.ui_url must be an http(s) URL")
     return v.rstrip("/")
 
 
@@ -918,6 +943,13 @@ def parse(raw: dict) -> Config:
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),
         telegram_ui_url=_ui_url(raw.get("telegram", {}).get("ui_url")),
+        slack_bot_token_file=_slack_secret(raw, "bot_token_file", gh.get("token_file"), "slack_bot_token"),
+        slack_app_token_file=_slack_secret(raw, "app_token_file", gh.get("token_file"), "slack_app_token"),
+        slack_channel=_slack_id(raw.get("slack", {}).get("channel"), "CGD", "channel"),
+        slack_user_id=_slack_id(raw.get("slack", {}).get("user_id"), "UW", "user_id"),
+        slack_verbosity=_verbosity(raw.get("slack", {}).get("verbosity", "normal"), "slack"),
+        slack_events=_events(raw.get("slack", {}).get("events"), "slack"),
+        slack_ui_url=_ui_url(raw.get("slack", {}).get("ui_url"), "slack"),
         github_poll_seconds=_github_poll(gh, int(g["poll_seconds"])),
         local_enabled=_local_enabled(raw.get("local", {})),
         kind_aliases=_aliases(raw.get("classifier", {}).get("kind_aliases")),

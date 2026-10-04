@@ -1,4 +1,4 @@
-"""Routes that show or change settings, credentials and Telegram. All POSTs arrive here already CSRF-checked."""
+"""Routes that show or change settings, credentials, Telegram and Slack. All POSTs arrive here already CSRF-checked."""
 import json
 import re
 import shutil
@@ -19,6 +19,8 @@ FLASH = {
     "saved": "Saved. The factory applies it at its next idle moment (never mid-task).",
     "secret": "Saved. The factory restarts when it is next idle so it picks the credential up.",
     "id": "Chat id saved. Press 'Send a test message' to confirm.",
+    "slack_id": "Saved. Slack turns on when the factory is next idle; then press 'Send a test message' to confirm.",
+    "slack_token": "Token saved. The factory connects to Slack when it is next idle (it restarts to pick the token up).",
     "run": "Run requested. The factory runs it within a poll (up to a minute) and opens a real ticket, whatever dry-run says.",
     "sched_saved": "Schedule saved. The factory applies it at its next idle moment (never mid-task).",
     "sched_deleted": "Schedule deleted. Snapshots already on disk were kept.",
@@ -42,12 +44,13 @@ def _files(h):
     return base, deep_merge(base, S.overrides_raw(h.app.config_path))
 
 
-def _unknown_senders(h) -> list:
+def _status_json(h, key: str, default: str = "[]"):
+    """A JSON value the orchestrator keeps in the status table (people who used a chat app, the Slack connection)."""
     db = h.app.ro_db()
     if db is None:
-        return []
+        return json.loads(default)
     try:
-        return json.loads((dbm.get_status(db).get("telegram_unknown_senders") or {}).get("value", "[]"))
+        return json.loads((dbm.get_status(db).get(key) or {}).get("value", default))
     finally:
         db.close()
 
@@ -140,6 +143,9 @@ def credentials_test(h, form, csrf: str) -> None:
     if name == "openrouter":
         r = I.check_openrouter(secret, cfg.jev_model)
         return _send_page(h, 200, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
+    if name in ("slack_bot", "slack_app"):
+        r = I.slack_check(secret) if name == "slack_bot" else I.slack_app_check(secret)
+        return _send_page(h, 200, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
     _send_page(h, 400, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, "There is no test for that credential.", "bad")
 
 
@@ -171,7 +177,7 @@ def harnesses_credential(h, form, csrf: str) -> None:
 # ------------------------------------------------------------------ telegram
 def _telegram(h, csrf: str, flash=None, kind="ok", status: int = 200, unknown=None, result: str = "") -> None:
     _, eff = _files(h)
-    _send_page(h, status, "Telegram", forms.telegram_page(h.app.cfg(), eff, csrf, unknown if unknown is not None else _unknown_senders(h), result), "/telegram", csrf, flash, kind)
+    _send_page(h, status, "Telegram", forms.telegram_page(h.app.cfg(), eff, csrf, unknown if unknown is not None else _status_json(h, "telegram_unknown_senders"), result), "/telegram", csrf, flash, kind)
 
 
 def telegram_get(h, q: dict, csrf: str) -> None:
@@ -192,7 +198,7 @@ def telegram_detect(h, form, csrf: str) -> None:
         return _telegram(h, csrf, "Save the bot token on the Credentials page first.", "bad", 400)
     found = I.telegram_senders(token)
     known = {u["id"] for u in found}
-    senders = found + [u for u in _unknown_senders(h) if u["id"] not in known]
+    senders = found + [u for u in _status_json(h, "telegram_unknown_senders") if u["id"] not in known]
     msg = ("Found the account(s) below. Pick yours." if senders else
            "No messages yet. Send /start to your bot in Telegram, then press Find again. (If the factory is already using Telegram, "
            "people who message the bot are listed here once they do.)")
@@ -214,6 +220,63 @@ def telegram_test(h, form, csrf: str) -> None:
         return _telegram(h, csrf, "Set the bot token and your chat id first.", "bad", 400)
     r = I.telegram_send(token, cfg.telegram_chat_id, "Test message from the Shikumi UI. Telegram is set up correctly.")
     _telegram(h, csrf, r["message"], "ok" if r["ok"] else "bad")
+
+
+# ------------------------------------------------------------------ slack
+def _slack(h, csrf: str, flash=None, kind="ok", status: int = 200) -> None:
+    _, eff = _files(h)
+    page = forms.slack_page(h.app.cfg(), eff, csrf, _status_json(h, "slack_unknown_senders"), _status_json(h, "slack_connection", "null"))
+    _send_page(h, status, "Slack", page, "/slack", csrf, flash, kind)
+
+
+def slack_get(h, q: dict, csrf: str) -> None:
+    _slack(h, csrf, FLASH.get(q.get("ok", "")))
+
+
+def slack_save(h, form, csrf: str) -> None:
+    try:
+        S.save_slack(h.app.config_path, h.app.state_dir(), form)
+    except S.SettingsError as e:
+        return _slack(h, csrf, " · ".join(e.messages), "bad", 422)
+    h._redirect("/slack?ok=saved")
+
+
+def slack_token(h, form, csrf: str) -> None:
+    name = form.get("name", "")
+    if name not in I.SLACK_PREFIX:
+        return _slack(h, csrf, "Unknown token.", "bad", 400)
+    try:
+        I.save_secret(h.app.cfg(), name, form.get("value", ""))
+    except ValueError as e:
+        return _slack(h, csrf, str(e), "bad", 400)
+    S.request_restart(h.app.state_dir())
+    h._redirect("/slack?ok=slack_token")
+
+
+def slack_check(h, form, csrf: str) -> None:
+    name = form.get("name", "")
+    secret = I.read_secret(h.app.cfg(), name) if name in I.SLACK_PREFIX else None
+    if not secret:
+        return _slack(h, csrf, "Save that token first.", "bad", 400)
+    r = I.slack_check(secret) if name == "slack_bot" else I.slack_app_check(secret)
+    _slack(h, csrf, r["message"], "ok" if r["ok"] else "bad")
+
+
+def slack_use(h, form, csrf: str) -> None:
+    try:
+        S.set_slack_user(h.app.config_path, h.app.state_dir(), form.get("user_id", ""), form.get("channel", ""))
+    except S.SettingsError:
+        return _slack(h, csrf, "That is not a valid member or channel id.", "bad", 400)
+    h._redirect("/slack?ok=slack_id")
+
+
+def slack_test(h, form, csrf: str) -> None:
+    cfg = h.app.cfg()
+    token = I.read_secret(cfg, "slack_bot")
+    if not token or not cfg.slack_channel:
+        return _slack(h, csrf, "Set the bot token and the channel id first.", "bad", 400)
+    r = I.slack_send(token, cfg.slack_channel, "Test message from the Shikumi UI. Slack is set up correctly.")
+    _slack(h, csrf, r["message"], "ok" if r["ok"] else "bad")
 
 
 # ------------------------------------------------------------------ verification workers
@@ -407,11 +470,11 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
     h._redirect("/backup?ok=restore")
 
 
-GET = {"/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
+GET = {"/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/review": RV.board_review_get}
 POST = {"/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
-        "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
+        "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
         "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/local/comment": LT.comment, "/tickets/local/edit": LT.edit, "/tickets/local/state": LT.set_state, "/tickets/import": L.import_issues, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
         "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/save": SB.save, "/screens/delete": SB.delete, "/screens/issue": RV.board_issue}
