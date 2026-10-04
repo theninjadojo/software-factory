@@ -8,15 +8,20 @@
   if (!root || !area) return;
   var meta = JSON.parse(root.getAttribute("data-meta"));
   var svg = root.querySelector(".fe-svg"), list = root.querySelector(".fe-problems"), canvas = root.querySelector(".fe-canvas");
-  var tray = root.querySelector(".fe-tray-list");
+  var tray = root.querySelector(".fe-tray-list"), checklist = root.querySelector(".fe-check");
+  var FREE = {};
+  (meta.free || []).forEach(function (k) { FREE[k] = 1; });
+  var RAIL = {};
+  (meta.tracks || []).forEach(function (t) { RAIL[t[0] + ">" + t[1]] = 1; });
   var artSrc = root.querySelector(".fe-art"), pics = {}, zoomOut = root.querySelector(".fe-zoomval");
   var hopSel = root.querySelector(".fe-hop"), dirSel = root.querySelector(".fe-dir");
   var G = meta.grid, NS = "http://www.w3.org/2000/svg";
   var doc = parse(area.value) || clone(meta["default"]);
+  if (!doc.tracks) doc.tracks = {};
   if (!doc.districts) doc.districts = {};
   var past = [], future = [], tool = "move", drawing = null, drag = null, pan = null, ugFrom = null, focused = null, focusedDist = null;
-  var link = null, slide = null, carryIn = null, carried = false, note = "";
-  var zoom = 1, AREAS = {mainland: 1, sea: 1, airfield: 1, yard: 1};
+  var link = null, slide = null, carryIn = null, carried = false, note = "", selTrack = null;
+  var zoom = 1, AREAS = {mainland: 1, sea: 1, airfield: 1, outside: 1};
   var GROUND = {mainland: "ap-land", sea: "sh-sea", airfield: "ap-field"};    // what fills a resized area round its picture
   var details = document.querySelector(".fe-data");
   if (details) details.removeAttribute("open");
@@ -116,9 +121,11 @@
     var out = [], bad = {}, ids = Object.keys(meta.nodes), i, j;
     for (i = 0; i < ids.length; i++) {
       var a = box(ids[i]);
-      if (!a) { out.push("Missing: " + label(ids[i]) + "."); continue; }
+      if (!a) { if (!meta.nodes[ids[i]].optional) out.push("Missing: " + label(ids[i]) + "."); continue; }
       if (a[0] < 0 || a[1] < 0 || a[0] + a[2] > meta.w || a[1] + a[3] > meta.h) out.push(label(ids[i]) + " is outside the floor.");
+      if (FREE[ids[i]]) continue;
       for (j = i + 1; j < ids.length; j++) {
+        if (FREE[ids[j]]) continue;
         var b = box(ids[j]);
         if (b && a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]) out.push(label(ids[i]) + " overlaps " + label(ids[j]) + ".");
       }
@@ -131,16 +138,57 @@
       if (!msg) {
         var cs = cells(pts);
         for (var k = 0; k < cs.length && !msg; k++)
-          for (var n = 0; n < ids.length && !msg; n++) { var bx = box(ids[n]); if (bx && inside(cs[k], bx)) msg = name + " runs through " + label(ids[n]) + "."; }
+          for (var n = 0; n < ids.length && !msg; n++) { var bx = !FREE[ids[n]] && box(ids[n]); if (bx && inside(cs[k], bx)) msg = name + " runs through " + label(ids[n]) + "."; }
       }
       if (msg) { out.push(msg); bad[id] = 1; }
+    });
+    Object.keys(doc.tracks).forEach(function (id) {
+      var ab = id.split(">"), pts = doc.tracks[id], name = "The track from " + label(ab[0]) + " to " + label(ab[1]), ba = box(ab[0]), bb = box(ab[1]), msg = "";
+      if (!RAIL[id]) msg = "Track cannot run from " + label(ab[0]) + " to " + label(ab[1]) + ".";
+      else if (!ba || !bb) msg = name + " needs both on the floor.";
+      else if (!near(pts[0], ba)) msg = name + " must start beside " + label(ab[0]) + ".";
+      else if (!near(pts[pts.length - 1], bb)) msg = name + " must end beside " + label(ab[1]) + ".";
+      else {
+        var cs = cells(pts);
+        for (var k = 0; k < cs.length && !msg; k++)
+          for (var n = 0; n < ids.length && !msg; n++) { var bx = !FREE[ids[n]] && box(ids[n]); if (bx && inside(cs[k], bx)) msg = name + " runs through " + label(ids[n]) + "."; }
+      }
+      if (msg) { out.push(msg); bad["t:" + id] = 1; }
+    });
+    var lp = loops();
+    (meta.workers || []).forEach(function (w) {
+      if (!lp[w]) out.push("No track loop for " + label(w) + ": lay track from the yard to it, from it to the Train station, and from the Train station back to the yard.");
     });
     doc.pieces.forEach(function (p) {
       if (pieceOk(p, doc.belts)) return;
       out.push(p.kind === "underground" ? "An underground belt at " + p.from[0] + ", " + p.from[1] + " is not on one straight run of a belt, its ends 2 to " +
                (meta.under + 1) + " cells apart." : "The " + p.kind + " at " + p.at[0] + ", " + p.at[1] + " is not on a belt.");
     });
-    return {problems: out, bad: bad};
+    return {problems: out, bad: bad, loops: lp};
+  }
+  function near(p, b) {
+    return (b[0] <= p[0] && p[0] <= b[0] + b[2] && (p[1] === b[1] - 1 || p[1] === b[1] + b[3] + 1)) ||
+           (b[1] <= p[1] && p[1] <= b[1] + b[3] && (p[0] === b[0] - 1 || p[0] === b[0] + b[2] + 1));
+  }
+  function reach(a, b) {
+    // through junctions only, along the track laid (as the server checks a worker's loop)
+    var seen = {}, todo = [a];
+    seen[a] = 1;
+    while (todo.length) {
+      var n = todo.pop(), ks = Object.keys(doc.tracks);
+      for (var i = 0; i < ks.length; i++) {
+        var ab = ks[i].split(">");
+        if (ab[0] !== n || !box(ab[1]) || !box(ab[0])) continue;
+        if (ab[1] === b) return true;
+        if (ab[1].indexOf("junction:") === 0 && !seen[ab[1]]) { seen[ab[1]] = 1; todo.push(ab[1]); }
+      }
+    }
+    return false;
+  }
+  function loops() {
+    var out = {}, home = reach("depot", "yard");
+    (meta.workers || []).forEach(function (w) { out[w] = home && reach("yard", w) && reach(w, "depot"); });
+    return out;
   }
 
   // ---- drawing the plan
@@ -193,6 +241,7 @@
     var xs = [], ys = [];
     Object.keys(meta.nodes).forEach(function (id) { var b = box(id); if (b) { xs.push(b[0], b[0] + b[2]); ys.push(b[1], b[1] + b[3]); } });
     Object.keys(doc.belts).forEach(function (k) { (doc.belts[k] || []).forEach(function (p) { xs.push(p[0]); ys.push(p[1]); }); });
+    Object.keys(doc.tracks || {}).forEach(function (k) { (doc.tracks[k] || []).forEach(function (p) { xs.push(p[0]); ys.push(p[1]); }); });
     if (!xs.length) return setZoom(1);
     var x0 = Math.max(0, Math.min.apply(null, xs) - 1), y0 = Math.max(0, Math.min.apply(null, ys) - 1);
     var x1 = Math.max.apply(null, xs) + 1, y1 = Math.max.apply(null, ys) + 1;
@@ -204,12 +253,14 @@
     if (!doc.districts) doc.districts = {};
     if (!doc.walls) doc.walls = [];
     if (!doc.trees) doc.trees = [];
+    if (!doc.tracks) doc.tracks = {};
     area.value = JSON.stringify(doc);
     var res = check();
     while (list.firstChild) list.removeChild(list.firstChild);
     if (note) { var nl = document.createElement("li"); nl.className = "note"; nl.textContent = note; list.appendChild(nl); }
     res.problems.slice(0, 12).forEach(function (p) { var li = document.createElement("li"); li.textContent = p; list.appendChild(li); });
     drawTray();
+    drawChecklist(res);
     if (!res.problems.length) { var ok = document.createElement("li"); ok.className = "ok"; ok.textContent = "Every station is reachable on its route."; list.appendChild(ok); }
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     var W = meta.w * G, H = meta.h * G;
@@ -223,7 +274,7 @@
     Object.keys(meta.districts).forEach(function (name) {
       var d = dbox(name);
       if (!d) return;
-      var g = el("g", {"class": "fe-dist" + (name === focusedDist ? " sel" : ""), "data-district": name, tabindex: 0, role: "button",
+      var g = el("g", {"class": "fe-dist d-" + name.toLowerCase() + (name === focusedDist ? " sel" : ""), "data-district": name, tabindex: 0, role: "button",
                        "aria-label": "District " + name + ", at " + d.x + ", " + d.y + ", " + d.w + " by " + d.h}, svg);
       el("rect", {x: d.x * G, y: d.y * G, width: d.w * G, height: d.h * G, rx: 4}, g);
       el("text", {x: d.x * G + 6, y: d.y * G + 14}, g, name);
@@ -235,7 +286,30 @@
       el("circle", {"class": "fp-crown", cx: t[0] * G, cy: t[1] * G, r: 9}, g);
       el("circle", {"class": "fp-leaf", cx: t[0] * G - 3, cy: t[1] * G - 3, r: 4}, g);
     });
+    // the railway: a turnaround loop round each rail building, the track, and stubs into the junctions
+    Object.keys(meta.nodes).forEach(function (id) {
+      var b = box(id);
+      if (!b || !meta.nodes[id].rail || id.indexOf("junction:") === 0) return;
+      el("rect", {"class": "fe-ring", x: (b[0] - 1) * G, y: (b[1] - 1) * G, width: (b[2] + 2) * G, height: (b[3] + 2) * G, rx: G}, svg);
+    });
+    Object.keys(doc.tracks).forEach(function (id) {
+      var pts = doc.tracks[id];
+      if (!pts || pts.length < 2) return;
+      var g = el("g", {"class": "fe-track" + (res.bad["t:" + id] ? " bad" : "") + (id === selTrack ? " sel" : ""), "data-track": id}, svg);
+      var ab = id.split(">"), all = pts.slice();
+      [[ab[0], 0], [ab[1], 1]].forEach(function (e) {
+        var b = e[0].indexOf("junction:") === 0 && box(e[0]);
+        if (b) { var c = [b[0] + b[2] / 2, b[1] + b[3] / 2]; if (e[1]) all.push(c); else all.unshift(c); }
+      });
+      el("polyline", {points: poly(all), "class": "fe-bed"}, g);
+      el("polyline", {points: poly(all), "class": "fe-ties"}, g);
+    });
     Object.keys(meta.nodes).forEach(function (id) { if (!AREAS[id]) drawNode(id); });
+    if (!Object.keys(doc.nodes).length) {
+      var cx = (canvas.scrollLeft + canvas.clientWidth / 2) / zoom, cy = (canvas.scrollTop + canvas.clientHeight / 2) / zoom;
+      el("text", {"class": "fe-empty-h", x: cx, y: cy - 10}, svg, "An empty floor: start with Receiving");
+      el("text", {"class": "fe-empty", x: cx, y: cy + 16}, svg, "Drag it in from the parts tray, or use Start from the default.");
+    }
     Object.keys(doc.belts).forEach(function (id) {
       var pts = doc.belts[id];
       if (!pts || pts.length < 2) return;
@@ -258,7 +332,7 @@
       }
     });
     if (drawing) el("polyline", {points: poly(drawing), "class": (tool === "wall" ? "fp-wall" : "fe-belt") + " drawing"}, svg);
-    if (link && link.pts) el("polyline", {points: poly(link.pts), "class": "fe-belt drawing" + (link.to && !link.hop ? " bad" : "")}, svg);
+    if (link && link.pts) el("polyline", {points: poly(link.pts), "class": (link.rail ? "fe-track-draw" : "fe-belt drawing") + (link.to && !link.hop ? " bad" : "")}, svg);
     if (carryIn && carryIn.at) {
       var cm = meta.nodes[carryIn.id], cb = spot(carryIn.id, carryIn.at);
       el("rect", {"class": "fe-ghost", x: (cb[0] + cm.dx) * G, y: (cb[1] + cm.dy) * G, width: cm.w * G, height: cm.h * G, rx: 3}, svg);
@@ -269,7 +343,32 @@
   }
 
   // ---- the parts tray: every building of this factory, the ones not on the floor ready to be dragged in (or clicked in)
-  var GROUPS = ["Arrivals", "Stations", "Notifiers", "Power and workers", "Areas"];
+  var GROUPS = ["Arrivals", "Stations", "Notifiers", "Power", "Workers and rail", "Areas"];
+  function drawChecklist(res) {
+    // every hop of the route with its belt, and every worker's train loop: what is laid and what is still missing
+    if (!checklist) return;
+    while (checklist.firstChild) checklist.removeChild(checklist.firstChild);
+    var items = meta.hops.map(function (h) {
+      var id = h[0] + ">" + h[1];
+      return {text: h[2], ok: !!(doc.belts[id] && doc.belts[id].length >= 2 && !res.bad[id] && box(h[0]) && box(h[1]))};
+    }).concat((meta.workers || []).map(function (w) { return {text: "Train loop: the yard → " + label(w) + " → the Train station", ok: !!res.loops[w]}; }));
+    var done = items.filter(function (i) { return i.ok; }).length;
+    var h = document.createElement("h2");
+    h.textContent = "Every hop needs a belt" + ((meta.workers || []).length ? " or track" : "") + " ";
+    var n = document.createElement("span");
+    n.className = done === items.length ? "fe-count ok" : "fe-count";
+    n.textContent = done + " of " + items.length + " laid";
+    h.appendChild(n);
+    checklist.appendChild(h);
+    var ul = document.createElement("ul");
+    items.forEach(function (i) {
+      var li = document.createElement("li");
+      li.className = i.ok ? "ok" : "miss";
+      li.textContent = (i.ok ? "✓ " : "✗ ") + i.text;
+      ul.appendChild(li);
+    });
+    checklist.appendChild(ul);
+  }
   function drawTray() {
     if (!tray) return;
     while (tray.firstChild) tray.removeChild(tray.firstChild);
@@ -286,9 +385,10 @@
         b.className = "fe-part" + (on ? " placed" : "") + (meta.nodes[id].group === "Notifiers" ? " radio" : "");
         b.setAttribute("data-part", id);
         b.setAttribute("aria-label", on ? label(id) + ", on the floor" : "Place " + label(id));
-        if (on) b.setAttribute("aria-disabled", "true"); else left++;
+        if (on) b.setAttribute("aria-disabled", "true"); else if (!meta.nodes[id].optional) left++;
         b.textContent = label(id);
         if (on) { var t = document.createElement("small"); t.textContent = "On floor"; b.appendChild(t); }
+        else if (meta.nodes[id].optional) { var o = document.createElement("small"); o.className = "opt"; o.textContent = "Optional"; b.appendChild(o); }
         tray.appendChild(b);
       });
       if (g === "Notifiers") {
@@ -330,13 +430,14 @@
     draw();
   }
   function emptyFloor() {
-    return {version: meta["default"].version, grid: G, nodes: {}, belts: {}, pieces: [], districts: {}, walls: [], trees: []};
+    return {version: meta["default"].version, grid: G, nodes: {}, belts: {}, tracks: {}, pieces: [], districts: {}, walls: [], trees: []};
   }
   function erase(id) {
     // a building goes back to the tray, with the belts that reach it
     remember();
     delete doc.nodes[id];
     meta.hops.forEach(function (h) { if (h[0] === id || h[1] === id) delete doc.belts[h[0] + ">" + h[1]]; });
+    Object.keys(doc.tracks).forEach(function (k) { if (k.split(">").indexOf(id) >= 0) delete doc.tracks[k]; });
     doc.pieces = doc.pieces.filter(function (p) { return pieceOk(p, doc.belts); });
     grow();
     if (focused === id) focused = null;
@@ -354,11 +455,22 @@
     var b = box(id), mx = b[0] + Math.floor(b[2] / 2), my = b[1] + Math.floor(b[3] / 2);
     return [[b[0] + b[2] + 1, my], [b[0] - 1, my], [mx, b[1] - 1], [mx, b[1] + b[3] + 1]];
   }
-  function route(a, b) {
+  function trackPorts(id) {
+    // track leaves or reaches a rail building in the middle of a side (never the yard's top, where its feeder comes in; a worker
+    // only at its left and right)
+    var b = box(id), mx = b[0] + Math.floor(b[2] / 2), my = b[1] + Math.floor(b[3] / 2);
+    var out = [[b[0] + b[2] + 1, my], [b[0] - 1, my]];
+    if (id.indexOf("worker:") === 0) return out;                  // a worker's track comes in and goes out at its sides, clear of its neighbours
+    out.push([mx, b[1] + b[3] + 1]);
+    if (id !== "yard") out.push([mx, b[1] - 1]);
+    return out;
+  }
+  function route(a, b, rail) {
     // a belt from beside one building to beside another: the shortest straight, L or Z shaped line that cuts through no building
     var best = null, any = null, len = function (w) { var n = 0; for (var k = 1; k < w.length; k++) n += Math.abs(w[k][0] - w[k - 1][0]) + Math.abs(w[k][1] - w[k - 1][1]); return n + 2 * (w.length - 2); };
-    var to = Array.isArray(b) && typeof b[0] === "number" ? [b] : ports(b);
-    ports(a).forEach(function (s) {
+    var P = rail ? trackPorts : ports;
+    var to = Array.isArray(b) && typeof b[0] === "number" ? [b] : P(b);
+    P(a).forEach(function (s) {
       to.forEach(function (e) {
         var mx = Math.round((s[0] + e[0]) / 2), my = Math.round((s[1] + e[1]) / 2);
         [[s, e], [s, [e[0], s[1]], e], [s, [s[0], e[1]], e], [s, [mx, s[1]], [mx, e[1]], e], [s, [s[0], my], [e[0], my], e]].forEach(function (w) {
@@ -409,7 +521,7 @@
     return out;
   }
   function through(pts) {
-    var cs = cells(pts), ids = Object.keys(meta.nodes);
+    var cs = cells(pts), ids = Object.keys(meta.nodes).filter(function (id) { return !FREE[id]; });
     return cs.some(function (c) { return ids.some(function (id) { var b = box(id); return b && inside(c, b); }); });
   }
   function follow(pts, atEnd, dx, dy) {
@@ -461,6 +573,14 @@
       else if (moved[h[0]]) { doc.belts[id] = follow(pts, false, dx, dy); ends.push([id, false]); }
       else if (moved[h[1]]) { doc.belts[id] = follow(pts, true, dx, dy); ends.push([id, true]); }
       else doc.belts[id] = pts;
+    });
+    doc.tracks = {};
+    Object.keys(from.tracks || {}).forEach(function (id) {
+      var ab = id.split(">"), pts = from.tracks[id];
+      if (moved[ab[0]] && moved[ab[1]]) doc.tracks[id] = pts.map(function (q) { return [q[0] + dx, q[1] + dy]; });
+      else if (moved[ab[0]]) doc.tracks[id] = follow(pts, false, dx, dy);
+      else if (moved[ab[1]]) doc.tracks[id] = follow(pts, true, dx, dy);
+      else doc.tracks[id] = pts;
     });
     carry(from, shifted, dx, dy, ends);
     grow();
@@ -539,9 +659,18 @@
     if (e.button > 0) return;
     var p = point(e), t = e.target;
     var node = t.closest && t.closest("[data-node]"), dist = t.closest && t.closest("[data-district]");
-    var piece = t.closest && t.closest("[data-piece]"), hop = t.closest && t.closest("[data-hop]");
+    var piece = t.closest && t.closest("[data-piece]"), hop = t.closest && t.closest("[data-hop]"), trk = t.closest && t.closest("[data-track]");
     note = "";
     if (tool === "move") {
+      if (trk && !node) {
+        var tid = trk.getAttribute("data-track");
+        selTrack = tid;
+        slide = {track: tid, run: nearestRun(doc.tracks[tid], p), start: p, from: doc.tracks[tid], before: JSON.stringify(doc), id: e.pointerId};
+        if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        draw();
+        return;
+      }
       if (hop && !node) {
         // a belt: picked to draw again, and dragged sideways it slides
         var hid = hop.getAttribute("data-hop");
@@ -566,9 +695,9 @@
       return;
     }
     e.preventDefault();
-    if (tool === "belt" && !drawing && node && !AREAS[node.getAttribute("data-node")]) {
-      // drag from one building onto the next: the belt for that hop is laid round the buildings
-      link = {from: node.getAttribute("data-node"), id: e.pointerId, pts: null, to: null, hop: null};
+    if ((tool === "belt" || tool === "rail") && !drawing && node && !AREAS[node.getAttribute("data-node")]) {
+      // drag from one building onto the next: the belt for that hop (or, with Draw track, the track) is laid round the buildings
+      link = {from: node.getAttribute("data-node"), id: e.pointerId, pts: null, to: null, hop: null, rail: tool === "rail"};
       if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
       return;
     }
@@ -585,6 +714,7 @@
     }
     if (tool === "erase") {
       var wall = t.closest && t.closest("[data-wall]"), tree = t.closest && t.closest("[data-tree]");
+      if (!piece && !wall && !tree && trk) { remember(); delete doc.tracks[trk.getAttribute("data-track")]; return draw(); }
       if (!piece && !wall && !tree && hop) { remember(); delete doc.belts[hop.getAttribute("data-hop")]; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); return draw(); }
       if (!piece && !wall && !tree && node) return erase(node.getAttribute("data-node"));
       if (!piece && !wall && !tree) return;
@@ -618,14 +748,15 @@
     }
     if (slide && e.pointerId === slide.id) {
       var q = point(e), r = slide.from[slide.run], s2 = slide.from[slide.run + 1], d = r[1] === s2[1] ? q[1] - slide.start[1] : q[0] - slide.start[0];
-      doc.belts[slide.hop] = d ? slid(slide.from, slide.run, d) : slide.from;
+      var lines = slide.track ? doc.tracks : doc.belts;
+      lines[slide.track || slide.hop] = d ? slid(slide.from, slide.run, d) : slide.from;
       return draw();
     }
     if (link && e.pointerId === link.id) {
       var lp = point(e), over = nodeAt(lp);
       link.to = over && over !== link.from && !AREAS[over] ? over : null;
-      link.hop = link.to && meta.hops.some(function (h) { return h[0] === link.from && h[1] === link.to; }) ? link.from + ">" + link.to : null;
-      link.pts = route(link.from, link.to || lp);
+      link.hop = link.to && (link.rail ? RAIL[link.from + ">" + link.to] : meta.hops.some(function (h) { return h[0] === link.from && h[1] === link.to; })) ? link.from + ">" + link.to : null;
+      link.pts = route(link.from, link.to || lp, link.rail);
       return draw();
     }
     if (!drag || e.pointerId !== drag.id) return;
@@ -645,7 +776,10 @@
     if (link && e.pointerId === link.id) {
       var done = link;
       link = null;
-      if (done.hop && done.pts) { remember(); doc.belts[done.hop] = done.pts; hopSel.value = done.hop; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); }
+      if (done.hop && done.pts && done.rail) { remember(); doc.tracks[done.hop] = done.pts; selTrack = done.hop; }
+      else if (done.hop && done.pts) { remember(); doc.belts[done.hop] = done.pts; hopSel.value = done.hop; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); }
+      else if (done.to && done.rail) note = "Track cannot run from " + label(done.from) + " to " + label(done.to) + ": trains go from the yard to the workers, on to the Train station and back to the yard, through junctions.";
+      else if (done.to && RAIL[done.from + ">" + done.to]) note = "Between " + label(done.from) + " and " + label(done.to) + " trains run on track: use Draw track.";
       else if (done.to) note = "No hop from " + label(done.from) + " to " + label(done.to) + ": a belt carries tickets along the route, from the station a ticket leaves to the one it goes to.";
       return draw();
     }

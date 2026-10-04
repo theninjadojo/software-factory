@@ -158,8 +158,17 @@ def drag_to(pg, start, end):
 
 
 def centre(pg, selector):
-    b = pg.locator(selector).first.bounding_box()
+    el = pg.locator(selector).first
+    el.scroll_into_view_if_needed()
+    b = el.bounding_box()
     return b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
+
+
+def drag_between(pg, a, b):
+    """Drag from one element onto another, both brought into view first."""
+    centre(pg, a)
+    end = centre(pg, b)
+    drag_to(pg, centre(pg, a), end)
 
 
 def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, server):
@@ -195,14 +204,14 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
 
     # Draw belt: drag from the harbor onto Receiving and the belt for that hop is laid, beside both, through nothing
     pg.click('[data-tool="belt"]')
-    drag_to(pg, centre(pg, '[data-node="harbor"]'), centre(pg, '[data-node="receiving"]'))
+    drag_between(pg, '[data-node="harbor"]', '[data-node="receiving"]')
     belt = plan(pg)["belts"].get("harbor>receiving")
     assert belt and len(belt) >= 2, plan(pg)["belts"]
     assert "The belt from The harbor to Receiving" not in problems(pg), problems(pg)
     assert "No belt from The harbor to Receiving" not in problems(pg)
 
     # the other way there is no hop: nothing is laid and the editor says why
-    drag_to(pg, centre(pg, '[data-node="receiving"]'), centre(pg, '[data-node="harbor"]'))
+    drag_between(pg, '[data-node="receiving"]', '[data-node="harbor"]')
     assert "No hop from Receiving to The harbor" in problems(pg)
     assert list(plan(pg)["belts"]) == ["harbor>receiving"]
 
@@ -236,4 +245,57 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
     pg.wait_for_url(server.url + "/?ok=layout_saved")
     assert pg.locator("svg.fm .hb-box").count() == 1
     assert pg.locator("svg.fm g.nt").count() == 2
+    assert pg.errors == []
+
+
+def test_workers_by_rail_lay_track_to_a_worker_and_back(wide, server):
+    """With workers, the editor lays track: a worker without its loop is named in the checklist and refused; drawn again by dragging
+    from the junction onto it, the loop is whole; saved, the floor draws the yard, the Train station, the workers and their track."""
+    import time as _t
+    from factory import jobs
+    for name in ("linux-box", "my-mac"):
+        jobs.touch_worker(server.db, name, "linux", ["web"], 1, _t.time())
+    server.db.commit()
+    pg = wide
+    open_editor(pg, server)
+    assert pg.locator('[data-tool="rail"]').count() == 1
+    assert "Every station is reachable" in problems(pg), problems(pg)
+    assert "Train loop: the yard → my-mac → the Train station" in pg.inner_text(".fe-check")
+    assert '"junction:a>worker:my-mac"' in pg.input_value("textarea[name=plan]")
+
+    # Erase the branch to my-mac: its loop is broken and the checklist says so
+    pg.click('[data-tool="erase"]')
+    pts = plan(pg)["tracks"]["junction:a>worker:my-mac"]
+    (ax, ay), (bx, by) = max(zip(pts, pts[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
+    pg.locator('[data-track="junction:a>worker:my-mac"]').scroll_into_view_if_needed()
+    pg.mouse.click(*grid_to_client(pg, (ax + bx) / 2, (ay + by) / 2))
+    assert "junction:a>worker:my-mac" not in plan(pg)["tracks"]
+    assert "No track loop for my-mac" in problems(pg)
+    assert "✗ Train loop: the yard → my-mac" in pg.inner_text(".fe-check")
+
+    # Draw track: drag from junction A onto my-mac and the loop is whole again
+    pg.click('[data-tool="rail"]')
+    drag_between(pg, '[data-node="junction:a"]', '[data-node="worker:my-mac"]')
+    assert "junction:a>worker:my-mac" in plan(pg)["tracks"], plan(pg)["tracks"]
+    assert "No track loop" not in problems(pg), problems(pg)
+    # the wrong way round is refused, with the reason
+    drag_between(pg, '[data-node="worker:my-mac"]', '[data-node="yard"]')
+    assert "Track cannot run from my-mac to The Verify yard" in problems(pg)
+
+    # Move: a track dragged sideways slides, its ends stay put
+    pg.click('[data-tool="move"]')
+    before = plan(pg)["tracks"]["depot>yard"]
+    (ax, ay), (bx, by) = max(zip(before, before[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
+    pg.locator('[data-track="depot>yard"]').scroll_into_view_if_needed()
+    mid = grid_to_client(pg, (ax + bx) / 2, (ay + by) / 2)
+    step = 2 * cell(pg)
+    drag_to(pg, mid, (mid[0], mid[1] + step) if ay == by else (mid[0] + step, mid[1]))
+    after = plan(pg)["tracks"]["depot>yard"]
+    assert after != before and after[0] == before[0] and after[-1] == before[-1]
+
+    pg.click(".fe-save button")
+    pg.wait_for_url(server.url + "/?ok=layout_saved")
+    assert pg.locator("svg.fm .ry-yard").count() == 1 and pg.locator("svg.fm .ry-depot").count() == 1
+    assert pg.locator('svg.fm a.fm-w').count() == 2
+    assert pg.locator("svg.fm .ry-junction").count() == 2
     assert pg.errors == []

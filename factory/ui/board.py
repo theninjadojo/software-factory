@@ -660,8 +660,9 @@ def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
 
 def floor_ctx(cfg: dict, workers: list) -> "floorplan.Ctx":
     """What a floor layout has to hold for this config (see floorplan.py)."""
+    shown = workers[:yard.MAX_WORKERS]
     return floorplan.Ctx([sid for sid, _, _ in floor_order(cfg)], [h["name"] for h in cfg.get("power") or []],
-                         bool(cfg.get("workers")) or bool(workers), min(len(workers), yard.MAX_WORKERS))
+                         bool(cfg.get("workers")) or bool(workers), len(shown), workers=[w["name"] for w in shown])
 
 
 def add_ticket(repos: list[str], csrf: str, roles: list[str]) -> str:
