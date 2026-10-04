@@ -413,7 +413,8 @@ class Config:
     slack_events: tuple[str, ...] | None = None
     slack_ui_url: str | None = None
     github_poll_seconds: int = 0                # how often GitHub is read (0: every poll); local tickets are handled every poll
-    local_enabled: bool = False                 # the local ticket tracker and the GitHub import
+    github_issues_enabled: bool = True          # GitHub issues are read and acted on (absent: on so old configs keep working; the example sets false)
+    local_enabled: bool = False                # the local ticket tracker and the GitHub import
     kind_aliases: dict = field(default_factory=lambda: dict(KIND_ALIASES))   # label -> kind (bug/feature/docs/chore/question)
 
 
@@ -617,6 +618,13 @@ def _github_poll(gh: dict, default: int) -> int:
     v = gh["poll_seconds"]
     if isinstance(v, bool) or not isinstance(v, int) or not 5 <= v <= 86400:
         raise ValueError("github.poll_seconds must be a whole number of seconds from 5 to 86400")
+    return v
+
+
+def _github_issues_enabled(gh: dict) -> bool:
+    v = gh.get("issues_enabled", True)
+    if not isinstance(v, bool):
+        raise ValueError("github.issues_enabled must be true or false")
     return v
 
 
@@ -951,6 +959,7 @@ def parse(raw: dict) -> Config:
         slack_events=_events(raw.get("slack", {}).get("events"), "slack"),
         slack_ui_url=_ui_url(raw.get("slack", {}).get("ui_url"), "slack"),
         github_poll_seconds=_github_poll(gh, int(g["poll_seconds"])),
+        github_issues_enabled=_github_issues_enabled(gh),
         local_enabled=_local_enabled(raw.get("local", {})),
         kind_aliases=_aliases(raw.get("classifier", {}).get("kind_aliases")),
     )

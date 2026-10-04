@@ -12,6 +12,9 @@ token_file = "/srv/factory/secrets/github_token"   # without a token every trust
 trigger_label = "factory:ready"                    # "build it": agents edit the repos and open PRs
 repos = ["your-org/standalone-service"]            # repos handled on their own; project members below are added automatically
 trusted_permissions = ["admin", "maintain", "write"]   # who may apply a trigger label
+# issues_enabled = false  # false: GitHub issues are not read or acted on (no polling, approvals, schedules, sub-issues or Import); pull requests
+#                           and CI still use GitHub. Turn the local tracker on below, or set true to work from GitHub issues. A config
+#                           without this line keeps working from GitHub issues.
 # poll_seconds = 300                                # how often GitHub is read (default: [general] poll_seconds). Local tickets, approvals
 #                                                   # and schedules are still handled every [general] poll_seconds.
 

@@ -96,6 +96,9 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("github.trusted_permissions", "Who may apply labels", "checks", "A label counts only if its author has one of these repository roles.",
               choices=("admin", "maintain", "write", "triage")),
         Field("github.repos", "Standalone repositories", "repos", "owner/name, one per line. Repos of a project (see Projects) are added automatically."),
+        Field("github.issues_enabled", "Work from GitHub issues", "bool",
+              "Off: GitHub issues are not read or acted on (no polling, approvals, schedules, sub-issues or Import). Running jobs finish. "
+              "Pull requests and CI still use GitHub. Turn on local tickets or nothing has tickets to work on."),
         Field("local.enabled", "Keep tickets in the factory", "bool",
               "On: tickets can live in the factory's own database (L-1, L-2 ...) instead of GitHub issues. New ticket offers both, and Import "
               "moves GitHub issues across. Pull requests still go to GitHub."),
@@ -283,7 +286,7 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     return {"auto.label": "factory:auto", "routing.low.fallback_models": [], "routing.medium.fallback_models": [], "routing.high.fallback_models": [],
             "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
-            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "auto.confirm_stages": False, "auto.chain": True}.get(key)
+            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
 def canon(key: str, v):
