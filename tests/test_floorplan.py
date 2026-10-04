@@ -682,3 +682,91 @@ class Terrain(unittest.TestCase):
         d["terrain"]["items"] = [[["tree", "pine", "bush", "rock"][k % 4], 40 + (k * 37) % 3900, 2000 + (k * 53) % 350, 40 if k % 4 < 2 else 24 if k % 4 == 2 else 30, k] for k in range(600)]
         self.assertEqual(F.validate(d, CTX), [])
         self.assertLess(len(json.dumps(F.canonical(d), separators=(",", ":"))), F.MAX_BYTES)
+
+
+def park_scene(ctx=CTX):
+    """The default layout with a park beside a pond and a road, away from the buildings and belts."""
+    d = scene(ctx)
+    d["terrain"]["items"] += [["fetch", 600, 2400, 200, 2], ["playground", 850, 2400, 180, 3], ["picnic", 1050, 2400, 110, 4],
+                              ["bench", 1250, 2250, 70, 6], ["dogwalk", 1450, 2400, 180, 8]]
+    return d
+
+
+class Park(unittest.TestCase):
+    def test_the_park_is_valid_kept_and_drawn_side_on_and_an_odd_seed_mirrors_a_piece(self):
+        d = park_scene()
+        self.assertEqual(F.validate(d, CTX), [])
+        self.assertEqual(F.merge(d, CTX)["terrain"], d["terrain"])
+        svg = Drawn().draw(d)
+        for cls in ("pk-fetch", "pk-playground", "pk-picnic", "pk-bench", "pk-dogwalk", 'id="pk-check"'):
+            self.assertIn(cls, svg, cls)
+        self.assertNotIn("style=", svg)
+        self.assertIn('<g class="pk-playground" transform="translate(940 2335) scale(-1 1)">', svg)       # seed 3: mirrored
+        self.assertIn('<g class="pk-fetch" transform="translate(500 2340)">', svg)
+
+    def test_the_old_man_walks_to_the_nearest_water_and_back_or_stays_on_his_bench(self):
+        t = {"items": [["bench", 400, 300, 70, 2], ["pond", 250, 320, 90, 5]]}
+        svg = terrain.svg(t, F.G, 2000, 1000)
+        self.assertIn('<g class="pk-man"><animateMotion path="M 35 37 L -62 38.9"', svg)            # to the pond's near shore
+        self.assertIn('keyPoints="0;0;1;1;0;0"', svg)                                              # sits, walks, feeds, walks back
+        self.assertIn('<g transform="scale(-1 1)">', svg)                                          # facing the pond, on his left
+        alone = terrain.svg({"items": [["bench", 400, 300, 70, 2]]}, F.G, 2000, 1000)
+        self.assertNotIn("pk-man", alone)
+        self.assertIn('<g transform="translate(35 37)">', alone)
+        river = terrain.svg({"items": [["bench", 400, 300, 70, 2]], "rivers": [[[600, 280], [700, 300]]]}, F.G, 2000, 1000)
+        self.assertIn("pk-man", river)                                                             # a river is water too
+
+    def test_cars_drive_both_ways_on_every_road(self):
+        t = {"roads": [[[10, 30], [60, 30]], [[70, 10], [70, 40], [90, 40]]]}
+        svg = terrain.svg(t, F.G, 2000, 1000, layer="under")
+        paths = re.findall(r'<g class="tf-car">.*?<animateMotion path="([^"]+)"', svg)
+        self.assertGreaterEqual(len(paths), 4)
+        self.assertTrue(any(p.startswith("M 200 604.5") for p in paths) and any(p.startswith("M 1200 595.5") for p in paths), paths)
+        self.assertIn("M 1395.5 200 L 1395.5 804.5 L 1800 804.5", paths)                                  # round a corner on its own lane
+        self.assertIn("M 1800 795.5 L 1404.5 795.5 L 1404.5 200", paths)
+        self.assertEqual(svg, terrain.svg(t, F.G, 2000, 1000, layer="under"))                      # the same cars every time
+        self.assertNotIn("tf-car", terrain.svg({"roads": [[[1, 1], [3, 1]]]}, F.G, 2000, 1000))    # a stub of a road has none
+
+    def test_track_crossing_a_road_goes_over_a_bridge_and_only_where_it_runs_straight(self):
+        t = {"roads": [[[10, 30], [60, 30]]]}
+        tracks = [[(400, 200), (400, 900)], [(800, 590), (800, 900)], [(100, 100), (300, 100)]]
+        svg = terrain.svg(t, F.G, 2000, 1000, layer="bridge", tracks=tracks)
+        self.assertEqual(svg.count('class="tf-bridge"'), 1)
+        self.assertIn('<g class="tf-bridge" transform="translate(400 600) rotate(90)">', svg)       # the second track bends too close
+        self.assertEqual(terrain.svg(t, F.G, 2000, 1000, layer="bridge"), "")
+        all_ = terrain.svg(t, F.G, 2000, 1000, tracks=tracks)
+        self.assertLess(all_.index("tf-car"), all_.index("tf-bridge"))                             # cars under the deck
+
+    def test_the_floor_bridges_its_own_track_over_a_road_across_it(self):
+        d = scene()
+        tid, pts = next((k, p) for k, p in d["tracks"].items() if any(a[0] == b[0] and abs(a[1] - b[1]) >= 6 for a, b in zip(p, p[1:])))
+        a, b = next((a, b) for a, b in zip(pts, pts[1:]) if a[0] == b[0] and abs(a[1] - b[1]) >= 6)
+        y = (a[1] + b[1]) // 2
+        d["terrain"]["roads"].append([[a[0] - 4, y], [a[0] + 4, y]])
+        svg = Drawn().draw(d)
+        self.assertIn(f'<g class="tf-bridge" transform="translate({a[0] * F.G} {y * F.G}) rotate(90)">', svg)
+        self.assertLess(svg.index("tf-bridge"), svg.index("fm-train") if "fm-train" in svg else len(svg))
+
+    def test_hitboxes_keep_the_park_off_the_buildings_and_off_each_other(self):
+        d = park_scene()
+        x, y, w, h = F.boxes(d["nodes"], CTX)["station:build"]
+        d["terrain"]["items"].append(["picnic", int((x + w / 2) * F.G), int((y + h / 2) * F.G), 110, 1])
+        errs = F.validate(d, CTX)
+        self.assertIn("The picnic overlaps Build.", errs)
+        d = park_scene()
+        d["terrain"]["items"] += [["bench", 610, 2400, 70, 2], ["tree", 860, 2400, 40, 1]]
+        errs = F.validate(d, CTX)
+        self.assertIn("The fetch with a dog overlaps the bench.", errs)
+        self.assertIn("The playground overlaps a tree.", errs)
+        self.assertEqual(sum("overlaps the bench" in e or "overlaps the fetch" in e for e in errs), 1)  # each pair once
+        d = park_scene()
+        d["terrain"]["items"].append(["lamp", 600, 2400, 130, 1])                                   # light lies over anything
+        self.assertEqual(F.validate(d, CTX), [])
+
+    def test_the_editor_draws_the_park_traffic_and_bridges_from_the_same_strings(self):
+        js = (Path(terrain.__file__).parent / "static" / "terrain.js").read_text()
+        for name in ("PK_FETCH", "PK_PLAYGROUND", "PK_PICNIC", "PK_BENCH", "PK_DOGWALK", "OM_FRONT", "OM_SIT", "OM_GO", "OM_FEED", "OM_BACK",
+                     "OM_KEYS", "CAR_A", "CAR_B", "TRUCK_A", "TRUCK_B", "BRIDGE", "PK_CHECK"):
+            self.assertIn(f"var {name} = {json.dumps(getattr(terrain, name))};", js, name)
+        for kind, (w, h) in terrain.PARK.items():
+            self.assertIn(f"{kind}: [{w}, {h}]", js)

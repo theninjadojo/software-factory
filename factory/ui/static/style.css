@@ -911,3 +911,8 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 .sw { display:inline-block; width:10px; height:10px; margin-right:6px; border:1px solid #59636b; vertical-align:-1px; }
 .sw-grass { background:#1d3624; } .sw-dirt { background:#3a2a1b; } .sw-sand { background:#5b5132; } .sw-concrete { background:#30363b; } .sw-water { background:#102838; }
 .fe-terrain, .fe-preview { pointer-events:none; } .fe-preview { opacity:.8; }
+/* the park (terrain.py PARK), traffic and bridges: side-on pictures moved with SVG animation; none of them takes the pointer */
+.pk-fetch, .pk-playground, .pk-picnic, .pk-bench, .pk-dogwalk, .pk-man, .tf-car, .tf-bridge { pointer-events:none; }
+/* hitboxes in the editor (Show hitboxes): the buildings and the solid terrain; what moves has none */
+.fe-hitboxes { pointer-events:none; } .fe-hitbox { fill:rgba(143,211,230,.06); stroke:#8fd3e6; stroke-width:1.5; stroke-dasharray:5 4; }
+.fe-hitbox.park { fill:rgba(182,156,255,.08); stroke:#b69cff; }

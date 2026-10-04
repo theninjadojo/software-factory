@@ -1250,7 +1250,8 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     right = max([x + w for x, _, w, _ in bx.values()] + [p[0] for p in loose])
     bottom = max([y + h for _, y, _, h in bx.values()] + [p[1] for p in loose])
     width, height = right + 40, bottom + 40
-    land = lambda layer: terrain.svg(tn, G_, width, height, C.get("wall_cells") or [], C.get("tree_cells") or [], layer)
+    rails_ = [t["pts"] for t in (C.get("tracks") or {}).values()]
+    land = lambda layer: terrain.svg(tn, G_, width, height, C.get("wall_cells") or [], C.get("tree_cells") or [], layer, rails_)
     # the sea's dock and crane at the harbor's height (the harbor stands where a person put it; its belt takes the tickets on)
     trips = extras.get("schedules") or []
     dock = bx.get("harbor") or bx["receiving"]
@@ -1264,10 +1265,14 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     told = {n["name"]: n for n in extras.get("notify") or []}
     radios = "".join(node(nid, lambda x, y, n=nid.split(":", 1)[1]: notifier(x, y, told.get(n, {"name": n})))
                      for nid in at if nid.startswith("notify:"))
+    # the outside area, where the workers stand: ground, so under the terrain painted on it (roads and their cars, ponds, trees)
+    area = ""
+    if "yard" in at and "outside" in at:
+        area = (f'<g transform="{tr("outside", 0, 0)}">{outside(0, 0, *bx["outside"][2:])}</g>' if "outside" not in sc else outside(*bx["outside"]))
     # the ground: the mainland and the sea, the districts, the buildings that are not stations
     back = (ground("mainland", "ap-land") + f'<g aria-hidden="true" transform="{tr("mainland", 0, 0)}">{mainland(1320)}</g>'
             + water + f'<g transform="{tr("sea", 0, 0)}">{sea(trips, 1320, dock_y, water=False, coast=coast)}</g>'
-            + f'<g aria-hidden="true">{land("under")}</g>' + _plan_districts(C.get("districts") or {})
+            + area + f'<g aria-hidden="true">{land("under")}</g>' + _plan_districts(C.get("districts") or {})
             + ground("airfield", "ap-field", 6) + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
             + f'<text class="fm-lab" x="{_f(at["sources"][0])}" y="{_f(at["sources"][1] - 8)}">SOURCES</text>'
             + f'<g transform="{tr("sources", *SRC)}">{github()}</g><g transform="{tr("receiving", 12, 200)}">{receiving(len(queued))}</g>'
@@ -1284,14 +1289,11 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     yard_still = yard_moving = ""
     if "yard" in at:
         live = {f'worker:{w["name"]}': w for w in shown}
-        area = f'<g transform="{tr("outside", 0, 0)}">{outside(0, 0, *bx["outside"][2:])}</g>' if "outside" in at and "outside" not in sc else (
-            outside(*bx["outside"]) if "outside" in at else "")
         track, yard_moving = railway(C, shown, now)
         parts_ = []
         parts_ += [node("depot", train_station)] if "depot" in at else []
         parts_ += [node(n, lambda x, y, n=n: worker_stop(x, y, live.get(n) or {"name": n.split(":", 1)[1], "online": False})) for n in at if n.startswith("worker:")]
         parts_ += [node(n, lambda x, y, n=n: junction(x, y, n.split(":", 1)[1])) for n in at if n.startswith("junction:")]
-        back += area                                                 # the outside area under everything that stands in it
         yard_still = track + "".join(parts_)
         if workers_on and not any(n.startswith("worker:") for n in at):
             x, y, w, h = bx["yard"]
@@ -1377,7 +1379,7 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
                       for f in (extras.get("flights") or []) if 0 <= f["age"] < FLIGHT_SECONDS)
     poll = extras.get("poll") or {}
     pad = lambda nid, p, o: M(nid, *p, *o)
-    plant = (back + "".join(belts) + f'<g aria-hidden="true">{yard_still}</g>' + pw
+    plant = (back + "".join(belts) + f'<g aria-hidden="true">{land("bridge")}{yard_still}</g>' + pw
              + f'<g aria-hidden="true">{"".join(parts)}{yard_moving}</g>'
              + "".join(node(st(sid), lambda x, y: _station(sid, label, fl[sid], word(sid, fl[sid]), href(sid), (x, y, True), sid))
                        for sid, label, _ in order if st(sid) in at)

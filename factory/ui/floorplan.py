@@ -682,7 +682,8 @@ def terrain_shape(t) -> list[str]:
         for it in items:
             ok = isinstance(it, list) and len(it) == 5 and it[0] in T.KINDS and px(it[1], W * G) and px(it[2], H * G) and _int(it[3]) and _int(it[4])
             if not ok or not (T.SIZES[it[0]][0] <= it[3] <= T.SIZES[it[0]][1]) or not 0 <= it[4] <= 0xFFFFFFFF:
-                errs.append("A terrain item is [kind, x, y, size, seed]: a tree, pine, bush, rock, pond, lamp, fog or shade inside the floor, its size in range.")
+                errs.append("A terrain item is [kind, x, y, size, seed]: a tree, pine, bush, rock, pond, lamp, fog, shade or park piece (fetch, "
+                            "playground, picnic, bench, dog walker) inside the floor, its size in range.")
                 break
     rivers = t.get("rivers", [])
     if not isinstance(rivers, list) or len(rivers) > L["rivers"] or not all(
@@ -788,6 +789,29 @@ def terrain_rules(doc: dict, B: dict, hops: list) -> list[str]:
         for nid, (bx, by, bw, bh) in solid(B).items():
             if bx < x + w and x < bx + bw and by < y + h and y < by + bh:
                 errs.append(f"{label(nid)} stands in a hazard zone.")
+    errs += park_rules(t, B)
+    return errs
+
+
+GROUND_AREAS = ("mainland", "sea", "airfield", "outside")          # areas the park may stand in
+
+
+def park_rules(t: dict, B: dict) -> list[str]:
+    """Hitboxes: a park piece stands clear of the buildings, of the other park pieces and of the trees, bushes, rocks and ponds."""
+    from . import terrain as T
+    items, errs = t.get("items") or [], []
+    for i, it in enumerate(items):
+        if it[0] not in T.PARK:
+            continue
+        a, name = T.footprint(it), f"The {T.PARK_NAMES[it[0]]}"
+        for nid, (bx, by, bw, bh) in B.items():
+            if nid not in GROUND_AREAS and T.hits(a, (bx * G, by * G, bw * G, bh * G)):
+                errs.append(f"{name} overlaps {label(nid)}.")
+        for j, o in enumerate(items):
+            if j == i or o[0] not in T.SOLID or (o[0] in T.PARK and j < i):
+                continue
+            if T.hits(a, T.footprint(o)):
+                errs.append(f"{name} overlaps " + (f"the {T.PARK_NAMES[o[0]]}." if o[0] in T.PARK else f"a {o[0]}."))
     return errs
 
 
