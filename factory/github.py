@@ -205,9 +205,13 @@ class GitHub:
             raise ValueError("factory issues must carry the step title prefix")
         return self._req("POST", f"/repos/{repo}/issues", {"title": title, "body": body})
 
-    def create_ticket(self, repo: str, title: str, body: str) -> dict:
-        """A person's new ticket (from the UI). Sends no labels or assignees, so it can never start work by itself."""
-        return self._req("POST", f"/repos/{repo}/issues", {"title": title, "body": body})
+    def create_ticket(self, repo: str, title: str, body: str, labels: list[str] | None = None) -> dict:
+        """A person's new ticket (from the UI). Sends no assignees. It carries a label only when the caller passes one: the UI
+        passes at most one, taken from its server-side list of start actions, so nothing starts unless a person chose it."""
+        data = {"title": title, "body": body}
+        if labels:
+            data["labels"] = list(labels)
+        return self._req("POST", f"/repos/{repo}/issues", data)
 
     def create_scheduled_issue(self, repo: str, title: str, body: str, labels: list[str]) -> dict:
         """A ticket opened by an admin-configured schedule (see schedules.py). Unlike create_ticket it carries the labels the
