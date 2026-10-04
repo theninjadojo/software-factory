@@ -21,7 +21,8 @@ TERRAIN_TOOLS = (("Scenery", (("tree", "Tree"), ("pine", "Pine"), ("bush", "Bush
                  ("Water", (("pond", "Pond"), ("river", "River"))),
                  ("Ground", (("g-grass", "Grass"), ("g-dirt", "Dirt"), ("g-sand", "Sand"), ("g-concrete", "Concrete"), ("g-water", "Water"))),
                  ("Build", (("wall", "Wall"), ("fence", "Fence"), ("gate", "Gate"), ("road", "Road"), ("hazard", "Hazard"))),
-                 ("Light", (("lamp", "Lamp"), ("fog", "Fog"), ("shade", "Shade"))))
+                 ("Light", (("lamp", "Lamp"), ("fog", "Fog"), ("shade", "Shade"))),
+                 ("Park", (("fetch", "Fetch"), ("playground", "Playground"), ("picnic", "Picnic"), ("bench", "Bench"), ("dogwalk", "Dog walker"))))
 
 
 def _ctx(h) -> "floorplan.Ctx":
@@ -46,7 +47,10 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'splitters, mergers, side-loads and underground belts. Paint the land round it with the terrain tools: trees, bushes and rocks, '
             'ponds and rivers (belts and track cannot cross water), ground tiles, walls (a belt goes under one with an underground belt), '
             'fences and gates (trains pass only at a gate), roads, hazard zones (nothing may be built in one), lamps, fog and shade; birds '
-            'and ducks move in by themselves. The harbor goes anywhere: its belt takes the ships\' '
+            'and ducks move in by themselves. Cars drive on every road, and where track crosses a road it goes over a bridge. Add a park: '
+            'fetch with a dog, a playground, a picnic, a bench whose old man walks to the nearest water to feed the ducks, and a dog walker. '
+            'Buildings, the park and the trees, bushes, rocks and ponds have hitboxes, so nothing is placed on top of another (Show '
+            'hitboxes draws them); cars, birds and trains pass over and under. The harbor goes anywhere: its belt takes the ships\' '
             'tickets to Receiving. Notifiers are wireless: put them anywhere, nothing to connect. Workers are train stops outside the factory: '
             'with Draw track, lay track from the yard to each worker, on to the Train station and back to the yard; tracks can join at a '
             'junction, whose signals let one train onto the shared track at a time. Drag the ground to pan; zoom with the '
@@ -61,6 +65,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             '<button type="button" class="secondary" data-act="undo">Undo</button><button type="button" class="secondary" data-act="redo">Redo</button>'
             '<button type="button" class="secondary" data-act="scratch">Start from scratch</button>'
             '<button type="button" class="secondary" data-act="default">Start from the default</button>'
+            '<button type="button" class="secondary" data-act="hitboxes" aria-pressed="false">Show hitboxes</button>'
             '<span class="fe-zoom"><button type="button" class="secondary" data-act="zoomout" aria-label="Zoom out">−</button>'
             '<output class="fe-zoomval" aria-live="polite">100%</output>'
             '<button type="button" class="secondary" data-act="zoomin" aria-label="Zoom in">+</button>'

@@ -110,7 +110,10 @@ def scene(seed: int) -> dict:
             cells[k].discard(c)
         cells[rnd.choice(T.GROUNDS)].add(c)
     return {"items": items, "rivers": rivers, "tiles": T.runs(cells), "fences": [[[10, 100], [30, 100], [30, 110]]], "gates": [[31, 100, "h"]],
-            "roads": [[[40, 100], [80, 100]]], "hazards": [[90, 100, 5, 4]]}
+            "roads": [[[40, 100], [80, 100]], [[60, 80], [60, 120]]], "hazards": [[90, 100, 5, 4]]}
+
+
+TRACKS = [[[1000, 1800], [1000, 2200]], [[700, 2400], [1300, 2400], [1300, 2600]]]       # pixels: one crosses each road
 
 
 def test_the_editor_draws_the_terrain_exactly_as_the_floor_does(wide, server):
@@ -119,10 +122,14 @@ def test_the_editor_draws_the_terrain_exactly_as_the_floor_does(wide, server):
     for seed in (1, 2, 3):
         t = scene(seed)
         walls, trees = [[[5, 5], [5, 20]]], [[7, 7], [70, 30]]
-        js = pg.evaluate("a => window.FT.svg(a[0], 20, 4000, 2400, a[1], a[2])", [t, walls, trees])
-        assert js == T.svg(t, 20, 4000, 2400, walls, trees), seed
-        for layer in ("under", "over", "top"):
-            assert pg.evaluate("a => window.FT.svg(a[0], 20, 4000, 2400, a[1], a[2], a[3])", [t, walls, trees, layer]) == T.svg(t, 20, 4000, 2400, walls, trees, layer)
+        js = pg.evaluate("a => window.FT.svg(a[0], 20, 4000, 2400, a[1], a[2], 'all', a[3])", [t, walls, trees, TRACKS])
+        assert js == T.svg(t, 20, 4000, 2400, walls, trees, "all", TRACKS), seed
+        for layer in ("under", "bridge", "over", "top"):
+            assert pg.evaluate("a => window.FT.svg(a[0], 20, 4000, 2400, a[1], a[2], a[3], a[4])", [t, walls, trees, layer, TRACKS]) == T.svg(t, 20, 4000, 2400, walls, trees, layer, TRACKS)
+        assert "tf-bridge" in js and "tf-car" in js
+        for kind in T.PARK:                                               # each hitbox the same on both sides
+            it = [kind, 500, 600, T.SIZES[kind][0], 7]
+            assert pg.evaluate("it => window.FT.footprint(it)", it) == list(T.footprint(it))
     assert pg.errors == []
 
 
@@ -243,13 +250,23 @@ def test_the_terrains_rules_are_shown_and_a_save_that_breaks_one_is_refused(wide
     editor(pg, server)
     d = plan(pg)
 
-    # a pond on a belt: belts cannot cross water
-    pts = d["belts"]["receiving>station:poll"]
-    mx, my = pts[1][0] * F.G, pts[1][1] * F.G
-    show(pg, mx, my)
+    # a pond on a belt: belts cannot cross water. A pond has a hitbox, so it lands only clear of the buildings: try along the
+    # longest belts until one does
     tool(pg, "pond")
-    click_px(pg, mx, my)
-    assert "The belt from Receiving to Poll crosses water" in problems(pg)
+    hop = None
+    for hid in sorted(d["belts"], key=lambda k: -len(F.cells(d["belts"][k]))):
+        cs = F.cells(d["belts"][hid])
+        for c in cs[len(cs) // 3: 2 * len(cs) // 3]:
+            show(pg, c[0] * F.G, c[1] * F.G)
+            click_px(pg, c[0] * F.G, c[1] * F.G)
+            if "pond" in kinds(pg):
+                hop = hid
+                break
+            assert "No room there: A pond would stand on" in problems(pg)
+        if hop:
+            break
+    a_, _, b_ = hop.partition(">")
+    assert f"The belt from {F.label(a_)} to {F.label(b_)} crosses water" in problems(pg)
     pg.click(".fe-save button")
     assert "The layout was not saved" in pg.inner_text(".flash")
     assert "crosses water" in problems(pg)
@@ -257,7 +274,7 @@ def test_the_terrains_rules_are_shown_and_a_save_that_breaks_one_is_refused(wide
     tool(pg, "erase")
     show(pg, pond[1], pond[2])
     click_px(pg, pond[1] + pond[3] * 0.25, pond[2] + pond[3] * 0.25)   # a part of the pond the belt does not run over
-    assert "pond" not in kinds(pg) and "receiving>station:poll" in plan(pg)["belts"]
+    assert "pond" not in kinds(pg) and hop in plan(pg)["belts"]
     assert "crosses water" not in problems(pg), problems(pg)
 
     # a wall across a belt: only under it, with an underground belt
@@ -299,3 +316,35 @@ def test_the_terrains_rules_are_shown_and_a_save_that_breaks_one_is_refused(wide
     saved = json.loads((server.root / "state" / F.FILE).read_text())
     assert saved["terrain"]["fences"] and saved["terrain"]["gates"] and saved["walls"]
     assert [e for e in pg.errors if "status of 422" not in e] == []
+
+
+def test_the_park_goes_where_there_is_room_and_hitboxes_show_on_request(wide, server):
+    pg = wide
+    editor(pg, server)
+    d = plan(pg)
+    n = d["nodes"]["station:build"]
+    # on a building: refused, and the status line says why
+    show(pg, (n["x"] + 2) * F.G, (n["y"] + 2) * F.G)
+    tool(pg, "picnic")
+    click_px(pg, (n["x"] + 2) * F.G, (n["y"] + 2) * F.G)
+    assert "picnic" not in kinds(pg)
+    assert "No room there: The picnic would stand on Build" in pg.inner_text(".fe-msg")
+    # out on the open floor, below everything: placed, and drawn side-on with its people
+    free = (300, F.H * F.G - 200)
+    show(pg, *free)
+    tool(pg, "bench")
+    click_px(pg, *free)
+    assert kinds(pg).count("bench") == 1
+    assert pg.locator(".fe-svg .pk-bench").count() == 1
+    click_px(pg, free[0] + 10, free[1])                                 # a second bench on top of the first: no room
+    assert kinds(pg).count("bench") == 1
+    # every hitbox, on request
+    assert pg.locator(".fe-svg .fe-hitbox").count() == 0
+    pg.click('[data-act="hitboxes"]')
+    assert pg.get_attribute('[data-act="hitboxes"]', "aria-pressed") == "true"
+    assert pg.locator(".fe-svg .fe-hitbox.park").count() == 1 and pg.locator(".fe-svg .fe-hitbox").count() > 5
+    # Erase takes the bench away again
+    tool(pg, "erase")
+    click_px(pg, *free)
+    assert "bench" not in kinds(pg)
+    assert pg.errors == []
