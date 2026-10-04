@@ -47,7 +47,14 @@ PY
 fi
 echo "Updating: v$HAVE -> $TAG"
 
-if [ -z "${DRY_RUN:-}" ]; then            # never restart over a run in flight (a restart kills it)
+# Never restart over a run in flight (a restart kills it). Pause the factory FIRST, so no run can start between this check and the
+# restart (downloading and testing take minutes); the pause is lifted on every way out unless a person had paused it already.
+PAUSED_BY_US=""
+resume() { if [ -n "$PAUSED_BY_US" ]; then rm -f "$ROOT/state/PAUSED"; PAUSED_BY_US=""; fi; }
+trap resume EXIT
+if [ -z "${DRY_RUN:-}" ]; then
+  if [ ! -e "$ROOT/state/PAUSED" ]; then echo "updating to $TAG" > "$ROOT/state/PAUSED"; PAUSED_BY_US=1; fi
+  sleep "${SHIKUMI_SETTLE:-5}"            # a job the factory took just before the pause records its run within moments
   N="$(podman ps -q --filter 'name=^factory-' | wc -l)"
   M="$(python3 - "$ROOT/state/factory.db" <<'PY'
 import sqlite3, sys
@@ -64,7 +71,7 @@ PY
   fi
 fi
 
-TMP="$(mktemp -d "$ROOT/state/update.XXXXXX")"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d "$ROOT/state/update.XXXXXX")"; trap 'rm -rf "$TMP"; resume' EXIT
 if [ -n "${SHIKUMI_TARBALL:-}" ]; then cp "$SHIKUMI_TARBALL" "$TMP/src.tgz"
 else api -o "$TMP/src.tgz" "https://api.github.com/repos/$REPO/tarball/$TAG" || die "could not download $TAG"; fi
 mkdir "$TMP/src" && tar -C "$TMP/src" --strip-components=1 -xzf "$TMP/src.tgz"
@@ -87,7 +94,7 @@ rollback() {
   for e in factory-agent factory-render factory-screens; do podman image exists "$e:previous" && podman tag "$e:previous" "$e" || true; done
   systemctl --user restart factory.service || true
   systemctl --user is-enabled factory-ui.service >/dev/null 2>&1 && systemctl --user restart factory-ui.service || true
-  exit 1
+  exit 1                                 # (the EXIT trap lifts the pause)
 }
 
 cd "$APP"

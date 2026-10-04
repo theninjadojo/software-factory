@@ -51,9 +51,15 @@ fi
 [ "v$HAVE" = "$TAG" ] && { echo "Already on $TAG."; exit 0; }
 echo "Updating Shikumi: v$HAVE -> $TAG"
 
-# never restart over a run in flight
+# Never restart over a run in flight. Pause the factory first, so no run can start between this check and the restart; the pause is
+# lifted on every way out unless a person had paused it already.
 FACTORY_HOME="$(sed -n 's/^FACTORY_HOME=//p' .env 2>/dev/null | tail -1)"; FACTORY_HOME="${FACTORY_HOME:-/srv/factory}"
+PAUSED_BY_US=""
+resume() { if [ -n "$PAUSED_BY_US" ]; then rm -f "$FACTORY_HOME/state/PAUSED"; PAUSED_BY_US=""; fi; }
+trap resume EXIT
 if [ -z "${DRY_RUN:-}" ]; then
+  if [ -d "$FACTORY_HOME/state" ] && [ ! -e "$FACTORY_HOME/state/PAUSED" ]; then echo "updating to $TAG" > "$FACTORY_HOME/state/PAUSED"; PAUSED_BY_US=1; fi
+  sleep "${SHIKUMI_SETTLE:-5}"            # a job the factory took just before the pause records its run within moments
   N="$(docker ps -q --filter 'name=^factory-' | wc -l)"
   M="$(python3 - "$FACTORY_HOME/state/factory.db" <<'PY'
 import sqlite3, sys
@@ -68,7 +74,7 @@ PY
 fi
 
 BASE="${SHIKUMI_ASSET_BASE:-https://github.com/$REPO/releases/download/$TAG}"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; resume' EXIT
 for f in docker-compose.yml config.example.toml VERSION env.example; do      # (env.example is saved as .env.example: GitHub renames dotfile assets)
   curl -fsSL "$BASE/$f" -o "$TMP/$f" || die "could not download $f from release $TAG"
 done

@@ -15,6 +15,12 @@ ssh "$TARGET" "cat > /tmp/sf-deploy.sh && chmod 755 /tmp/sf-deploy.sh && sudo -n
 set -e
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 cd /srv/factory
+# Pause first, so no run can start between the check and the restart; lifted on every way out unless a person had paused it already.
+PAUSED_BY_US=""
+resume() { if [ -n "$PAUSED_BY_US" ]; then rm -f /srv/factory/state/PAUSED; PAUSED_BY_US=""; fi; }
+trap resume EXIT
+if [ ! -e state/PAUSED ]; then echo "deploying" > state/PAUSED; PAUSED_BY_US=1; fi
+sleep 5                                   # a job the factory took just before the pause records its run within moments
 RUNNING=$(podman ps -q --filter 'name=^factory-' | wc -l); echo "running sandboxes: $RUNNING"
 # A run is also in flight while it clones the repositories, before its sandbox exists: the database knows about it from its first moment.
 DBRUNS=$(python3 -c "

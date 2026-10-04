@@ -19,7 +19,7 @@ from .github import GitHub
 from .jev import JevClassifier
 from .pool import Pool, key as jobkey
 from .roles import MARKER, STAGE_TO_ROLE
-from .router import decide, pick_stage
+from .router import behind, decide, pick_stage
 from .sanitize import sanitize_markdown
 from .telegram import Telegram
 
@@ -36,7 +36,7 @@ held: dict[tuple[str, int], tuple] = {}    # poll thread only: (repo, ticket) ->
 cycles_seen: set = set()                   # poll thread only: (repo, tickets) of each blocker cycle already reported
 
 
-BOILERPLATE = ("Opened https://", "Factory run did not produce", "Rate limited")
+BOILERPLATE = ("Opened https://", "Factory run did not produce", "Rate limited", "The factory's ")
 PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)$")
 STAGE_HEAD = Q.STAGE_HEAD
 
@@ -177,10 +177,42 @@ def end_run(run_id, res, sink: dict) -> None:
         log.exception("could not record run end")
 
 
-def start(cfg: Config, conn, repo: str, num: int, kind: str, job) -> None:
+def start(cfg: Config, conn, repo: str, num: int, kind: str, job, gh: GitHub | None = None) -> None:
     """Hand job(db) for ticket repo#num to the pool. The caller has checked pool.can_take. A job running inline uses conn;
-    one on a worker thread uses that thread's own connection to the database."""
-    pool.submit(jobkey(repo, num), kind, lambda: job(conn if pool.inline else dbm.local(cfg.db_path)))
+    one on a worker thread uses that thread's own connection to the database. With gh, a job that crashes leaves the ticket
+    marked failed (stranded) instead of stopping with nothing to show."""
+    def run():
+        db = conn if pool.inline else dbm.local(cfg.db_path)
+        try:
+            job(db)
+        except Exception as e:
+            if gh is None:
+                raise
+            log.exception("job for %s#%s failed", repo, num)
+            stranded(gh, repo, num, kind, e)
+    pool.submit(jobkey(repo, num), kind, run)
+
+
+STRANDED = ("The factory's {kind} run stopped with an error before it could finish ({error}). Nothing more will happen on its own: "
+            "a person should take a look, then apply the label again to retry.")
+
+
+def stranded(gh: GitHub, repo: str, num: int, kind: str, error: Exception) -> None:
+    """A job crashed (often GitHub timing out). If the run had claimed the ticket (its working label is still on), mark it failed
+    with a fixed comment and an alert. If GitHub cannot be reached even for that, the working label stays and the next start's
+    recovery requeues the ticket. A crash before the claim leaves the trigger label on, so the next poll simply tries again."""
+    working = WORKING if kind == "build" else working_label(kind)
+    try:
+        if working not in [lb["name"] for lb in gh.get_issue(repo, num).get("labels", [])]:
+            return
+        gh.add_labels(repo, num, [FAILED])
+        gh.comment(repo, num, STRANDED.format(kind=kind, error=type(error).__name__))
+        gh.remove_label(repo, num, working)
+    except Exception:
+        log.exception("could not mark %s#%s failed after its job crashed", repo, num)
+        return
+    emit("run:crashed", f"{kind} job crashed ({type(error).__name__}): marked failed", repo, num)
+    alert(f"Run crashed: {repo}#{num} ({kind}, {type(error).__name__}). Marked failed.", event="failure")
 
 
 def maybe_restart(state_dir: Path) -> None:
@@ -298,13 +330,14 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         vf = res.verify_failure
         emit("verify:retry", f"a worker check failed: fix round {vf['round']} of {cfg.workers.fix_rounds}", repo, num)
         res, route = run_chain(cfg, gh, "build", repo, issue, route, c, verify_retry=vf, **kw)
-    gh.remove_label(repo, num, WORKING)
-    if res.status == "rate-limited":
+    if res.status == "rate-limited":                 # the working label comes off once the outcome is on the ticket (see dispatch_stage)
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, "implement")
+        gh.remove_label(repo, num, WORKING)
     elif res.status == "pr":
         gh.add_labels(repo, num, [DONE])
         draft = cfg.review.enabled and cfg.review.auto
         gh.comment(repo, num, f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else ""))
+        gh.remove_label(repo, num, WORKING)
         if conn is not None:
             for u in res.pr_url.split():                  # watch each PR's CI; skip anything that is not a PR URL
                 m = PR_URL.match(u)
@@ -322,6 +355,7 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     else:
         gh.add_labels(repo, num, [FAILED])
         gh.comment(repo, num, f"Factory run did not produce a PR ({res.status}). A person should take a look.")
+        gh.remove_label(repo, num, WORKING)
         alert(f"Run did not produce a PR: {repo}#{num} ({res.status})\n{res.detail[:300]}", event="failure")
     return res
 
@@ -397,15 +431,18 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                            comments=comments, answers=Q.summary(before), **({"review": review} if review else {}))
     if review and res.status == "stage":
         reviewnotes.mark_sent(conn, review["ids"])
-    gh.remove_label(repo, num, working_label(role.name))
+    # The working label comes off only once the outcome is on the ticket: a crash or a restart before that leaves it on, so the
+    # job's crash handler or the next start's recovery finds the run instead of a ticket with nothing to show.
+    working = working_label(role.name)
     if res.status == "rate-limited":
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, role.name)
+        gh.remove_label(repo, num, working)
     elif res.status == "stage":
         if conn is not None:                            # a designer's draft PR is checked for merge conflicts too
             for pm in map(PR_URL.match, (res.pr_url or "").split()):
                 if pm:
                     dbm.track_pr(conn, pm.group(1), int(pm.group(2)), repo, num)
-        labels = [lb["name"] for lb in gh.get_issue(repo, num).get("labels", [])] + [role.done_label]
+        labels = [lb["name"] for lb in gh.get_issue(repo, num).get("labels", []) if lb["name"] != working] + [role.done_label]
         doc, qs = Q.extract(res.output)                 # qs None: no block or a malformed one, so the classifier alone decides
         pending = [q for q in qs or [] if not q.safe]
         earlier = [q for st in before if st.stage != role.name for q in st.pending()]    # still unanswered from another stage
@@ -423,13 +460,15 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             # stop it). The re-applied label goes through the normal auto gate, which still asks before a build it is unsure
             # about. Stages already done are never chosen again, so a chain always ends.
             go_on = bool(chain and cfg.auto_chain and not pending and not earlier and not nxt.needs_human
-                         and (nxt.stage in STAGE_TO_ROLE or nxt.stage == "implement"))
+                         and (nxt.stage in STAGE_TO_ROLE or nxt.stage == "implement")
+                         and not behind(cfg, STAGE_TO_ROLE.get(nxt.stage or ""), stages_done(cfg, labels)))
         except Exception:
             log.exception("next-stage suggestion failed")
         if pending or earlier:
             hint = "a person's answer to the open questions " + ", ".join(q.id for q in pending + earlier)
         url = gh.comment(repo, num, stage_comment(role, route, doc, hint, res.files, res.notes, qs, role.design_files))
         gh.add_labels(repo, num, [role.done_label])
+        gh.remove_label(repo, num, working)
         if pending or earlier:                          # a visible "waiting for you" mark on the issue itself
             try:
                 gh.create_label(repo, Q.NEEDS_ANSWERS, "fbca04", "Open questions are waiting for a person's answers")
@@ -451,6 +490,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
     else:
         gh.add_labels(repo, num, [FAILED])
         gh.comment(repo, num, f"Factory {role.name} run did not produce a document ({res.status}). A person should take a look.")
+        gh.remove_label(repo, num, working)
         alert(f"{role.name.title()} failed: {repo}#{num} ({res.status})\n{res.detail[:300]}", event="failure")
     return res
 
@@ -698,7 +738,7 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
                 else:
                     res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=db)
                 dbm.record(db, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved via telegram; {res.detail}; {res.pr_url or ''}")
-            start(cfg, conn, repo, num, role.name if role else "build", approved)
+            start(cfg, conn, repo, num, role.name if role else "build", approved, gh)
         except Exception:
             log.exception("approval failed for %s#%s", repo, num)
 
@@ -740,7 +780,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
                 outcome = "no-prs"
             gh.remove_label(repo, num, working_label("review"))
             dbm.record(db, repo, num, updated, f"run:{outcome}", f"{why}; review of {len(prs)} PR(s)")
-        start(cfg, conn, repo, num, "review", review_job)
+        start(cfg, conn, repo, num, "review", review_job, gh)
         return None
     if kind == "conflicts":
         if cfg.dry_run:
@@ -753,7 +793,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             outcome = fix_conflicts(cfg, gh, db, repo, issue, label)
             dbm.record(db, repo, num, updated, f"run:{outcome}", f"{why}; merge conflicts")
             log.info("%s#%d conflicts: %s", repo, num, outcome)
-        start(cfg, conn, repo, num, "conflicts", conflicts_job)
+        start(cfg, conn, repo, num, "conflicts", conflicts_job, gh)
         return None
     labels = [lb["name"] for lb in issue.get("labels", [])]
     done = stages_done(cfg, labels)
@@ -780,15 +820,17 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         # A read-only stage (analyst, designer, architect) only writes a document on the ticket, and low confidence or "needs a person"
         # is exactly why an analyst is the right next step, so it runs without asking. A person is asked before a BUILD, or when
         # the classifier named no stage, or a stage that is already done.
-        read_only_pick = bool(st) and st not in done and not cfg.auto_confirm_stages
-        if (not read_only_pick and (c.needs_human or not sure) and not cfg.auto_confirm_stages and "analyst" not in done
+        back = behind(cfg, st, done)                    # an earlier stage than one already done: auto never goes back
+        read_only_pick = bool(st) and st not in done and not back and not cfg.auto_confirm_stages
+        if (not read_only_pick and (c.needs_human or not sure) and not cfg.auto_confirm_stages and not done
                 and any(r.name == "analyst" for r in cfg.roles)):
             st, read_only_pick = "analyst", True       # unsure what to do: the cheap read-only analyst is the right first step, not a question
             emit("decision", f"unsure ({summary}): running the analyst first", repo, num)
         # A question that needs a person is never auto-resolved: until it is answered, auto does not build (whatever the classifier says).
-        if not read_only_pick and (c.needs_human or open_questions or not sure or (st and st in done)):
+        if not read_only_pick and (c.needs_human or open_questions or not sure or (st and (st in done or back))):
             reason = ("needs a person" if c.needs_human else "open questions need a person" if open_questions
-                      else "low confidence" if not sure else "chose a stage already done")
+                      else "low confidence" if not sure else "chose an earlier stage than one already done" if back
+                      else "chose a stage already done")
             dbm.record(conn, repo, num, updated, "human", f"{why}; {summary}; {reason}")
             emit("decision", f"needs a person: {reason} ({summary})", repo, num)
             log.info("%s#%d auto -> human (%s)", repo, num, reason)
@@ -815,7 +857,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             res = dispatch_stage(cfg, gh, classifier, repo, issue, role, c if kind == "auto" else None, label, chain=(kind == "auto"), conn=db)
             dbm.record(db, repo, num, updated, f"run:{res.status}", f"{detail}; {res.detail}")
             log.info("%s#%d stage %s: %s", repo, num, role.name, res.status)
-        start(cfg, conn, repo, num, role.name, stage_job)
+        start(cfg, conn, repo, num, role.name, stage_job, gh)
         return None
 
     d = decide(cfg, c)
@@ -825,7 +867,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             res = dispatch(cfg, gh, repo, issue, d.route, c, label, db)
             dbm.record(db, repo, num, updated, f"run:{res.status}", f"{detail}; {res.detail}; {res.pr_url or ''}")
             log.info("%s#%d run %s: %s %s", repo, num, res.status, res.detail, res.pr_url or "")
-        start(cfg, conn, repo, num, "build", build_job)
+        start(cfg, conn, repo, num, "build", build_job, gh)
     else:
         dbm.record(conn, repo, num, updated, d.action, detail)
         emit("decision", f"{d.action}: {d.reason} ({summary}){' [dry-run]' if cfg.dry_run else ''}", repo, num)

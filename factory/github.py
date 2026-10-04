@@ -1,11 +1,25 @@
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 
 STEP_TITLE_PREFIX = "[factory] "
+RETRY_WAITS = (2, 5)                        # seconds before the 2nd and 3rd try of a request that is safe to repeat
+
+
+def _repeatable(method: str, path: str) -> bool:
+    """Reads, label removals and label additions give the same result when sent twice; a comment or a new issue would not."""
+    return method == "GET" or (method == "DELETE" and "/labels/" in path) or (method == "POST" and path.endswith("/labels"))
+
+
+def _transient(e: Exception) -> bool:
+    """GitHub timing out or briefly unavailable, not a refusal."""
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code in (500, 502, 503, 504)
+    return isinstance(e, (TimeoutError, ConnectionError, urllib.error.URLError))
 
 
 class GitHub:
@@ -16,6 +30,18 @@ class GitHub:
         self.token = token
 
     def _req(self, method: str, path: str, data: dict | None = None):
+        """One API call. A call that is safe to repeat is tried again when GitHub times out or answers 5xx, so a short GitHub
+        hiccup does not throw away a finished run."""
+        waits = RETRY_WAITS if _repeatable(method, path) else ()
+        for wait in (*waits, None):
+            try:
+                return self._send(method, path, data)
+            except Exception as e:
+                if wait is None or not _transient(e):
+                    raise
+                time.sleep(wait)
+
+    def _send(self, method: str, path: str, data: dict | None = None):
         req = urllib.request.Request(
             f"https://api.github.com{path}",
             method=method,
