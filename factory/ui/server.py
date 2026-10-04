@@ -33,8 +33,9 @@ from .workerproc import WorkerApiProcess
 
 log = logging.getLogger("factory.ui")
 STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8",
-          "floor-edit.js": "application/javascript; charset=utf-8", "fonts/space-grotesk-latin.woff2": "font/woff2", "fonts/jetbrains-mono-latin.woff2": "font/woff2"}
+          "floor-edit.js": "application/javascript; charset=utf-8", "terrain.js": "application/javascript; charset=utf-8", "fonts/space-grotesk-latin.woff2": "font/woff2", "fonts/jetbrains-mono-latin.woff2": "font/woff2"}
 MAX_BODY = 64 * 1024
+MAX_LAYOUT_BODY = 256 * 1024             # saving the floor layout, terrain and all (signed in, CSRF-checked like every form)
 PAGE = 50
 HEADERS = {
     "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; "
@@ -277,12 +278,12 @@ class Handler(BaseHTTPRequestHandler):
         host = host[1:host.index("]")] if host.startswith("[") and "]" in host else host.rsplit(":", 1)[0] if host.count(":") == 1 else host
         return host in self.app.allowed_hosts            # defeats DNS-rebinding
 
-    def _form(self) -> dict | None:
+    def _form(self, limit: int = MAX_BODY) -> dict | None:
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             return None
-        if n > MAX_BODY:
+        if n > limit:
             return None
         parsed = parse_qs(self.rfile.read(n).decode("utf-8", "replace"), keep_blank_values=True)
         form = Form({k: v[0] for k, v in parsed.items()})
@@ -325,7 +326,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.command == "POST":
                 if path == "/backup/restore":
                     return self._restore_upload(csrf)
-                form = self._form()
+                form = self._form(MAX_LAYOUT_BODY if path == "/floor/layout/save" else MAX_BODY)
                 if form is None:
                     return self._send(413, "request too large", "text/plain")
                 if not hmac.compare_digest(str(form.get("csrf", "")), csrf):

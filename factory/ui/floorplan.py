@@ -36,7 +36,7 @@ log = logging.getLogger("factory.ui")
 
 VERSION, G = 1, 20
 W, H = 200, 120                            # the floor's bounds, in cells
-MAX_BYTES = 16 * 1024                      # the document; url-encoded it stays under the server's 64 KB body limit
+MAX_BYTES = 64 * 1024                      # the document (terrain included); url-encoded it stays under the layout save's body limit
 MAX_POINTS, MAX_CELLS, MAX_PIECES, MAX_UNDER = 64, 6000, 100, 5
 MAX_WALLS, MAX_WALL_CELLS, MAX_TREES = 60, 4000, 400
 FILE = "floor-layout.json"
@@ -592,7 +592,7 @@ def structure(doc) -> list[str]:
     if not isinstance(doc, dict):
         return ["The layout must be a JSON object."]
     errs = []
-    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces", "districts", "walls", "trees", "tracks"}
+    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces", "districts", "walls", "trees", "tracks", "terrain"}
     if extra:
         errs.append("Unknown keys: " + ", ".join(sorted(str(k)[:30] for k in extra)[:5]) + ".")
     if doc.get("version") != VERSION or doc.get("grid") != G:
@@ -632,6 +632,7 @@ def structure(doc) -> list[str]:
             errs.append(f"Too many trees ({len(trees)}; at most {MAX_TREES}).")
         elif not all(_pt(t) for t in trees):
             errs.append("A tree is a grid point inside the floor.")
+    errs += terrain_shape(doc.get("terrain", {}))
     tracks = doc.get("tracks", {})
     if not isinstance(tracks, dict):
         errs.append("The tracks are an object of lines.")
@@ -659,6 +660,134 @@ def structure(doc) -> list[str]:
         if not ok:
             errs.append("A piece is a splitter, merger or side-load {kind, at, dir} or an underground {kind, from, to}.")
             break
+    return errs
+
+
+def terrain_shape(t) -> list[str]:
+    """The terrain's shape (terrain.py): known keys and kinds, whole numbers inside the floor, sizes in range, bounded counts."""
+    from . import terrain as T
+    if t in (None, {}):
+        return []
+    if not isinstance(t, dict):
+        return ["The terrain is an object."]
+    errs, L = [], T.LIMITS
+    extra = set(t) - {"items", "rivers", "tiles", "fences", "gates", "roads", "hazards"}
+    if extra:
+        errs.append("Unknown terrain: " + ", ".join(sorted(str(k)[:20] for k in extra)[:5]) + ".")
+    px = lambda v, hi: _int(v) and 0 <= v <= hi
+    items = t.get("items", [])
+    if not isinstance(items, list) or len(items) > L["items"]:
+        errs.append(f"The terrain holds at most {L['items']} trees, bushes, rocks, ponds and lights.")
+    else:
+        for it in items:
+            ok = isinstance(it, list) and len(it) == 5 and it[0] in T.KINDS and px(it[1], W * G) and px(it[2], H * G) and _int(it[3]) and _int(it[4])
+            if not ok or not (T.SIZES[it[0]][0] <= it[3] <= T.SIZES[it[0]][1]) or not 0 <= it[4] <= 0xFFFFFFFF:
+                errs.append("A terrain item is [kind, x, y, size, seed]: a tree, pine, bush, rock, pond, lamp, fog or shade inside the floor, its size in range.")
+                break
+    rivers = t.get("rivers", [])
+    if not isinstance(rivers, list) or len(rivers) > L["rivers"] or not all(
+            isinstance(r, list) and 2 <= len(r) <= L["river_points"] and all(isinstance(p, list) and len(p) == 2 and px(p[0], W * G) and px(p[1], H * G) for p in r)
+            for r in rivers):
+        errs.append(f"A river is 2 to {L['river_points']} points inside the floor (at most {L['rivers']} rivers).")
+    tiles = t.get("tiles", {})
+    if not isinstance(tiles, dict) or set(tiles) - set(T.GROUNDS):
+        errs.append("The ground is painted in grass, dirt, sand, concrete or water.")
+    else:
+        seen, nruns = set(), 0
+        for kind, rs in tiles.items():
+            if not isinstance(rs, list):
+                errs.append("The ground is runs of tiles: [column, row, count].")
+                break
+            for r in rs:
+                nruns += 1
+                if not (isinstance(r, list) and len(r) == 3 and all(_int(v) for v in r) and r[0] >= 0 and r[1] >= 0 and r[2] >= 1
+                        and (r[0] + r[2]) * T.TILE <= W * G and (r[1] + 1) * T.TILE <= H * G):
+                    errs.append("The ground is runs of tiles inside the floor: [column, row, count].")
+                    return errs
+                cells = {(r[0] + i, r[1]) for i in range(r[2])}
+                if cells & seen:
+                    errs.append("A ground tile is painted only one kind.")
+                    return errs
+                seen |= cells
+                if len(seen) > L["tiles"]:
+                    errs.append(f"At most {L['tiles']} ground tiles.")
+                    return errs
+        if nruns > L["runs"]:
+            errs.append(f"The ground is too broken up ({nruns} runs; at most {L['runs']}).")
+    for key, what in (("fences", "fence"), ("roads", "road")):
+        ls = t.get(key, [])
+        if not isinstance(ls, list) or len(ls) > L[key] or not all(
+                isinstance(pts, list) and 2 <= len(pts) <= MAX_POINTS and all(_pt(q) for q in pts)
+                and all((q[0] != r[0]) != (q[1] != r[1]) for q, r in zip(pts, pts[1:])) for pts in ls):
+            errs.append(f"A {what} is 2 to {MAX_POINTS} grid points inside the floor, each run straight across or down (at most {L[key]}).")
+    gates = t.get("gates", [])
+    if not isinstance(gates, list) or len(gates) > L["gates"] or not all(
+            isinstance(g, list) and len(g) == 3 and _pt(g[:2]) and g[2] in ("h", "v") for g in gates):
+        errs.append(f"A gate is [x, y, \"h\" or \"v\"] at a grid point (at most {L['gates']}).")
+    hz = t.get("hazards", [])
+    if not isinstance(hz, list) or len(hz) > L["hazards"] or not all(
+            isinstance(r, list) and len(r) == 4 and all(_int(v) for v in r) and r[0] >= 0 and r[1] >= 0 and r[2] >= 1 and r[3] >= 1
+            and r[0] + r[2] <= W and r[1] + r[3] <= H for r in hz):
+        errs.append(f"A hazard zone is [x, y, w, h] in cells inside the floor (at most {L['hazards']}).")
+    return errs
+
+
+def water_at(t: dict):
+    """A test for "is this pixel in water?": ponds, rivers and painted water tiles."""
+    import math
+    from . import terrain as T
+    ponds = [(x, y, s / 2) for kind, x, y, s, v in (t.get("items") or []) if kind == "pond"]
+    segs = [(a, b) for r in (t.get("rivers") or []) for a, b in zip(r, r[1:])]
+    tiles = T.cells_of({"water": (t.get("tiles") or {}).get("water") or []}).get("water", set())
+
+    def seg_dist(p, a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L2 = dx * dx + dy * dy
+        u = 0 if not L2 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2))
+        return math.dist(p, (a[0] + u * dx, a[1] + u * dy))
+
+    def at(p):
+        return (any(math.dist(p, (x, y)) <= r for x, y, r in ponds) or any(seg_dist(p, a, b) <= 13 for a, b in segs)
+                or (int(p[0] // T.TILE), int(p[1] // T.TILE)) in tiles)
+    return at
+
+
+def terrain_rules(doc: dict, B: dict, hops: list) -> list[str]:
+    """What the terrain asks of the rest: belts and track do not cross water (a bridge is not drawn yet); a belt crosses a wall only
+    with an underground belt; track never runs through a wall, nor through a fence except at a gate; nothing is built in a hazard
+    zone."""
+    t = doc.get("terrain") or {}
+    errs = []
+    wet = water_at(t)
+    walls = {c for w in doc.get("walls") or [] for c in cells(w)}
+    fences = {c for w in t.get("fences") or [] for c in cells(w)}
+    for x, y, way in t.get("gates") or []:
+        fences -= {(x, y), (x + 1, y)} if way == "h" else {(x, y), (x, y + 1)}
+    under = [p for p in doc.get("pieces") or [] if p.get("kind") == "underground"]
+    lines_ = [("belt", k, v) for k, v in (doc.get("belts") or {}).items() if k in hops] + [("track", k, v) for k, v in (doc.get("tracks") or {}).items()]
+    for what, hid, pts in lines_:
+        a, _, b = hid.partition(">")
+        name = f"The {what} from {label(a)} to {label(b)}"
+        cs = cells(pts)
+        if any(wet((cx * G, cy * G)) for cx, cy in cs):
+            errs.append(f"{name} crosses water: route it round, there is no bridge yet.")
+        hit = [c for c in cs if c in walls]
+        if hit and what == "track":
+            errs.append(f"{name} runs into a wall.")
+        elif hit:
+            hidden = set()
+            for u in under:
+                if _same_run(pts, u["from"], u["to"]):
+                    run = cells([u["from"], u["to"]])
+                    hidden |= set(run[1:-1])
+            if any(c not in hidden for c in hit):
+                errs.append(f"{name} crosses a wall: take it under with an underground belt.")
+        if what == "track" and any(c in fences for c in cs):
+            errs.append(f"{name} runs into a fence: put a gate where it crosses.")
+    for x, y, w, h in t.get("hazards") or []:
+        for nid, (bx, by, bw, bh) in solid(B).items():
+            if bx < x + w and x < bx + bw and by < y + h and y < by + bh:
+                errs.append(f"{label(nid)} stands in a hazard zone.")
     return errs
 
 
@@ -772,6 +901,7 @@ def validate(doc, ctx: Ctx) -> list[str]:
     for w, ok in loops(tracks, ctx).items():
         if not ok:
             errs.append(f"No track loop for {label(w)}: lay track from the yard to it, from it to the Train station, and from the Train station back to the yard.")
+    errs += terrain_rules(doc, B, hops)
     belts = [p for k, p in doc["belts"].items() if k in hops]
     for p in doc["pieces"]:
         if p["kind"] == "underground":
@@ -833,6 +963,8 @@ def merge(doc: dict, ctx: Ctx) -> dict | None:
             dists[name] = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
     out = {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts, "pieces": pieces, "districts": dists,
            "walls": list(doc.get("walls") or []), "trees": list(doc.get("trees") or [])}
+    if doc.get("terrain"):
+        out["terrain"] = doc["terrain"]
     if tracks:
         out["tracks"] = tracks
     return out
@@ -933,7 +1065,8 @@ def canonical(doc: dict) -> dict:
             "belts": {k: [list(p) for p in v] for k, v in doc["belts"].items()}, "pieces": doc.get("pieces", []),
             "districts": {k: {c: v[c] for c in ("x", "y", "w", "h")} for k, v in (doc.get("districts") or {}).items()},
             "walls": [[list(p) for p in w] for w in doc.get("walls") or []], "trees": [list(t) for t in doc.get("trees") or []],
-            **({"tracks": {k: [list(p) for p in v] for k, v in doc["tracks"].items()}} if doc.get("tracks") else {})}
+            **({"tracks": {k: [list(p) for p in v] for k, v in doc["tracks"].items()}} if doc.get("tracks") else {}),
+            **({"terrain": doc["terrain"]} if doc.get("terrain") else {})}
 
 
 def save(state_dir, doc: dict) -> None:
@@ -975,7 +1108,8 @@ def compile_plan(doc: dict, ctx: Ctx) -> dict:
     return {"at": {k: px((v["x"], v["y"])) for k, v in nodes.items()}, "box": {k: tuple(c * G for c in v) for k, v in B.items()}, "districts": dist,
             "hops": hops, "pieces": [{**p, "at": px(p["at"])} for p in doc["pieces"] if p["kind"] != "underground"], "scale": scale,
             "walls": [[px(p) for p in w] for w in doc.get("walls") or []], "trees": [px(t) for t in doc.get("trees") or []],
-            "tracks": rails, "circuits": circuits, "workers": [f"worker:{w}" for w in ctx.workers]}
+            "tracks": rails, "circuits": circuits, "workers": [f"worker:{w}" for w in ctx.workers],
+            "terrain": doc.get("terrain") or {}, "wall_cells": doc.get("walls") or [], "tree_cells": doc.get("trees") or []}
 
 
 def fit_art(nid: str, b) -> tuple[float, float, float]:

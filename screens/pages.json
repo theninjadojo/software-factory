@@ -28,5 +28,20 @@
   "viewports": [
    "desktop"
   ]
+ },
+ {
+  "name": "floor-editor-terrain",
+  "path": "screens/pages/floor-editor-terrain.html",
+  "viewports": [
+   "desktop"
+  ]
+ },
+ {
+  "name": "factory-terrain",
+  "path": "screens/pages/factory-terrain.html",
+  "viewports": [
+   "desktop",
+   "mobile"
+  ]
  }
 ]

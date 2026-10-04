@@ -220,6 +220,7 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
     pts = plan(pg)["belts"]["harbor>receiving"]
     i = max(range(len(pts) - 1), key=lambda k: abs(pts[k + 1][0] - pts[k][0]) + abs(pts[k + 1][1] - pts[k][1]))
     (ax, ay), (bx, by) = pts[i], pts[i + 1]
+    pg.locator('[data-hop="harbor>receiving"]').evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")
     mid = grid_to_client(pg, (ax + bx) / 2, (ay + by) / 2)
     across = ay == by
     zoom = float(pg.inner_text(".fe-zoomval").rstrip("%")) / 100

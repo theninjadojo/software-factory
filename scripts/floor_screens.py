@@ -29,7 +29,38 @@ HOLD = 12.0                                                  # every SMIL animat
 WORKERS = ("linux-box", "my-mac", "win-pc")
 # (page name, address, viewports, what to do before the snapshot)
 SHOTS = (("factory", "/", ("desktop", "mobile"), None), ("floor-editor", "/floor/edit", ("desktop", "mobile"), None),
-         ("floor-editor-scratch", "/floor/edit", ("desktop",), "scratch"), ("floor-editor-belt", "/floor/edit", ("desktop",), "select-belt"))
+         ("floor-editor-scratch", "/floor/edit", ("desktop",), "scratch"), ("floor-editor-belt", "/floor/edit", ("desktop",), "select-belt"),
+         ("floor-editor-terrain", "/floor/edit", ("desktop",), "terrain"), ("factory-terrain", "/", ("desktop", "mobile"), "terrain-saved"))
+
+
+def terrain_scene() -> dict:
+    """A scene like the design's terrain sandbox, round the default floor: grass under the plant and a concrete pad, a road, a
+    pond with its ducks in a patch of dirt, a river, a fence with a gate, trees, pines, bushes and rocks, lamps, fog, shade and a
+    hazard zone. Fixed seeds, so the screens are the same every time."""
+    from factory.ui import terrain as T
+    cells = {k: set() for k in T.GROUNDS}
+    for c in range(14, 63):
+        for r in range(0, 32):
+            cells["grass"].add((c, r))
+    for c in range(18, 41):
+        for r in range(0, 14):
+            cells["grass"].discard((c, r))
+            cells["concrete"].add((c, r))
+    for c in range(15, 20):
+        for r in range(23, 29):
+            cells["grass"].discard((c, r))
+            cells["dirt"].add((c, r))
+    items = [["pond", 700, 1020, 100, 5]]
+    items += [["tree", x, y, s, v] for x, y, s, v in ((620, 1280, 60, 11), (760, 1300, 48, 12), (900, 1260, 70, 13), (1500, 1300, 56, 14))]
+    items += [["pine", x, y, s, v] for x, y, s, v in ((1100, 1280, 50, 21), (1180, 1330, 40, 22), (1320, 1260, 60, 23))]
+    items += [["bush", x, y, s, v] for x, y, s, v in ((840, 1140, 24, 31), (980, 1160, 20, 32), (1240, 1150, 26, 33))]
+    items += [["rock", x, y, s, v] for x, y, s, v in ((1050, 1150, 40, 41), (1400, 1180, 30, 42))]
+    items += [["lamp", x, y, 130, 51] for x, y in ((1580, 560), (720, 560), (1300, 960), (1700, 960))]
+    items += [["fog", 1500, 150, 160, 61], ["fog", 650, 1400, 140, 62], ["shade", 760, 1320, 100, 71]]
+    return {"items": items, "rivers": [[[560, 1500], [700, 1540], [840, 1500], [980, 1560], [1120, 1520], [1260, 1580], [1400, 1540]]],
+            "tiles": T.runs(cells), "fences": [[[30, 60], [42, 60]], [[44, 60], [56, 60]]], "gates": [[42, 60, "h"]],
+            "roads": [[[28, 47], [62, 47]]], "hazards": [[63, 34, 4, 3]]}
+
 
 
 def check(cond, what: str) -> None:
@@ -91,10 +122,15 @@ def shoot(server, password: str) -> list:
                 verify_editor(pg, act)
             else:
                 verify_factory(pg)
+            if act == "terrain-saved":
+                verify_terrain_floor(pg)
             check(not errors, f"no script or CSP errors on {name} ({errors[:2]})")
             out = PAGES_DIR / f"{name}.html"
             out.write_text(snapshot(pg))
             pages.append((name, out.relative_to(ROOT).as_posix(), views))
+            if act == "terrain":                                        # keep it: the next screen is the floor drawn from it
+                pg.click(".fe-save button")
+                pg.wait_for_url(server.url + "/?ok=layout_saved")
         ctx.close()
         b.close()
     return pages
@@ -120,6 +156,17 @@ def verify_editor(pg, act) -> None:
         pg.click('[data-act="scratch"]')
         check(plan()["nodes"] == {}, "Start from scratch empties the floor")
         check("An empty floor" in pg.text_content(".fe-svg"), "an empty floor says how to start")
+    if act == "terrain":
+        doc = plan()
+        doc["terrain"] = terrain_scene()
+        pg.locator("textarea[name=plan]").evaluate("(a, v) => { a.value = v; a.dispatchEvent(new Event('change')); }", json.dumps(doc))   # as typed in "The layout as data"
+        check(plan().get("terrain") == doc["terrain"], "the terrain scene is in the editor")
+        check("Every station is reachable" in pg.inner_text(".fe-problems"), "the terrain breaks no rule")
+        for cls in ("gd-grass", "gd-concrete", "gd-dirt", "tr-pond", "tr-river", "tr-tree", "tr-pine", "tr-bush", "tr-rock", "fc-gate", "rd-road",
+                    "hz-zone", "lt-pool", "lt-fog", "lt-shade", "dk-duck", "bd-bird"):
+            check(pg.locator(f".fe-svg .{cls}").count() >= 1, f"the editor draws {cls}")
+        check(pg.evaluate("t => window.FT.svg(t, 20, 0, 0, [], [], 'under')", doc["terrain"]) == __import__("factory.ui.terrain", fromlist=["svg"]).svg(doc["terrain"], 20, 0, 0, [], [], "under"),
+              "the editor's terrain is the server's, to the character")
     if act == "select-belt":
         pts = plan()["belts"]["harbor>receiving"]
         (ax, ay), (bx, by) = max(zip(pts, pts[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
@@ -130,6 +177,11 @@ def verify_editor(pg, act) -> None:
         check("Belt The harbor → Receiving" in pg.inner_text(".fe-msg"), "selecting a belt names it in the status line")
         check(pg.locator(".fe-remove").is_visible() and pg.inner_text(".fe-remove") == "Remove belt", "with a Remove belt button")
         check(pg.locator(".fe-belt.sel").count() == 1 and pg.locator(".fe-handle").count() == 1, "the belt turns orange, with its handle")
+
+
+def verify_terrain_floor(pg) -> None:
+    for cls in ("gd-grass", "tr-pond", "tr-river", "tr-tree", "fc-gate", "rd-road", "hz-zone", "lt-pool", "dk-duck", "bd-bird"):
+        check(pg.locator(f"svg.fm .{cls}").count() >= 1, f"the floor draws {cls}")
 
 
 def verify_factory(pg) -> None:

@@ -6,7 +6,7 @@ import json
 import logging
 import threading
 
-from . import board, floorplan, plant, views
+from . import board, floorplan, plant, terrain, views
 from .views import esc
 
 log = logging.getLogger("factory.ui")
@@ -15,7 +15,13 @@ FLASH = {"layout_reset": "Back to the default layout. The floor is drawn as it w
 STALE = ("The layout was saved by someone else since you opened it. Save again to replace it with yours, or open the page again to "
          "start from theirs.")
 TOOLS = (("move", "Move"), ("belt", "Draw belt"), ("rail", "Draw track"), ("splitter", "Splitter"), ("merger", "Merger"), ("sideload", "Side-load"),
-         ("underground", "Underground"), ("wall", "Wall"), ("tree", "Tree"), ("erase", "Erase"))
+         ("underground", "Underground"), ("erase", "Erase"))
+# the terrain tools (terrain.py), in the groups of the design's terrain sandbox
+TERRAIN_TOOLS = (("Scenery", (("tree", "Tree"), ("pine", "Pine"), ("bush", "Bush"), ("rock", "Rock"))),
+                 ("Water", (("pond", "Pond"), ("river", "River"))),
+                 ("Ground", (("g-grass", "Grass"), ("g-dirt", "Dirt"), ("g-sand", "Sand"), ("g-concrete", "Concrete"), ("g-water", "Water"))),
+                 ("Build", (("wall", "Wall"), ("fence", "Fence"), ("gate", "Gate"), ("road", "Road"), ("hazard", "Hazard"))),
+                 ("Light", (("lamp", "Lamp"), ("fog", "Fog"), ("shade", "Shade"))))
 
 
 def _ctx(h) -> "floorplan.Ctx":
@@ -37,7 +43,10 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             '<p class="muted">Start from the default or from an empty floor, and bring buildings in from the parts tray: drag one onto the '
             'floor, or click it. Move the buildings on the grid and drag a corner to resize one. With Draw belt, drag from the building a '
             'ticket leaves onto the one it goes to (or click the belt\'s points); with Move, drag a belt sideways to slide it. Place '
-            'splitters, mergers, side-loads and underground belts, walls and trees. The harbor goes anywhere: its belt takes the ships\' '
+            'splitters, mergers, side-loads and underground belts. Paint the land round it with the terrain tools: trees, bushes and rocks, '
+            'ponds and rivers (belts and track cannot cross water), ground tiles, walls (a belt goes under one with an underground belt), '
+            'fences and gates (trains pass only at a gate), roads, hazard zones (nothing may be built in one), lamps, fog and shade; birds '
+            'and ducks move in by themselves. The harbor goes anywhere: its belt takes the ships\' '
             'tickets to Receiving. Notifiers are wireless: put them anywhere, nothing to connect. Workers are train stops outside the factory: '
             'with Draw track, lay track from the yard to each worker, on to the Train station and back to the yard; tracks can join at a '
             'junction, whose signals let one train onto the shared track at a time. Drag the ground to pan; zoom with the '
@@ -57,7 +66,12 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             '<button type="button" class="secondary" data-act="zoomin" aria-label="Zoom in">+</button>'
             '<button type="button" class="secondary" data-act="fit">Fit</button>'
             '<button type="button" class="secondary" data-act="full">Full screen</button></span></div>'
-            f'<svg class="fm fe-art" aria-hidden="true" width="0" height="0" focusable="false">{art}</svg>'
+            '<div class="fe-tools fe-terrain-tools" role="toolbar" aria-label="Terrain tools">' + "".join(
+                f'<span class="fe-group"><span class="lab">{esc(g)}</span>' + "".join(
+                    f'<button type="button" class="secondary" data-tool="{t}" aria-pressed="false">'
+                    + (f'<i class="sw sw-{t[2:]}" aria-hidden="true"></i>' if t.startswith("g-") else "") + f'{esc(n)}</button>' for t, n in tools) + '</span>'
+                for g, tools in TERRAIN_TOOLS) + '</div>'
+            f'<svg class="fm fe-art" aria-hidden="true" width="0" height="0" focusable="false">{terrain.defs()}{art}</svg>'
             '<div class="fe-status"><p class="fe-msg" aria-live="polite"></p><button type="button" class="secondary fe-remove" hidden>Remove</button>'
             '<ul class="fe-legend"><li><i class="lg-belt"></i>Belt</li><li><i class="lg-in"></i>Deliveries in</li>'
             + ('<li><i class="lg-rail"></i>Rail</li>' if ctx.yard_on else '') + '<li><i class="lg-radio"></i>Notifier, wireless</li></ul></div>'
@@ -73,7 +87,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             '<button>Save layout</button></form>'
             f'<form method="post" action="/floor/layout/reset" class="fe-reset">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
             '<button class="secondary">Reset to the default layout</button></form>'
-            '<script src="/static/floor-edit.js" defer></script>')
+            '<script src="/static/terrain.js" defer></script><script src="/static/floor-edit.js" defer></script>')
     h._send(status, views.page("Floor layout", body, "/", csrf, wide=True, full=True, flash=flash, flash_kind=kind))
 
 
