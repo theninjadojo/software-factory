@@ -103,6 +103,8 @@ installs used). For the Docker install, `FACTORY_WORKERS=1 ./scripts/setup.sh` d
   it, and make sure the bot account has write access and the token covers it. Restart.
 - Rotating a secret: replace the file, restart the orchestrator.
 - Tokens expire: a GitHub token that lapses shows up as failed runs and Telegram alerts.
+- Local tickets can carry attachments (Settings → General sets the size and count limits). They live in the `local_attachments` table,
+  so a backup holds them and grows with them; restoring such a backup into an older version drops them silently.
 
 ## Docker notes
 

@@ -150,3 +150,76 @@ class ImportAll(LocalTickets):
         self.assertEqual(self.queued(), [])
         self.assertEqual(self.req("POST", "/tickets/import", "repo=" + quote(REPO, safe="") + "&all=1", cookie=self.cookie)[0], 403)
         self.assertEqual(self.queued(), [])
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 40
+
+
+class Attachments(AdminCase):
+    setUp = LocalTickets.setUp
+    cfg = LocalTickets.cfg
+    create = LocalTickets.create
+    page = LocalTickets.page
+    store = LocalTickets.store
+
+    def upload(self, path, fields, files, csrf=None, token="XBOUNDARYX"):
+        body = b""
+        for k, v in {"csrf": self.csrf if csrf is None else csrf, **fields}.items():
+            body += f'--{token}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+        for name, data in files:
+            body += f'--{token}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: x/y\r\n\r\n'.encode() + data + b"\r\n"
+        body += f"--{token}--\r\n".encode()
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("POST", path, body=body, headers={"Host": f"127.0.0.1:{self.port}", "Cookie": self.cookie,
+                                                    "Content-Type": f"multipart/form-data; boundary={token}"})
+        r = c.getresponse()
+        out = (r.status, dict(r.getheaders()), r.read())
+        c.close()
+        return out
+
+    def new(self, files, **over):
+        return self.upload("/tickets/create", {"repo": REPO, "title": "With files", "body": "see", "start": "", "where": "local", **over}, files)
+
+    def test_vetting_allows_listed_types_with_matching_content_only(self):
+        self.assertEqual(tracker.vet_attachment("../../a b.PNG", PNG), ("a_b.PNG", "image/png"))
+        self.assertEqual(tracker.vet_attachment("notes.md", "é".encode()), ("notes.md", "text/plain"))
+        for name, data in (("x.svg", b"<svg/>"), ("x.html", b"<b>"), ("x.png", b"not a png"), ("x.txt", b"\xff\xfe"), ("x.pdf", b""),
+                           ("noext", b"a"), ("x.png", None), ("x.txt", b"a" * (tracker.ATTACH_DEFAULTS[0] + 1))):
+            with self.assertRaises(ValueError, msg=name):
+                tracker.vet_attachment(name, data)
+        safe, _ = tracker.vet_attachment("<script>\"x\".txt", b"a")
+        self.assertRegex(safe, r"^[A-Za-z0-9._-]+$")
+        self.assertLessEqual(len(tracker.vet_attachment("a" * 300 + ".txt", b"a")[0]), 80)
+
+    def test_a_ticket_is_created_with_its_files_and_they_download_safely(self):
+        s, _, _ = self.new([("shot.png", PNG), ("log.txt", b"boom")])
+        self.assertEqual(s, 303)
+        n = tracker.LOCAL_BASE + 1
+        items = self.store().attachments(REPO, n)
+        self.assertEqual([(a["name"], a["mime"]) for a in items], [("shot.png", "image/png"), ("log.txt", "text/plain")])
+        s, h, body = self.req("GET", f"/tickets/local/attachment?repo={quote(REPO, safe='')}&n={n}&id={items[1]['id']}", cookie=self.cookie)
+        self.assertEqual((s, body, h["Content-Type"], h["X-Content-Type-Options"]), (200, "boom", "text/plain", "nosniff"))
+        self.assertEqual(h["Content-Disposition"], 'attachment; filename="log.txt"')
+        self.assertIn("shot.png", self.page(n)[2])
+        self.assertEqual(self.req("GET", f"/tickets/local/attachment?repo={quote(REPO, safe='')}&n={n}&id=999", cookie=self.cookie)[0], 404)
+        self.assertEqual(self.req("GET", f"/tickets/local/attachment?repo={quote(REPO, safe='')}&n={n}&id=1")[0], 303)    # no session
+
+    def test_a_refused_file_creates_nothing(self):
+        for files in ([("a.svg", b"<svg/>")], [("a.png", b"nope")], [(f"{i}.txt", b"x") for i in range(6)]):
+            s, _, _ = self.new(files)
+            self.assertEqual(s, 303)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM local_tickets").fetchone()[0], 0)
+
+    def test_files_need_a_local_ticket_and_a_csrf_token(self):
+        self.new([("a.txt", b"x")], where="github")
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM local_tickets").fetchone()[0], 0)
+        self.assertEqual(self.upload("/tickets/create", {"repo": REPO, "title": "t"}, [], csrf="bad")[0], 403)
+
+    def test_attach_and_remove_on_an_existing_ticket(self):
+        self.create()
+        n = tracker.LOCAL_BASE + 1
+        self.assertEqual(self.upload("/tickets/local/attach", {"repo": REPO, "n": str(n)}, [("a.txt", b"x")])[0], 303)
+        (a,) = self.store().attachments(REPO, n)
+        self.assertEqual(self.post(self.cookie, self.csrf, "/tickets/local/attachment/delete", {"repo": REPO, "n": str(n), "id": str(a["id"])})[0], 303)
+        self.assertEqual(self.store().attachments(REPO, n), [])

@@ -360,10 +360,11 @@ def ticket_dialog(dom_id: str, label: str, sub: str, form: str) -> str:
 
 
 def new_ticket_form(cfg, repo: str, csrf: str) -> str:
+    from . import localtickets as LT
     if not csrf or not cfg.repos:
         return ""
     opts = "".join(f'<option value="{esc(r)}"{" selected" if r == repo else ""}>{esc(r)}</option>' for r in cfg.repos)
-    form = (f'<form method="post" action="/tickets/create" class="field">{csrf_field(csrf)}'
+    form = (f'<form method="post" action="/tickets/create" enctype="multipart/form-data" class="field">{csrf_field(csrf)}'
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="5" maxlength="{MAX_BODY}"></textarea></label>'
@@ -371,6 +372,9 @@ def new_ticket_form(cfg, repo: str, csrf: str) -> str:
                '<option value="github">GitHub issues</option></select></label>' if cfg.local_enabled else
                '<p class="muted ft-note">It becomes a GitHub issue. Local tickets, kept in the factory, are off. '
                '<a href="/tickets?ask=local#tk-settings">Turn them on</a></p>')
+            + (f'<label>Attachments (optional, local tickets only)<input type="file" name="file" multiple '
+               f'accept=".png,.jpg,.jpeg,.gif,.pdf,.txt,.md,.log,.json,.csv"></label><p class="muted">{esc(LT.attach_help(cfg))}</p>'
+               if cfg.local_enabled else '')
             + f'{start_field([r.name for r in cfg.roles])}'
             '<button>Create ticket</button></form>')
     return ticket_dialog("nt-d", "New ticket", "Kept in the factory or filed on GitHub.", form)
@@ -821,7 +825,7 @@ def flights(now: float, last: float = 20.0) -> list[dict]:
         return [{"label": lab, "age": now - t} for t, lab in _flights]
 
 
-def create(h, form, csrf: str) -> None:
+def create(h, form, csrf: str, files=()) -> None:
     """A person's new ticket: title, body and at most one start action, looked up in start_options (never a label from the
     browser). No start action means no labels, so it does not start work. Validated before GitHub is called."""
     cfg = h.app.cfg()
@@ -841,10 +845,15 @@ def create(h, form, csrf: str) -> None:
         where = form.get("where") or ("local" if cfg.local_enabled else "github")
         if where not in ("local", "github") or (where == "local" and not cfg.local_enabled):
             raise Refused("Local tickets are turned off. Turn them on under Settings → General.")
+        if files and where != "local":
+            raise Refused("Attachments can only be kept on local tickets. Choose “The factory”, or remove the files.")
+        if files:
+            from . import localtickets as LT
+            files = LT.vet(cfg, files)
     except Refused as e:
         return _done(h, form, csrf, str(e), "bad")
     if where == "local":
-        return _create_local(h, form, csrf, cfg, repo, title, body, labels, chosen[1])
+        return _create_local(h, form, csrf, cfg, repo, title, body, labels, chosen[1], files)
     gh = _gh(h)
     if gh is None:
         return _done(h, form, csrf, NO_TOKEN, "bad")
@@ -871,14 +880,19 @@ def create(h, form, csrf: str) -> None:
           else f"Created {repo}#{int(n)}. Nothing started.")
 
 
-def _create_local(h, form, csrf: str, cfg, repo: str, title: str, body: str, labels: list[str], verb: str) -> None:
+def _create_local(h, form, csrf: str, cfg, repo: str, title: str, body: str, labels: list[str], verb: str, files=()) -> None:
     from . import localtickets as LT
     now = time.time()
     with _recent_lock:
         if now - _recent.get((repo, title), 0) < DUP_SECONDS:
             return _done(h, form, csrf, "That ticket was just created.", "bad")
         _recent[(repo, title)] = now
-    n = LT.create(cfg, repo, title, body, labels)
+    try:
+        n = LT.create(cfg, repo, title, body, labels, files)
+    except ValueError as e:
+        with _recent_lock:
+            _recent.pop((repo, title), None)
+        return _done(h, form, csrf, str(e), "bad")
     log.info("tickets: created local %s %s from the UI%s", repo, tracker.display(n), f" with {labels[0]}" if labels else "")
     with _flights_lock:
         _flights.append((time.time(), tracker.display(n)))

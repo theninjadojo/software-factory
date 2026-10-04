@@ -215,14 +215,16 @@ def rebuild_db(untrusted: Path, out: Path) -> dict:
 
 
 # ---------------------------------------------------------------- multipart upload
-def read_multipart(path: Path, content_type: str, max_field: int = 256) -> tuple[dict, tuple[int, int] | None]:
-    """The text fields and the byte span of the file part of a multipart/form-data body saved at path (read through mmap,
-    so a large upload is never held in memory)."""
+def read_parts(path: Path, content_type: str, max_field: int = 256, max_parts: int = 64,
+               truncate: bool = False) -> tuple[dict, list[tuple[str, str, tuple[int, int]]]]:
+    """The text fields and the file parts ((field name, file name, byte span)) of a multipart/form-data body saved at path
+    (read through mmap, so a large upload is never held in memory). A text field longer than max_field is dropped, or with
+    truncate cut to max_field + 1 bytes so the caller's own length check refuses it. More than max_parts parts is refused."""
     m = re.search(r'boundary="?([^";\s]{1,200})"?', content_type or "")
     if not m or not (content_type or "").lower().startswith("multipart/form-data"):
         raise BackupError("Expected a multipart upload.")
     delim = b"--" + m.group(1).encode()
-    fields, span = {}, None
+    fields, files, count = {}, [], 0
     if path.stat().st_size == 0:
         raise BackupError("Empty upload.")
     with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as buf:
@@ -231,19 +233,34 @@ def read_multipart(path: Path, content_type: str, max_field: int = 256) -> tuple
             start = pos + len(delim)
             if buf[start:start + 2] == b"--":
                 break
+            count += 1
+            if count > max_parts:
+                raise BackupError("The upload has too many parts.")
             head_end = buf.find(b"\r\n\r\n", start)
             nxt = buf.find(b"\r\n" + delim, head_end) if head_end != -1 else -1
             if head_end == -1 or nxt == -1 or head_end - start > 4096:
                 raise BackupError("The upload is malformed.")
             msg = email.parser.BytesParser().parsebytes(buf[start + 2:head_end] + b"\r\n\r\n", headersonly=True)
             name = msg.get_param("name", header="content-disposition")
-            if msg.get_param("filename", header="content-disposition") is not None:
-                if name == "file" and span is None:
-                    span = (head_end + 4, nxt)
-            elif name and nxt - (head_end + 4) <= max_field:
-                fields[name] = buf[head_end + 4:nxt].decode("utf-8", "replace")
+            fname = msg.get_param("filename", header="content-disposition")
+            if fname is not None:
+                files.append((name or "", str(fname), (head_end + 4, nxt)))
+            elif name and (nxt - (head_end + 4) <= max_field or truncate):
+                fields[name] = buf[head_end + 4:min(nxt, head_end + 4 + max_field + 1)].decode("utf-8", "replace")
             pos = nxt + 2
-    return fields, span
+    return fields, files
+
+
+def read_multipart(path: Path, content_type: str, max_field: int = 256) -> tuple[dict, tuple[int, int] | None]:
+    """The text fields and the byte span of the (first) file part named `file` of a multipart/form-data body saved at path."""
+    fields, files = read_parts(path, content_type, max_field)
+    return fields, next((span for name, _, span in files if name == "file"), None)
+
+
+def read_span(src: Path, span: tuple[int, int]) -> bytes:
+    with open(src, "rb") as f:
+        f.seek(span[0])
+        return f.read(span[1] - span[0])
 
 
 def copy_span(src: Path, span: tuple[int, int], dst: Path) -> None:
