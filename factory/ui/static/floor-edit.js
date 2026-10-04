@@ -303,8 +303,9 @@
         var b = e[0].indexOf("junction:") === 0 && box(e[0]);
         if (b) { var c = [b[0] + b[2] / 2, b[1] + b[3] / 2]; if (e[1]) all.push(c); else all.unshift(c); }
       });
-      el("polyline", {points: poly(all), "class": "fe-bed"}, g);
-      el("polyline", {points: poly(all), "class": "fe-ties"}, g);
+      var rd = roundD(all.map(function (q) { return [q[0] * G, q[1] * G]; }), CURVE);
+      el("path", {d: rd, "class": "fe-bed"}, g);
+      el("path", {d: rd, "class": "fe-ties"}, g);
     });
     Object.keys(meta.nodes).forEach(function (id) { if (!AREAS[id]) drawNode(id); });
     if (!Object.keys(doc.nodes).length) {
@@ -394,7 +395,21 @@
   });
 
   // ---- the trains in the editor, on the same timetable as the floor (plant.timetable): one train at a time on shared track
-  var SPEED = 150, DWELL = 3, HOME_DWELL = 2.5, GAP = 31;
+  var SPEED = 150, DWELL = 3, HOME_DWELL = 2.5, GAP = 31, CURVE = 40, PLAT0 = 40, PLAT_GAP = 60, PARK = 50;
+  function roundD(pts, r) {
+    // a line through the points with wide rounded corners, as the floor draws track (plant.trace)
+    var q = pts.filter(function (p, i) { return !i || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]; });
+    if (q.length < 2) return "";
+    var d = "M " + q[0][0] + " " + q[0][1];
+    for (var i = 1; i < q.length - 1; i++) {
+      var a = q[i - 1], b = q[i], c = q[i + 1], la = Math.hypot(b[0] - a[0], b[1] - a[1]), lc = Math.hypot(c[0] - b[0], c[1] - b[1]);
+      var cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+      if (!la || !lc || Math.abs(cr) < 1e-9) { d += " L " + b[0] + " " + b[1]; continue; }
+      var rr = Math.min(r, la / 2, lc / 2), p1 = [b[0] - (b[0] - a[0]) / la * rr, b[1] - (b[1] - a[1]) / la * rr], p2 = [b[0] + (c[0] - b[0]) / lc * rr, b[1] + (c[1] - b[1]) / lc * rr];
+      d += " L " + p1[0] + " " + p1[1] + " A " + rr + " " + rr + " 0 0 " + (cr > 0 ? 1 : 0) + " " + p2[0] + " " + p2[1];
+    }
+    return d + " L " + q[q.length - 1][0] + " " + q[q.length - 1][1];
+  }
   function legOf(a, b) {
     var prev = {}, todo = [a], ks = Object.keys(doc.tracks);
     prev[a] = "";
@@ -431,6 +446,10 @@
     var pts = [], run = 0, marks = {tracks: {}}, stops = {};
     var add = function (q) { if (pts.length) { var l = pts[pts.length - 1]; if (l[0] === q[0] && l[1] === q[1]) return; run += Math.hypot(q[0] - l[0], q[1] - l[1]); } pts.push(q); };
     var px = function (q) { return [q[0] * G, q[1] * G]; };
+    // it starts and ends with the train's head at its platform in the yard (plant.circuit_marks): west onto the yard's loop and out
+    var yb = box("yard"), py = yb[1] * G + PLAT0 + PLAT_GAP * meta.workers.indexOf(w), park = [yb[0] * G + PARK, py], edge = [(yb[0] - 1) * G, py];
+    add(park); add(edge);
+    ringRoute("yard", edge, px(doc.tracks[legs[0][0]][0])).forEach(add);
     var rings = [w, "depot", "yard"];
     legs.forEach(function (edges, k) {
       edges.forEach(function (tid, i) {
@@ -441,11 +460,12 @@
         for (var j = 1; j < q.length; j++) add(px(q[j]));
         marks.tracks[tid] = [start, run];
       });
-      var next = px(doc.tracks[legs[(k + 1) % 3][0]][0]), before = run;
+      var next = k < 2 ? px(doc.tracks[legs[k + 1][0]][0]) : edge, before = run;
       ringRoute(rings[k], pts[pts.length - 1], next).forEach(add);
       add(next);
       stops[rings[k]] = (before + run) / 2;
     });
+    add(park);
     marks.stop = stops[w]; marks.off = stops.depot; marks.len = run;
     return {pts: pts, m: marks, legs: legs};
   }
@@ -487,21 +507,18 @@
       var r = plan[w], m = cs[w].m;
       var pts = [[0, 0], [r.depart, 0], [r.arrive, m.stop], [r.leave, m.stop], [r.signal, r.homeAt], [r.go, r.homeAt], [r.atOff, m.off], [r.offLeave, m.off], [r.home, m.len], [T, m.len]];
       r.pts = pts;
-      var kt = [], kp = [];
-      pts.forEach(function (q) { var k = Math.round(q[0] / T * 10000) / 10000; if (kt.length && k <= kt[kt.length - 1]) return; kt.push(k); kp.push(Math.round(q[1] / m.len * 10000) / 10000); });
-      kt[0] = 0; kt[kt.length - 1] = 1;
-      var tr = el("g", {"class": "fe-train", opacity: 0}, g);
-      var out = Math.round(r.depart / T * 10000) / 10000, back = (r.home / T).toFixed(4);     // shown from leaving the yard until back in it
-      el("animate", out > 0 ? {attributeName: "opacity", values: "0;1;0", keyTimes: "0;" + out.toFixed(4) + ";" + back, calcMode: "discrete", dur: T + "s", repeatCount: "indefinite"}
-                            : {attributeName: "opacity", values: "1;0", keyTimes: "0;" + back, calcMode: "discrete", dur: T + "s", repeatCount: "indefinite"}, tr);
-      [-62, -36].forEach(function (x) {
-        el("rect", {"class": "fm-wagon", x: x, y: -7, width: 22, height: 14, rx: 2}, tr);
-        el("rect", {"class": "fm-load", x: x + 4, y: -4, width: 14, height: 8}, tr);
-      });
-      el("rect", {"class": "fm-loco", x: -10, y: -7, width: 22, height: 14, rx: 3}, tr);
-      el("circle", {"class": "fm-head", cx: 9, cy: 0, r: 2}, tr);
-      el("animateMotion", {path: "M " + cs[w].pts.map(function (q) { return q[0] + " " + q[1]; }).join(" L "), dur: T + "s", rotate: "auto", calcMode: "linear",
-                           keyTimes: kt.join(";"), keyPoints: kp.join(";"), repeatCount: "indefinite"}, tr);
+      var d = roundD(cs[w].pts, CURVE), probe = el("path", {d: d}, svg), len = probe.getTotalLength() || m.len, f = len / m.len;
+      svg.removeChild(probe);
+      var twice = d + " L" + d.slice(1), cars = [3, 4, 3, 2, 3][meta.workers.indexOf(w) % 5];
+      for (var c = 0; c < cars; c++) {
+        // each car runs the line on its own a fixed distance behind the one ahead, so the train bends round every curve (yard._train)
+        var tr = el("g", {"class": "fe-train"}, g), ktc = [], kpc = [];
+        pts.forEach(function (q) { var k = Math.round(q[0] / T * 10000) / 10000; if (ktc.length && k <= ktc[ktc.length - 1]) return; ktc.push(k); kpc.push(Math.round((len + q[1] * f - c * GAP) / (2 * len) * 100000) / 100000); });
+        ktc[0] = 0; ktc[ktc.length - 1] = 1;
+        if (c === 0) { el("rect", {"class": "fm-loco", x: -15, y: -9, width: 30, height: 18, rx: 4}, tr); el("circle", {"class": "fm-head", cx: 12, cy: 0, r: 2.4}, tr); }
+        else { el("rect", {"class": "fm-wagon", x: -13, y: -9, width: 26, height: 18, rx: 2}, tr); el("rect", {"class": "fm-load", x: -9, y: -5, width: 18, height: 10}, tr); }
+        el("animateMotion", {path: twice, dur: T + "s", rotate: "auto", calcMode: "linear", keyTimes: ktc.join(";"), keyPoints: kpc.join(";"), repeatCount: "indefinite"}, tr);
+      }
     });
     // a signal on every track into a junction, green as it lets its train through
     Object.keys(doc.tracks).forEach(function (tid) {

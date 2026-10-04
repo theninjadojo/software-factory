@@ -48,7 +48,7 @@ MIN = {"station": (5, 4), "power": (7, 4), "sources": (5, 5), "receiving": (5, 4
        "mainland": (6, 20), "sea": (6, 20), "harbor": (5, 3), "notify": (5, 3), "depot": (6, 3), "worker": (7, 3), "junction": (2, 2),
        "outside": (10, 4)}                     # the smallest a resized building may be, in cells
 JUNCTIONS = ("a", "b", "c", "d")             # optional: where tracks join or split
-YARD_DX = -5                                 # the yard's box starts five cells left of its anchor, the top of Build's feeder
+YARD_DX = -14                                # the yard's box starts 14 cells left of its anchor, the top of Build's feeder (on its right)
 SINGLE = ("mainland", "sea", "sources", "receiving", "harbor", "queue", "airfield")
 NOTIFIERS = ("telegram", "slack")          # the channels that tell a person what the factory needs: wireless, so they take no belt
 NOTIFY_NAMES = {"telegram": "Telegram", "slack": "Slack"}
@@ -211,9 +211,9 @@ def group(nid: str) -> str:
 
 
 def yard_box(trains: int = 0) -> tuple[int, int, int, int]:
-    """The yard's box relative to its anchor (the top of its feeder), in cells: (dx, dy, w, h). On a saved layout the yard is where
-    trains are loaded; the workers are buildings of their own, joined to it by track."""
-    return (YARD_DX, 0, *SIZE["yard"])
+    """The yard's box relative to its anchor (the top of its feeder), in cells: (dx, dy, w, h): a platform per train, three cells
+    apart, where each waits to be loaded from Build's feeder. The workers are buildings of their own, joined to it by track."""
+    return (YARD_DX, 0, 16, 2 + 3 * max(1, trains))
 
 
 def box(nid: str, at, ctx: Ctx, wh=None) -> tuple[int, int, int, int]:
@@ -310,7 +310,7 @@ def default_tracks(ctx: Ctx) -> list[tuple[str, str]]:
     return out + ([("junction:b", "depot")] if ctx.workers else []) + [("depot", "yard")]
 
 
-def track_port(nid: str, other, B: dict, side: bool = False):
+def track_port(nid: str, other, B: dict, side: bool = False, way: str = ""):
     """Where track leaves or reaches a rail building: the middle of the side facing the other end (never the yard's top, where its
     feeder comes in). A worker's track comes in and goes out at its sides, so its neighbours' track never runs along its loop; a
     junction branches up and down to the stops above and below it. side: also return which side ("n", "e", "s", "w")."""
@@ -318,8 +318,12 @@ def track_port(nid: str, other, B: dict, side: bool = False):
     ox, oy = other
     cx, cy = x + w / 2, y + h / 2
     sides = {"e": (x + w + 1, y + h // 2), "w": (x - 1, y + h // 2), "s": (x + w // 2, y + h + 1), "n": (x + w // 2, y - 1)}
-    if nid == "yard":
+    if nid == "yard":                                                # trains leave low on a side and come back high, never on top
         del sides["n"]
+        lo, hi = y + max(1, (3 * h) // 4), y + max(1, h // 4)
+        sides["e"] = (x + w + 1, lo if way == "out" else hi)
+        sides["w"] = (x - 1, lo if way == "out" else hi)
+        sides["s"] = (x + (w // 4 if way == "out" else (3 * w) // 4), y + h + 1)
     if nid.startswith("worker:"):
         k = "e" if ox > cx else "w"
     elif nid.startswith("junction:") and abs(oy - cy) >= 2:
@@ -519,7 +523,7 @@ def route_tracks(nodes: dict, keep: dict, pairs, ctx: Ctx, belts: dict) -> dict:
         if tid in out or a not in B or b not in B:
             continue
         ca, cb = (B[a][0] + B[a][2] / 2, B[a][1] + B[a][3] / 2), (B[b][0] + B[b][2] / 2, B[b][1] + B[b][3] / 2)
-        (pa, sa), pb = track_port(a, cb, B, True), track_port(b, ca, B)
+        (pa, sa), pb = track_port(a, cb, B, True, "out"), track_port(b, ca, B, way="in")
         pts = _bend(pa, pb, sa in "ns", blocked) or autoroute(pa, pb, blocked, used)
         if pts and len(pts) >= 2:
             out[tid] = [list(p) for p in pts]
@@ -971,7 +975,7 @@ def compile_plan(doc: dict, ctx: Ctx) -> dict:
     return {"at": {k: px((v["x"], v["y"])) for k, v in nodes.items()}, "box": {k: tuple(c * G for c in v) for k, v in B.items()}, "districts": dist,
             "hops": hops, "pieces": [{**p, "at": px(p["at"])} for p in doc["pieces"] if p["kind"] != "underground"], "scale": scale,
             "walls": [[px(p) for p in w] for w in doc.get("walls") or []], "trees": [px(t) for t in doc.get("trees") or []],
-            "tracks": rails, "circuits": circuits}
+            "tracks": rails, "circuits": circuits, "workers": [f"worker:{w}" for w in ctx.workers]}
 
 
 def fit_art(nid: str, b) -> tuple[float, float, float]:

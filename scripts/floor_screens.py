@@ -108,7 +108,7 @@ def verify_editor(pg, act) -> None:
     hb, sea = plan()["nodes"]["harbor"], plan()["nodes"]["sea"]
     check(sea["x"] <= hb["x"] < sea["x"] + 15, "the harbor stands in the sea, at the shore")
     check(pg.locator(".fe-belt.in").count() == 2, "the airfield's and the harbor's belts are drawn as deliveries in")
-    check(pg.locator(".fe-train").count() == len(meta["workers"]) == len(WORKERS), "a train runs each worker's loop in the editor")
+    check(pg.locator(".fe-train .fm-loco").count() == len(meta["workers"]) == len(WORKERS), "a train runs each worker's loop in the editor")
     check(pg.locator(".fe-trains .fm-sig").count() >= len(WORKERS) + 1, "every track into a junction has a signal")
     check(pg.locator(".fe-ring").count() == len(WORKERS) + 2, "the yard, the Train station and each worker have a turnaround loop")
     check(len(pg.locator(".fe-part[data-part] .fe-part-ico").all()) == len(meta["nodes"]), "every part in the tray has its icon")
