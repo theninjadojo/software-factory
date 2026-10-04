@@ -127,7 +127,15 @@ def _arm(x, y, src_down: bool, rot: str = "", carry: str = "") -> str:
     return (f'<g class="fn-ins"><rect class="fn-ins-base" x="{_f(x - 6)}" y="{_f(y - 6)}" width="12" height="12" rx="2"/>'
             f'<g>{rot}<line class="fn-ins-l" x1="{_f(x)}" y1="{_f(y)}" x2="{_f(hx)}" y2="{_f(hy)}"/>'
             f'<rect class="fn-ins-c" x="{_f(hx - 4)}" y="{_f(hy - 4)}" width="8" height="8" opacity="0">{carry}</rect>'
-            f'<circle class="fn-ins-h" cx="{_f(hx)}" cy="{_f(hy)}" r="2.6"/></g><circle class="fn-ins-p" cx="{_f(x)}" cy="{_f(y)}" r="3"/></g>')
+            f'{hand(hx, hy, a)}</g><circle class="fn-ins-p" cx="{_f(x)}" cy="{_f(y)}" r="3"/></g>')
+
+
+def hand(hx, hy, ang) -> str:
+    """An inserter's grab hand at the end of its arm: a wrist across the arm and two fingers reaching on towards what it takes."""
+    ux, uy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+    vx, vy = -uy * 4.5, ux * 4.5
+    return (f'<path class="fn-ins-h" d="M {_f(hx + vx)} {_f(hy + vy)} L {_f(hx - vx)} {_f(hy - vy)} '
+            f'M {_f(hx + vx)} {_f(hy + vy)} l {_f(ux * 5)} {_f(uy * 5)} M {_f(hx - vx)} {_f(hy - vy)} l {_f(ux * 5)} {_f(uy * 5)}"/>')
 
 
 def _anim(attr: str, values: str, keys: str, P: float, begin: float, discrete=True) -> str:

@@ -69,24 +69,26 @@ def pick(lay, sid):
 
 
 # ---------------------------------------------------------------- inserters at any angle (the angle points at where it takes from)
-def arm(x, y, ang, rot="", carry=""):
-    hx, hy = x + 18 * math.cos(math.radians(ang)), y + 18 * math.sin(math.radians(ang))
-    return (f'<g class="fn-ins"><rect class="fn-ins-base" x="{_f(x - 6)}" y="{_f(y - 6)}" width="12" height="12" rx="2"/>'
+def arm(x, y, ang, rot="", carry="", reach=18):
+    """reach: from the pivot to the hand (a saved layout stands the pivot halfway between the building and its belt)."""
+    hx, hy = x + reach * math.cos(math.radians(ang)), y + reach * math.sin(math.radians(ang))
+    n = 6 if reach >= 18 else 5
+    return (f'<g class="fn-ins"><rect class="fn-ins-base" x="{_f(x - n)}" y="{_f(y - n)}" width="{2 * n}" height="{2 * n}" rx="2"/>'
             f'<g>{rot}<line class="fn-ins-l" x1="{_f(x)}" y1="{_f(y)}" x2="{_f(hx)}" y2="{_f(hy)}"/>'
             f'<rect class="fn-ins-c" x="{_f(hx - 4)}" y="{_f(hy - 4)}" width="8" height="8" opacity="0">{carry}</rect>'
-            f'<circle class="fn-ins-h" cx="{_f(hx)}" cy="{_f(hy)}" r="2.6"/></g><circle class="fn-ins-p" cx="{_f(x)}" cy="{_f(y)}" r="3"/></g>')
+            f'{yard.hand(hx, hy, ang)}</g><circle class="fn-ins-p" cx="{_f(x)}" cy="{_f(y)}" r="3"/></g>')
 
 
-def taking(x, y, ang, Tg, P, b):
+def taking(x, y, ang, Tg, P, b, reach=18):
     k = lambda t: f"{min(t / P, 1):.4f}"
     return arm(x, y, ang, yard._rot(x, y, (0, 0, 180, 0, 0), f"0;{k(Tg)};{k(Tg + yard.SWING)};{k(Tg + 2 * yard.SWING)};1", P, b),
-               yard._anim("opacity", "0;1;0", f"0;{k(Tg)};{k(Tg + yard.SWING - .02)}", P, b))
+               yard._anim("opacity", "0;1;0", f"0;{k(Tg)};{k(Tg + yard.SWING - .02)}", P, b), reach)
 
 
-def giving(x, y, ang, P, b):
+def giving(x, y, ang, P, b, reach=18):
     k = lambda t: f"{min(t / P, 1):.4f}"
     return arm(x, y, ang, yard._rot(x, y, (180, 0, 0, 180), f"0;{k(yard.SWING)};{k(P - yard.SWING)};1", P, b),
-               yard._anim("opacity", "0;1", f"0;{k(P - yard.SWING)}", P, b))
+               yard._anim("opacity", "0;1", f"0;{k(P - yard.SWING)}", P, b), reach)
 
 
 # ---------------------------------------------------------------- belts
@@ -549,21 +551,23 @@ def airfield(conveyor: bool = True) -> str:
             + _tower(460, AF_Y + 44) + (belt(conv, "fn-belt thin") if conveyor else ""))
 
 
-def flight(age: float, label: str, mo=(0, 0), ao=(FX, 0), conveyor=None) -> str:
+def flight(age: float, label: str, mo=(0, 0), ao=(FX, 0), conveyor=None, ms=(1, 1), as_=(1, 1)) -> str:
     """A 747 from the mainland's gate to the plant's cargo terminal (14 s), `age` seconds in; the crate then rides into Receiving.
-    mo, ao: where the mainland and the airfield are drawn from (a saved layout moves them); conveyor: the points of the belt from the
-    airfield to Receiving when a saved layout routes it."""
+    mo, ao: where the mainland and the airfield are drawn from (a saved layout moves them); ms, as_: how much they are stretched (a
+    saved layout resizes them); conveyor: the points of the belt from the airfield to Receiving when a saved layout routes it."""
     mx, my = mo
     ox, oy = ao
-    rx, ry, rw, rh = MR
-    rx, ry = rx + mx, ry + my
-    ax, ay, aw, ah = AR
-    ax, ay = ax + ox, ay + oy
+    M = lambda x, y: (mx + x * ms[0], my + y * ms[1])
+    A = lambda x, y: (ox + 20 + (x - 20) * as_[0], oy + AF_Y + (y - AF_Y) * as_[1])
+    rx, ry = M(*MR[:2])
+    rw, rh = MR[2] * ms[0], MR[3] * ms[1]
+    ax, ay = A(*AR[:2])
+    aw, ah = AR[2] * as_[0], AR[3] * as_[1]
     c = rx + rw / 2
     y1 = ay + ah / 2
-    apx, apy = APRON[0] + ox, APRON[1] + oy
-    p = (Path(GATE[0] + mx, GATE[1] + my).L(c, ry + rh - 30).mark("lined").L(c, ry + 380).mark("lift")
-         .C(c, ry + 160, c + 140, 300 + my, 300 + mx, 330 + my).C(420 + mx, 360 + my, 480 + ox - FX, y1 - 40, ax - 120, y1)
+    apx, apy = A(*APRON)
+    p = (Path(*M(*GATE)).L(c, ry + rh - 30 * ms[1]).mark("lined").L(c, ry + 380 * ms[1]).mark("lift")
+         .C(c, ry + 160 * ms[1], c + 140, 300 + my, 300 + mx, 330 + my).C(420 + mx, 360 + my, 480 + ox - FX, y1 - 40, ax - 120, y1)
          .L(ax + 30, y1).mark("touch").L(ax + aw - 60, y1).mark("roll")
          .A(24, 0, ax + aw - 20, y1 - 30).L(ax + aw - 20, apy + 30).A(14, 0, ax + aw - 34, apy + 16).L(apx + 30, apy + 16))
     k = lambda m: f"{p.marks[m] / p.len:.4f}"
@@ -577,7 +581,8 @@ def flight(age: float, label: str, mo=(0, 0), ao=(FX, 0), conveyor=None) -> str:
               f'dur="{T}s" begin="{b}" fill="freeze"/>')
     plane = (f'<g class="ap-plane">{motion}<g class="ap-shadow">{shadow}<g transform="scale(1.4)">{PLANE}</g></g><g>{climb}{PLANE}</g></g>'
              f'<g class="ap-tag">{motion.replace(" rotate=\"auto\"", "")}<text x="0" y="-40">{esc(label)}</text></g>')
-    ride = (f"M {apx + 20} {apy + 16} L {ox + 70} {oy + AF_Y + 50} " + (" ".join(f"L {_f(x)} {_f(y)}" for x, y in conveyor) if conveyor
+    tx, ty = A(70, AF_Y + 50)
+    ride = (f"M {_f(apx + 20)} {_f(apy + 16)} L {_f(tx)} {_f(ty)} " + (" ".join(f"L {_f(x)} {_f(y)}" for x, y in conveyor) if conveyor
             else f"L {ox + 52} {oy + AF_Y + 18} V {oy + 600} H {ox + 22} V {oy + 336}"))
     off = (f'<rect class="fn-item" x="-7" y="-7" width="14" height="14" opacity="0">'
            f'<animateMotion path="{ride}" dur="3s" begin="{T * 0.92 - age:.2f}s" fill="freeze"/>'
@@ -712,16 +717,20 @@ def _visible(pts, under) -> list[list]:
     return [q for q in (_dedupe(q) for q in parts) if len(q) >= 2]
 
 
+REACH = 10                                  # half the cell between a building and its belt
+
+
 def _pivot(box, pt):
-    """Where an inserter stands between a building and the belt point beside it, and its angle towards the belt."""
+    """Where an inserter stands, halfway between a building and the belt point beside it (its hand reaches the belt one way and the
+    building's edge the other), and its angle towards the belt."""
     x, y, w, h = box
     if pt[1] < y:
-        return (pt[0], y - 2, -90)
+        return (pt[0], y - REACH, -90)
     if pt[1] > y + h:
-        return (pt[0], y + h + 2, 90)
+        return (pt[0], y + h + REACH, 90)
     if pt[0] < x:
-        return (x - 2, pt[1], 180)
-    return (x + w + 2, pt[1], 0)
+        return (x - REACH, pt[1], 180)
+    return (x + w + REACH, pt[1], 0)
 
 
 def _piece(p) -> str:
@@ -748,6 +757,37 @@ def _plan_districts(dist: dict) -> str:
     return out
 
 
+def scenery(walls, trees) -> str:
+    """Walls and trees a person drew on the floor (pixels): they only decorate it."""
+    out = "".join(f'<path class="fp-wall" d="M {" L ".join(f"{_f(x)} {_f(y)}" for x, y in w)}"/>' for w in walls)
+    out += "".join(f'<g class="fp-tree"><circle class="fp-crown" cx="{_f(x)}" cy="{_f(y)}" r="9"/><circle class="fp-leaf" cx="{_f(x - 3)}" '
+                   f'cy="{_f(y - 3)}" r="4"/></g>' for x, y in trees)
+    return f'<g aria-hidden="true">{out}</g>' if out else ""
+
+
+def node_art(nid: str, label: str, trains: int = 0) -> str:
+    """The picture of a building or an area as the floor draws it, idle, with its top left at the origin and at its own size (the
+    layout editor stretches it to the box a person gives it). The yard is drawn with its trains, or not at all without any."""
+    kind, _, name = nid.partition(":")
+    if nid == "yard":
+        if trains <= 0:
+            return ""
+        from .floorplan import G, yard_box
+        g = yard.yard_geometry(trains, 0)
+        still, _ = yard._yard(g, [{"name": f"worker {k + 1}", "online": False} for k in range(trains)], 0)
+        return f'<g transform="translate({-yard_box(trains)[0] * G} {-(yard.BOT_Y + yard.MH + 30)})">{still}</g>'
+    idle = {"state": "idle", "refs": [], "count": 0}
+    if kind == "station":
+        return _station(name, label, idle, "idle", "#", (0, 0, True), name)
+    if kind == "power":
+        return power_station(0, 0, {"name": name, "on": False}, [])
+    return {"mainland": lambda: mainland(1320), "sea": lambda: sea([], 1320),
+            "sources": lambda: f'<g transform="translate({-SRC[0]} {-SRC[1]})">{github()}</g>',
+            "receiving": lambda: f'<g transform="translate(-12 -200)">{receiving(0)}</g>',
+            "queue": lambda: f'<g transform="translate(0 -250)">{_queue_chest(30, 0)}</g>',
+            "airfield": lambda: f'<g transform="translate(-20 {-AF_Y})">{airfield(conveyor=False)}</g>'}.get(nid, lambda: "")()
+
+
 def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> str:
     """The floor drawn from a saved layout (floorplan.compile_plan): every building where it was put, a belt per hop of the route,
     and the crates, inserters, drones, trains and the plane following them."""
@@ -757,18 +797,31 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     harnesses = extras.get("power") or []
     queued = extras.get("queued") or []
     shown = (workers or [])[:yard.MAX_WORKERS]
-    tr = lambda nid, x0, y0: f'translate({_f(at[nid][0] - x0)} {_f(at[nid][1] - y0)})'
-    right = max([x + w for x, _, w, _ in bx.values()] + [p[0] for hb in hops.values() for p in hb["pts"]])
-    bottom = max([y + h for _, y, _, h in bx.values()] + [p[1] for hb in hops.values() for p in hb["pts"]])
+    sc = C.get("scale") or {}
+    S = lambda nid: sc.get(nid, (1, 1))
+
+    def tr(nid, x0, y0):
+        """Draws a part made with its top left at (x0, y0) where the layout put it, stretched when it was resized."""
+        if nid not in sc:
+            return f'translate({_f(at[nid][0] - x0)} {_f(at[nid][1] - y0)})'
+        return f'translate({_f(at[nid][0])} {_f(at[nid][1])}) scale({_f(S(nid)[0])} {_f(S(nid)[1])}) translate({_f(-x0)} {_f(-y0)})'
+
+    def node(nid, draw):
+        """A station or a power station: drawn in place, or at the origin and stretched when it was resized."""
+        return draw(*at[nid]) if nid not in sc else f'<g transform="{tr(nid, 0, 0)}">{draw(0, 0)}</g>'
+    loose = [p for hb in hops.values() for p in hb["pts"]] + [p for w in C.get("walls") or [] for p in w] + list(C.get("trees") or [])
+    right = max([x + w for x, _, w, _ in bx.values()] + [p[0] for p in loose])
+    bottom = max([y + h for _, y, _, h in bx.values()] + [p[1] for p in loose])
     width, height = right + 40, bottom + 40
     # the sea's dock and crane at Receiving's height, and a belt from the crane to Receiving when they stand apart
     sx, sy = at["sea"]
     rx0, ry0 = at["receiving"]
-    dock_y = max(100.0, min(1320 - 420.0, ry0 + MH / 2 - sy))
-    qy, wall = sy + dock_y, sx + SEA_W
+    rh = bx["receiving"][3]
+    dock_y = max(100.0, min(1320 - 420.0, (ry0 + rh / 2 - sy) / S("sea")[1]))
+    qy, wall = sy + dock_y * S("sea")[1], sx + bx["sea"][2]
     quay = ""
     if rx0 - wall > 24:
-        cy = ry0 + MH / 2
+        cy = ry0 + rh / 2
         quay = belt(f"M {_f(wall)} {_f(qy)} " + (f"H {_f(rx0)}" if abs(cy - qy) < 1 else f"H {_f((wall + rx0) / 2)} V {_f(cy)} H {_f(rx0)}"),
                     "fn-belt thin")
     # the ground: the mainland and the sea, the districts, the buildings that are not stations
@@ -777,7 +830,7 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
             + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
             + f'<text class="fm-lab" x="{_f(at["sources"][0])}" y="{_f(at["sources"][1] - 8)}">SOURCES</text>'
             + f'<g transform="{tr("sources", *SRC)}">{github()}</g><g transform="{tr("receiving", 12, 200)}">{receiving(len(queued))}</g>'
-            + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>')
+            + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>' + scenery(C.get("walls") or [], C.get("trees") or []))
     # the belts, cut where they go under, and the pieces on them
     belts, hoods = [], set()
     for hid, hb in hops.items():
@@ -807,15 +860,15 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
         nid = f'power:{h["name"]}'
         if nid not in at:
             continue
-        x0, y0 = at[nid]
+        x0, y0, pwid, ph = bx[nid]
         uses = [s for s in h.get("uses", []) if st(s) in bx]
-        pw += power_station(x0, y0, h, uses)
-        cy = y0 + PH / 2
+        pw += node(nid, lambda x, y: power_station(x, y, h, uses))
+        cy = y0 + ph / 2
         for s in uses:
             sx, sy, sw, sh = bx[st(s)]
             scx = sx + sw / 2 + 8 * k
             edge = sy if sy > cy else sy + sh
-            pw += _pole_line([(x0 if scx < x0 else x0 + PW, cy), (scx, cy)]) + f'<path class="pw-wire" d="M {_f(scx)} {_f(cy - 6)} V {_f(edge)}"/>'
+            pw += _pole_line([(x0 if scx < x0 else x0 + pwid, cy), (scx, cy)]) + f'<path class="pw-wire" d="M {_f(scx)} {_f(cy - 6)} V {_f(edge)}"/>'
     # crates: each ticket rides the hop into the station taking it; every other inserter waits
     arms, parts, k = {}, [], 0
     ends = lambda hb: ((hb["src"], hb["pts"][0]), (hb["dst"], hb["pts"][-1]))
@@ -831,10 +884,10 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
         (src, a), (dst, z) = ends(hb)
         if armed(dst):
             x, y, ang = _pivot(bx[dst], z)
-            arms[(x, y)] = taking(x, y, ang, Tg, P, b)
+            arms[(x, y)] = taking(x, y, ang, Tg, P, b, REACH)
         if armed(src):
             x, y, ang = _pivot(bx[src], a)
-            arms[(x, y)] = giving(x, y, (ang + 180) % 360, P, b)
+            arms[(x, y)] = giving(x, y, (ang + 180) % 360, P, b, REACH)
 
     def into(i, sid):
         return f"receiving>{st(sid)}" if i == 0 else f"{st(ids[i - 1])}>{st(sid)}"
@@ -857,12 +910,12 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     if feed in hops and any(w["online"] and w.get("job") for w in shown):
         x, y, ang = _pivot(bx[st("build")], hops[feed]["pts"][0])
         Pf = 8.4 / max(1, len(shown))
-        arms[(x, y)] = giving(x, y, (ang + 180) % 360, Pf, -(now % Pf))
+        arms[(x, y)] = giving(x, y, (ang + 180) % 360, Pf, -(now % Pf), REACH)
     for hb in hops.values():
         for n, (nid, pt) in enumerate(ends(hb)):
             if armed(nid):
                 x, y, ang = _pivot(bx[nid], pt)
-                arms.setdefault((x, y), arm(x, y, ang if n else (ang + 180) % 360))
+                arms.setdefault((x, y), arm(x, y, ang if n else (ang + 180) % 360, reach=REACH))
     # waiting and stuck crates at their doors, backed up along the belt in
     for i, sid in enumerate(ids):
         o, hid = fl.get(sid) or {}, into(i, sid)
@@ -876,15 +929,15 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
             parts.append(_still_crate(zx - dx * 14, zy - dy * 14, o["refs"][0], stuck=True))
     # the plane, its crate riding the conveyor into Receiving
     conv = hops.get("airfield>receiving", {}).get("pts")
-    flights = "".join(flight(f["age"], f["label"], at["mainland"], (at["airfield"][0] - 20, at["airfield"][1] - AF_Y), conv)
+    flights = "".join(flight(f["age"], f["label"], at["mainland"], (at["airfield"][0] - 20, at["airfield"][1] - AF_Y), conv, S("mainland"), S("airfield"))
                       for f in (extras.get("flights") or []) if 0 <= f["age"] < FLIGHT_SECONDS)
     poll = extras.get("poll") or {}
-    gx, gy = at["sources"][0] - SRC[0], at["sources"][1] - SRC[1]
-    rx, ry = at["receiving"][0] - 12, at["receiving"][1] - 200
+    pad = lambda nid, p, o: (at[nid][0] + (p[0] - o[0]) * S(nid)[0], at[nid][1] + (p[1] - o[1]) * S(nid)[1])
     plant = (back + "".join(belts) + f'<g aria-hidden="true">{yard_still}</g>' + pw
-             + f'<g aria-hidden="true">{"".join(parts)}{"".join(arms.values())}{yard_moving}</g>'
-             + "".join(_station(sid, label, fl[sid], word(sid, fl[sid]), href(sid), (*at[st(sid)], True), sid)
+             + f'<g aria-hidden="true">{"".join(parts)}{yard_moving}</g>'
+             + "".join(node(st(sid), lambda x, y: _station(sid, label, fl[sid], word(sid, fl[sid]), href(sid), (x, y, True), sid))
                        for sid, label, _ in order if st(sid) in at)
-             + f'<g aria-hidden="true">{drones(now, poll.get("every"), poll.get("last"), (PAD[0] + gx, PAD[1] + gy), (RECV_PAD[0] + rx, RECV_PAD[1] + ry))}</g>')
+             + f'<g aria-hidden="true">{"".join(arms.values())}</g>'
+             + f'<g aria-hidden="true">{drones(now, poll.get("every"), poll.get("last"), pad("sources", PAD, SRC), pad("receiving", RECV_PAD, (12, 200)))}</g>')
     return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor">'
             f'<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>{plant}<g aria-hidden="true">{flights}</g></svg>')
