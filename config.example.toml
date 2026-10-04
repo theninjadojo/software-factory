@@ -12,6 +12,13 @@ token_file = "/srv/factory/secrets/github_token"   # without a token every trust
 trigger_label = "factory:ready"                    # "build it": agents edit the repos and open PRs
 repos = ["your-org/standalone-service"]            # repos handled on their own; project members below are added automatically
 trusted_permissions = ["admin", "maintain", "write"]   # who may apply a trigger label
+# poll_seconds = 300                                # how often GitHub is read (default: [general] poll_seconds). Local tickets, approvals
+#                                                   # and schedules are still handled every [general] poll_seconds.
+
+# The local ticket tracker: tickets kept in the factory's own database (L-1, L-2, ...), and "Import" on the Tickets page, which
+# copies a GitHub issue here and marks the original "factory:moved". Off by default.
+# [local]
+# enabled = true
 
 # Classification tier -> agent settings. A fixed table: the classifier can only select a row, never write one.
 [routing.low]

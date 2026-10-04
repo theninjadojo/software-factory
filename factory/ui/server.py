@@ -412,7 +412,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, detail)
         finally:
             db.close()
-        new = L.new_ticket_form(cfg, cfg.repos[0], csrf) if cfg.repos else ""
+        new = (L.new_ticket_form(cfg, cfg.repos[0], csrf) + L.import_form(cfg, cfg.repos[0], csrf)) if cfg.repos else ""
         shown = L.flash_pop(csrf)
         title = f"#{int(sel['issue'])} · Tickets" if explicit and sel else "Tickets"
         return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf), path, csrf, wide=True,

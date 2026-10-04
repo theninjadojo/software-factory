@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .. import db as dbm
 from .. import questions as Q
+from .. import tracker
 from ..github import GitHub
 from ..roles import STAGE_TO_ROLE
 from . import integrations as I, views
@@ -215,7 +216,8 @@ def _gh(h):
     token = I.read_secret(h.app.cfg(), "github")
     if not token:
         return None
-    gh = GitHub(token)
+    cfg = h.app.cfg()
+    gh = tracker.Hub(token, cfg.db_path, actor=tracker.UI_ACTOR) if cfg.local_enabled else GitHub(token)
     gh._login = _logins.get(token)          # already known: no /user call
     return gh
 
@@ -278,6 +280,8 @@ def list_get(h, q: dict, csrf: str) -> None:
         return _page(h, 502, "Tickets", filters(cfg, repo, state, label, text, [], "", stage), csrf, _github_error(e), "bad")
     if label and text.lstrip("#").isdigit():
         issues = [i for i in issues if label in _names(i)]
+    if cfg.local_enabled:                   # moved issues live in the local tracker now
+        issues = [i for i in issues if tracker.MOVED_LABEL not in _names(i)]
     decisions = _decisions(h, repo)
     asked = _asked(h, gh, cfg, repo, issues, decisions)
     approved = _approved(h)
@@ -302,7 +306,7 @@ def filters(cfg, repo, state, label, text, names, csrf: str = "", stage: str = "
     chip = lambda name, key: (f'<a href="/tickets?{esc(urlencode({"repo": repo, "state": state, "label": label, "q": text, **({"stage": key} if key else {})}))}"'
                               f'{" aria-current=page" if key == stage else ""}>{name}</a>')
     chips = "".join(chip(n, k) for n, k in (("All", ""), ("Needs you", "needs"), ("In progress", "progress"), ("PRs &amp; CI", "prs"), ("Done", "done")))
-    return (new_ticket_form(cfg, repo, csrf) + '<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
+    return (new_ticket_form(cfg, repo, csrf) + import_form(cfg, repo, csrf) + '<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
             f'<form method="get" class="filters"><select name="repo" aria-label="Repository">{opts(cfg.repos, repo)}</select>'
             f'<select name="state" aria-label="State">{opts(STATES, state)}</select>'
             f'<select name="label" aria-label="Label">{opts(["", *names], label, "any label")}</select>'
@@ -326,6 +330,21 @@ def start_field(roles: list[str]) -> str:
     return (f'<label>Start<select name="start" aria-describedby="start-help">{opts}</select></label>'
             '<p class="muted" id="start-help">Choose a Start action to begin work right away. Leave it on "Just open the ticket" '
             'to start it later from its row.</p>')
+
+
+def import_form(cfg, repo: str, csrf: str) -> str:
+    """Move GitHub issues into the local tracker: one issue by number, or every open issue with a label (at most MAX_BULK)."""
+    if not csrf or not cfg.repos or not cfg.local_enabled:
+        return ""
+    opts = "".join(f'<option value="{esc(r)}"{" selected" if r == repo else ""}>{esc(r)}</option>' for r in cfg.repos)
+    return ('<details class="disclose"><summary class="btn">Import</summary>'
+            f'<form method="post" action="/tickets/import" class="field">{csrf_field(csrf)}'
+            f'<label>Repository<select name="repo">{opts}</select></label>'
+            '<label>Issue number<input name="n" inputmode="numeric" maxlength="9"></label>'
+            f'<label>Or every open issue with the label<input name="label" maxlength="50"></label>'
+            '<label><input type="checkbox" name="close" value="1"> Also close the issue on GitHub</label>'
+            f'<p class="muted">Copies the issue and its comments to a local ticket, then removes its trigger labels on GitHub, labels it <code>{tracker.MOVED_LABEL}</code> and links to the local ticket. At most {tracker.MAX_BULK} issues at a time.</p>'
+            '<button>Import</button></form></details>')
 
 
 def new_ticket_form(cfg, repo: str, csrf: str) -> str:
@@ -858,6 +877,40 @@ def close(h, form, csrf: str) -> None:
         _needs_cache["rows"] = None
     log.info("tickets: closed %s#%d from the UI", repo, n)
     _done(h, form, csrf, f"Closed {repo}#{n}.")
+
+
+def import_issues(h, form, csrf: str) -> None:
+    """Queue GitHub issues to be moved into the local tracker: one by number, or the open issues with a label. The orchestrator
+    re-reads and checks each one (a pull request, a moved or a busy issue is refused) before it changes anything."""
+    cfg = h.app.cfg()
+    try:
+        if not cfg.local_enabled:
+            raise Refused("The local tracker is turned off.")
+        repo = _repo(cfg, form.get("repo", ""))
+        label = (form.get("label") or "").strip()
+        if len(label) > 50:
+            raise Refused("That label is not valid.")
+        if label and (form.get("n") or "").strip():
+            raise Refused("Give an issue number or a label, not both.")
+        numbers = [] if label else [_number((form.get("n") or "").strip())]
+        if any(tracker.is_local(n) for n in numbers):
+            raise Refused("That is a local ticket, not a GitHub issue.")
+    except Refused as e:
+        return _done(h, form, csrf, str(e), "bad")
+    if label:
+        gh = _gh(h)
+        if gh is None:
+            return _done(h, form, csrf, NO_TOKEN, "bad")
+        try:
+            found, _ = gh.issues(repo, "open", label)
+        except (urllib.error.URLError, OSError) as e:
+            return _done(h, form, csrf, _github_error(e), "bad")
+        numbers = [int(i["number"]) for i in found][:tracker.MAX_BULK]
+        if not numbers:
+            return _done(h, form, csrf, "No open issue has that label.", "bad")
+    tracker.request_import(cfg.db_path, repo, numbers, form.get("close") == "1")
+    log.info("tickets: queued %d import(s) from %s", len(numbers), repo)
+    _done(h, form, csrf, f"Queued {len(numbers)} issue(s) to move. The factory moves them at its next poll.")
 
 
 def _record(gh, cfg, h, repo: str, n: int, stage, picks, accept_all: bool) -> bool:

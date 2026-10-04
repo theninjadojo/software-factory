@@ -6,7 +6,7 @@ who closes or reopens it by hand is respected: the factory stops touching that s
 import logging
 import re
 
-from . import db as dbm
+from . import db as dbm, tracker
 from .github import STEP_TITLE_PREFIX
 
 log = logging.getLogger("factory.subtasks")
@@ -33,7 +33,7 @@ def body(step: str, parent: int, s: dict) -> str:
 
 def sync(gh, db, repo: str, issue: int, step: str | None) -> None:
     """Bring the step's sub-issue in line with the latest run. Never raises."""
-    if not step:
+    if not step or tracker.is_local(issue):      # GitHub sub-issues cannot point at a local ticket
         return
     try:
         s = next((x for x in dbm.steps_for_ticket(db, repo, issue) if x["step"] == step), None)
