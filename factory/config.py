@@ -405,6 +405,8 @@ class Config:
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
     telegram_ui_url: str | None = None          # the admin UI's address, for an "Open in UI" button on open-question messages
+    github_poll_seconds: int = 0                # how often GitHub is read (0: every poll); local tickets are handled every poll
+    local_enabled: bool = False                 # the local ticket tracker and the GitHub import
     kind_aliases: dict = field(default_factory=lambda: dict(KIND_ALIASES))   # label -> kind (bug/feature/docs/chore/question)
 
 
@@ -582,6 +584,22 @@ def _events(v):
     if unknown:
         raise ValueError(f"unknown telegram events: {sorted(unknown)}")
     return tuple(v)
+
+
+def _github_poll(gh: dict, default: int) -> int:
+    if "poll_seconds" not in gh:
+        return default
+    v = gh["poll_seconds"]
+    if isinstance(v, bool) or not isinstance(v, int) or not 5 <= v <= 86400:
+        raise ValueError("github.poll_seconds must be a whole number of seconds from 5 to 86400")
+    return v
+
+
+def _local_enabled(loc: dict) -> bool:
+    v = loc.get("enabled", False)
+    if not isinstance(v, bool):
+        raise ValueError("local.enabled must be true or false")
+    return v
 
 
 def _ui_url(v):
@@ -898,5 +916,7 @@ def parse(raw: dict) -> Config:
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),
         telegram_ui_url=_ui_url(raw.get("telegram", {}).get("ui_url")),
+        github_poll_seconds=_github_poll(gh, int(g["poll_seconds"])),
+        local_enabled=_local_enabled(raw.get("local", {})),
         kind_aliases=_aliases(raw.get("classifier", {}).get("kind_aliases")),
     )

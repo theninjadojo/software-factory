@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import pause, screens, version
+from . import pause, screens, tracker, version
 from .config import load
 from .github import GitHub
 
@@ -24,7 +24,7 @@ def factory_labels(cfg) -> list[tuple[str, str, str]]:
             (cfg.mockups.bypass_label, "bfdadc", "Build without design mockups"),
             (cfg.mockups.approve_label, "0e8a16", "The design mockups are approved"),
             (cfg.screens.label, "fbca04", "Screen baselines changed: review the images"),
-            ("factory:working", "fef2c0", "An agent is working on this"), ("factory:pr-open", "c5def5", "The factory opened a PR"),
+            (tracker.MOVED_LABEL, "ededed", "Moved to the factory's local tracker"), ("factory:working", "fef2c0", "An agent is working on this"), ("factory:pr-open", "c5def5", "The factory opened a PR"),
             ("factory:failed", "d93f0b", "The last factory run failed"), ("factory:needs-answers", "fbca04", "Open questions wait for a person"),
             ("priority: high", "b60205", "Picked up first"), ("priority: low", "c2e0c6", "Picked up last")]
     out += [(f"factory:working-{k}", "fef2c0", f"A {k} agent is working on this") for k in ("analyze", "design", "architect", "review", "conflicts")]

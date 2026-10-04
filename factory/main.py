@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import backup, ci, conflicts, designfiles, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, usage, verify
+from . import backup, ci, conflicts, designfiles, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -236,6 +236,11 @@ def maybe_restart(state_dir: Path) -> None:
 def trusted(cfg: Config, gh: GitHub, repo: str, num: int, label: str | None = None) -> tuple[bool, str]:
     """Fail closed: act only if a user with write access applied the trigger label."""
     label = label or cfg.trigger_label
+    if tracker.is_local(num):                      # a local ticket: only the admin UI or the factory itself may have applied it
+        actor = gh.label_actor(repo, num, label)
+        if actor in tracker.TRUSTED_ACTORS:
+            return True, f"label applied by {actor} (local ticket)"
+        return False, f"local label applied by {actor}" if actor else "no label event found"
     if not gh.token:
         return False, "no token: cannot verify who applied the label"
     actor = gh.label_actor(repo, num, label)
@@ -957,8 +962,28 @@ def pool_status() -> str:
     return json.dumps({"max": pool.max, "draining": pool.draining, "queued": queued})
 
 
+def github_poll_due(cfg: Config, conn) -> bool:
+    """GitHub is read at most every github.poll_seconds; the rest of the poll (local tickets, approvals, schedules) runs every time."""
+    if cfg.github_poll_seconds <= cfg.poll_seconds:
+        return True
+    now = time.time()
+    last = float(dbm.get_status(conn).get("last_github_poll", {}).get("value") or 0)
+    if now - last < cfg.github_poll_seconds - 1:
+        return False
+    dbm.set_status(conn, "last_github_poll", str(now))
+    return True
+
+
 def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     queued.clear()
+    github_due = github_poll_due(cfg, conn)
+    if hasattr(gh, "github_due"):
+        gh.github_due = github_due
+    if cfg.local_enabled and not cfg.dry_run:
+        try:
+            tracker.process_imports(cfg, gh, conn, frozenset(label for _, label in triggers(cfg)), emit)
+        except Exception:
+            log.exception("import of GitHub issues failed")      # never stops the poll
     if not cfg.dry_run:
         process_approvals(cfg, gh, conn, classifier)
     for repo in cfg.repos:
@@ -1006,7 +1031,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         verify.watch(cfg, conn, lambda text, event="worker_offline": alert(text, event=event))
     except Exception:
         log.exception("worker watch failed")                    # never stops the poll
-    if not cfg.dry_run:
+    if not cfg.dry_run and github_due:
         ci.watch_ci(cfg, gh, conn, lambda text, event="ci_result": alert(text, event=event),
                     lambda *a: run_fix(cfg, gh, *a), ci_submit(cfg, conn))
         conflicts.watch(cfg, gh, conn, lambda text, event="conflict": alert(text, event=event))
@@ -1050,7 +1075,7 @@ def main() -> None:
     alert_filter = lambda event: event_enabled(cfg.telegram_verbosity, event, cfg.telegram_events)
     global ev_path, pool, step_gh
     ev_path = cfg.db_path
-    conn, gh = dbm.local(cfg.db_path), GitHub(token)     # the poll thread's connection; every worker opens its own
+    conn, gh = dbm.local(cfg.db_path), tracker.Hub(token, cfg.db_path)     # the poll thread's connection; every worker opens its own
     if not args.once:               # --once runs its jobs inline, one after another, and returns when they are done
         pool = Pool(cfg.runner.max_parallel, threaded=True)
     log.info("running up to %d job(s) at once", pool.max)
