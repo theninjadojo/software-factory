@@ -251,7 +251,7 @@ def list_get(h, q: dict, csrf: str) -> None:
     if stage == "prs":                      # the pull requests and checks the factory is watching, across every repository (this was the PRs & CI page)
         db = h.app.ro_db()
         try:
-            prs = dbm.watched_prs(db, 300) if db is not None else []
+            prs = [p for p in dbm.watched_prs(db, 300) if p.get("status") != "closed"] if db is not None else []
         finally:
             if db is not None:
                 db.close()
