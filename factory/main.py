@@ -722,6 +722,8 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
     if pause.paused(Path(cfg.db_path).parent):
         return
     for repo, num, action in dbm.approvals(conn):
+        if not cfg.github_issues_enabled and not tracker.is_local(num):
+            continue                                # GitHub issues are switched off; the approval waits
         try:
             if action != "skip" and not pool.can_take(jobkey(repo, num)):
                 continue                            # waits for a free slot (or for this ticket's job to end); the approval stays
@@ -979,12 +981,18 @@ def github_poll_due(cfg: Config, conn) -> bool:
     return True
 
 
+warned_no_tickets: list[bool] = []
+
+
 def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     queued.clear()
     github_due = github_poll_due(cfg, conn)
     if hasattr(gh, "github_due"):
-        gh.github_due = github_due
-    if cfg.local_enabled and not cfg.dry_run:
+        gh.github_due = github_due and cfg.github_issues_enabled      # off: only local tickets are listed
+    if not cfg.github_issues_enabled and not cfg.local_enabled and not warned_no_tickets:
+        warned_no_tickets.append(True)
+        log.warning("github.issues_enabled and local.enabled are both off: the factory has no tickets to work on")
+    if cfg.local_enabled and cfg.github_issues_enabled and not cfg.dry_run:
         try:
             tracker.process_imports(cfg, gh, conn, frozenset(label for _, label in triggers(cfg)), emit)
         except Exception:
@@ -1021,7 +1029,8 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         except Exception:
             log.exception("project manager sweep of %s failed", repo)        # never stops the poll
     try:
-        schedules.tick(cfg, gh, conn, time.time(), Path(cfg.db_path).parent, emit, alert)
+        if cfg.github_issues_enabled:
+            schedules.tick(cfg, gh, conn, time.time(), Path(cfg.db_path).parent, emit, alert)
     except Exception:
         log.exception("scheduled jobs failed")                  # never stops the poll
     try:
@@ -1085,7 +1094,7 @@ def main() -> None:
     if not args.once:               # --once runs its jobs inline, one after another, and returns when they are done
         pool = Pool(cfg.runner.max_parallel, threaded=True)
     log.info("running up to %d job(s) at once", pool.max)
-    step_gh = gh if cfg.subtasks.enabled and not cfg.dry_run and token else None
+    step_gh = gh if cfg.subtasks.enabled and cfg.github_issues_enabled and not cfg.dry_run and token else None
     if not args.once:
         stranded = dbm.mark_interrupted(conn)
         emit("startup", f"orchestrator started ({'dry-run' if cfg.dry_run else 'LIVE'}), {len(cfg.repos)} repo(s)"

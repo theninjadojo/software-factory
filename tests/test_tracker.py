@@ -173,6 +173,30 @@ class GithubPoll(Base):
         self.assertEqual(config.parse(raw).github_poll_seconds, 300)
 
 
+class GithubIssuesSwitch(Base):
+    def test_config_default_is_on_and_validated(self):
+        raw = tomllib.loads(open("config.example.toml").read())
+        raw["github"].pop("issues_enabled", None)
+        self.assertTrue(config.parse(raw).github_issues_enabled)
+        raw["github"]["issues_enabled"] = False
+        self.assertFalse(config.parse(raw).github_issues_enabled)
+        raw["github"]["issues_enabled"] = "yes"
+        with self.assertRaises(ValueError):
+            config.parse(raw)
+
+    def test_off_ignores_github_issues_and_keeps_local_tickets(self):
+        c = dataclasses.replace(self.cfg, github_issues_enabled=False)
+        local = tracker.LocalTracker(self.db).create(self.repo, "a", labels=["factory:ready"])
+        h = tracker.Hub("t", self.path)
+        with mock.patch.object(GitHub, "labeled_issues", return_value=[issue(7)]) as g, \
+                mock.patch.object(main, "process_approvals"), mock.patch.object(main, "handle_issue", return_value=None) as hi, \
+                mock.patch.object(main.schedules, "tick") as sched, mock.patch.object(main, "maybe_pm_sweep"):
+            main.poll_once(c, h, self.db, None)
+        g.assert_not_called()
+        sched.assert_not_called()
+        self.assertEqual([call.args[5]["number"] for call in hi.call_args_list], [local])
+
+
 class Import(Base):
     def test_import_copies_the_issue_and_marks_the_original(self):
         gh = FakeGH({5: issue(5, labels=("factory:ready", "bug", "factory:working"))}, {5: [
