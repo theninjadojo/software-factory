@@ -647,7 +647,8 @@ def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
               "power": [{**h, "on": h["name"] in running} for h in d["cfg"].get("power") or []],
               "schedules": d.get("schedules") or [],
               "poll": {"every": d["cfg"].get("poll_seconds"), "last": float(last) if last else None},
-              "flights": L.flights(now)}
+              "flights": L.flights(now),
+              "notify": [{"name": n, "on": bool((d["cfg"].get("notify") or {}).get(n))} for n in floorplan.NOTIFIERS]}
     workers = d.get("workers") or []
     ctx = floor_ctx(d["cfg"], workers)
     plan, _ = floorplan.usable(*d["floor_layout"], ctx) if d.get("floor_layout") else (None, "")

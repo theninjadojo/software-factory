@@ -35,14 +35,16 @@ MAX_WALLS, MAX_WALL_CELLS, MAX_TREES = 60, 4000, 400
 FILE = "floor-layout.json"
 INTAKE, LATER = ("poll", "classify", "route"), ("build", "review", "ci", "pr")
 SIZE = {"station": (7, 5), "power": (10, 5), "sources": (7, 6), "receiving": (7, 5), "queue": (3, 3), "airfield": (34, 11),
-        "mainland": (12, 66), "sea": (15, 66)}
+        "mainland": (12, 66), "sea": (15, 66), "harbor": (6, 4), "notify": (6, 4)}
 MIN = {"station": (5, 4), "power": (7, 4), "sources": (5, 5), "receiving": (5, 4), "queue": (2, 2), "airfield": (17, 6),
-       "mainland": (6, 20), "sea": (6, 20)}           # the smallest a resized building may be, in cells
-SINGLE = ("mainland", "sea", "sources", "receiving", "queue", "airfield")
+       "mainland": (6, 20), "sea": (6, 20), "harbor": (5, 3), "notify": (5, 3)}           # the smallest a resized building may be, in cells
+SINGLE = ("mainland", "sea", "sources", "receiving", "harbor", "queue", "airfield")
+NOTIFIERS = ("telegram", "slack")          # the channels that tell a person what the factory needs: wireless, so they take no belt
+NOTIFY_NAMES = {"telegram": "Telegram", "slack": "Slack"}
 DIRS = {"n": (0, -1), "e": (1, 0), "s": (0, 1), "w": (-1, 0)}
 KINDS = ("splitter", "merger", "sideload", "underground")
 NAMES = {"mainland": "The mainland", "sea": "The sea", "sources": "Sources", "receiving": "Receiving", "queue": "The queue",
-         "airfield": "The airfield", "yard": "The Verify yard"}
+         "airfield": "The airfield", "yard": "The Verify yard", "harbor": "The harbor"}
 DISTRICTS = ("INTAKE", "PLANNING", "PRODUCTION", "QUALITY", "SHIPPING")
 YARD_TOP = 590                             # the yard's feeder top in yard.py's coordinates (yard.BOT_Y + yard.MH + 30)
 
@@ -50,11 +52,12 @@ YARD_TOP = 590                             # the yard's feeder top in yard.py's 
 # ---------------------------------------------------------------- what the config puts on the floor
 class Ctx:
     """What the factory has now: the stations in route order, the enabled agent harnesses, whether the yard is shown and with how many
-    trains (its size follows them)."""
+    trains (its size follows them), and the notifiers (every channel the factory can talk on, set up or not)."""
 
-    def __init__(self, ids, harnesses=(), yard_on: bool = False, trains: int = 0):
+    def __init__(self, ids, harnesses=(), yard_on: bool = False, trains: int = 0, notifiers=NOTIFIERS):
         self.ids, self.harnesses, self.yard_on, self.trains = tuple(ids), tuple(harnesses), bool(yard_on), max(0, min(5, int(trains)))
-        self.key = (self.ids, self.harnesses, self.yard_on, self.trains)
+        self.notifiers = tuple(n for n in notifiers if n in NOTIFY_NAMES)
+        self.key = (self.ids, self.harnesses, self.yard_on, self.trains, self.notifiers)
         self.roles = [s for s in self.ids if s not in INTAKE + LATER]
         self.districts: dict[str, list[str]] = {}
         for s in self.ids:
@@ -62,13 +65,13 @@ class Ctx:
 
     def nodes(self) -> list[str]:
         return (list(SINGLE) + [f"station:{s}" for s in self.ids] + [f"power:{h}" for h in self.harnesses]
-                + (["yard"] if self.yard_on else []))
+                + [f"notify:{n}" for n in self.notifiers] + (["yard"] if self.yard_on else []))
 
     def hops(self) -> list[tuple[str, str]]:
         """Every hop a ticket can ride, as (from, to) node ids."""
         s = lambda x: f"station:{x}"
         has = set(self.ids)
-        out = [("airfield", "receiving")]
+        out = [("airfield", "receiving"), ("harbor", "receiving")]                # the 747's crates; the ships' tickets
         if "poll" in has:
             out.append(("receiving", s("poll")))
         intake = [x for x in INTAKE if x in has]
@@ -125,7 +128,16 @@ def label(nid: str) -> str:
         return LABEL.get(name, name.replace("_", " ").title())
     if kind == "power":
         return "Power: " + POWER.get(name, name)
+    if kind == "notify":
+        return NOTIFY_NAMES.get(name, name)
     return NAMES.get(nid, nid)
+
+
+def group(nid: str) -> str:
+    """Where the editor's parts tray lists a building."""
+    kind = nid.split(":")[0]
+    return {"station": "Stations", "queue": "Stations", "power": "Power and workers", "yard": "Power and workers", "notify": "Notifiers",
+            "mainland": "Areas", "sea": "Areas"}.get(kind, "Arrivals")
 
 
 def yard_box(trains: int) -> tuple[int, int, int, int]:
@@ -182,7 +194,7 @@ def cells(pts):
 # ---------------------------------------------------------------- the default layout: today's arrangement on the grid
 def _default_pos(ctx: Ctx) -> dict:
     roles = ctx.roles
-    P = {"mainland": (0, 0), "sea": (12, 0), "sources": (28, 2), "receiving": (28, 10), "queue": (50, 12), "airfield": (28, 33)}
+    P = {"mainland": (0, 0), "sea": (12, 0), "sources": (28, 2), "receiving": (28, 10), "harbor": (31, 19), "queue": (50, 12), "airfield": (28, 33)}
     for s, x in zip(INTAKE, (37, 45, 53)):
         P[f"station:{s}"] = (x, 2)
     for i, r in enumerate(roles):
@@ -194,6 +206,8 @@ def _default_pos(ctx: Ctx) -> dict:
     px = max(63 + 8 * len(roles) + 2, 82)
     for k, h in enumerate(ctx.harnesses):
         P[f"power:{h}"] = (px, 1 + 6 * k)
+    for k, n in enumerate(ctx.notifiers):
+        P[f"notify:{n}"] = (px + 7 * k, 2 + 6 * len(ctx.harnesses))
     P["yard"] = (79, 46)
     return {n: {"x": P[n][0], "y": P[n][1]} for n in ctx.nodes() if n in P}
 
@@ -207,7 +221,9 @@ def port(nid: str, way: str, other: str, nodes: dict, ctx: Ctx):
     if nid == "yard":
         return (nodes[nid]["x"], nodes[nid]["y"] - 1)
     if nid == "receiving":
-        return (x + w + 1, y + 2) if way == "out" else (x + 2, y + h + 1)
+        return (x + w + 1, y + 2) if way == "out" else (x + 5, y + h + 1) if other == "harbor" else (x + 2, y + h + 1)
+    if nid == "harbor":
+        return (x + 2, y - 1)
     if nid == "airfield":
         return (x + 2, y - 1)
     if nid == "queue":
@@ -721,7 +737,8 @@ def meta(ctx: Ctx) -> dict:
             dx, dy, w, h = yard_box(ctx.trains)
         else:
             (dx, dy), (w, h) = (0, 0), SIZE[nid.split(":")[0]]
-        out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h, "min": None if nid == "yard" else MIN[nid.split(":")[0]]}
+        out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h, "min": None if nid == "yard" else MIN[nid.split(":")[0]],
+                    "group": group(nid)}
     dist = ctx.districts
     return {"grid": G, "w": W, "h": H, "nodes": out, "hops": [[a, b, f"{label(a)} → {label(b)}"] for a, b in ctx.hops()],
             "districts": dist, "under": MAX_UNDER, "default": default_plan(ctx)}

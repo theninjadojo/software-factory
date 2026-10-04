@@ -506,6 +506,58 @@ def sea(trips: list[dict], height: float, dock_y: float = DOCK[1]) -> str:
     return "".join(out) + lines + marks + ships + f'<rect class="sh-wall" x="{SEA_W - 4}" y="{_f(dock[1] - 54)}" width="8" height="108"/>' + crane
 
 
+def harbor(x, y, due: bool = False) -> str:
+    """The harbor, 120 by 80 at (x, y): a basin and its quay, where the scheduled jobs' ships unload. A saved layout puts it anywhere and
+    a belt takes its tickets to Receiving; when a run is due a ship lies at the quay and the crane swings its cargo ashore."""
+    cx, cy = x + 98, y + 50
+    ship = (f'<g class="sh-ship due" transform="translate({_f(x + 52)} {_f(y + 30)})"><g class="sh-rock">{SHIP}{CARGO}</g></g>' if due else "")
+    crane = f'<line class="sh-jib" x1="{_f(cx)}" y1="{_f(cy)}" x2="{_f(cx - 22)}" y2="{_f(cy - 14)}"/>'
+    if due:
+        crane = (f'<g><animateTransform attributeName="transform" type="rotate" values="0 {_f(cx)} {_f(cy)};0 {_f(cx)} {_f(cy)};70 {_f(cx)} {_f(cy)};70 {_f(cx)} {_f(cy)};0 {_f(cx)} {_f(cy)}" '
+                 f'keyTimes="0;.15;.5;.6;1" dur="4s" repeatCount="indefinite"/>{crane}</g>')
+    return (f'<g class="hb{" due" if due else ""}" role="img" aria-label="The harbor: ships with the scheduled jobs unload here{", a ship is in" if due else ""}">'
+            f'<rect class="hb-box" x="{_f(x)}" y="{_f(y)}" width="120" height="80" rx="3"/><rect class="sh-sea" x="{_f(x + 4)}" y="{_f(y + 4)}" width="112" height="40"/>'
+            f'<path class="sh-wave w0" d="M {_f(x + 14)} {_f(y + 16)} q 6 -4 12 0 t 12 0"/><path class="sh-wave w1" d="M {_f(x + 70)} {_f(y + 30)} q 6 -4 12 0 t 12 0"/>'
+            f'{ship}<rect class="sh-wall" x="{_f(x + 4)}" y="{_f(y + 44)}" width="112" height="8"/>'
+            + "".join(f'<circle class="hb-bollard" cx="{_f(x + 16 + 22 * k)}" cy="{_f(y + 48)}" r="2"/>' for k in range(3))
+            + f'<g class="sh-crane">{crane}<circle class="sh-base" cx="{_f(cx)}" cy="{_f(cy)}" r="6"/></g>'
+            f'<text class="fn-n" x="{_f(x + 8)}" y="{_f(y + 66)}">Harbor</text><text class="fn-s" x="{_f(x + 8)}" y="{_f(y + 76)}">Ships dock</text></g>')
+
+
+# ---------------------------------------------------------------- notifiers: wireless, so they stand anywhere and take no belt
+NOTIFY_LINK = {"telegram": "/telegram"}
+
+
+def _arc(cx, cy, r) -> str:
+    return f'M {_f(cx - r * .72)} {_f(cy - r * .1)} A {r} {r} 0 0 1 {_f(cx + r * .72)} {_f(cy - r * .1)}'
+
+
+def notifier(x, y, n: dict) -> str:
+    """A notifier, 120 by 80 at (x, y): a mast that broadcasts while its channel is set up (questions, failures and pull requests reach
+    a person there wherever it stands)."""
+    from .floorplan import NOTIFY_NAMES
+    on = bool(n.get("on"))
+    name = NOTIFY_NAMES.get(n["name"], n["name"])
+    tx, ty = x + 30, y + 22
+    waves = "".join(f'<path class="nt-wave w{k}" d="{_arc(tx, ty, 7 + 6 * k)}"/>' for k in range(3))
+    return (f'<g class="nt{" on" if on else ""}" role="img" aria-label="Notifier {esc(name)}: {"set up, wireless" if on else "not set up"}">'
+            f'<rect class="nt-box" x="{_f(x)}" y="{_f(y)}" width="120" height="80" rx="3"/>'
+            f'<rect class="nt-body" x="{_f(x + 12)}" y="{_f(y + 44)}" width="36" height="24" rx="2"/><rect class="win" x="{_f(x + 18)}" y="{_f(y + 50)}" width="10" height="6" rx="1"/>'
+            f'<rect class="win" x="{_f(x + 32)}" y="{_f(y + 50)}" width="10" height="6" rx="1"/>'
+            f'<path class="nt-mast" d="M {_f(tx)} {_f(y + 44)} V {_f(ty + 4)} M {_f(tx - 7)} {_f(y + 44)} L {_f(tx)} {_f(ty + 10)} L {_f(tx + 7)} {_f(y + 44)}"/>'
+            f'<circle class="nt-tip" cx="{_f(tx)}" cy="{_f(ty + 2)}" r="2.5"/>{waves}'
+            f'<text class="nt-n" x="{_f(x + 56)}" y="{_f(y + 50)}">{esc(name)}</text>'
+            f'<text class="nt-s" x="{_f(x + 56)}" y="{_f(y + 64)}">{"wireless · on" if on else "not set up"}</text></g>')
+
+
+def notifiers(x0, y, items: list[dict]) -> str:
+    """The default floor's notifiers, in a column under power."""
+    if not items:
+        return ""
+    out = "".join(notifier(x0 + 40, y + k * 92, n) for k, n in enumerate(items))
+    return out + f'<text class="fm-lab" x="{_f(x0)}" y="{_f(y + len(items) * 92 + 12)}">NOTIFIERS · WIRELESS</text>'
+
+
 # ---------------------------------------------------------------- the mainland's airport, the plant's airfield, and a 747
 PLANE = ('<path class="ap-wing" d="M 2 0 L -10 -30 L -16 -30 L -8 0 L -16 30 L -10 30 Z"/><path class="ap-tail" d="M -24 0 L -30 -11 L -33 -11 L -29 0 L -33 11 L -30 11 Z"/>'
          '<rect class="ap-eng" x="-5" y="-21" width="7" height="3.5" rx="1.5"/><rect class="ap-eng" x="-8" y="-13" width="7" height="3.5" rx="1.5"/>'
@@ -644,8 +696,9 @@ def floor_map(order: list[tuple[str, str, str]], fl: dict, workers: list[dict], 
     queued = extras.get("queued") or []
     plant_svg, pipe_svg = power(lay, harnesses)
     poll = extras.get("poll") or {}
+    nt = notifiers(lay["power_x"], 14 + len(harnesses) * (PH + 14) + 90, extras.get("notify") or [])
     plant = (sources(len(queued)) + districts(lay) + airfield() + pipe_svg + belts(lay, len(queued), steam, bool(shown))
-             + f'<g aria-hidden="true">{yard_still}</g>' + plant_svg
+             + f'<g aria-hidden="true">{yard_still}</g>' + plant_svg + nt
              + f'<g aria-hidden="true">{crates(lay, ids, fl, ex, now)}{yard_moving}</g>'
              + "".join(_station(sid, label, fl[sid], word(sid, fl[sid]), href(sid), (*lay["pos"][sid], True), sid)
                        for sid, label, _ in order if sid in lay["pos"])
@@ -781,7 +834,9 @@ def node_art(nid: str, label: str, trains: int = 0) -> str:
         return _station(name, label, idle, "idle", "#", (0, 0, True), name)
     if kind == "power":
         return power_station(0, 0, {"name": name, "on": False}, [])
-    return {"mainland": lambda: mainland(1320), "sea": lambda: sea([], 1320),
+    if kind == "notify":
+        return notifier(0, 0, {"name": name, "on": False})
+    return {"harbor": lambda: harbor(0, 0), "mainland": lambda: mainland(1320), "sea": lambda: sea([], 1320),
             "sources": lambda: f'<g transform="translate({-SRC[0]} {-SRC[1]})">{github()}</g>',
             "receiving": lambda: f'<g transform="translate(-12 -200)">{receiving(0)}</g>',
             "queue": lambda: f'<g transform="translate(0 -250)">{_queue_chest(30, 0)}</g>',
@@ -827,29 +882,26 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     right = max([x + w for x, _, w, _ in bx.values()] + [p[0] for p in loose])
     bottom = max([y + h for _, y, _, h in bx.values()] + [p[1] for p in loose])
     width, height = right + 40, bottom + 40
-    # the sea's dock and crane at Receiving's height, and a belt from the crane to Receiving when they stand apart
-    sx, sy = at["sea"]
-    rx0, ry0 = at["receiving"]
-    rh = bx["receiving"][3]
-    dock_y = max(100.0, min(1320 - 420.0, (ry0 + rh / 2 - top("sea")[1]) / S("sea")[0]))
-    wall, qy = M("sea", SEA_W, dock_y)
-    quay = ""
-    if rx0 - wall > 24:
-        cy = ry0 + rh / 2
-        quay = belt(f"M {_f(wall)} {_f(qy)} " + (f"H {_f(rx0)}" if abs(cy - qy) < 1 else f"H {_f((wall + rx0) / 2)} V {_f(cy)} H {_f(rx0)}"),
-                    "fn-belt thin")
+    # the sea's dock and crane at the harbor's height (the harbor stands where a person put it; its belt takes the tickets on)
+    trips = extras.get("schedules") or []
+    dock = bx.get("harbor") or bx["receiving"]
+    dock_y = max(100.0, min(1320 - 420.0, (dock[1] + dock[3] / 2 - top("sea")[1]) / S("sea")[0]))
+    harbor_svg = node("harbor", lambda x, y: harbor(x, y, any(t["due"] for t in trips))) if "harbor" in at else ""
+    told = {n["name"]: n for n in extras.get("notify") or []}
+    radios = "".join(node(nid, lambda x, y, n=nid.split(":", 1)[1]: notifier(x, y, told.get(n, {"name": n})))
+                     for nid in at if nid.startswith("notify:"))
     # the ground: the mainland and the sea, the districts, the buildings that are not stations
     back = (ground("mainland", "ap-land") + f'<g aria-hidden="true" transform="{tr("mainland", 0, 0)}">{mainland(1320)}</g>'
-            + ground("sea", "sh-sea") + f'<g transform="{tr("sea", 0, 0)}">{sea(extras.get("schedules") or [], 1320, dock_y)}</g>{quay}' + _plan_districts(C.get("districts") or {})
+            + ground("sea", "sh-sea") + f'<g transform="{tr("sea", 0, 0)}">{sea(trips, 1320, dock_y)}</g>' + _plan_districts(C.get("districts") or {})
             + ground("airfield", "ap-field", 6) + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
             + f'<text class="fm-lab" x="{_f(at["sources"][0])}" y="{_f(at["sources"][1] - 8)}">SOURCES</text>'
             + f'<g transform="{tr("sources", *SRC)}">{github()}</g><g transform="{tr("receiving", 12, 200)}">{receiving(len(queued))}</g>'
-            + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>' + scenery(C.get("walls") or [], C.get("trees") or []))
+            + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>' + harbor_svg + radios + scenery(C.get("walls") or [], C.get("trees") or []))
     # the belts, cut where they go under, and the pieces on them
     belts, hoods = [], set()
     for hid, hb in hops.items():
         pts = hb["pts"] + ([at["yard"]] if hb["dst"] == "yard" else [])
-        cls = "fn-belt thin" if "airfield" in (hb["src"], hb["dst"]) or hb["dst"] == "yard" else "fn-belt"
+        cls = "fn-belt thin" if hb["src"] in ("airfield", "harbor") or hb["dst"] == "yard" else "fn-belt"
         belts += [belt(trace(q)[0].d, cls) for q in _visible(pts, hb["under"])]
         hoods |= set(hb["under"])
     belts += [underground(u, v) for u, v in sorted(hoods)] + [_piece(p) for p in C["pieces"]]

@@ -114,6 +114,7 @@ class App:
         summary["review"], summary["conflicts"] = cfg.review.enabled, cfg.conflicts.enabled
         summary["roles"], summary["workers"] = [r.name for r in cfg.roles], cfg.workers.enabled
         summary["power"], summary["repos"] = power_uses(cfg), list(cfg.repos)
+        summary["notify"] = {"telegram": bool(cfg.telegram_chat_id), "slack": bool(getattr(cfg, "slack_channel", None))}   # Slack: once configured
         d = {"cfg": summary, "paused": pause.paused(self.state_dir()) or "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": [],
              "recent": [], "decided": {}, "conflicting": 0, "workers": [], "floor_layout": floorplan.read(self.state_dir())}
         if db is not None:

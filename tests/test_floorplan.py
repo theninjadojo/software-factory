@@ -171,6 +171,22 @@ class Merge(unittest.TestCase):
         self.assertIn("station:architect", m["nodes"])
         self.assertEqual(F.validate(m, big), [])
 
+    def test_an_older_layout_gains_the_harbor_and_the_notifiers(self):
+        old = json.loads(json.dumps(F.default_plan(CTX)))
+        for k in ("harbor", "notify:telegram", "notify:slack"):
+            del old["nodes"][k]
+        del old["belts"]["harbor>receiving"]
+        m = F.merge(old, CTX)
+        self.assertIsNotNone(m)
+        self.assertTrue({"harbor", "notify:telegram", "notify:slack"} <= set(m["nodes"]))
+        self.assertIn("harbor>receiving", m["belts"])
+        self.assertEqual(F.validate(m, CTX), [])
+
+    def test_an_empty_floor_is_not_saved(self):
+        empty = {"version": F.VERSION, "grid": F.G, "nodes": {}, "belts": {}, "pieces": [], "districts": {}, "walls": [], "trees": []}
+        errs = F.validate(empty, CTX)
+        self.assertTrue(any(e.startswith("Missing buildings") for e in errs), errs)
+
     def test_a_removed_station_is_dropped(self):
         m = F.merge(F.default_plan(CTX), ctx({**ROLES, "review": False}, 2))
         self.assertNotIn("station:review", m["nodes"])
@@ -229,16 +245,45 @@ class Drawn(unittest.TestCase):
         self.assertIn(tuple(map(float, hop["pts"][-1])), ends)
         self.assertIn(tuple(map(float, hop["pts"][0])), starts)
 
-    def test_the_dock_and_crane_follow_receiving_and_a_quay_joins_them(self):
-        d = moved(F.default_plan(CTX), "receiving", 2, 4)              # lower and further from the sea wall
+    def test_the_harbor_stands_anywhere_with_its_belt_to_receiving_and_the_dock_follows_it(self):
+        d = moved(F.default_plan(CTX), "harbor", 0, 32)                 # far out, under the airfield; its belt is routed again
         self.assertEqual(F.validate(d, CTX), [])
-        svg = self.draw(d, extras={"schedules": [{"name": "n", "source": "gh", "when": "soon", "progress": 0.2, "due": False}]})
+        trips = [{"name": "n", "source": "gh", "when": "soon", "progress": 0.2, "due": True}]
+        svg = self.draw(d, extras={"schedules": trips})
         C = F.compile_plan(d, CTX)
-        dock = C["at"]["receiving"][1] + plant.MH / 2 - C["at"]["sea"][1]
-        self.assertIn(f'<circle class="sh-base" cx="{plant.SEA_W}" cy="{plant._f(dock)}"', svg)
-        wall, rx = C["at"]["sea"][0] + plant.SEA_W, C["at"]["receiving"][0]
-        self.assertGreater(rx - wall, 0)
-        self.assertIn(f"M {plant._f(wall)} {plant._f(C['at']['sea'][1] + dock)} H {plant._f(rx)}", svg)
+        x, y, w, h = C["box"]["harbor"]
+        self.assertIn(f'<rect class="hb-box" x="{plant._f(x)}" y="{plant._f(y)}"', svg)
+        self.assertIn('class="hb due"', svg)                               # a run is due: a ship lies at the quay
+        dock = y + h / 2 - C["at"]["sea"][1]
+        self.assertIn(f'<circle class="sh-base" cx="{plant.SEA_W}" cy="{plant._f(min(900.0, max(100.0, dock)))}"', svg)
+        hop = C["hops"]["harbor>receiving"]
+        self.assertIn(plant.belt(plant.trace(hop["pts"])[0].d, "fn-belt thin"), svg)
+        self.assertNotIn("H " + plant._f(C["at"]["receiving"][0]) + '"', svg)    # no quay drawn by itself any more
+
+    def test_a_layout_without_the_harbor_belt_is_refused(self):
+        d = json.loads(json.dumps(F.default_plan(CTX)))
+        del d["belts"]["harbor>receiving"]
+        self.assertTrue(any("No belt from The harbor to Receiving" in e for e in F.validate(d, CTX)))
+
+    def test_notifiers_are_wireless_machines_lit_when_set_up(self):
+        d = F.default_plan(CTX)
+        self.assertEqual({k for k in d["nodes"] if k.startswith("notify:")}, {"notify:telegram", "notify:slack"})
+        self.assertFalse(any("notify:" in k for k in d["belts"]))         # no belt and no hop: they reach a person wherever they stand
+        self.assertFalse(any("notify:" in a + b for a, b in CTX.hops()))
+        svg = self.draw(d, extras={"notify": [{"name": "telegram", "on": True}, {"name": "slack", "on": False}]})
+        self.assertIn('aria-label="Notifier Telegram: set up, wireless"', svg)
+        self.assertIn('aria-label="Notifier Slack: not set up"', svg)
+        self.assertEqual(svg.count('class="nt-wave'), 6)
+        moved_d = json.loads(json.dumps(d))
+        moved_d["nodes"]["notify:slack"] = {"x": 3, "y": 70}              # anywhere free
+        self.assertEqual(F.validate(moved_d, CTX), [])
+
+    def test_the_default_floor_shows_the_notifiers_under_power(self):
+        order = board.floor_order(ROLES)
+        fl = {sid: {"state": "none", "refs": [], "count": 0} for sid, _, _ in order}
+        svg = plant.floor_map(order, fl, [], True, 1000.0, extras={"notify": [{"name": "telegram", "on": True}, {"name": "slack", "on": False}]})
+        self.assertIn("NOTIFIERS · WIRELESS", svg)
+        self.assertIn('class="nt on"', svg)
 
     def test_a_resized_station_is_stretched_and_scenery_is_drawn(self):
         d = F.default_plan(CTX)
@@ -264,7 +309,8 @@ class Drawn(unittest.TestCase):
         self.assertIn(f'<rect class="sh-sea" x="240" y="0" width="300" height="660" rx="0"/>', svg)
         self.assertIn('transform="translate(315 0) scale(0.5) translate(0 0)"', svg)
         C = F.compile_plan(d, CTX)
-        dock = (C["at"]["receiving"][1] + plant.MH / 2) / 0.5               # the crane at Receiving's height, in the sea's own units
+        x, y, w, h = C["box"]["harbor"]
+        dock = (y + h / 2) / 0.5                                            # the crane at the harbor's height, in the sea's own units
         self.assertIn(f'<circle class="sh-base" cx="{plant.SEA_W}" cy="{plant._f(max(100.0, min(900.0, dock)))}"', svg)
         self.assertNotRegex(svg, r'scale\([\d.]+ [\d.]+\)')                 # never a stretch that squashes the text
 
@@ -314,6 +360,12 @@ class Editing(AdminCase):
         self.assertIn('<g data-art="station:build">', page)
         self.assertIn('data-tool="wall"', page)
         self.assertIn('data-act="zoomin"', page)
+        self.assertIn('data-act="scratch"', page)                       # start from an empty floor, with the parts tray to fill it
+        self.assertIn('class="fe-tray-list"', page)
+        meta = json.loads(html.unescape(re.search(r'data-meta="([^"]*)"', page).group(1)))
+        self.assertEqual(meta["nodes"]["harbor"]["group"], "Arrivals")
+        self.assertEqual(meta["nodes"]["notify:telegram"]["group"], "Notifiers")
+        self.assertIn(["harbor", "receiving", "The harbor → Receiving"], meta["hops"])
         self.assertIn("floor-edit.js", server.STATIC)
         s, h, js = self.req("GET", "/static/floor-edit.js")
         self.assertEqual(s, 200)

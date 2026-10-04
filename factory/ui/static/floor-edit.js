@@ -1,18 +1,21 @@
 // The floor's layout editor (/floor/edit). The server renders the page, checks every save and draws the floor; this script only shows
-// the layout from the form's JSON as a plan on a grid with each building's picture, lets a person move and resize buildings, draw belts,
-// walls and trees and place pieces (mouse, pen or touch), pan and zoom, and writes the JSON back into the form. It sets SVG attributes only, never style attributes, so the page policy holds.
+// the layout from the form's JSON as a plan on a grid with each building's picture, lets a person start from an empty floor and bring
+// buildings in from the parts tray, move and resize them, draw belts (point by point, or by dragging from one building onto the next)
+// and slide them, draw walls and trees and place pieces (mouse, pen or touch), pan and zoom, and writes the JSON back into the form. It sets SVG attributes only, never style attributes, so the page policy holds.
 (function () {
   var root = document.querySelector(".fe");
   var area = document.querySelector(".fe-save textarea[name=plan]");
   if (!root || !area) return;
   var meta = JSON.parse(root.getAttribute("data-meta"));
   var svg = root.querySelector(".fe-svg"), list = root.querySelector(".fe-problems"), canvas = root.querySelector(".fe-canvas");
+  var tray = root.querySelector(".fe-tray-list");
   var artSrc = root.querySelector(".fe-art"), pics = {}, zoomOut = root.querySelector(".fe-zoomval");
   var hopSel = root.querySelector(".fe-hop"), dirSel = root.querySelector(".fe-dir");
   var G = meta.grid, NS = "http://www.w3.org/2000/svg";
   var doc = parse(area.value) || clone(meta["default"]);
   if (!doc.districts) doc.districts = {};
   var past = [], future = [], tool = "move", drawing = null, drag = null, pan = null, ugFrom = null, focused = null, focusedDist = null;
+  var link = null, slide = null, carryIn = null, carried = false, note = "";
   var zoom = 1, AREAS = {mainland: 1, sea: 1, airfield: 1, yard: 1};
   var GROUND = {mainland: "ap-land", sea: "sh-sea", airfield: "ap-field"};    // what fills a resized area round its picture
   var details = document.querySelector(".fe-data");
@@ -204,7 +207,9 @@
     area.value = JSON.stringify(doc);
     var res = check();
     while (list.firstChild) list.removeChild(list.firstChild);
+    if (note) { var nl = document.createElement("li"); nl.className = "note"; nl.textContent = note; list.appendChild(nl); }
     res.problems.slice(0, 12).forEach(function (p) { var li = document.createElement("li"); li.textContent = p; list.appendChild(li); });
+    drawTray();
     if (!res.problems.length) { var ok = document.createElement("li"); ok.className = "ok"; ok.textContent = "Every station is reachable on its route."; list.appendChild(ok); }
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     var W = meta.w * G, H = meta.h * G;
@@ -253,9 +258,139 @@
       }
     });
     if (drawing) el("polyline", {points: poly(drawing), "class": (tool === "wall" ? "fp-wall" : "fe-belt") + " drawing"}, svg);
+    if (link && link.pts) el("polyline", {points: poly(link.pts), "class": "fe-belt drawing" + (link.to && !link.hop ? " bad" : "")}, svg);
+    if (carryIn && carryIn.at) {
+      var cm = meta.nodes[carryIn.id], cb = spot(carryIn.id, carryIn.at);
+      el("rect", {"class": "fe-ghost", x: (cb[0] + cm.dx) * G, y: (cb[1] + cm.dy) * G, width: cm.w * G, height: cm.h * G, rx: 3}, svg);
+    }
     if (ugFrom) el("circle", {"class": "fe-end drawing", cx: ugFrom[0] * G, cy: ugFrom[1] * G, r: 6}, svg);
     if (focusedDist && !focused) { var fd = svg.querySelector('[data-district="' + focusedDist + '"]'); if (fd && document.activeElement !== fd && svg.contains(document.activeElement || null)) fd.focus(); }
     if (focused) { var f = svg.querySelector('[data-node="' + focused + '"]'); if (f && document.activeElement !== f && svg.contains(document.activeElement || null)) f.focus(); }
+  }
+
+  // ---- the parts tray: every building of this factory, the ones not on the floor ready to be dragged in (or clicked in)
+  var GROUPS = ["Arrivals", "Stations", "Notifiers", "Power and workers", "Areas"];
+  function drawTray() {
+    if (!tray) return;
+    while (tray.firstChild) tray.removeChild(tray.firstChild);
+    var left = 0;
+    GROUPS.forEach(function (g) {
+      var ids = Object.keys(meta.nodes).filter(function (id) { return meta.nodes[id].group === g; });
+      if (!ids.length) return;
+      var h = document.createElement("h3");
+      h.textContent = g;
+      tray.appendChild(h);
+      ids.forEach(function (id) {
+        var on = !!doc.nodes[id], b = document.createElement("button");
+        b.type = "button";
+        b.className = "fe-part" + (on ? " placed" : "") + (meta.nodes[id].group === "Notifiers" ? " radio" : "");
+        b.setAttribute("data-part", id);
+        b.setAttribute("aria-label", on ? label(id) + ", on the floor" : "Place " + label(id));
+        if (on) b.setAttribute("aria-disabled", "true"); else left++;
+        b.textContent = label(id);
+        if (on) { var t = document.createElement("small"); t.textContent = "On floor"; b.appendChild(t); }
+        tray.appendChild(b);
+      });
+      if (g === "Notifiers") {
+        var later = document.createElement("p");
+        later.className = "fe-part later";
+        later.textContent = "More channels later";
+        tray.appendChild(later);
+      }
+    });
+    var head = root.querySelector(".fe-tray-left");
+    if (head) head.textContent = left ? left + " to place" : "All placed";
+  }
+  function spot(id, p) {
+    // where a building dropped at grid point p stands: centred on it, inside the floor
+    var m = meta.nodes[id], x = p[0] - Math.floor(m.w / 2) - m.dx, y = p[1] - Math.floor(m.h / 2) - m.dy;
+    return [Math.max(-m.dx, Math.min(meta.w - m.w - m.dx, x)), Math.max(-m.dy, Math.min(meta.h - m.h - m.dy, y))];
+  }
+  function freeSpot(id) {
+    // the nearest place to the middle of the view where the building touches nothing (a cell of room all round)
+    var m = meta.nodes[id], c = [Math.round((canvas.scrollLeft + canvas.clientWidth / 2) / zoom / G), Math.round((canvas.scrollTop + canvas.clientHeight / 2) / zoom / G)];
+    var taken = Object.keys(doc.nodes).map(box).filter(Boolean);
+    for (var r = 0; r < 80; r++) {
+      for (var dx = -r; dx <= r; dx++) {
+        for (var dy = -r; dy <= r; dy++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          var at = spot(id, [c[0] + dx, c[1] + dy]), b = [at[0] + m.dx, at[1] + m.dy, m.w, m.h];
+          if (taken.every(function (t) { return !(b[0] - 1 < t[0] + t[2] && t[0] < b[0] + b[2] + 1 && b[1] - 1 < t[1] + t[3] && t[1] < b[1] + b[3] + 1); })) return at;
+        }
+      }
+    }
+    return spot(id, c);
+  }
+  function place(id, at) {
+    if (doc.nodes[id]) return;
+    remember();
+    doc.nodes[id] = {x: at[0], y: at[1]};
+    focused = id; focusedDist = null; note = "";
+    grow();
+    draw();
+  }
+  function emptyFloor() {
+    return {version: meta["default"].version, grid: G, nodes: {}, belts: {}, pieces: [], districts: {}, walls: [], trees: []};
+  }
+  function erase(id) {
+    // a building goes back to the tray, with the belts that reach it
+    remember();
+    delete doc.nodes[id];
+    meta.hops.forEach(function (h) { if (h[0] === id || h[1] === id) delete doc.belts[h[0] + ">" + h[1]]; });
+    doc.pieces = doc.pieces.filter(function (p) { return pieceOk(p, doc.belts); });
+    grow();
+    if (focused === id) focused = null;
+    draw();
+  }
+  function nodeAt(p) {
+    // the building under a grid point (a building over an area)
+    var hit = null;
+    Object.keys(doc.nodes).forEach(function (id) { var b = box(id); if (b && inside(p, b) && (!hit || AREAS[hit])) hit = id; });
+    return hit;
+  }
+  function ports(id) {
+    // the grid points beside a building where a belt may start or end: the middle of each side (the yard: the top of its feeder)
+    if (id === "yard") return [[doc.nodes.yard.x, doc.nodes.yard.y - 1]];
+    var b = box(id), mx = b[0] + Math.floor(b[2] / 2), my = b[1] + Math.floor(b[3] / 2);
+    return [[b[0] + b[2] + 1, my], [b[0] - 1, my], [mx, b[1] - 1], [mx, b[1] + b[3] + 1]];
+  }
+  function route(a, b) {
+    // a belt from beside one building to beside another: the shortest straight, L or Z shaped line that cuts through no building
+    var best = null, any = null, len = function (w) { var n = 0; for (var k = 1; k < w.length; k++) n += Math.abs(w[k][0] - w[k - 1][0]) + Math.abs(w[k][1] - w[k - 1][1]); return n + 2 * (w.length - 2); };
+    var to = Array.isArray(b) && typeof b[0] === "number" ? [b] : ports(b);
+    ports(a).forEach(function (s) {
+      to.forEach(function (e) {
+        var mx = Math.round((s[0] + e[0]) / 2), my = Math.round((s[1] + e[1]) / 2);
+        [[s, e], [s, [e[0], s[1]], e], [s, [s[0], e[1]], e], [s, [mx, s[1]], [mx, e[1]], e], [s, [s[0], my], [e[0], my], e]].forEach(function (w) {
+          w = simplify(w);
+          if (w.length < 2) return;
+          for (var k = 1; k < w.length; k++) if (w[k][0] !== w[k - 1][0] && w[k][1] !== w[k - 1][1]) return;
+          if (!any || len(w) < len(any)) any = w;
+          if (!through(w) && (!best || len(w) < len(best))) best = w;
+        });
+      });
+    });
+    return best || any;
+  }
+  function nearestRun(pts, p) {
+    // the run of a belt nearest a grid point
+    var best = 0, bd = Infinity;
+    for (var i = 1; i < pts.length; i++) {
+      var a = pts[i - 1], b = pts[i];
+      var x = Math.max(Math.min(a[0], b[0]), Math.min(Math.max(a[0], b[0]), p[0])), y = Math.max(Math.min(a[1], b[1]), Math.min(Math.max(a[1], b[1]), p[1]));
+      var d = Math.abs(x - p[0]) + Math.abs(y - p[1]);
+      if (d < bd) { bd = d; best = i - 1; }
+    }
+    return best;
+  }
+  function slid(pts, i, d) {
+    // a belt with one run moved sideways by d cells; its ends stay beside their buildings and join the moved run with a bend
+    var p = pts.map(function (q) { return q.slice(); }), across = p[i][1] === p[i + 1][1];
+    if (i === 0) { p.unshift(p[0].slice()); i = 1; }
+    if (i === p.length - 2) p.push(p[p.length - 1].slice());
+    [i, i + 1].forEach(function (k) { if (across) p[k][1] += d; else p[k][0] += d; });
+    p.forEach(function (q) { q[0] = Math.max(0, Math.min(meta.w, q[0])); q[1] = Math.max(0, Math.min(meta.h, q[1])); });
+    return simplify(p);
   }
 
   // ---- editing
@@ -405,8 +540,18 @@
     var p = point(e), t = e.target;
     var node = t.closest && t.closest("[data-node]"), dist = t.closest && t.closest("[data-district]");
     var piece = t.closest && t.closest("[data-piece]"), hop = t.closest && t.closest("[data-hop]");
+    note = "";
     if (tool === "move") {
-      if (hop && !node) { hopSel.value = hop.getAttribute("data-hop"); draw(); return; }
+      if (hop && !node) {
+        // a belt: picked to draw again, and dragged sideways it slides
+        var hid = hop.getAttribute("data-hop");
+        hopSel.value = hid;
+        slide = {hop: hid, run: nearestRun(doc.belts[hid], p), start: p, from: doc.belts[hid], before: JSON.stringify(doc), id: e.pointerId};
+        if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        draw();
+        return;
+      }
       var grip = t.closest && t.closest("[data-resize]"), ngrip = t.closest && t.closest("[data-grip]");
       var name = !node && dist ? dist.getAttribute("data-district") : null;
       var ids = node ? [node.getAttribute("data-node")] : name ? meta.districts[name].slice() : null;
@@ -421,6 +566,12 @@
       return;
     }
     e.preventDefault();
+    if (tool === "belt" && !drawing && node && !AREAS[node.getAttribute("data-node")]) {
+      // drag from one building onto the next: the belt for that hop is laid round the buildings
+      link = {from: node.getAttribute("data-node"), id: e.pointerId, pts: null, to: null, hop: null};
+      if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
+      return;
+    }
     if (tool === "belt" || tool === "wall") {
       if (tool === "belt" && !hopSel.value) return;
       if (!drawing) { drawing = [p]; }
@@ -434,6 +585,8 @@
     }
     if (tool === "erase") {
       var wall = t.closest && t.closest("[data-wall]"), tree = t.closest && t.closest("[data-tree]");
+      if (!piece && !wall && !tree && hop) { remember(); delete doc.belts[hop.getAttribute("data-hop")]; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); return draw(); }
+      if (!piece && !wall && !tree && node) return erase(node.getAttribute("data-node"));
       if (!piece && !wall && !tree) return;
       remember();
       if (piece) doc.pieces.splice(Number(piece.getAttribute("data-piece")), 1);
@@ -463,6 +616,18 @@
       canvas.scrollTop = pan.t - (e.clientY - pan.y);
       return;
     }
+    if (slide && e.pointerId === slide.id) {
+      var q = point(e), r = slide.from[slide.run], s2 = slide.from[slide.run + 1], d = r[1] === s2[1] ? q[1] - slide.start[1] : q[0] - slide.start[0];
+      doc.belts[slide.hop] = d ? slid(slide.from, slide.run, d) : slide.from;
+      return draw();
+    }
+    if (link && e.pointerId === link.id) {
+      var lp = point(e), over = nodeAt(lp);
+      link.to = over && over !== link.from && !AREAS[over] ? over : null;
+      link.hop = link.to && meta.hops.some(function (h) { return h[0] === link.from && h[1] === link.to; }) ? link.from + ">" + link.to : null;
+      link.pts = route(link.from, link.to || lp);
+      return draw();
+    }
     if (!drag || e.pointerId !== drag.id) return;
     var p = point(e);
     if (drag.grow) resizeNode(drag.grow, p[0] - drag.start[0], p[1] - drag.start[1], drag.from);
@@ -472,6 +637,18 @@
   });
   function drop(e) {
     if (pan && e.pointerId === pan.id) { pan = null; svg.removeAttribute("data-panning"); return; }
+    if (slide && e.pointerId === slide.id) {
+      if (JSON.stringify(doc) !== slide.before) { past.push(slide.before); future = []; }
+      slide = null;
+      return draw();
+    }
+    if (link && e.pointerId === link.id) {
+      var done = link;
+      link = null;
+      if (done.hop && done.pts) { remember(); doc.belts[done.hop] = done.pts; hopSel.value = done.hop; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); }
+      else if (done.to) note = "No hop from " + label(done.from) + " to " + label(done.to) + ": a belt carries tickets along the route, from the station a ticket leaves to the one it goes to.";
+      return draw();
+    }
     if (!drag || e.pointerId !== drag.id) return;
     if (JSON.stringify(doc) !== drag.before) { past.push(drag.before); future = []; }
     drag = null;
@@ -507,7 +684,7 @@
     var k = (e.key || "").toLowerCase();
     if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); return e.shiftKey ? redo() : undo(); }
     if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); return redo(); }
-    if (k === "escape") { drawing = null; ugFrom = null; draw(); }
+    if (k === "escape") { drawing = null; ugFrom = null; link = null; carryIn = null; draw(); }
     if (k === "enter" && drawing) { e.preventDefault(); finish(); }
   });
   root.addEventListener("click", function (e) {
@@ -518,7 +695,8 @@
     if (act === "undo") undo();
     else if (act === "redo") redo();
     else if (act === "finish") finish();
-    else if (act === "default") { remember(); doc = clone(meta["default"]); drawing = null; draw(); }
+    else if (act === "default") { remember(); doc = clone(meta["default"]); drawing = null; note = ""; draw(); }
+    else if (act === "scratch") { remember(); doc = emptyFloor(); drawing = null; focused = null; focusedDist = null; note = ""; draw(); }
     else if (act === "zoomin") setZoom(zoom * 1.25);
     else if (act === "zoomout") setZoom(zoom / 1.25);
     else if (act === "fit") fitView();
@@ -531,6 +709,34 @@
     var b = root.querySelector('[data-act="full"]');
     if (b) b.textContent = document.fullscreenElement === root ? "Exit full screen" : "Full screen";
   });
+  if (tray) {
+    // a part: clicked, it goes to a free spot in view; dragged onto the floor, it lands where it is let go
+    tray.addEventListener("pointerdown", function (e) {
+      var b = e.target.closest && e.target.closest("[data-part]");
+      if (!b || e.button > 0 || doc.nodes[b.getAttribute("data-part")]) return;
+      carryIn = {id: b.getAttribute("data-part"), x: e.clientX, y: e.clientY, moved: false, at: null};
+    });
+    tray.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest("[data-part]");
+      if (!b || carried || doc.nodes[b.getAttribute("data-part")]) { carried = false; return; }
+      place(b.getAttribute("data-part"), freeSpot(b.getAttribute("data-part")));
+    });
+    document.addEventListener("pointermove", function (e) {
+      if (!carryIn) return;
+      if (Math.abs(e.clientX - carryIn.x) + Math.abs(e.clientY - carryIn.y) > 4) carryIn.moved = true;
+      var r = canvas.getBoundingClientRect(), over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      var at = carryIn.moved && over ? point(e) : null;
+      if (String(at) !== String(carryIn.at)) { carryIn.at = at; draw(); }
+    });
+    document.addEventListener("pointerup", function () {
+      if (!carryIn) return;
+      var c = carryIn;
+      carryIn = null;
+      carried = c.moved;
+      if (c.moved && c.at) place(c.id, spot(c.id, c.at));
+      else if (c.moved) draw();
+    });
+  }
   canvas.addEventListener("wheel", function (e) {
     if (!e.ctrlKey && !e.metaKey) return;                                  // a plain wheel scrolls; with Ctrl it zooms round the pointer
     e.preventDefault();
