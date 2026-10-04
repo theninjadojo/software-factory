@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, designfiles, mockups, pause, pm, reviewnotes, runner, schedules, subtasks, usage, verify
+from . import ci, conflicts, designfiles, mockups, pause, pm, reviewnotes, runner, schedules, screenboard, subtasks, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -952,6 +952,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         schedules.tick(cfg, gh, conn, time.time(), Path(cfg.db_path).parent, emit, alert)
     except Exception:
         log.exception("scheduled jobs failed")                  # never stops the poll
+    try:
+        screenboard.tick(cfg, conn, time.time(), gh.token, lambda: dbm.connect(cfg.db_path), emit)
+    except Exception:
+        log.exception("screens board failed")                   # never stops the poll
     try:
         verify.watch(cfg, conn, lambda text, event="worker_offline": alert(text, event=event))
     except Exception:
