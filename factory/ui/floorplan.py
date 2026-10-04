@@ -1,0 +1,669 @@
+"""The floor's layout as data, for people who arrange the Factory floor themselves (the edit page, /floor/edit).
+
+A layout is a small JSON document, never markup. It holds where each building stands on a grid of 20px cells, one belt per hop of
+the route (an orthogonal line of grid points, from beside the station a ticket leaves to beside the one it goes to), and the pieces
+placed on the belts (splitters, mergers, side-loads, underground pairs). The server draws the floor from it (plant.planned_map), so
+text is still escaped and the page policy holds. Each hop being its own belt is what keeps every station reachable: a layout is
+only saved when every hop of the route has a belt that starts beside one station and ends beside the next.
+
+Districts are boxes of their own (optional: one left out is drawn round its stations). Moving a district moves its stations with it,
+it can be resized, and it must always hold its stations: the editor grows it when one of them is moved out.
+
+Without a saved layout the floor is drawn as before (plant.floor_map). A saved layout that cannot be read falls back to that; one
+that is stale (the config gained or lost a station, an agent or the workers) is merged: what is gone is dropped, and what is new
+gets a default spot and an auto-routed belt."""
+import hashlib
+import heapq
+import json
+import logging
+import math
+import os
+from pathlib import Path
+
+log = logging.getLogger("factory.ui")
+
+VERSION, G = 1, 20
+W, H = 200, 120                            # the floor's bounds, in cells
+MAX_BYTES = 16 * 1024                      # the document; url-encoded it stays under the server's 64 KB body limit
+MAX_POINTS, MAX_CELLS, MAX_PIECES, MAX_UNDER = 64, 6000, 100, 5
+FILE = "floor-layout.json"
+INTAKE, LATER = ("poll", "classify", "route"), ("build", "review", "ci", "pr")
+SIZE = {"station": (7, 5), "power": (10, 5), "sources": (7, 6), "receiving": (7, 5), "queue": (3, 3), "airfield": (34, 11),
+        "mainland": (12, 66), "sea": (15, 66)}
+SINGLE = ("mainland", "sea", "sources", "receiving", "queue", "airfield")
+DIRS = {"n": (0, -1), "e": (1, 0), "s": (0, 1), "w": (-1, 0)}
+KINDS = ("splitter", "merger", "sideload", "underground")
+NAMES = {"mainland": "The mainland", "sea": "The sea", "sources": "Sources", "receiving": "Receiving", "queue": "The queue",
+         "airfield": "The airfield", "yard": "The Verify yard"}
+DISTRICTS = ("INTAKE", "PLANNING", "PRODUCTION", "QUALITY", "SHIPPING")
+YARD_TOP = 590                             # the yard's feeder top in yard.py's coordinates (yard.BOT_Y + yard.MH + 30)
+
+
+# ---------------------------------------------------------------- what the config puts on the floor
+class Ctx:
+    """What the factory has now: the stations in route order, the enabled agent harnesses, whether the yard is shown and with how many
+    trains (its size follows them)."""
+
+    def __init__(self, ids, harnesses=(), yard_on: bool = False, trains: int = 0):
+        self.ids, self.harnesses, self.yard_on, self.trains = tuple(ids), tuple(harnesses), bool(yard_on), max(0, min(5, int(trains)))
+        self.key = (self.ids, self.harnesses, self.yard_on, self.trains)
+        self.roles = [s for s in self.ids if s not in INTAKE + LATER]
+        self.districts: dict[str, list[str]] = {}
+        for s in self.ids:
+            self.districts.setdefault(district_of(s), []).append(f"station:{s}")
+
+    def nodes(self) -> list[str]:
+        return (list(SINGLE) + [f"station:{s}" for s in self.ids] + [f"power:{h}" for h in self.harnesses]
+                + (["yard"] if self.yard_on else []))
+
+    def hops(self) -> list[tuple[str, str]]:
+        """Every hop a ticket can ride, as (from, to) node ids."""
+        s = lambda x: f"station:{x}"
+        has = set(self.ids)
+        out = [("airfield", "receiving")]
+        if "poll" in has:
+            out.append(("receiving", s("poll")))
+        intake = [x for x in INTAKE if x in has]
+        out += [(s(a), s(b)) for a, b in zip(intake, intake[1:])]
+        if {"classify", "route"} <= has:
+            out += [(s("classify"), "queue"), ("queue", s("route"))]
+        main = [x for x in self.ids if x not in INTAKE + ("review", "ci", "pr")]
+        if "route" in has:
+            main = ["route"] + main
+        out += [(s(a), s(b)) for a, b in zip(main, main[1:])]
+        if self.roles and {"route", "build"} <= has:
+            out.append((s("route"), s("build")))                     # the bypass
+        late = [x for x in ("build", "review", "ci", "pr") if x in has]
+        out += [(s(a), s(b)) for a, b in zip(late, late[1:])]
+        if {"ci", "build"} <= has:
+            out.append((s("ci"), s("build")))                        # CI's fix rounds
+        if self.yard_on and "build" in has:
+            out.append((s("build"), "yard"))
+        return out
+
+
+def district_of(sid: str) -> str:
+    return ("INTAKE" if sid in INTAKE else "PRODUCTION" if sid == "build" else "QUALITY" if sid in ("review", "ci")
+            else "SHIPPING" if sid == "pr" else "PLANNING")
+
+
+def fit(members: list, B: dict) -> dict:
+    """The smallest district round its stations' boxes, with room for its name: a cell aside and below, two above."""
+    bs = [B[m] for m in members if m in B]
+    x0, y0 = min(b[0] for b in bs) - 1, min(b[1] for b in bs) - 2
+    x1, y1 = max(b[0] + b[2] for b in bs) + 1, max(b[1] + b[3] for b in bs) + 2
+    return {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
+
+
+def holds(d: dict, b) -> bool:
+    return d["x"] <= b[0] and d["y"] <= b[1] and b[0] + b[2] <= d["x"] + d["w"] and b[1] + b[3] <= d["y"] + d["h"]
+
+
+def district_boxes(doc: dict, ctx: "Ctx", B: dict) -> dict:
+    """Each district of the config: the saved box, or the one round its stations."""
+    saved = doc.get("districts") or {}
+    return {n: dict(saved[n]) if n in saved else fit(m, B) for n, m in ctx.districts.items()}
+
+
+def hop_id(a: str, b: str) -> str:
+    return f"{a}>{b}"
+
+
+def label(nid: str) -> str:
+    from .board import LABEL
+    from .plant import NAMES as POWER
+    kind, _, name = nid.partition(":")
+    if kind == "station":
+        return LABEL.get(name, name.replace("_", " ").title())
+    if kind == "power":
+        return "Power: " + POWER.get(name, name)
+    return NAMES.get(nid, nid)
+
+
+def yard_box(trains: int) -> tuple[int, int, int, int]:
+    """The yard's box relative to its anchor (the top of its feeder), in cells: (dx, dy, w, h)."""
+    from . import yard
+    if trains <= 0:
+        return (-5, 0, 10, 3)                                        # only the "+ Connect a worker" button
+    g = yard.yard_geometry(trains, 0)
+    left, right = min(min(g["xs"]) - 90, -320), g["tx"] + 70
+    return (math.floor(left / G), 0, math.ceil((right - left) / G) + 1, math.ceil((g["bottom"] - YARD_TOP) / G))
+
+
+def box(nid: str, at, ctx: Ctx) -> tuple[int, int, int, int]:
+    x, y = at
+    if nid == "yard":
+        dx, dy, w, h = yard_box(ctx.trains)
+        return (x + dx, y + dy, w, h)
+    return (x, y, *SIZE[nid.split(":")[0]])
+
+
+def boxes(nodes: dict, ctx: Ctx) -> dict:
+    return {nid: box(nid, (p["x"], p["y"]), ctx) for nid, p in nodes.items()}
+
+
+def _inside(p, b) -> bool:
+    return b[0] <= p[0] <= b[0] + b[2] and b[1] <= p[1] <= b[1] + b[3]
+
+
+def beside(p, nid: str, B: dict, nodes: dict) -> bool:
+    """Is grid point p one cell outside the node's box (where its inserter reaches)? The yard takes only at its feeder."""
+    if nid == "yard":
+        a = nodes["yard"]
+        return tuple(p) == (a["x"], a["y"] - 1)
+    x, y, w, h = B[nid]
+    px, py = p
+    return ((x <= px <= x + w and py in (y - 1, y + h + 1)) or (y <= py <= y + h and px in (x - 1, x + w + 1)))
+
+
+def cells(pts):
+    """Every grid point along an orthogonal line, in order (corners once)."""
+    out = [tuple(pts[0])]
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        n = abs(x2 - x1) + abs(y2 - y1)
+        dx, dy = (x2 > x1) - (x2 < x1), (y2 > y1) - (y2 < y1)
+        out += [(x1 + dx * k, y1 + dy * k) for k in range(1, n + 1)]
+    return out
+
+
+# ---------------------------------------------------------------- the default layout: today's arrangement on the grid
+def _default_pos(ctx: Ctx) -> dict:
+    roles = ctx.roles
+    P = {"mainland": (0, 0), "sea": (12, 0), "sources": (28, 2), "receiving": (28, 10), "queue": (50, 12), "airfield": (28, 33)}
+    for s, x in zip(INTAKE, (37, 45, 53)):
+        P[f"station:{s}"] = (x, 2)
+    for i, r in enumerate(roles):
+        P[f"station:{r}"] = (63 + 8 * i, 2)
+    P["station:build"] = (70, 17)
+    for j, s in enumerate(x for x in ("review", "ci") if x in ctx.ids):
+        P[f"station:{s}"] = (57 - 9 * j, 25)
+    P["station:pr"] = (37, 25)
+    px = max(63 + 8 * len(roles) + 2, 82)
+    for k, h in enumerate(ctx.harnesses):
+        P[f"power:{h}"] = (px, 1 + 6 * k)
+    P["yard"] = (79, 46)
+    return {n: {"x": P[n][0], "y": P[n][1]} for n in ctx.nodes() if n in P}
+
+
+LOW = ("station:review", "station:ci", "station:pr")                 # the quality and shipping row, flowing west
+
+
+def port(nid: str, way: str, other: str, nodes: dict, ctx: Ctx):
+    """Where a default belt leaves (way "out") or reaches (way "in") a node, as a grid point beside it."""
+    x, y, w, h = box(nid, (nodes[nid]["x"], nodes[nid]["y"]), ctx)
+    if nid == "yard":
+        return (nodes[nid]["x"], nodes[nid]["y"] - 1)
+    if nid == "receiving":
+        return (x + w + 1, y + 2) if way == "out" else (x + 2, y + h + 1)
+    if nid == "airfield":
+        return (x + 2, y - 1)
+    if nid == "queue":
+        return (x + 1, y - 1) if way == "in" else (x + 1, y + h + 1)
+    if nid == "station:build":
+        if way == "in":
+            return (x - 1, y + 2) if other == "station:ci" else (x + 1, y - 1)
+        return (x + w + 1, y + 2) if other == "yard" else (x + 1, y + h + 1)
+    if nid == "station:ci" and other == "station:build":
+        return (x + 3, y + h + 1)
+    low = nid in LOW
+    if way == "in":
+        return (x + w - 1, y - 1) if low else (x + 1, y + h + 1)
+    return (x + 1, y - 1) if low else (x + w - 1, y + h + 1)
+
+
+def blocked_cells(B: dict) -> set:
+    return {(x, y) for bx, by, bw, bh in B.values() for x in range(bx, bx + bw + 1) for y in range(by, by + bh + 1)}
+
+
+def autoroute(a, b, blocked: set, used: set = frozenset()):
+    """An orthogonal belt from a to b round the buildings (A* over cells, a turn costs more than a step, sharing another belt's cells
+    costs a little). Returns its corner points, or None."""
+    a, b = tuple(a), tuple(b)
+    if a in blocked or b in blocked:
+        return None
+    for pad in (12, 40, None):
+        lo_x, hi_x = (0, W) if pad is None else (max(0, min(a[0], b[0]) - pad), min(W, max(a[0], b[0]) + pad))
+        lo_y, hi_y = (0, H) if pad is None else (max(0, min(a[1], b[1]) - pad), min(H, max(a[1], b[1]) + pad))
+        h0 = abs(a[0] - b[0]) + abs(a[1] - b[1])
+        best, prev, q, n = {(a, None): 0}, {}, [(h0, 0, a, None)], 0
+        while q:
+            _, c, p, d = heapq.heappop(q)
+            if p == b:
+                path, s = [p], (p, d)
+                while s in prev:
+                    s = prev[s]
+                    path.append(s[0])
+                path.reverse()
+                return [path[0]] + [path[i] for i in range(1, len(path) - 1)
+                                    if (path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]) != (path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1])] + [path[-1]]
+            if c > best.get((p, d), 1e18):
+                continue
+            n += 1
+            if n > 200000:
+                break
+            for nd, (dx, dy) in DIRS.items():
+                np_ = (p[0] + dx, p[1] + dy)
+                if not (lo_x <= np_[0] <= hi_x and lo_y <= np_[1] <= hi_y) or np_ in blocked:
+                    continue
+                if d is not None and (DIRS[d][0] == -dx and DIRS[d][1] == -dy):
+                    continue
+                nc = c + 1 + (4 if d is not None and nd != d else 0) + (2 if np_ in used else 0)
+                if nc < best.get((np_, nd), 1e18):
+                    best[(np_, nd)] = nc
+                    prev[(np_, nd)] = (p, d)
+                    heapq.heappush(q, (nc + abs(np_[0] - b[0]) + abs(np_[1] - b[1]), nc, np_, nd))
+    return None
+
+
+def _pieces_for(belts: dict) -> list[dict]:
+    """Splitters where belts leave one point, mergers where they meet, and an underground pair wherever a belt crosses another."""
+    out, starts, ends = [], {}, {}
+    for hop, pts in belts.items():
+        starts.setdefault(tuple(pts[0]), []).append(pts)
+        ends.setdefault(tuple(pts[-1]), []).append(pts)
+    for at, ps in starts.items():
+        if len(ps) > 1:
+            out.append({"kind": "splitter", "at": list(at), "dir": _dir(ps[0][0], ps[0][1])})
+    for at, ps in ends.items():
+        if len(ps) > 1:
+            out.append({"kind": "merger", "at": list(at), "dir": _dir(ps[0][-2], ps[0][-1])})
+    seen = {}
+    for hop, pts in belts.items():
+        for c in cells(pts):
+            seen.setdefault(c, set()).add(hop)
+    taken = set()
+    for hop, pts in belts.items():
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+            line = cells([(x1, y1), (x2, y2)])
+            for i in range(2, len(line) - 2):
+                c, u, v = line[i], line[i - 1], line[i + 1]
+                others = seen.get(c, set()) - {hop}
+                if not others or c in taken or seen.get(u, set()) != {hop} or seen.get(v, set()) != {hop}:
+                    continue
+                crosses = any(_crosses(belts[o], c, (x1 == x2)) for o in others)
+                if crosses and not _on_other_ug(out, c):
+                    out.append({"kind": "underground", "from": list(u), "to": list(v)})
+                    taken |= {u, c, v}
+    return out
+
+
+def _crosses(pts, c, vertical: bool) -> bool:
+    """Does this belt run across point c the other way?"""
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        if vertical and y1 == y2 == c[1] and min(x1, x2) < c[0] < max(x1, x2):
+            return True
+        if not vertical and x1 == x2 == c[0] and min(y1, y2) < c[1] < max(y1, y2):
+            return True
+    return False
+
+
+def _on_other_ug(pieces, c) -> bool:
+    return any(p["kind"] == "underground" and c in cells([p["from"], p["to"]]) for p in pieces)
+
+
+def _dir(a, b) -> str:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    return "e" if dx > 0 else "w" if dx < 0 else "s" if dy > 0 else "n"
+
+
+_DEFAULTS: dict = {}
+
+
+def default_plan(ctx: Ctx) -> dict:
+    """Today's arrangement on the grid, its belts routed round the buildings."""
+    if ctx.key in _DEFAULTS:
+        return json.loads(json.dumps(_DEFAULTS[ctx.key]))
+    nodes = _default_pos(ctx)
+    belts = _route_all(nodes, {}, ctx)
+    doc = {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts or {}, "pieces": _pieces_for(belts or {})}
+    doc["districts"] = district_boxes(doc, ctx, boxes(nodes, ctx))
+    if len(_DEFAULTS) > 32:
+        _DEFAULTS.clear()
+    _DEFAULTS[ctx.key] = doc
+    return json.loads(json.dumps(doc))
+
+
+def _route_all(nodes: dict, keep: dict, ctx: Ctx) -> dict | None:
+    """Belts for every hop: the kept ones as they are, the rest routed. None when a hop cannot be routed."""
+    B = boxes(nodes, ctx)
+    blocked = blocked_cells(B)
+    out, used = {}, set()
+    for pts in keep.values():
+        used |= set(cells(pts))
+    for a, b in ctx.hops():
+        hid = hop_id(a, b)
+        if hid in keep:
+            out[hid] = keep[hid]
+            continue
+        pts = autoroute(port(a, "out", b, nodes, ctx), port(b, "in", a, nodes, ctx), blocked, used)
+        if pts is None or len(pts) < 2:
+            return None
+        out[hid] = [list(p) for p in pts]
+        used |= set(cells(pts))
+    return out
+
+
+# ---------------------------------------------------------------- checking a layout
+def _int(v) -> bool:
+    return type(v) is int
+
+
+def _pt(v) -> bool:
+    return isinstance(v, list) and len(v) == 2 and all(_int(c) for c in v) and 0 <= v[0] <= W and 0 <= v[1] <= H
+
+
+def structure(doc) -> list[str]:
+    """The document's shape: known keys, whole numbers inside the floor, bounded sizes. Nothing here knows about the config."""
+    if not isinstance(doc, dict):
+        return ["The layout must be a JSON object."]
+    errs = []
+    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces", "districts"}
+    if extra:
+        errs.append("Unknown keys: " + ", ".join(sorted(str(k)[:30] for k in extra)[:5]) + ".")
+    if doc.get("version") != VERSION or doc.get("grid") != G:
+        errs.append(f"The layout must have version {VERSION} and grid {G}.")
+    nodes, belts, pieces = doc.get("nodes"), doc.get("belts"), doc.get("pieces")
+    if not isinstance(nodes, dict) or not isinstance(belts, dict) or not isinstance(pieces, list):
+        return errs + ["The layout needs nodes and belts (objects) and pieces (a list)."]
+    dists = doc.get("districts", {})
+    if not isinstance(dists, dict):
+        errs.append("The districts are an object of boxes.")
+    else:
+        for k, v in dists.items():
+            if not (isinstance(v, dict) and set(v) == {"x", "y", "w", "h"} and all(_int(v[c]) for c in v) and v["x"] >= 0 and v["y"] >= 0
+                    and v["w"] >= 1 and v["h"] >= 1 and v["x"] + v["w"] <= W and v["y"] + v["h"] <= H):
+                errs.append(f"District {str(k)[:40]}: a box is {{\"x\", \"y\", \"w\", \"h\"}} in whole cells inside the floor.")
+    for k, v in nodes.items():
+        if not (isinstance(v, dict) and set(v) == {"x", "y"} and _int(v["x"]) and _int(v["y"]) and 0 <= v["x"] <= W and 0 <= v["y"] <= H):
+            errs.append(f"{str(k)[:40]}: a position is {{\"x\": whole number, \"y\": whole number}} inside the floor.")
+    total = 0
+    for k, pts in belts.items():
+        if not (isinstance(pts, list) and 2 <= len(pts) <= MAX_POINTS and all(_pt(p) for p in pts)):
+            errs.append(f"Belt {str(k)[:60]}: it needs 2 to {MAX_POINTS} grid points inside the floor.")
+            continue
+        for p, q in zip(pts, pts[1:]):
+            if (p[0] != q[0]) == (p[1] != q[1]):
+                errs.append(f"Belt {str(k)[:60]}: each run goes straight across or down the grid and is at least one cell long.")
+                break
+        total += sum(abs(p[0] - q[0]) + abs(p[1] - q[1]) for p, q in zip(pts, pts[1:]))
+    if total > MAX_CELLS:
+        errs.append(f"The belts are too long ({total} cells; at most {MAX_CELLS}).")
+    if len(pieces) > MAX_PIECES:
+        errs.append(f"Too many pieces ({len(pieces)}; at most {MAX_PIECES}).")
+    for p in pieces[:MAX_PIECES]:
+        ok = isinstance(p, dict) and p.get("kind") in KINDS
+        if ok and p["kind"] == "underground":
+            ok = set(p) == {"kind", "from", "to"} and _pt(p["from"]) and _pt(p["to"])
+        elif ok:
+            ok = set(p) == {"kind", "at", "dir"} and _pt(p["at"]) and p["dir"] in DIRS
+        if not ok:
+            errs.append("A piece is a splitter, merger or side-load {kind, at, dir} or an underground {kind, from, to}.")
+            break
+    return errs
+
+
+def _belt_problem(hid: str, pts, B: dict, nodes: dict) -> str:
+    a, b = hid.split(">")
+    if not beside(pts[0], a, B, nodes):
+        return f"The belt from {label(a)} to {label(b)} must start beside {label(a)}."
+    if not beside(pts[-1], b, B, nodes):
+        return (f"The belt from {label(a)} to {label(b)} must end " + ("at the top of the yard's feeder." if b == "yard" else f"beside {label(b)}."))
+    for c in cells(pts):
+        for nid, bx in B.items():
+            if _inside(c, bx):
+                return f"The belt from {label(a)} to {label(b)} runs through {label(nid)}."
+    return ""
+
+
+def _on_line(pts, c) -> bool:
+    return tuple(c) in set(cells(pts))
+
+
+def _same_run(pts, u, v) -> bool:
+    for p, q in zip(pts, pts[1:]):
+        line = cells([p, q])
+        if tuple(u) in line and tuple(v) in line and line.index(tuple(u)) < line.index(tuple(v)):
+            return True
+    return False
+
+
+def placement(B: dict) -> list[str]:
+    """Every building inside the floor and no two overlapping."""
+    errs = [f"{label(nid)} is outside the floor." for nid, (x, y, w, h) in B.items() if x < 0 or y < 0 or x + w > W or y + h > H]
+    ids = list(B)
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            (ax, ay, aw, ah), (bx, by, bw, bh) = B[a], B[b]
+            if ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah:
+                errs.append(f"{label(a)} overlaps {label(b)}.")
+    return errs
+
+
+def validate(doc, ctx: Ctx) -> list[str]:
+    """Everything a saved layout must satisfy: its shape, every building present once and inside the floor with no two overlapping,
+    and every hop of the route on a belt that starts beside the station it leaves and ends beside the one it reaches."""
+    errs = structure(doc)
+    if errs:
+        return errs
+    want = ctx.nodes()
+    nodes = doc["nodes"]
+    unknown = [k for k in nodes if k not in want]
+    if unknown:
+        errs.append("Unknown buildings: " + ", ".join(str(k)[:40] for k in unknown[:5]) + ".")
+    missing = [k for k in want if k not in nodes]
+    if missing:
+        errs.append("Missing buildings: " + ", ".join(label(k) for k in missing[:5]) + ".")
+    if errs:
+        return errs
+    B = boxes(nodes, ctx)
+    errs += placement(B)
+    for name in doc.get("districts", {}):
+        if name not in ctx.districts:
+            errs.append(f"There is no district {str(name)[:40]} in this factory.")
+    for name, d in district_boxes(doc, ctx, B).items():
+        errs += [f"The {name.title()} district must hold {label(m)}." for m in ctx.districts[name] if not holds(d, B[m])]
+    hops = [hop_id(a, b) for a, b in ctx.hops()]
+    for k in doc["belts"]:
+        if k not in hops:
+            errs.append(f"There is no hop {str(k)[:60]} on the route.")
+    for hid in hops:
+        a, b = hid.split(">")
+        pts = doc["belts"].get(hid)
+        if pts is None:
+            errs.append(f"No belt from {label(a)} to {label(b)}: {label(b)} cannot be reached on its route.")
+            continue
+        problem = _belt_problem(hid, pts, B, nodes)
+        if problem:
+            errs.append(problem)
+    belts = [p for k, p in doc["belts"].items() if k in hops]
+    for p in doc["pieces"]:
+        if p["kind"] == "underground":
+            n = abs(p["from"][0] - p["to"][0]) + abs(p["from"][1] - p["to"][1])
+            if not 2 <= n <= MAX_UNDER + 1 or not any(_same_run(bp, p["from"], p["to"]) for bp in belts):
+                errs.append(f"An underground belt at {p['from']} must sit on one straight run of a belt, its ends 2 to {MAX_UNDER + 1} cells apart in the belt's direction.")
+        elif not any(_on_line(bp, p["at"]) for bp in belts):
+            errs.append(f"The {p['kind']} at {p['at']} is not on a belt.")
+    return errs[:20]
+
+
+# ---------------------------------------------------------------- stale layouts
+def merge(doc: dict, ctx: Ctx) -> dict | None:
+    """Fit a saved layout to what the factory has now: buildings that are gone are dropped, new ones get their default spot (or the
+    nearest free one), belts that no longer fit are routed again. None when it cannot be made whole (the caller draws the default)."""
+    want = ctx.nodes()
+    nodes = {k: dict(v) for k, v in doc["nodes"].items() if k in want}
+    default = _default_pos(ctx)
+    for nid in want:
+        if nid in nodes:
+            continue
+        spot = _free_spot(nid, default[nid], nodes, ctx)
+        if spot is None:
+            return None
+        nodes[nid] = {"x": spot[0], "y": spot[1]}
+    B = boxes(nodes, ctx)
+    if placement(B):                                                 # the yard grew with the workers into a neighbour, or off the floor
+        return None
+    keep = {}
+    for a, b in ctx.hops():
+        hid = hop_id(a, b)
+        pts = doc["belts"].get(hid)
+        if pts and not _belt_problem(hid, pts, B, nodes):
+            keep[hid] = pts
+    belts = _route_all(nodes, keep, ctx)
+    if belts is None:
+        return None
+    on = list(belts.values())
+    pieces = [p for p in doc["pieces"] if (p["kind"] == "underground" and any(_same_run(bp, p["from"], p["to"]) for bp in on))
+              or (p["kind"] != "underground" and any(_on_line(bp, p["at"]) for bp in on))]
+    dists = {}
+    for name, d in (doc.get("districts") or {}).items():
+        if name not in ctx.districts:
+            continue
+        f = fit(ctx.districts[name], B)                              # a new station of the district: the box grows round it
+        x0, y0 = min(d["x"], f["x"]), min(d["y"], f["y"])
+        x1, y1 = max(d["x"] + d["w"], f["x"] + f["w"]), max(d["y"] + d["h"], f["y"] + f["h"])
+        if x0 >= 0 and y0 >= 0 and x1 <= W and y1 <= H:
+            dists[name] = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
+    return {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts, "pieces": pieces, "districts": dists}
+
+
+def _free_spot(nid, at, nodes, ctx):
+    taken = list(boxes(nodes, ctx).values())
+    x0, y0 = at["x"], at["y"]
+    for r in range(0, 60):
+        for dx in range(-r, r + 1):
+            for dy in (range(-r, r + 1) if abs(dx) == r else (-r, r)):
+                x, y = x0 + dx, y0 + dy
+                bx, by, bw, bh = box(nid, (x, y), ctx)
+                if bx < 0 or by < 1 or bx + bw > W or by + bh > H:
+                    continue
+                if all(not (bx - 1 < tx + tw and tx < bx + bw + 1 and by - 1 < ty + th and ty < by + bh + 1) for tx, ty, tw, th in taken):
+                    return (x, y)
+    return None
+
+
+# ---------------------------------------------------------------- the file
+_READ: dict = {}
+_MERGED: dict = {}
+_TOLD: set = set()
+
+
+def path(state_dir) -> Path:
+    return Path(state_dir) / FILE
+
+
+def rev(state_dir) -> str:
+    """A short fingerprint of the saved file ("" when there is none), so a save from a stale editor tab is refused."""
+    try:
+        return hashlib.sha256(path(state_dir).read_bytes()).hexdigest()[:16]
+    except OSError:
+        return ""
+
+
+def read(state_dir) -> tuple[dict | None, str]:
+    """(the saved document or None, why it is not used). Parsed once per change of the file."""
+    p = path(state_dir)
+    try:
+        st = p.stat()
+    except OSError:
+        return None, ""
+    key = (str(p), st.st_mtime_ns, st.st_size)
+    if key not in _READ:
+        doc, why = None, ""
+        try:
+            if st.st_size > MAX_BYTES:
+                why = "the file is too large"
+            else:
+                doc = json.loads(p.read_text())
+                errs = structure(doc)
+                if errs:
+                    doc, why = None, errs[0]
+        except (OSError, ValueError, RecursionError) as e:
+            why = f"it could not be read ({type(e).__name__})"
+        _READ.clear()
+        _READ[key] = (doc, why)
+    return _READ[key]
+
+
+def current(state_dir, ctx: Ctx) -> tuple[dict | None, str]:
+    """The saved layout fitted to the config (None: draw the default) and, when the saved file is not used, why."""
+    doc, why = read(state_dir)
+    return usable(doc, why, ctx)
+
+
+def usable(doc, why: str, ctx: Ctx) -> tuple[dict | None, str]:
+    if doc is None:
+        if why:
+            _tell(why)
+        return None, why
+    key = (id(doc), ctx.key)                                         # read() hands back the same object until the file changes
+    hit = _MERGED.get(key)
+    if hit is None or hit[0] is not doc:
+        _MERGED.clear()
+        hit = _MERGED[key] = (doc, merge(doc, ctx))
+    merged = hit[1]
+    if merged is None:
+        why = "it no longer fits the factory's stations"
+        _tell(why)
+        return None, why
+    return merged, ""
+
+
+def _tell(why: str) -> None:
+    if why not in _TOLD:
+        _TOLD.add(why)
+        log.warning("saved floor layout not used: %s", why)
+
+
+def canonical(doc: dict) -> dict:
+    """Only what a layout holds, in a fixed order (the editor may send more than it needs)."""
+    return {"version": VERSION, "grid": G, "nodes": {k: {"x": v["x"], "y": v["y"]} for k, v in doc["nodes"].items()},
+            "belts": {k: [list(p) for p in v] for k, v in doc["belts"].items()}, "pieces": doc.get("pieces", []),
+            "districts": {k: {c: v[c] for c in ("x", "y", "w", "h")} for k, v in (doc.get("districts") or {}).items()}}
+
+
+def save(state_dir, doc: dict) -> None:
+    """Write the layout atomically, readable by the UI's user only (like the UI's other files)."""
+    p = path(state_dir)
+    tmp = p.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)                                             # a leftover .tmp keeps its old mode otherwise
+    with os.fdopen(fd, "w") as f:
+        json.dump(canonical(doc), f, separators=(",", ":"))
+    os.replace(tmp, p)
+
+
+def reset(state_dir) -> None:
+    path(state_dir).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------- what the plant draws from
+def compile_plan(doc: dict, ctx: Ctx) -> dict:
+    """The merged layout in the plant's pixels: node boxes and origins, each hop's belt points with its underground stretches, and
+    the pieces."""
+    nodes = doc["nodes"]
+    B = boxes(nodes, ctx)
+    px = lambda p: (p[0] * G, p[1] * G)
+    hops = {}
+    for a, b in ctx.hops():
+        hid = hop_id(a, b)
+        pts = doc["belts"][hid]
+        under = [(px(p["from"]), px(p["to"])) for p in doc["pieces"] if p["kind"] == "underground" and _same_run(pts, p["from"], p["to"])]
+        hops[hid] = {"src": a, "dst": b, "pts": [px(p) for p in pts], "under": under}
+    dist = {n: (d["x"] * G, d["y"] * G, d["w"] * G, d["h"] * G) for n, d in district_boxes(doc, ctx, B).items()}
+    return {"at": {k: px((v["x"], v["y"])) for k, v in nodes.items()}, "box": {k: tuple(c * G for c in v) for k, v in B.items()}, "districts": dist,
+            "hops": hops, "pieces": [{**p, "at": px(p["at"])} for p in doc["pieces"] if p["kind"] != "underground"]}
+
+
+def meta(ctx: Ctx) -> dict:
+    """What the editor needs besides the layout: each building's label and size, the hops, the districts, the default layout."""
+    out = {}
+    for nid in ctx.nodes():
+        if nid == "yard":
+            dx, dy, w, h = yard_box(ctx.trains)
+        else:
+            (dx, dy), (w, h) = (0, 0), SIZE[nid.split(":")[0]]
+        out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h}
+    dist = ctx.districts
+    return {"grid": G, "w": W, "h": H, "nodes": out, "hops": [[a, b, f"{label(a)} → {label(b)}"] for a, b in ctx.hops()],
+            "districts": dist, "default": default_plan(ctx)}

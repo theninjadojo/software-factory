@@ -20,7 +20,7 @@ from .. import designfiles
 from .. import pause, screenboard, updates, version
 from .. import questions as Q
 from ..config import load
-from . import admin, board, floor, views
+from . import admin, board, floor, floorplan, views
 from . import workers as WK
 from . import labels as L
 from .auth import AuthStore, Sessions, Throttle
@@ -28,7 +28,8 @@ from .settings import Form
 from .workerproc import WorkerApiProcess
 
 log = logging.getLogger("factory.ui")
-STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8", "fonts/space-grotesk-latin.woff2": "font/woff2", "fonts/jetbrains-mono-latin.woff2": "font/woff2"}
+STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8",
+          "floor-edit.js": "application/javascript; charset=utf-8", "fonts/space-grotesk-latin.woff2": "font/woff2", "fonts/jetbrains-mono-latin.woff2": "font/woff2"}
 MAX_BODY = 64 * 1024
 PAGE = 50
 HEADERS = {
@@ -110,7 +111,7 @@ class App:
         summary["roles"], summary["workers"] = [r.name for r in cfg.roles], cfg.workers.enabled
         summary["power"], summary["repos"] = power_uses(cfg), list(cfg.repos)
         d = {"cfg": summary, "paused": pause.paused(self.state_dir()) or "", "status": {}, "running": [], "queued": [], "runs": [], "events": [], "prs": [],
-             "recent": [], "decided": {}, "conflicting": 0, "workers": []}
+             "recent": [], "decided": {}, "conflicting": 0, "workers": [], "floor_layout": floorplan.read(self.state_dir())}
         if db is not None:
             try:
                 d["status"] = dbm.get_status(db)
