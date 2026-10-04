@@ -122,6 +122,44 @@ class Districts(unittest.TestCase):
         self.assertTrue(F.holds(m["districts"]["PLANNING"], F.boxes(m["nodes"], big)["station:architect"]))
 
 
+class Resized(unittest.TestCase):
+    def test_a_resized_building_and_scenery_are_valid_and_kept(self):
+        d = F.default_plan(CTX)
+        d["nodes"]["sea"].update(w=10, h=40)
+        d["nodes"]["power:claude-code"].update(w=12, h=6)
+        d["walls"] = [[[150, 10], [170, 10], [170, 30]]]
+        d["trees"] = [[150, 40], [152, 41]]
+        self.assertEqual(F.validate(d, CTX), [])
+        c = F.canonical(json.loads(json.dumps(d)))
+        self.assertEqual((c["nodes"]["sea"], c["walls"], c["trees"]), ({"x": 12, "y": 0, "w": 10, "h": 40}, d["walls"], d["trees"]))
+        self.assertNotIn("w", c["nodes"]["mainland"])
+        m = F.merge(d, CTX)
+        self.assertEqual((m["nodes"]["sea"]["w"], m["walls"], m["trees"]), (10, d["walls"], d["trees"]))
+        C = F.compile_plan(d, CTX)
+        self.assertEqual(C["box"]["sea"][2:], (200, 800))
+        self.assertEqual(C["scale"]["sea"], (10 / 15, 40 / 66))
+        self.assertNotIn("mainland", C["scale"])
+
+    def test_sizes_and_scenery_are_checked(self):
+        good = F.default_plan(CTX)
+
+        def bad(change, needle):
+            d = json.loads(json.dumps(good))
+            change(d)
+            errs = F.validate(d, CTX)
+            self.assertTrue(any(needle in e for e in errs), (needle, errs))
+
+        bad(lambda d: d["nodes"]["sea"].update(w=2, h=40), "smaller than it may be")
+        bad(lambda d: d["nodes"]["yard"].update(w=40, h=20), "cannot be resized")
+        bad(lambda d: d["nodes"]["sea"].update(w=10), "a position is")
+        bad(lambda d: d["nodes"]["power:claude-code"].update(w=40, h=40), "overlaps")
+        bad(lambda d: d.update(walls=[[[1, 1], [2, 2]]]), "A wall is")
+        bad(lambda d: d.update(walls=[[[1, 1]]]), "A wall is")
+        bad(lambda d: d.update(trees=[[1, 1, 1]]), "A tree is")
+        bad(lambda d: d.update(trees=[[1, 1]] * (F.MAX_TREES + 1)), "Too many trees")
+        bad(lambda d: d.update(walls={}), "lists")
+
+
 class Merge(unittest.TestCase):
     def test_a_new_station_gets_a_spot_and_a_belt(self):
         small = ctx({**ROLES, "roles": ["analyst"]}, 2)
@@ -201,6 +239,32 @@ class Drawn(unittest.TestCase):
         self.assertGreater(rx - wall, 0)
         self.assertIn(f"M {plant._f(wall)} {plant._f(C['at']['sea'][1] + dock)} H {plant._f(rx)}", svg)
 
+    def test_a_resized_station_is_stretched_and_scenery_is_drawn(self):
+        d = F.default_plan(CTX)
+        d["nodes"]["power:claude-code"].update(w=12, h=6)
+        d["walls"] = [[[150, 10], [170, 10], [170, 30]]]
+        d["trees"] = [[150, 40]]
+        svg = self.draw(d)
+        x, y = d["nodes"]["power:claude-code"]["x"] * F.G, d["nodes"]["power:claude-code"]["y"] * F.G
+        self.assertIn(f'transform="translate({x} {y}) scale(1.2 1.2) translate(0 0)"', svg)
+        self.assertIn('<path class="fp-wall" d="M 3000 200 L 3400 200 L 3400 600"/>', svg)
+        self.assertIn('<circle class="fp-crown" cx="3000" cy="800" r="9"/>', svg)
+        self.assertGreaterEqual(float(re.search(r'<svg class="fm" viewBox="0 0 ([\d.]+)', svg).group(1)), 3400)
+        self.assertNotIn("style=", svg)
+
+    def test_inserters_stand_between_the_building_and_its_belt_and_have_hands(self):
+        svg = self.draw(F.default_plan(CTX))
+        self.assertIn('class="fn-ins-h" d="M ', svg)
+        self.assertEqual(plant._pivot((100, 100, 140, 100), (120, 80)), (120, 100 - plant.REACH, -90))
+        self.assertGreater(svg.rindex('class="fn-ins"'), svg.rindex('class="fm-m '))            # drawn over the stations
+
+    def test_every_node_has_a_picture_for_the_editor(self):
+        for nid in CTX.nodes():
+            art = plant.node_art(nid, F.label(nid), CTX.trains)
+            self.assertTrue(art, nid)
+            self.assertNotIn("style=", art)
+        self.assertEqual(plant.node_art("yard", "The Verify yard", 0), "")
+
     def test_the_default_floor_is_unchanged_without_a_layout(self):
         order = board.floor_order(ROLES)
         fl = {sid: {"state": "none", "refs": [], "count": 0} for sid, _, _ in order}
@@ -231,6 +295,9 @@ class Editing(AdminCase):
         _, _, page = self.doc(cookie)
         self.assertNotIn("style=", page)
         self.assertIn('<script src="/static/floor-edit.js"', page)
+        self.assertIn('<g data-art="station:build">', page)
+        self.assertIn('data-tool="wall"', page)
+        self.assertIn('data-act="zoomin"', page)
         self.assertIn("floor-edit.js", server.STATIC)
         s, h, js = self.req("GET", "/static/floor-edit.js")
         self.assertEqual(s, 200)

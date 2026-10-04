@@ -6,6 +6,10 @@ placed on the belts (splitters, mergers, side-loads, underground pairs). The ser
 text is still escaped and the page policy holds. Each hop being its own belt is what keeps every station reachable: a layout is
 only saved when every hop of the route has a belt that starts beside one station and ends beside the next.
 
+Buildings and areas (all but the Verify yard, whose size follows its trains) can be resized: a node may carry "w" and "h", never
+below its minimum (MIN); the floor draws its picture stretched to that box. Walls (orthogonal lines of grid points) and trees (grid
+points) are scenery: they block nothing.
+
 Districts are boxes of their own (optional: one left out is drawn round its stations). Moving a district moves its stations with it,
 it can be resized, and it must always hold its stations: the editor grows it when one of them is moved out.
 
@@ -26,10 +30,13 @@ VERSION, G = 1, 20
 W, H = 200, 120                            # the floor's bounds, in cells
 MAX_BYTES = 16 * 1024                      # the document; url-encoded it stays under the server's 64 KB body limit
 MAX_POINTS, MAX_CELLS, MAX_PIECES, MAX_UNDER = 64, 6000, 100, 5
+MAX_WALLS, MAX_WALL_CELLS, MAX_TREES = 60, 4000, 400
 FILE = "floor-layout.json"
 INTAKE, LATER = ("poll", "classify", "route"), ("build", "review", "ci", "pr")
 SIZE = {"station": (7, 5), "power": (10, 5), "sources": (7, 6), "receiving": (7, 5), "queue": (3, 3), "airfield": (34, 11),
         "mainland": (12, 66), "sea": (15, 66)}
+MIN = {"station": (5, 4), "power": (7, 4), "sources": (5, 5), "receiving": (5, 4), "queue": (2, 2), "airfield": (17, 6),
+       "mainland": (6, 20), "sea": (6, 20)}           # the smallest a resized building may be, in cells
 SINGLE = ("mainland", "sea", "sources", "receiving", "queue", "airfield")
 DIRS = {"n": (0, -1), "e": (1, 0), "s": (0, 1), "w": (-1, 0)}
 KINDS = ("splitter", "merger", "sideload", "underground")
@@ -130,16 +137,21 @@ def yard_box(trains: int) -> tuple[int, int, int, int]:
     return (math.floor(left / G), 0, math.ceil((right - left) / G) + 1, math.ceil((g["bottom"] - YARD_TOP) / G))
 
 
-def box(nid: str, at, ctx: Ctx) -> tuple[int, int, int, int]:
+def box(nid: str, at, ctx: Ctx, wh=None) -> tuple[int, int, int, int]:
+    """The node's box in cells; wh: its size when it was resized."""
     x, y = at
     if nid == "yard":
         dx, dy, w, h = yard_box(ctx.trains)
         return (x + dx, y + dy, w, h)
-    return (x, y, *SIZE[nid.split(":")[0]])
+    return (x, y, *(wh or SIZE[nid.split(":")[0]]))
+
+
+def size_of(p: dict):
+    return (p["w"], p["h"]) if "w" in p else None
 
 
 def boxes(nodes: dict, ctx: Ctx) -> dict:
-    return {nid: box(nid, (p["x"], p["y"]), ctx) for nid, p in nodes.items()}
+    return {nid: box(nid, (p["x"], p["y"]), ctx, size_of(p)) for nid, p in nodes.items()}
 
 
 def _inside(p, b) -> bool:
@@ -190,7 +202,7 @@ LOW = ("station:review", "station:ci", "station:pr")                 # the quali
 
 def port(nid: str, way: str, other: str, nodes: dict, ctx: Ctx):
     """Where a default belt leaves (way "out") or reaches (way "in") a node, as a grid point beside it."""
-    x, y, w, h = box(nid, (nodes[nid]["x"], nodes[nid]["y"]), ctx)
+    x, y, w, h = box(nid, (nodes[nid]["x"], nodes[nid]["y"]), ctx, size_of(nodes[nid]))
     if nid == "yard":
         return (nodes[nid]["x"], nodes[nid]["y"] - 1)
     if nid == "receiving":
@@ -315,7 +327,7 @@ def default_plan(ctx: Ctx) -> dict:
         return json.loads(json.dumps(_DEFAULTS[ctx.key]))
     nodes = _default_pos(ctx)
     belts = _route_all(nodes, {}, ctx)
-    doc = {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts or {}, "pieces": _pieces_for(belts or {})}
+    doc = {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts or {}, "pieces": _pieces_for(belts or {}), "walls": [], "trees": []}
     doc["districts"] = district_boxes(doc, ctx, boxes(nodes, ctx))
     if len(_DEFAULTS) > 32:
         _DEFAULTS.clear()
@@ -357,7 +369,7 @@ def structure(doc) -> list[str]:
     if not isinstance(doc, dict):
         return ["The layout must be a JSON object."]
     errs = []
-    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces", "districts"}
+    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces", "districts", "walls", "trees"}
     if extra:
         errs.append("Unknown keys: " + ", ".join(sorted(str(k)[:30] for k in extra)[:5]) + ".")
     if doc.get("version") != VERSION or doc.get("grid") != G:
@@ -374,8 +386,29 @@ def structure(doc) -> list[str]:
                     and v["w"] >= 1 and v["h"] >= 1 and v["x"] + v["w"] <= W and v["y"] + v["h"] <= H):
                 errs.append(f"District {str(k)[:40]}: a box is {{\"x\", \"y\", \"w\", \"h\"}} in whole cells inside the floor.")
     for k, v in nodes.items():
-        if not (isinstance(v, dict) and set(v) == {"x", "y"} and _int(v["x"]) and _int(v["y"]) and 0 <= v["x"] <= W and 0 <= v["y"] <= H):
-            errs.append(f"{str(k)[:40]}: a position is {{\"x\": whole number, \"y\": whole number}} inside the floor.")
+        if not (isinstance(v, dict) and set(v) in ({"x", "y"}, {"x", "y", "w", "h"}) and all(_int(v[c]) for c in v) and 0 <= v["x"] <= W
+                and 0 <= v["y"] <= H and ("w" not in v or (1 <= v["w"] <= W and 1 <= v["h"] <= H))):
+            errs.append(f"{str(k)[:40]}: a position is {{\"x\": whole number, \"y\": whole number}} inside the floor, with \"w\" and \"h\" "
+                        "when it was resized.")
+    walls, trees = doc.get("walls", []), doc.get("trees", [])
+    if not isinstance(walls, list) or not isinstance(trees, list):
+        errs.append("The walls and trees are lists.")
+    else:
+        if len(walls) > MAX_WALLS:
+            errs.append(f"Too many walls ({len(walls)}; at most {MAX_WALLS}).")
+        cells_ = 0
+        for pts in walls[:MAX_WALLS]:
+            if not (isinstance(pts, list) and 2 <= len(pts) <= MAX_POINTS and all(_pt(p) for p in pts)
+                    and all((p[0] != q[0]) != (p[1] != q[1]) for p, q in zip(pts, pts[1:]))):
+                errs.append(f"A wall is 2 to {MAX_POINTS} grid points inside the floor, each run straight across or down.")
+                break
+            cells_ += sum(abs(p[0] - q[0]) + abs(p[1] - q[1]) for p, q in zip(pts, pts[1:]))
+        if cells_ > MAX_WALL_CELLS:
+            errs.append(f"The walls are too long ({cells_} cells; at most {MAX_WALL_CELLS}).")
+        if len(trees) > MAX_TREES:
+            errs.append(f"Too many trees ({len(trees)}; at most {MAX_TREES}).")
+        elif not all(_pt(t) for t in trees):
+            errs.append("A tree is a grid point inside the floor.")
     total = 0
     for k, pts in belts.items():
         if not (isinstance(pts, list) and 2 <= len(pts) <= MAX_POINTS and all(_pt(p) for p in pts)):
@@ -455,6 +488,15 @@ def validate(doc, ctx: Ctx) -> list[str]:
         errs.append("Missing buildings: " + ", ".join(label(k) for k in missing[:5]) + ".")
     if errs:
         return errs
+    for k, v in nodes.items():
+        if "w" in v:
+            kind = k.split(":")[0]
+            if k == "yard":
+                errs.append("The Verify yard cannot be resized: its size follows its trains.")
+            elif v["w"] < MIN[kind][0] or v["h"] < MIN[kind][1]:
+                errs.append(f"{label(k)} is smaller than it may be (at least {MIN[kind][0]} by {MIN[kind][1]} cells).")
+    if errs:
+        return errs
     B = boxes(nodes, ctx)
     errs += placement(B)
     for name in doc.get("districts", {}):
@@ -492,6 +534,8 @@ def merge(doc: dict, ctx: Ctx) -> dict | None:
     nearest free one), belts that no longer fit are routed again. None when it cannot be made whole (the caller draws the default)."""
     want = ctx.nodes()
     nodes = {k: dict(v) for k, v in doc["nodes"].items() if k in want}
+    if "yard" in nodes:
+        nodes["yard"] = {"x": nodes["yard"]["x"], "y": nodes["yard"]["y"]}         # its size follows the trains
     default = _default_pos(ctx)
     for nid in want:
         if nid in nodes:
@@ -524,7 +568,8 @@ def merge(doc: dict, ctx: Ctx) -> dict | None:
         x1, y1 = max(d["x"] + d["w"], f["x"] + f["w"]), max(d["y"] + d["h"], f["y"] + f["h"])
         if x0 >= 0 and y0 >= 0 and x1 <= W and y1 <= H:
             dists[name] = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
-    return {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts, "pieces": pieces, "districts": dists}
+    return {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts, "pieces": pieces, "districts": dists,
+            "walls": list(doc.get("walls") or []), "trees": list(doc.get("trees") or [])}
 
 
 def _free_spot(nid, at, nodes, ctx):
@@ -617,9 +662,11 @@ def _tell(why: str) -> None:
 
 def canonical(doc: dict) -> dict:
     """Only what a layout holds, in a fixed order (the editor may send more than it needs)."""
-    return {"version": VERSION, "grid": G, "nodes": {k: {"x": v["x"], "y": v["y"]} for k, v in doc["nodes"].items()},
+    pos = lambda v: {"x": v["x"], "y": v["y"], **({"w": v["w"], "h": v["h"]} if "w" in v else {})}
+    return {"version": VERSION, "grid": G, "nodes": {k: pos(v) for k, v in doc["nodes"].items()},
             "belts": {k: [list(p) for p in v] for k, v in doc["belts"].items()}, "pieces": doc.get("pieces", []),
-            "districts": {k: {c: v[c] for c in ("x", "y", "w", "h")} for k, v in (doc.get("districts") or {}).items()}}
+            "districts": {k: {c: v[c] for c in ("x", "y", "w", "h")} for k, v in (doc.get("districts") or {}).items()},
+            "walls": [[list(p) for p in w] for w in doc.get("walls") or []], "trees": [list(t) for t in doc.get("trees") or []]}
 
 
 def save(state_dir, doc: dict) -> None:
@@ -651,8 +698,10 @@ def compile_plan(doc: dict, ctx: Ctx) -> dict:
         under = [(px(p["from"]), px(p["to"])) for p in doc["pieces"] if p["kind"] == "underground" and _same_run(pts, p["from"], p["to"])]
         hops[hid] = {"src": a, "dst": b, "pts": [px(p) for p in pts], "under": under}
     dist = {n: (d["x"] * G, d["y"] * G, d["w"] * G, d["h"] * G) for n, d in district_boxes(doc, ctx, B).items()}
+    scale = {k: (B[k][2] / SIZE[k.split(":")[0]][0], B[k][3] / SIZE[k.split(":")[0]][1]) for k, v in nodes.items() if "w" in v}
     return {"at": {k: px((v["x"], v["y"])) for k, v in nodes.items()}, "box": {k: tuple(c * G for c in v) for k, v in B.items()}, "districts": dist,
-            "hops": hops, "pieces": [{**p, "at": px(p["at"])} for p in doc["pieces"] if p["kind"] != "underground"]}
+            "hops": hops, "pieces": [{**p, "at": px(p["at"])} for p in doc["pieces"] if p["kind"] != "underground"], "scale": scale,
+            "walls": [[px(p) for p in w] for w in doc.get("walls") or []], "trees": [px(t) for t in doc.get("trees") or []]}
 
 
 def meta(ctx: Ctx) -> dict:
@@ -663,7 +712,7 @@ def meta(ctx: Ctx) -> dict:
             dx, dy, w, h = yard_box(ctx.trains)
         else:
             (dx, dy), (w, h) = (0, 0), SIZE[nid.split(":")[0]]
-        out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h}
+        out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h, "min": None if nid == "yard" else MIN[nid.split(":")[0]]}
     dist = ctx.districts
     return {"grid": G, "w": W, "h": H, "nodes": out, "hops": [[a, b, f"{label(a)} → {label(b)}"] for a, b in ctx.hops()],
             "districts": dist, "default": default_plan(ctx)}

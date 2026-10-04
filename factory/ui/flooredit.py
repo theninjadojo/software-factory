@@ -6,7 +6,7 @@ import json
 import logging
 import threading
 
-from . import board, floorplan, views
+from . import board, floorplan, plant, views
 from .views import esc
 
 log = logging.getLogger("factory.ui")
@@ -15,7 +15,7 @@ FLASH = {"layout_reset": "Back to the default layout. The floor is drawn as it w
 STALE = ("The layout was saved by someone else since you opened it. Save again to replace it with yours, or open the page again to "
          "start from theirs.")
 TOOLS = (("move", "Move"), ("belt", "Draw belt"), ("splitter", "Splitter"), ("merger", "Merger"), ("sideload", "Side-load"),
-         ("underground", "Underground"), ("erase", "Erase"))
+         ("underground", "Underground"), ("wall", "Wall"), ("tree", "Tree"), ("erase", "Erase"))
 
 
 def _ctx(h) -> "floorplan.Ctx":
@@ -30,9 +30,12 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
     tools = "".join(f'<button type="button" class="secondary" data-tool="{t}" aria-pressed="{"true" if t == "move" else "false"}">{esc(n)}</button>'
                     for t, n in TOOLS)
     dirs = "".join(f'<option value="{d}">{n}</option>' for d, n in (("e", "Facing east"), ("w", "Facing west"), ("s", "Facing south"), ("n", "Facing north")))
+    art = "".join(f'<g data-art="{esc(nid)}">{plant.node_art(nid, m["label"], ctx.trains)}</g>'
+                  for nid, m in floorplan.meta(ctx)["nodes"].items())
     body = ('<p><a href="/">← Factory</a></p>'
-            '<p class="muted">Move the buildings on the grid, draw the belt for each hop of the route and place splitters, mergers, '
-            'side-loads and underground belts. Each belt starts beside the station a ticket leaves and ends beside the one it goes to, '
+            '<p class="muted">Move the buildings on the grid and drag a corner to resize one, draw the belt for each hop of the route and '
+            'place splitters, mergers, side-loads and underground belts, walls and trees. Drag the ground to pan; zoom with the buttons or '
+            'Ctrl and the mouse wheel. Each belt starts beside the station a ticket leaves and ends beside the one it goes to, '
             'so every station stays reachable. Moving a station changes the picture, not the workflow. New stations, agents or workers '
             'get a default spot until you place them.</p>' + note
             + '<p class="fe-phone muted">Editing the layout is for wider screens. On a phone the floor is the column of its stations.</p>'
@@ -42,7 +45,13 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             f'<select class="fe-dir" aria-label="Which way the piece faces">{dirs}</select>'
             '<button type="button" class="secondary" data-act="finish">Finish belt</button>'
             '<button type="button" class="secondary" data-act="undo">Undo</button><button type="button" class="secondary" data-act="redo">Redo</button>'
-            '<button type="button" class="secondary" data-act="default">Start from the default</button></div>'
+            '<button type="button" class="secondary" data-act="default">Start from the default</button>'
+            '<span class="fe-zoom"><button type="button" class="secondary" data-act="zoomout" aria-label="Zoom out">−</button>'
+            '<output class="fe-zoomval" aria-live="polite">100%</output>'
+            '<button type="button" class="secondary" data-act="zoomin" aria-label="Zoom in">+</button>'
+            '<button type="button" class="secondary" data-act="fit">Fit</button>'
+            '<button type="button" class="secondary" data-act="full">Full screen</button></span></div>'
+            f'<svg class="fm fe-art" aria-hidden="true" width="0" height="0" focusable="false">{art}</svg>'
             '<div class="fe-canvas"><svg class="fe-svg" role="application" aria-label="The floor layout: drag a building, or focus one and use the arrow keys"></svg></div>'
             '<ul class="fe-problems" aria-live="polite">' + "".join(f"<li>{esc(p)}</li>" for p in problems) + '</ul></div>'
             f'<form method="post" action="/floor/layout/save" class="fe-save field">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
@@ -54,7 +63,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             f'<form method="post" action="/floor/layout/reset" class="fe-reset">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
             '<button class="secondary">Reset to the default layout</button></form>'
             '<script src="/static/floor-edit.js" defer></script>')
-    h._send(status, views.page("Floor layout", body, "/", csrf, wide=True, flash=flash, flash_kind=kind))
+    h._send(status, views.page("Floor layout", body, "/", csrf, wide=True, full=True, flash=flash, flash_kind=kind))
 
 
 def edit_get(h, q: dict, csrf: str) -> None:
