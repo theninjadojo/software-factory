@@ -798,17 +798,31 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     queued = extras.get("queued") or []
     shown = (workers or [])[:yard.MAX_WORKERS]
     sc = C.get("scale") or {}
-    S = lambda nid: sc.get(nid, (1, 1))
+    S = lambda nid: sc.get(nid, (1, 0, 0))                           # (scale, x offset, y offset): floorplan.fit_art
+    top = lambda nid: (at[nid][0] + S(nid)[1], at[nid][1] + S(nid)[2])  # where the picture's top left lands
+
+    def M(nid, x, y, x0=0, y0=0):
+        """A point of a part made with its top left at (x0, y0), where the layout drew it."""
+        (tx, ty), s = top(nid), S(nid)[0]
+        return (tx + (x - x0) * s, ty + (y - y0) * s)
 
     def tr(nid, x0, y0):
-        """Draws a part made with its top left at (x0, y0) where the layout put it, stretched when it was resized."""
+        """Draws a part made with its top left at (x0, y0) where the layout put it, scaled evenly and centred when it was resized."""
         if nid not in sc:
             return f'translate({_f(at[nid][0] - x0)} {_f(at[nid][1] - y0)})'
-        return f'translate({_f(at[nid][0])} {_f(at[nid][1])}) scale({_f(S(nid)[0])} {_f(S(nid)[1])}) translate({_f(-x0)} {_f(-y0)})'
+        tx, ty = top(nid)
+        return f'translate({_f(tx)} {_f(ty)}) scale({_f(S(nid)[0])}) translate({_f(-x0)} {_f(-y0)})'
 
     def node(nid, draw):
-        """A station or a power station: drawn in place, or at the origin and stretched when it was resized."""
+        """A station or a power station: drawn in place, or at the origin and scaled when it was resized."""
         return draw(*at[nid]) if nid not in sc else f'<g transform="{tr(nid, 0, 0)}">{draw(0, 0)}</g>'
+
+    def ground(nid, cls, rx=0):
+        """A resized area's ground under its picture, filling its whole box."""
+        if nid not in sc:
+            return ""
+        x, y, w, h = bx[nid]
+        return f'<rect class="{cls}" x="{_f(x)}" y="{_f(y)}" width="{_f(w)}" height="{_f(h)}" rx="{rx}"/>'
     loose = [p for hb in hops.values() for p in hb["pts"]] + [p for w in C.get("walls") or [] for p in w] + list(C.get("trees") or [])
     right = max([x + w for x, _, w, _ in bx.values()] + [p[0] for p in loose])
     bottom = max([y + h for _, y, _, h in bx.values()] + [p[1] for p in loose])
@@ -817,17 +831,17 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     sx, sy = at["sea"]
     rx0, ry0 = at["receiving"]
     rh = bx["receiving"][3]
-    dock_y = max(100.0, min(1320 - 420.0, (ry0 + rh / 2 - sy) / S("sea")[1]))
-    qy, wall = sy + dock_y * S("sea")[1], sx + bx["sea"][2]
+    dock_y = max(100.0, min(1320 - 420.0, (ry0 + rh / 2 - top("sea")[1]) / S("sea")[0]))
+    wall, qy = M("sea", SEA_W, dock_y)
     quay = ""
     if rx0 - wall > 24:
         cy = ry0 + rh / 2
         quay = belt(f"M {_f(wall)} {_f(qy)} " + (f"H {_f(rx0)}" if abs(cy - qy) < 1 else f"H {_f((wall + rx0) / 2)} V {_f(cy)} H {_f(rx0)}"),
                     "fn-belt thin")
     # the ground: the mainland and the sea, the districts, the buildings that are not stations
-    back = (f'<g aria-hidden="true" transform="{tr("mainland", 0, 0)}">{mainland(1320)}</g>'
-            f'<g transform="{tr("sea", 0, 0)}">{sea(extras.get("schedules") or [], 1320, dock_y)}</g>{quay}' + _plan_districts(C.get("districts") or {})
-            + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
+    back = (ground("mainland", "ap-land") + f'<g aria-hidden="true" transform="{tr("mainland", 0, 0)}">{mainland(1320)}</g>'
+            + ground("sea", "sh-sea") + f'<g transform="{tr("sea", 0, 0)}">{sea(extras.get("schedules") or [], 1320, dock_y)}</g>{quay}' + _plan_districts(C.get("districts") or {})
+            + ground("airfield", "ap-field", 6) + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
             + f'<text class="fm-lab" x="{_f(at["sources"][0])}" y="{_f(at["sources"][1] - 8)}">SOURCES</text>'
             + f'<g transform="{tr("sources", *SRC)}">{github()}</g><g transform="{tr("receiving", 12, 200)}">{receiving(len(queued))}</g>'
             + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>' + scenery(C.get("walls") or [], C.get("trees") or []))
@@ -929,10 +943,11 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
             parts.append(_still_crate(zx - dx * 14, zy - dy * 14, o["refs"][0], stuck=True))
     # the plane, its crate riding the conveyor into Receiving
     conv = hops.get("airfield>receiving", {}).get("pts")
-    flights = "".join(flight(f["age"], f["label"], at["mainland"], (at["airfield"][0] - 20, at["airfield"][1] - AF_Y), conv, S("mainland"), S("airfield"))
+    af = top("airfield")
+    flights = "".join(flight(f["age"], f["label"], top("mainland"), (af[0] - 20, af[1] - AF_Y), conv, (S("mainland")[0],) * 2, (S("airfield")[0],) * 2)
                       for f in (extras.get("flights") or []) if 0 <= f["age"] < FLIGHT_SECONDS)
     poll = extras.get("poll") or {}
-    pad = lambda nid, p, o: (at[nid][0] + (p[0] - o[0]) * S(nid)[0], at[nid][1] + (p[1] - o[1]) * S(nid)[1])
+    pad = lambda nid, p, o: M(nid, *p, *o)
     plant = (back + "".join(belts) + f'<g aria-hidden="true">{yard_still}</g>' + pw
              + f'<g aria-hidden="true">{"".join(parts)}{yard_moving}</g>'
              + "".join(node(st(sid), lambda x, y: _station(sid, label, fl[sid], word(sid, fl[sid]), href(sid), (x, y, True), sid))

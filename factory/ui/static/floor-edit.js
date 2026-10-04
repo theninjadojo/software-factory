@@ -14,6 +14,7 @@
   if (!doc.districts) doc.districts = {};
   var past = [], future = [], tool = "move", drawing = null, drag = null, pan = null, ugFrom = null, focused = null, focusedDist = null;
   var zoom = 1, AREAS = {mainland: 1, sea: 1, airfield: 1, yard: 1};
+  var GROUND = {mainland: "ap-land", sea: "sh-sea", airfield: "ap-field"};    // what fills a resized area round its picture
   var details = document.querySelector(".fe-data");
   if (details) details.removeAttribute("open");
 
@@ -76,6 +77,38 @@
     }
     return out;
   }
+  // a piece sits on a belt (as the server checks): a splitter, merger or side-load on any belt's line, an underground pair on one run
+  function hasCell(pts, c) { return cells(pts).some(function (q) { return q[0] === c[0] && q[1] === c[1]; }); }
+  function sameRun(pts, u, v) {
+    for (var i = 1; i < pts.length; i++) {
+      var line = cells([pts[i - 1], pts[i]]), at = function (c) { for (var k = 0; k < line.length; k++) if (line[k][0] === c[0] && line[k][1] === c[1]) return k; return -1; };
+      var a = at(u), b = at(v);
+      if (a >= 0 && b > a) return true;
+    }
+    return false;
+  }
+  function pieceOk(p, belts) {
+    var ids = meta.hops.map(function (h) { return h[0] + ">" + h[1]; }).filter(function (k) { return belts[k] && belts[k].length >= 2; });
+    if (p.kind !== "underground") return ids.some(function (k) { return hasCell(belts[k], p.at); });
+    var n = Math.abs(p.from[0] - p.to[0]) + Math.abs(p.from[1] - p.to[1]);
+    return n >= 2 && n <= meta.under + 1 && ids.some(function (k) { return sameRun(belts[k], p.from, p.to); });
+  }
+  function carry(from, shifted, dx, dy, ends) {
+    // pieces ride with a belt that moved whole, and one at a moved end of a belt (a splitter where belts leave a station) goes with
+    // that end; one left off its belt by a move or a resize is taken away
+    var mv = function (q) { return [q[0] + dx, q[1] + dy]; }, same = function (a, b) { return a[0] === b[0] && a[1] === b[1]; };
+    doc.pieces = from.pieces.map(function (p) {
+      if (p.kind !== "underground") {
+        for (var i = 0; i < (ends || []).length; i++) {
+          var e = ends[i], old = from.belts[e[0]], now = doc.belts[e[0]];
+          if (same(p.at, e[1] ? old[old.length - 1] : old[0])) return {kind: p.kind, at: (e[1] ? now[now.length - 1] : now[0]).slice(), dir: p.dir};
+        }
+      }
+      var on = shifted.some(function (k) { return p.kind === "underground" ? sameRun(from.belts[k], p.from, p.to) : hasCell(from.belts[k], p.at); });
+      if (!on) return p;
+      return p.kind === "underground" ? {kind: p.kind, from: mv(p.from), to: mv(p.to)} : {kind: p.kind, at: mv(p.at), dir: p.dir};
+    }).filter(function (p) { return pieceOk(p, doc.belts); });
+  }
   function check() {
     var out = [], bad = {}, ids = Object.keys(meta.nodes), i, j;
     for (i = 0; i < ids.length; i++) {
@@ -98,6 +131,11 @@
           for (var n = 0; n < ids.length && !msg; n++) { var bx = box(ids[n]); if (bx && inside(cs[k], bx)) msg = name + " runs through " + label(ids[n]) + "."; }
       }
       if (msg) { out.push(msg); bad[id] = 1; }
+    });
+    doc.pieces.forEach(function (p) {
+      if (pieceOk(p, doc.belts)) return;
+      out.push(p.kind === "underground" ? "An underground belt at " + p.from[0] + ", " + p.from[1] + " is not on one straight run of a belt, its ends 2 to " +
+               (meta.under + 1) + " cells apart." : "The " + p.kind + " at " + p.at[0] + ", " + p.at[1] + " is not on a belt.");
     });
     return {problems: out, bad: bad};
   }
@@ -124,7 +162,10 @@
                      "aria-label": label(id) + ", at " + doc.nodes[id].x + ", " + doc.nodes[id].y + ", " + b[2] + " by " + b[3]}, svg);
     var art = pic(id);
     if (art) {
-      var w = el("g", {"class": "fe-pic", transform: "translate(" + b[0] * G + " " + b[1] * G + ") scale(" + b[2] / m.w + " " + b[3] / m.h + ")"}, g);
+      // one scale, centred in the box, as the floor draws it (floorplan.fit_art): the picture keeps its proportions
+      var s = Math.min(b[2] / m.w, b[3] / m.h), ox = (b[2] - m.w * s) * G / 2, oy = (b[3] - m.h * s) * G / 2;
+      if (GROUND[id] && (b[2] !== m.w || b[3] !== m.h)) el("rect", {"class": GROUND[id] + " fe-pic", x: b[0] * G, y: b[1] * G, width: b[2] * G, height: b[3] * G}, g);
+      var w = el("g", {"class": "fe-pic", transform: "translate(" + (b[0] * G + ox) + " " + (b[1] * G + oy) + ") scale(" + s + ")"}, g);
       w.appendChild(art);
     }
     el("rect", {"class": art ? "fe-hit" : "", x: b[0] * G, y: b[1] * G, width: b[2] * G, height: b[3] * G, rx: 3}, g);
@@ -277,23 +318,35 @@
       moved[id] = 1; doc.nodes[id] = to;
     });
     dists.forEach(function (name) { var d = doc.districts[name]; doc.districts[name] = {x: d.x + dx, y: d.y + dy, w: d.w, h: d.h}; });
+    var shifted = [], ends = [];
     meta.hops.forEach(function (h) {
       var id = h[0] + ">" + h[1], pts = belts[id];
       if (!pts || pts.length < 2) return;
-      if (moved[h[0]] && moved[h[1]]) doc.belts[id] = pts.map(function (q) { return [q[0] + dx, q[1] + dy]; });
-      else if (moved[h[0]]) doc.belts[id] = follow(pts, false, dx, dy);
-      else if (moved[h[1]]) doc.belts[id] = follow(pts, true, dx, dy);
+      if (moved[h[0]] && moved[h[1]]) { doc.belts[id] = pts.map(function (q) { return [q[0] + dx, q[1] + dy]; }); shifted.push(id); }
+      else if (moved[h[0]]) { doc.belts[id] = follow(pts, false, dx, dy); ends.push([id, false]); }
+      else if (moved[h[1]]) { doc.belts[id] = follow(pts, true, dx, dy); ends.push([id, true]); }
       else doc.belts[id] = pts;
     });
+    carry(from, shifted, dx, dy, ends);
     grow();
   }
   function resizeNode(id, dx, dy, from) {
     // the corner handle: never smaller than the building's minimum, never off the floor; belts that reach it keep reaching it
     var n = from.nodes[id], m = meta.nodes[id], w0 = n.w || m.w, h0 = n.h || m.h;
     var w = Math.max(m.min[0], Math.min(meta.w - n.x, w0 + dx)), h = Math.max(m.min[1], Math.min(meta.h - n.y, h0 + dy));
+    if (!AREAS[id]) {
+      // a building keeps its proportions: the side dragged further sets the scale, the other follows
+      var cur = w0 / m.w, sx = (w0 + dx) / m.w, sy = (h0 + dy) / m.h, sc = Math.abs(sx - cur) >= Math.abs(sy - cur) ? sx : sy;
+      sc = Math.max(sc, m.min[0] / m.w, m.min[1] / m.h);
+      sc = Math.min(sc, (meta.w - n.x) / m.w, (meta.h - n.y) / m.h);
+      w = Math.max(m.min[0], Math.round(m.w * sc)); h = Math.max(m.min[1], Math.round(m.h * sc));
+      if (dx && !dy && w === w0) w = w0 + Math.sign(dx);                    // Shift+arrow: always one step, the other side rounds after it
+      if (dy && !dx && h === h0) h = h0 + Math.sign(dy);
+      w = Math.max(m.min[0], Math.min(meta.w - n.x, w)); h = Math.max(m.min[1], Math.min(meta.h - n.y, h));
+    }
     doc.nodes = clone(from.nodes); doc.belts = clone(from.belts); doc.districts = clone(from.districts || {});
     doc.nodes[id] = w === m.w && h === m.h ? {x: n.x, y: n.y} : {x: n.x, y: n.y, w: w, h: h};
-    var x0 = n.x, y0 = n.y, cl = function (v, a, b) { return Math.max(a, Math.min(b, v)); };
+    var x0 = n.x, y0 = n.y, cl = function (v, a, b) { return Math.max(a, Math.min(b, v)); }, ends = [];
     meta.hops.forEach(function (hp) {
       var hid = hp[0] + ">" + hp[1], pts = from.belts[hid];
       if (!pts || pts.length < 2) return;
@@ -304,9 +357,10 @@
         else if (p[1] === y0 + h0 + 1) q = [cl(p[0], x0, x0 + w), y0 + h + 1];
         else if (p[0] === x0 - 1) q = [p[0], cl(p[1], y0, y0 + h)];
         else q = [cl(p[0], x0, x0 + w), p[1]];
-        if (q[0] !== p[0] || q[1] !== p[1]) doc.belts[hid] = follow(cur, end[1], q[0] - p[0], q[1] - p[1]);
+        if (q[0] !== p[0] || q[1] !== p[1]) { doc.belts[hid] = follow(cur, end[1], q[0] - p[0], q[1] - p[1]); ends.push([hid, end[1]]); }
       });
     });
+    carry(from, [], 0, 0, ends);
     grow();
   }
   function fitIn(state, name) { var keep = doc; doc = state; var f = fit(name); doc = keep; return f; }
