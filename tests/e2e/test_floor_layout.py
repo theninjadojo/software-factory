@@ -44,6 +44,8 @@ def drag(pg, selector, dx, dy, at=(0.5, 0.5)):
     el.scroll_into_view_if_needed()
     b = el.bounding_box()
     x, y = b["x"] + b["width"] * at[0], b["y"] + b["height"] * at[1]
+    o, c = pg.locator(".fe-svg").bounding_box(), cell(pg)              # press on a grid point, so the move rounds to whole cells
+    x, y = o["x"] + round((x - o["x"]) / c) * c, o["y"] + round((y - o["y"]) / c) * c
     pg.mouse.move(x, y)
     pg.mouse.down()
     pg.mouse.move(x + dx / 2, y + dy / 2, steps=4)
@@ -138,3 +140,100 @@ def test_a_broken_route_is_shown_and_refused_on_save(wide, server):
     pg.click('[data-act="default"]')
     assert "Every station is reachable" in problems(pg), problems(pg)
     assert [e for e in pg.errors if "status of 422" not in e] == []          # the refused save itself is a 422
+
+
+def grid_to_client(pg, gx, gy):
+    """The screen point of a grid point on the editor's canvas (at its current zoom and scroll)."""
+    b = pg.locator(".fe-svg").bounding_box()
+    zoom = float(pg.inner_text(".fe-zoomval").rstrip("%")) / 100
+    return b["x"] + gx * F.G * zoom, b["y"] + gy * F.G * zoom
+
+
+def drag_to(pg, start, end):
+    pg.mouse.move(*start)
+    pg.mouse.down()
+    pg.mouse.move((start[0] + end[0]) / 2, (start[1] + end[1]) / 2, steps=5)
+    pg.mouse.move(*end, steps=5)
+    pg.mouse.up()
+
+
+def centre(pg, selector):
+    b = pg.locator(selector).first.bounding_box()
+    return b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
+
+
+def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, server):
+    pg = wide
+    open_editor(pg, server)
+
+    # an empty floor: every building waits in the parts tray
+    pg.click('[data-act="scratch"]')
+    assert plan(pg)["nodes"] == {} and plan(pg)["belts"] == {}
+    assert "Missing" in problems(pg)
+    meta = json.loads(pg.get_attribute(".fe", "data-meta"))
+    assert pg.locator(".fe-part[data-part]:not(.placed)").count() == len(meta["nodes"])                # all of them listed
+    assert pg.locator('.fe-part[data-part="harbor"]').count() == 1 and pg.locator('.fe-part[data-part="notify:telegram"]').count() == 1
+    assert "More channels later" in pg.inner_text(".fe-tray")
+
+    # Receiving dragged from the tray lands centred where it is let go
+    pg.locator(".fe-canvas").evaluate("c => { c.scrollLeft = 0; c.scrollTop = 0; }")
+    drag_to(pg, centre(pg, '.fe-part[data-part="receiving"]'), grid_to_client(pg, 20, 14))
+    r = plan(pg)["nodes"]["receiving"]
+    assert (r["x"], r["y"]) == (20 - 7 // 2, 14 - 5 // 2), r
+    assert pg.locator('.fe-part[data-part="receiving"].placed').count() == 1
+
+    # the harbor, clicked in, then dragged off somewhere else entirely: it can stand anywhere
+    pg.click('.fe-part[data-part="harbor"]')
+    assert "harbor" in plan(pg)["nodes"]
+    pg.click('[data-tool="move"]')
+    h0 = plan(pg)["nodes"]["harbor"]
+    sx, sy = centre(pg, '[data-node="harbor"]')
+    hx, hy = grid_to_client(pg, 40, 30)
+    drag_to(pg, (sx, sy), (hx, hy))
+    h1 = plan(pg)["nodes"]["harbor"]
+    assert h1 != h0
+
+    # Draw belt: drag from the harbor onto Receiving and the belt for that hop is laid, beside both, through nothing
+    pg.click('[data-tool="belt"]')
+    drag_to(pg, centre(pg, '[data-node="harbor"]'), centre(pg, '[data-node="receiving"]'))
+    belt = plan(pg)["belts"].get("harbor>receiving")
+    assert belt and len(belt) >= 2, plan(pg)["belts"]
+    assert "The belt from The harbor to Receiving" not in problems(pg), problems(pg)
+    assert "No belt from The harbor to Receiving" not in problems(pg)
+
+    # the other way there is no hop: nothing is laid and the editor says why
+    drag_to(pg, centre(pg, '[data-node="receiving"]'), centre(pg, '[data-node="harbor"]'))
+    assert "No hop from Receiving to The harbor" in problems(pg)
+    assert list(plan(pg)["belts"]) == ["harbor>receiving"]
+
+    # Move: a belt dragged sideways slides; its ends stay beside the buildings
+    pg.click('[data-tool="move"]')
+    pts = plan(pg)["belts"]["harbor>receiving"]
+    i = max(range(len(pts) - 1), key=lambda k: abs(pts[k + 1][0] - pts[k][0]) + abs(pts[k + 1][1] - pts[k][1]))
+    (ax, ay), (bx, by) = pts[i], pts[i + 1]
+    mid = grid_to_client(pg, (ax + bx) / 2, (ay + by) / 2)
+    across = ay == by
+    zoom = float(pg.inner_text(".fe-zoomval").rstrip("%")) / 100
+    step = 3 * F.G * zoom
+    drag_to(pg, mid, (mid[0], mid[1] + step) if across else (mid[0] + step, mid[1]))
+    slid = plan(pg)["belts"]["harbor>receiving"]
+    assert slid != pts and slid[0] == pts[0] and slid[-1] == pts[-1], (pts, slid)
+    assert "The belt from The harbor to Receiving" not in problems(pg), problems(pg)
+    pg.keyboard.press("Control+z")
+    assert plan(pg)["belts"]["harbor>receiving"] == pts
+
+    # Erase: the harbor goes back to the tray and takes its belt with it
+    pg.click('[data-tool="erase"]')
+    pg.locator('[data-node="harbor"] > rect.fe-hit').click(force=True)
+    assert "harbor" not in plan(pg)["nodes"] and "harbor>receiving" not in plan(pg)["belts"]
+    assert pg.locator('.fe-part[data-part="harbor"]:not(.placed)').count() == 1
+
+    # the default has everything; saved, the floor draws the harbor and the notifiers where they stand
+    pg.click('[data-act="default"]')
+    assert "Every station is reachable" in problems(pg), problems(pg)
+    assert pg.locator(".fe-part.placed").count() == pg.locator(".fe-part[data-part]").count()
+    pg.click(".fe-save button")
+    pg.wait_for_url(server.url + "/?ok=layout_saved")
+    assert pg.locator("svg.fm .hb-box").count() == 1
+    assert pg.locator("svg.fm g.nt").count() == 2
+    assert pg.errors == []
