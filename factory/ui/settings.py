@@ -112,6 +112,7 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               "One per line, label=kind, where kind is bug, feature, docs, chore or question. Lets existing labels (like GitHub's enhancement) count."),
     ]),
     "runner": ("Agent runner", [
+        Field("runner.max_parallel", "Agents at once", "int", "Sandboxes that may run at the same time. Each may use the memory and CPUs below.", lo=1, hi=8),
         Field("runner.timeout_seconds", "Task timeout (seconds)", "int", lo=60, hi=14400),
         Field("runner.max_turns", "Max agent turns", "int", lo=1, hi=200),
         Field("runner.rate_limit_backoff_seconds", "Pause after a rate limit (seconds)", "int", lo=60, hi=86400),
@@ -513,6 +514,29 @@ def set_dry_run(cfg_path: str, state_dir: Path, dry: bool) -> bool:
     _store(new_ov, base, "general.dry_run", dry)
     _commit(cfg_path, state_dir, new_ov)
     return True
+
+
+def set_switch(cfg_path: str, state_dir: Path, key: str, on: bool) -> bool:
+    """Turn one on/off feature (features.SWITCHES) on or off from the screen it shapes. Returns True when the value changed."""
+    from .features import SWITCHES
+    if key not in SWITCHES:
+        raise SettingsError(["That setting cannot be switched here."])
+    base, ov = base_raw(cfg_path), overrides_raw(cfg_path)
+    if bool(effective(deep_merge(base, ov), key)) == on:
+        return False
+    new_ov = copy.deepcopy(ov)
+    _store(new_ov, base, key, on)
+    _commit(cfg_path, state_dir, new_ov)
+    return True
+
+
+def set_parallel(cfg_path: str, state_dir: Path, value: int) -> None:
+    """The Factory's agents-at-once stepper."""
+    if not 1 <= value <= 8:
+        raise SettingsError(["Agents at once must be from 1 to 8."])
+    base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
+    _store(new_ov, base, "runner.max_parallel", value)
+    _commit(cfg_path, state_dir, new_ov)
 
 
 def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:

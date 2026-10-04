@@ -151,7 +151,7 @@ def test_hostile_event_text_is_shown_as_text_not_run(page, server, viewport):
 
 
 def test_saving_a_setting_writes_an_override_and_bad_input_is_refused(page, server, viewport):
-    page.goto(server.url + "/settings")
+    page.goto(server.url + "/settings?section=general")
     field = page.locator("input[name=poll_seconds], input[name='general.poll_seconds']").first
     field.fill("90")
     page.get_by_role("button", name="Save changes").click()
@@ -173,6 +173,34 @@ def test_a_saved_credential_is_never_shown_back(page, server, viewport):
     card.get_by_role("button", name="Save").click()
     assert secret not in page.content()
     assert (server.root / "secrets" / "github_token").read_text().strip() == secret
+
+
+def test_local_tickets_are_turned_on_from_new_ticket(page, server, viewport):
+    page.goto(server.url + "/tickets")
+    page.locator("summary", has_text="New ticket").click()
+    page.get_by_role("link", name="Turn them on").click()
+    strip = page.get_by_role("region", name="The settings that shape Tickets")
+    expect(strip.get_by_role("button", name="Turn on")).to_be_visible()          # the confirmation, already open
+    strip.get_by_role("button", name="Turn on").click()
+    expect(page.locator(".flash")).to_contain_text("Local tickets turned on")
+    assert tomllib.loads((server.root / "config.overrides.toml").read_text())["local"]["enabled"] is True
+    expect(page.get_by_role("region", name="The settings that shape Tickets")).to_contain_text("GitHub and the factory")
+    page.locator("summary", has_text="New ticket").click()
+    expect(page.get_by_label("Keep it in")).to_be_visible()
+
+
+def test_settings_opens_on_every_feature_and_switches_one(page, server, viewport):
+    page.goto(server.url + "/")
+    go(page, viewport, "Settings")
+    card = page.locator("#f-review")
+    expect(card).to_contain_text("Off")
+    card.locator("summary", has_text="Turn on").click()
+    card.get_by_role("button", name="Turn on").click()
+    expect(page.locator(".flash")).to_contain_text("Code review turned on")
+    expect(page.locator("#f-review .badge")).to_have_text("On")
+    page.get_by_role("link", name=re.compile("^Off")).click()
+    expect(page.locator("#f-local")).to_be_visible()
+    expect(page.locator("#f-review")).to_have_count(0)
 
 
 def test_slack_is_set_up_entirely_from_its_page(page, server, viewport, monkeypatch):

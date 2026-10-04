@@ -17,7 +17,7 @@ EVENT_HELP = {
     "fallback": "A model was unavailable (limit or API error) and the next fallback model was tried", "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from chat",
     "info": "Anything else",
 }
-TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("pm", "Project manager"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts"), ("screens", "Screens"), ("prompts", "Agent prompts")]
+TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("pm", "Project manager"), ("mockups", "Design mockups"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts"), ("screens", "Screens"), ("prompts", "Agent prompts")]
 
 
 def _fmt(f: S.Field, v) -> str:
@@ -34,7 +34,7 @@ def _fmt(f: S.Field, v) -> str:
     return str(v)
 
 
-SIDE = [("general", "General", "/settings?section=general"), ("routing", "Routing", "/settings?section=routing"),
+SIDE = [("home", "Overview", "/settings"), ("general", "General", "/settings?section=general"), ("routing", "Routing", "/settings?section=routing"),
         ("roles", "Role agents", "/settings?section=roles"), ("projects", "Projects", "/settings?section=projects"),
         ("harnesses", "Harnesses", "/harnesses"), ("workers", "Workers", "/workers"), ("schedules", "Schedules", "/schedules"), ("credentials", "Credentials", "/credentials"), ("telegram", "Telegram", "/telegram"), ("slack", "Slack", "/slack"),
         ("labels", "Labels", "/settings?section=labels"), ("backup", "Backup", "/backup")]
@@ -43,7 +43,8 @@ SIDE_MORE = [(k, t, f"/settings?section={k}") for k, t in TABS if k not in {s[0]
 
 def side_list(active: str) -> str:
     link = lambda k, t, href: f'<a href="{href}"{" class=active aria-current=page" if k == active else ""}>{esc(t)}</a>'
-    return ('<nav class="side" aria-label="Settings">' + "".join(link(*x) for x in SIDE)
+    cls = "side on-home" if active == "home" else "side"            # on a phone the home keeps the list to one scrolling row
+    return (f'<nav class="{cls}" aria-label="Settings">' + "".join(link(*x) for x in SIDE)
             + '<span class="side-h">More settings</span>' + "".join(link(*x) for x in SIDE_MORE) + "</nav>")
 
 

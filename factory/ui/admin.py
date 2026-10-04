@@ -12,7 +12,7 @@ from ..router import decide
 import time
 
 from .. import schedules as sched
-from . import flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, review as RV, schedules as SC, screens as SB, settings as S, views, workers as WK
+from . import features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, review as RV, schedules as SC, screens as SB, settings as S, views, workers as WK
 from .views import esc
 
 FLASH = {
@@ -67,7 +67,10 @@ def render_settings(h, section: str, csrf: str, submitted=None, tester: str = ""
 
 
 def settings_get(h, q: dict, csrf: str) -> None:
-    section = q.get("section", "general")
+    if not q.get("section"):                # the home: every feature and its state
+        body = FT.home(h.app.cfg(), csrf, q.get("show", ""), q.get("q", ""), _status_json(h, "slack_connection", "null"))
+        return _send_page(h, 200, "Settings", body, "/settings", csrf, FLASH.get(q.get("ok", "")), section="home")
+    section = q.get("section")
     if section == "labels":
         return _send_page(h, 200, "Settings", forms.labels_page(h.app.cfg()), "/settings", csrf, FLASH.get(q.get("ok", "")), section="labels")
     if section != "projects" and section not in S.SECTIONS:
@@ -85,6 +88,38 @@ def mode_set(h, form, csrf: str) -> None:
     except S.SettingsError as e:
         return _send_page(h, 422, "Settings", "", "/settings", csrf, " · ".join(e.messages), "bad", section="general")
     h._redirect("/?ok=" + ("dry" if want_dry else "live") if changed else "/")
+
+
+def _feature_back(form) -> str:
+    """Back to the Settings home, or to a page the strips live on (the Floor or Tickets)."""
+    b = form.get("back", "")
+    return b if b == "/settings" or (L.BACK.fullmatch(b) and "//" not in b) else "/settings"
+
+
+def feature_set(h, form, csrf: str) -> None:
+    """A switch from the Settings home or from the screen it shapes; the confirmation was the form itself."""
+    key, back = form.get("key", ""), _feature_back(form)
+    try:
+        changed = S.set_switch(h.app.config_path, h.app.state_dir(), key, form.get("on") == "1")
+    except S.SettingsError as e:
+        msg, kind = " · ".join(e.messages), "bad"
+    else:
+        name = FT.SWITCHES[key][0]
+        msg, kind = (f"{name} turned {'on' if form.get('on') == '1' else 'off'}. {FT.APPLIES}" if changed else f"{name} was already {'on' if form.get('on') == '1' else 'off'}."), "ok"
+    if back == "/settings":
+        return _send_page(h, 200 if kind == "ok" else 400, "Settings", FT.home(h.app.cfg(), csrf, slack_conn=_status_json(h, "slack_connection", "null")),
+                          "/settings", csrf, msg, kind, section="home")
+    L.flash_set(csrf, msg, kind)
+    h._redirect(back)
+
+
+def parallel_set(h, form, csrf: str) -> None:
+    try:
+        S.set_parallel(h.app.config_path, h.app.state_dir(), int(form.get("value", "")))
+        L.flash_set(csrf, f"Agents at once: {int(form.get('value'))}. {FT.APPLIES}")
+    except (ValueError, S.SettingsError):
+        L.flash_set(csrf, "Agents at once must be from 1 to 8.", "bad")
+    h._redirect("/")
 
 
 def settings_save(h, form, csrf: str) -> None:
@@ -473,7 +508,7 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
 GET = {"/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/review": RV.board_review_get}
 POST = {"/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
-        "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
+        "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
         "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/local/comment": LT.comment, "/tickets/local/edit": LT.edit, "/tickets/local/state": LT.set_state, "/tickets/import": L.import_issues, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
