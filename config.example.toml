@@ -199,6 +199,12 @@ bypass_label = "factory:skip-mockup"
 # viewports = ["desktop", "mobile"]     # optional: default is all
 # mask = [".clock"]                     # optional CSS selectors of dynamic regions
 # wait_for = "main"                     # optional CSS selector
+# journey = "checkout"                  # optional: the Screens board shows pages grouped by journey, in step order
+# step = 2
+# design = "docs/design/checkout-payment.dc.html"   # optional: the design canvas, rendered next to the built screen
+# The Screens board (Screens in the UI) shoots every page on each repo's default branch, and renders their design canvases,
+# when asked there, and on a timer with:
+# board_every = "6h"                    # under [screens]
 
 # Verification workers: a machine you own (a Mac, a networked Linux box) that checks an agent's patch BEFORE anything is pushed, using
 # what the sandbox lacks (Xcode, an emulator, the network for `npm ci`). Pull-based; recipes are defined on the worker, never here.
