@@ -101,8 +101,11 @@ class Api:
             job = jobs.claim(db, worker, platform, recipes, now, w.lease_seconds, w.claim_wait_seconds, w.max_attempts)
             if not job:
                 return 204, None
-            return 200, {"id": job["id"], "repo": job["repo"], "base_sha": job["base_sha"], "patch": job["patch"],
-                         "recipe": job["recipe"], "lease_seconds": w.lease_seconds}
+            reply = {"id": job["id"], "repo": job["repo"], "base_sha": job["base_sha"], "patch": job["patch"],
+                     "recipe": job["recipe"], "lease_seconds": w.lease_seconds}
+            if job["params"]:
+                reply["params"] = json.loads(job["params"])
+            return 200, reply
         m = JOB_PATH.fullmatch(path)
         if not m:
             return 404, {"error": "not found"}

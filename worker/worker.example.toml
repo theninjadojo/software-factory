@@ -35,3 +35,8 @@ command = ["/Users/factory/recipes/ios-test.sh", "--scheme", "App", "--project",
 # command = [".../ios-test.sh", "--scheme", "App", "--workspace", "App.xcworkspace", "--destination", "platform=iOS Simulator,name=iPhone 15 Pro"]
 timeout_seconds = 3600
 artifacts = ["build/screens/*.png"]                # the simulator's final screenshot
+
+[recipes.smell-scan]
+# Code-smell scans (docs/scanner.md). Reads files only; never runs the repository's code. Needs python3 on this machine.
+command = ["/home/factory/recipes/smell-scan.py"]
+timeout_seconds = 600
