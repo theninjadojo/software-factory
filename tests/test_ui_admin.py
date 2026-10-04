@@ -281,7 +281,7 @@ class Slack(AdminCase):
         s, _, html = self.req("GET", "/slack", cookie=cookie)
         self.assertEqual(s, 200)
         self.assertIn('href="/slack"', html)
-        self.assertIn("bot token not set", html)
+        self.assertIn("not set", html)
 
     def test_slack_token_files_default_next_to_the_github_token(self):
         cfg = load(str(self.root / "config.toml"))
@@ -343,6 +343,58 @@ class Slack(AdminCase):
         with mock.patch.object(I, "_http", lambda *a, **k: (200, {"ok": False, "error": "not_in_channel"})):
             _, _, html = self.post(cookie, csrf, "/slack/test")
         self.assertIn("/invite", html)
+
+    def test_the_page_walks_through_the_whole_set_up(self):
+        cookie, _ = self.session()
+        _, _, html = self.req("GET", "/slack", cookie=cookie)
+        for step in ("Create the app in Slack", "manifest_json=", "connections:write", 'action="/slack/token"', "/factory", 'action="/slack/save"', 'action="/slack/test"'):
+            self.assertIn(step, html)
+        self.assertIn("Slack is off", html)
+
+    def test_tokens_are_saved_and_tested_from_the_slack_page(self):
+        cookie, csrf = self.session()
+        self.assertEqual(self.post(cookie, csrf, "/slack/token", {"name": "slack_bot", "value": SLACK_APP})[0], 400)       # the wrong token
+        self.assertEqual(self.post(cookie, csrf, "/slack/token", {"name": "github", "value": TOKEN})[0], 400)            # only Slack's tokens here
+        self.assertEqual(self.post(cookie, csrf, "/slack/check", {"name": "slack_app"})[0], 400)                         # nothing saved yet
+        s, headers, _ = self.post(cookie, csrf, "/slack/token", {"name": "slack_bot", "value": SLACK_BOT})
+        self.assertEqual((s, headers["Location"]), (303, "/slack?ok=slack_token"))
+        self.assertEqual(self.post(cookie, csrf, "/slack/token", {"name": "slack_app", "value": SLACK_APP})[0], 303)
+        cfg = load(str(self.root / "config.toml"))
+        self.assertEqual((Path(cfg.slack_bot_token_file).read_text(), Path(cfg.slack_app_token_file).read_text()), (SLACK_BOT, SLACK_APP))
+        self.assertTrue(any(self.root.rglob("RESTART")))                                                      # the factory reconnects with them
+        _, _, html = self.req("GET", "/slack", cookie=cookie)
+        self.assertNotIn(SLACK_BOT, html)
+        self.assertIn("not connected yet", html)
+        with mock.patch.object(I, "_http", lambda *a, **k: (200, {"ok": True, "url": "wss://x"})):
+            s, _, html = self.post(cookie, csrf, "/slack/check", {"name": "slack_app"})
+        self.assertEqual(s, 200)
+        self.assertIn("Socket Mode is on", html)
+        with mock.patch.object(I, "_http", lambda *a, **k: (200, {"ok": False, "error": "invalid_auth"})):
+            _, _, html = self.post(cookie, csrf, "/slack/check", {"name": "slack_bot"})
+        self.assertIn("invalid_auth", html)
+        self.assertNotIn(SLACK_APP, html)
+
+    def test_use_this_sets_the_member_and_the_channel_they_typed_in(self):
+        cookie, csrf = self.session()
+        dbm.set_status(self.db, "slack_unknown_senders", '[{"id": "U0777ABCDEF", "name": "Me", "channel": "C0555ABCDEF", "ts": 1}]')
+        dbm.set_status(self.db, "slack_connection", '{"ok": true, "error": ""}')
+        _, _, html = self.req("GET", "/slack", cookie=cookie)
+        self.assertIn("C0555ABCDEF", html)
+        self.assertIn("connected", html)
+        self.assertEqual(self.post(cookie, csrf, "/slack/use", {"user_id": "U0777ABCDEF", "channel": "C0555ABCDEF"})[0], 303)
+        cfg = load(str(self.root / "config.toml"))
+        self.assertEqual((cfg.slack_user_id, cfg.slack_channel), ("U0777ABCDEF", "C0555ABCDEF"))
+        self.assertEqual(self.post(cookie, csrf, "/slack/use", {"user_id": "U0777ABCDEF", "channel": "#general"})[0], 400)
+        self.assertIn("Slack is on", self.req("GET", "/slack", cookie=cookie)[2])
+
+    def test_the_ui_address_is_saved_and_checked(self):
+        cookie, csrf = self.session()
+        base = [("slack.verbosity", "normal"), ("slack.mode", "level")]
+        self.assertEqual(self.post(cookie, csrf, "/slack/save", base + [("slack.ui_url", "https://f.example/")])[0], 303)
+        self.assertEqual(load(str(self.root / "config.toml")).slack_ui_url, "https://f.example")
+        self.assertEqual(self.post(cookie, csrf, "/slack/save", base + [("slack.ui_url", "javascript:alert(1)")])[0], 422)
+        self.assertEqual(self.post(cookie, csrf, "/slack/save", base + [("slack.ui_url", "")])[0], 303)
+        self.assertIsNone(load(str(self.root / "config.toml")).slack_ui_url)
 
     def test_credential_test_checks_the_bot_token(self):
         cookie, csrf = self.session()

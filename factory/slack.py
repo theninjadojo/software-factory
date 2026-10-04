@@ -1,6 +1,8 @@
 """Slack: alerts out, a few fixed commands and Run/Skip/answer buttons in, over Socket Mode (no public URL).
 Trust model, as for Telegram: only the configured Slack user is obeyed (buttons must also come from the configured channel);
-everything else is dropped, and only the sender's id and display name are remembered so the UI can offer 'use this id'.
+everything else is dropped, and only the sender's id, display name and channel are remembered so the UI can offer 'use this'.
+The connection runs as soon as both tokens are saved, before anyone is configured, so the person setting it up can type /factory
+and pick themselves on the UI's Slack page. Until then nobody is obeyed and no alert is sent.
 Free text is never executed or forwarded to an agent (the app subscribes to no message events). Messages go out as plain text."""
 import json
 import logging
@@ -17,6 +19,7 @@ from .telegram import parse_callback
 
 log = logging.getLogger("factory.slack")
 HELP = "Commands: /factory status | usage | pause | resume | help"
+NOT_LINKED = "Shikumi is not linked to anyone yet. Open the Slack page in the factory's UI and press 'Use this' next to your name."
 API = "https://slack.com/api/"
 
 
@@ -44,7 +47,7 @@ def blocks(text: str, buttons: list | None) -> list:
 
 
 class Slack:
-    def __init__(self, bot_token: str, app_token: str, channel: str, user_id: str, state_dir: str, db_path: str,
+    def __init__(self, bot_token: str, app_token: str, channel: str | None, user_id: str | None, state_dir: str, db_path: str,
                  allowed_repos: list[str]):
         self.bot_token, self.app_token, self.channel, self.user_id = bot_token, app_token, channel, user_id
         self.state_dir, self.db_path, self.allowed = Path(state_dir), db_path, set(allowed_repos)
@@ -59,6 +62,8 @@ class Slack:
         return out
 
     def send(self, text: str, buttons: list | None = None) -> None:
+        if not self.channel:
+            return
         params = {"channel": self.channel, "text": text[:3000], "mrkdwn": False, "unfurl_links": False, "unfurl_media": False}
         if buttons:
             params["blocks"] = blocks(text, buttons)
@@ -74,24 +79,34 @@ class Slack:
         c.close()
         return f"paused: {pause.paused(self.state_dir) or 'no'}\n" + "\n".join(f"{t} {r}#{i} {o}" for r, i, o, t in rows)
 
-    def _note_unknown(self, user_id: str | None, name: str) -> None:
-        """Remember (id, name) of someone else using the app, never what they typed, so the UI can offer 'use this id'."""
+    def _note_unknown(self, user_id: str | None, name: str, channel: str | None = None) -> None:
+        """Remember (id, name, channel) of someone else using the app, never what they typed, so the UI can offer 'use this'."""
         try:
             if not user_id:
                 return
             db = dbm.connect(self.db_path)
             known = json.loads((dbm.get_status(db).get("slack_unknown_senders") or {}).get("value", "[]"))
-            known = [k for k in known if k["id"] != user_id] + [{"id": str(user_id)[:30], "name": str(name)[:40], "ts": time.time()}]
+            known = [k for k in known if k["id"] != user_id] + [{"id": str(user_id)[:30], "name": str(name)[:40], "channel": str(channel or "")[:30],
+                                                                 "ts": time.time()}]
             dbm.set_status(db, "slack_unknown_senders", json.dumps(known[-5:]))
             db.close()
         except Exception:
             log.exception("could not record unknown sender")
 
+    def _note_connection(self, error: str | None) -> None:
+        """Whether the Socket Mode connection is up, for the UI's Slack page: the error code only, never a token."""
+        try:
+            db = dbm.connect(self.db_path)
+            dbm.set_status(db, "slack_connection", json.dumps({"ok": error is None, "error": (error or "")[:120]}))
+            db.close()
+        except Exception:
+            log.exception("could not record the slack connection state")
+
     def command(self, p: dict) -> dict:
         """A /factory slash command. Returns the reply (shown only to the person who typed it)."""
         if not authorized(p.get("user_id"), p.get("channel_id"), self.user_id):
-            self._note_unknown(p.get("user_id"), p.get("user_name", ""))
-            return {"response_type": "ephemeral", "text": "You are not allowed to use this."}
+            self._note_unknown(p.get("user_id"), p.get("user_name", ""), p.get("channel_id"))
+            return {"response_type": "ephemeral", "text": "You are not allowed to use this." if self.user_id else NOT_LINKED}
         word = (p.get("text") or "").strip().lower().split(" ")[0]
         if word == "pause":
             (self.state_dir / "PAUSED").write_text("")
@@ -115,7 +130,7 @@ class Slack:
         user = p.get("user") or {}
         channel = (p.get("channel") or {}).get("id") or (p.get("container") or {}).get("channel_id")
         if not authorized(user.get("id"), channel, self.user_id, self.channel):
-            self._note_unknown(user.get("id"), user.get("username") or user.get("name") or "")
+            self._note_unknown(user.get("id"), user.get("username") or user.get("name") or "", channel)
             return
         for a in p.get("actions") or []:
             parsed = parse_callback(a.get("value") or "")
@@ -163,13 +178,15 @@ class Slack:
                 ws = wsclient.connect(self._api("apps.connections.open", self.app_token)["url"])
                 try:
                     delay = 1
+                    self._note_connection(None)
                     self.serve(ws)
                 finally:
                     ws.close()
             except (socket.timeout, wsclient.Closed) as e:
                 log.info("slack connection ended (%s); reconnecting", e or type(e).__name__)
-            except Exception:
+            except Exception as e:
                 log.exception("slack connection failed")
+                self._note_connection(str(e) if isinstance(e, RuntimeError) else type(e).__name__)
                 delay = min(delay * 2, 60)
             time.sleep(delay)
 

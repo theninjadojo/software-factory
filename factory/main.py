@@ -1100,10 +1100,13 @@ def main() -> None:
                       cfg.db_path, cfg.repos)
         tg.start()
     sb, sa = cfg.slack_bot_token_file, cfg.slack_app_token_file
-    if sb and sa and cfg.slack_channel and cfg.slack_user_id and Path(sb).exists() and Path(sa).exists() and not args.once:
-        sl = Slack(Path(sb).read_text().strip(), Path(sa).read_text().strip(), cfg.slack_channel, cfg.slack_user_id,
-                   str(Path(cfg.db_path).parent), cfg.db_path, cfg.repos)
-        sl.start()
+    if sb and sa and Path(sb).exists() and Path(sa).exists() and not args.once:
+        # Connected as soon as both tokens are saved, so /factory can be typed while setting up and the UI can offer 'use this';
+        # nobody is obeyed and nothing is sent until the channel and the member id are set.
+        listener = Slack(Path(sb).read_text().strip(), Path(sa).read_text().strip(), cfg.slack_channel, cfg.slack_user_id,
+                         str(Path(cfg.db_path).parent), cfg.db_path, cfg.repos)
+        listener.start()
+        sl = listener if cfg.slack_channel and cfg.slack_user_id else None
     if (tg or sl) and not args.once:
         alert(f"Factory started ({'dry-run' if cfg.dry_run else 'LIVE'}). {len(cfg.repos)} repo(s).", event="startup")
     if (warning := resource_warning(cfg.runner)) and not args.once:

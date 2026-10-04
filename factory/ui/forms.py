@@ -155,7 +155,7 @@ def credentials_page(cfg, csrf: str, result: str = "") -> str:
             extra = ('<div class="field"><label class="check"><input type="radio" name="kind" value="subscription" checked> Subscription token '
                      '(<code>claude setup-token</code>)</label> <label class="check"><input type="radio" name="kind" value="apikey"> API key</label>'
                      '<div class="muted">Unattended use of a subscription is a gray area in Anthropic\'s terms; an API key is the supported route.</div></div>')
-        test = f'<button name="action" value="test" formaction="/credentials/test">Test</button>' if name in ("github", "openrouter", "slack_bot") else ""
+        test = f'<button name="action" value="test" formaction="/credentials/test">Test</button>' if name in ("github", "openrouter", "slack_bot", "slack_app") else ""
         cards.append(
             f'<form method="post" action="/credentials/save" class="card cred">{csrf_field(csrf)}<input type="hidden" name="name" value="{esc(name)}">'
             f'<h3>{esc(label)}</h3><p>{status}</p>{extra}<div class="field"><input type="password" name="value" placeholder="paste a new value to replace it" autocomplete="off" class="wide"></div>'
@@ -164,39 +164,71 @@ def credentials_page(cfg, csrf: str, result: str = "") -> str:
             'Saving restarts the orchestrator when it is next idle.</p>' + result + '<div class="cards">' + "".join(cards) + "</div>")
 
 
-def slack_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") -> str:
+def slack_page(cfg, eff: dict, csrf: str, unknown: list, conn: dict | None = None, result: str = "") -> str:
+    """Slack is set up here from start to finish: create the app from a manifest, paste its two tokens, type /factory in Slack and
+    pick yourself, then choose how chatty it is. Nothing needs editing on disk."""
+    from .integrations import SLACK_MANIFEST, slack_create_url
     sl = eff.get("slack", {})
     mode_events = isinstance(sl.get("events"), list)
     chosen = set(sl.get("events") or [])
     level = sl.get("verbosity", "normal")
     bot, app = secret_status(cfg, "slack_bot"), secret_status(cfg, "slack_app")
+    on = bool(cfg.slack_channel and cfg.slack_user_id)
     checks = "".join(
         f'<label class="check evt"><input type="checkbox" name="slack.events" value="{esc(e)}"{" checked" if e in chosen else ""}> <strong>{esc(e)}</strong> '
         f'<span class="muted">{esc(EVENT_HELP.get(e, ""))}</span></label>' for e in sorted(ALL_EVENTS, key=lambda x: (x not in LEVELS["quiet"], x not in LEVELS["normal"], x)))
     lv = "".join(f'<option{" selected" if v == level else ""}>{v}</option>' for v in ("quiet", "normal", "verbose"))
+    tokens = "".join(
+        f'<form method="post" action="/slack/token" class="card cred">{csrf_field(csrf)}<input type="hidden" name="name" value="{name}">'
+        f'<h3>{label}</h3><p>{badge("set", "good") if st["set"] else badge("not set", "warn")} <span class="muted">{hint}</span></p>'
+        f'<div class="field"><input type="password" name="value" placeholder="{prefix}..." autocomplete="off" class="wide" aria-label="{label}"></div>'
+        f'<button>Save</button> <button name="action" value="test" formaction="/slack/check">Test</button></form>'
+        for name, label, prefix, hint, st in (
+            ("slack_bot", "Bot token", "xoxb-", "Install App → Bot User OAuth Token.", bot),
+            ("slack_app", "App-level token", "xapp-", "Basic Information → App-Level Tokens → Generate, with the scope connections:write.", app)))
+    if conn is None:
+        link = badge("not connected yet", "warn") + (' <span class="muted">The factory connects when it is next idle after the tokens are saved.</span>'
+                                                      if bot["set"] and app["set"] else ' <span class="muted">Save both tokens first.</span>')
+    elif conn.get("ok"):
+        link = badge("connected", "good")
+    else:
+        link = badge("connection failing", "bad") + f' <span class="muted">{esc(conn.get("error", ""))}</span>'
     found = ""
     if unknown:
-        found = ("<h2>People who used the app</h2><table class=stack><thead><tr><th>Name</th><th>Id</th><th></th></tr></thead><tbody>" + "".join(
-            f'<tr><td data-l="Name">{esc(u["name"])}</td><td data-l="Id">{esc(u["id"])}</td><td data-l="Actions">'
-            f'<form method="post" action="/slack/use" class="inline">{csrf_field(csrf)}<input type="hidden" name="user_id" value="{esc(u["id"])}"><button>Use this id</button></form></td></tr>'
-            for u in unknown) + "</tbody></table><p class=muted>Only this account will ever be obeyed. Check the id is yours.</p>")
+        found = ("<table class=stack><thead><tr><th>Name</th><th>Member id</th><th>Channel</th><th></th></tr></thead><tbody>" + "".join(
+            f'<tr><td data-l="Name">{esc(u["name"])}</td><td data-l="Member id">{esc(u["id"])}</td><td data-l="Channel">{esc(u.get("channel", ""))}</td>'
+            f'<td data-l="Actions"><form method="post" action="/slack/use" class="inline">{csrf_field(csrf)}<input type="hidden" name="user_id" value="{esc(u["id"])}">'
+            f'<input type="hidden" name="channel" value="{esc(u.get("channel", ""))}"><button>Use this</button></form></td></tr>'
+            for u in unknown) + "</tbody></table><p class=muted>Only this person will ever be obeyed, and alerts go to that channel. Check it is you.</p>")
     return (
-        f'<p>{badge("bot token set", "good") if bot["set"] else badge("bot token not set", "warn")} '
-        f'{badge("app token set", "good") if app["set"] else badge("app token not set", "warn")} '
-        '<span class="muted">Create a Slack app (see the README, "Slack"), then paste its bot token (xoxb-) and app-level token (xapp-) on the '
-        f'<a href="/credentials">Credentials</a> page.</span></p>{result}'
-        f'<form method="post" action="/slack/save" class="settings">{csrf_field(csrf)}'
+        f'<p>{badge("Slack is on", "good") if on else badge("Slack is off", "warn")} '
+        '<span class="muted">Slack works instead of Telegram or alongside it. It uses Socket Mode: the factory connects out to Slack, so nothing '
+        f'needs to be reachable from the internet.</span></p>{result}'
+        '<h2>1. Create the Slack app</h2>'
+        f'<p><a class="btn" href="{esc(slack_create_url())}" target="_blank" rel="noopener noreferrer">Create the app in Slack</a> '
+        '<span class="muted">Pick your workspace, confirm, then press <em>Install to Workspace</em>.</span></p>'
+        '<details><summary>The app manifest (to paste by hand under Create New App → From a manifest)</summary>'
+        f'<pre>{esc(json.dumps(SLACK_MANIFEST, indent=2))}</pre></details>'
+        f'<h2>2. Paste its tokens</h2><div class="cards">{tokens}</div>'
+        '<p class="muted">Saved tokens are never shown again. Saving one restarts the factory when it is next idle.</p>'
+        f'<h2>3. Link your Slack account</h2><p>{link}</p>'
+        '<p class="muted">In Slack, open the channel for alerts (or a direct message with the app), type <code>/invite @Shikumi</code>, then '
+        '<code>/factory</code>. You appear below; press <em>Use this</em>. You can also type the ids yourself further down.</p>'
+        f'{found or "<p class=muted>Nobody has used /factory yet. Reload this page after you have.</p>"}'
+        f'<h2>4. Settings</h2><form method="post" action="/slack/save" class="settings">{csrf_field(csrf)}'
         f'<div class="field"><label>Channel id</label><input name="slack.channel" value="{esc(sl.get("channel", ""))}" autocomplete="off" placeholder="C0123ABCDEF">'
-        '<div class="muted">Alerts go here and buttons are only accepted from here. Open the channel\'s details in Slack for its id, and invite the bot with /invite. Empty turns Slack off.</div></div>'
+        '<div class="muted">Alerts go here and buttons are only accepted from here (channel details, at the bottom). Empty turns Slack off.</div></div>'
         f'<div class="field"><label>Your member id</label><input name="slack.user_id" value="{esc(sl.get("user_id", ""))}" autocomplete="off" placeholder="U0123ABCDEF">'
         '<div class="muted">The only person the factory will obey (profile → ⋮ → Copy member ID). Empty turns Slack off.</div></div>'
+        f'<div class="field"><label>Address of this UI</label><input name="slack.ui_url" value="{esc(sl.get("ui_url", ""))}" autocomplete="off" placeholder="https://factory.example.internal">'
+        '<div class="muted">Optional: adds an <em>Open in UI</em> button to messages with questions for you.</div></div>'
         f'<div class="field"><label>How chatty</label><label class="check"><input type="radio" name="slack.mode" value="level"{"" if mode_events else " checked"}> Use a level</label> '
         f'<select name="slack.verbosity">{lv}</select>'
         '<div class="muted">quiet: needs-a-person, failures, rate limits · normal: + PR ready, stage done, CI results · verbose: everything</div>'
         f'<label class="check"><input type="radio" name="slack.mode" value="events"{" checked" if mode_events else ""}> Pick the events myself</label>'
         f'<div class="events">{checks}</div></div><button>Save Slack settings</button></form>'
-        f'<h2>Check</h2><p class="muted">Messages and button clicks from anyone else are never acted on. If someone else uses the app, they are listed below.</p>'
-        f'<form method="post" action="/slack/test" class="inline">{csrf_field(csrf)}<button>Send a test message</button></form>{found}')
+        '<h2>5. Check</h2><p class="muted">Messages and button clicks from anyone else are never acted on; they are listed in step 3.</p>'
+        f'<form method="post" action="/slack/test" class="inline">{csrf_field(csrf)}<button>Send a test message</button></form>')
 
 
 def telegram_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") -> str:

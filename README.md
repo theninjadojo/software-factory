@@ -234,40 +234,18 @@ Create a bot with BotFather, put its token in `secrets/telegram_token`, message 
 Slack works instead of Telegram or alongside it. It uses **Socket Mode**: the factory opens an outbound connection to Slack, so
 nothing needs to be reachable from the internet.
 
-1. At <https://api.slack.com/apps> choose **Create New App → From a manifest**, pick your workspace and paste:
+Everything is done from the UI's **Slack** page (Settings → Slack), which walks through it:
 
-   ```yaml
-   display_information:
-     name: Shikumi
-   features:
-     bot_user:
-       display_name: Shikumi
-     slash_commands:
-       - command: /factory
-         description: Control the factory
-         usage_hint: status | usage | pause | resume | help
-         should_escape: false
-   oauth_config:
-     scopes:
-       bot:
-         - chat:write
-         - commands
-   settings:
-     interactivity:
-       is_enabled: true
-     socket_mode_enabled: true
-     org_deploy_enabled: false
-     token_rotation_enabled: false
-   ```
+1. **Create the app in Slack** opens Slack with the app already described (a bot that may post and owns `/factory`, buttons, Socket
+   Mode). Pick your workspace, confirm and **Install to Workspace**. The manifest is also shown on the page, to paste by hand.
+2. Paste the *Bot User OAuth Token* (`xoxb-...`) and an app-level token with the `connections:write` scope (`xapp-...`, under
+   **Basic Information → App-Level Tokens**). Each has a Test button. The factory connects to Slack when it is next idle.
+3. In the channel for alerts (or a DM with the app) run `/invite @Shikumi`, then `/factory`. You appear on the Slack page with your
+   member id and the channel; press **Use this**. Until then nobody is obeyed and no alert is sent.
+4. Choose how chatty it is, optionally the address of the UI (for an *Open in UI* button), and press *Send a test message*.
 
-2. **Install to Workspace** and copy the *Bot User OAuth Token* (`xoxb-...`). Under **Basic Information → App-Level Tokens** make one with the
-   `connections:write` scope and copy it (`xapp-...`).
-3. Create a channel (or use a DM with the bot), run `/invite @Shikumi` in it, and note the channel id (channel details, at the bottom) and your
-   own member id (your profile → ⋮ → *Copy member ID*).
-4. In the UI, paste both tokens on **Credentials**, then on the **Slack** page enter the channel id and your member id, save, and press
-   *Send a test message*. Or by hand: put the tokens in `secrets/slack_bot_token` and `secrets/slack_app_token` (mode 0600) and set
-   `channel` and `user_id` in `[slack]`. Slack stays off until both ids are set. Choose `verbosity` = `quiet` | `normal` | `verbose`, or
-   list `events` (see `config.example.toml`).
+By hand instead: put the tokens in `secrets/slack_bot_token` and `secrets/slack_app_token` (mode 0600) and set `channel` and `user_id`
+in `[slack]` (see `config.example.toml`).
 
 Only the member id you configure is obeyed (button clicks must also come from the configured channel). Someone else who clicks a button or
 runs `/factory` is ignored and listed on the Slack page, by id and display name only, so you can check your own id.

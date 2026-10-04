@@ -586,8 +586,15 @@ def save_slack(cfg_path: str, state_dir: Path, form: Form) -> None:
     verbosity = form.get("slack.verbosity", "")
     if verbosity not in ("quiet", "normal", "verbose"):
         raise SettingsError(["Choose quiet, normal or verbose."])
+    ui_url = (form.get("slack.ui_url") or "").strip()
+    if ui_url and not re.fullmatch(r"https?://[^\s\"'<>|]{1,200}", ui_url):
+        raise SettingsError(["The address of this UI must be an http(s) URL (or empty)."])
     _store(new_ov, base, "slack.channel", channel)
     _store(new_ov, base, "slack.user_id", user)
+    if ui_url or "ui_url" in base.get("slack", {}):
+        _store(new_ov, base, "slack.ui_url", ui_url.rstrip("/"))
+    else:
+        del_in(new_ov, "slack.ui_url")
     _store(new_ov, base, "slack.verbosity", verbosity)
     if form.get("slack.mode") == "events":
         chosen = [e for e in form.getall("slack.events") if e in ALL_EVENTS]
@@ -601,11 +608,16 @@ def save_slack(cfg_path: str, state_dir: Path, form: Form) -> None:
     _commit(cfg_path, state_dir, new_ov)
 
 
-def set_slack_user(cfg_path: str, state_dir: Path, user_id: str) -> None:
+def set_slack_user(cfg_path: str, state_dir: Path, user_id: str, channel: str = "") -> None:
+    """Obey this member, and send to the channel they typed /factory in (when one was recorded)."""
     if not re.fullmatch(r"[UW][A-Z0-9]{6,20}", user_id):
         raise SettingsError(["That is not a Slack member id."])
+    if channel and not re.fullmatch(r"[CGD][A-Z0-9]{6,20}", channel):
+        raise SettingsError(["That is not a Slack channel id."])
     base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
     _store(new_ov, base, "slack.user_id", user_id)
+    if channel:
+        _store(new_ov, base, "slack.channel", channel)
     _commit(cfg_path, state_dir, new_ov)
 
 

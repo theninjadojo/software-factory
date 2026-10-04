@@ -175,6 +175,33 @@ def test_a_saved_credential_is_never_shown_back(page, server, viewport):
     assert (server.root / "secrets" / "github_token").read_text().strip() == secret
 
 
+def test_slack_is_set_up_entirely_from_its_page(page, server, viewport, monkeypatch):
+    from factory.ui import integrations as I
+    page.goto(server.url + "/settings")
+    page.get_by_role("navigation", name="Settings").get_by_role("link", name="Slack").click()
+    expect(page.get_by_role("link", name="Create the app in Slack")).to_have_attribute("href", re.compile(r"^https://api\.slack\.com/apps\?new_app=1&manifest_json="))
+    bot, app = "xoxb-" + "1234567890-abcdefABCDEF", "xapp-" + "1-A0123456789-abcdef0123456789"
+    for label, value in (("Bot token", bot), ("App-level token", app)):
+        card = page.locator("form.card", has=page.get_by_role("heading", name=label))
+        card.get_by_label(label).fill(value)
+        card.get_by_role("button", name="Save").click()
+        expect(page.locator(".flash")).to_contain_text("Token saved")
+    assert bot not in page.content() and app not in page.content()
+    assert (server.root / "secrets" / "slack_app_token").read_text() == app
+    monkeypatch.setattr(I, "_http", lambda *a, **k: (200, {"ok": True, "url": "wss://x"}))
+    page.locator("form.card", has=page.get_by_role("heading", name="App-level token")).get_by_role("button", name="Test").click()
+    expect(page.locator(".flash")).to_contain_text("Socket Mode is on")
+    # the orchestrator, now connected, records whoever types /factory
+    dbm.set_status(server.db, "slack_unknown_senders", '[{"id": "U0777ABCDEF", "name": "juan", "channel": "C0555ABCDEF", "ts": 1}]')
+    page.reload()
+    page.get_by_role("row", name=re.compile("juan")).get_by_role("button", name="Use this").click()
+    expect(page.locator(".badge", has_text="Slack is on")).to_be_visible()
+    slack = tomllib.loads((server.root / "config.overrides.toml").read_text())["slack"]
+    assert (slack["user_id"], slack["channel"]) == ("U0777ABCDEF", "C0555ABCDEF")
+    page.get_by_role("button", name="Send a test message").click()
+    expect(page.locator(".flash")).to_contain_text("Sent.")
+
+
 def test_settings_side_list_is_tappable_and_event_names_do_not_break(page, server, viewport):
     page.goto(server.url + "/telegram")
     for strong in page.locator(".check.evt strong").all():

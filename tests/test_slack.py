@@ -185,6 +185,52 @@ class Commands(Base):
         self.assertEqual([k["id"] for k in self.unknown()], ["U0EVIL"])
 
 
+class NotLinkedYet(Base):
+    """Connected with only the tokens saved: the person setting it up types /factory and picks themselves in the UI."""
+    def setUp(self):
+        super().setUp()
+        self.sl = S.Slack("xoxb-t", "xapp-t", None, None, self.d, self.db, ["o/r"])
+
+    def test_nobody_is_obeyed_and_the_reply_says_how_to_finish(self):
+        r = self.sl.command({"text": "pause", "user_id": ME, "channel_id": CHAN, "user_name": "me"})
+        self.assertEqual(r["text"], S.NOT_LINKED)
+        self.assertFalse((Path(self.d) / "PAUSED").exists())
+        self.assertEqual([(k["id"], k["name"], k["channel"]) for k in self.unknown()], [(ME, "me", CHAN)])
+        with mock.patch.object(self.sl, "send"):
+            self.sl.action(click(ME, CHAN, "run|o/r|7"))
+        self.assertEqual(self.approvals(), [])
+
+    def test_nothing_is_sent_without_a_channel(self):
+        with mock.patch.object(self.sl, "_api") as api:
+            self.sl.send("hello")
+        api.assert_not_called()
+
+
+class Connection(Base):
+    def status(self):
+        c = dbm.connect(self.db)
+        try:
+            return json.loads(dbm.get_status(c)["slack_connection"]["value"])
+        finally:
+            c.close()
+
+    def test_the_connection_state_is_kept_for_the_ui_without_the_token(self):
+        calls = iter([RuntimeError("slack apps.connections.open: invalid_auth"), KeyboardInterrupt()])
+
+        def api(*a, **k):
+            raise next(calls)
+        with mock.patch.object(self.sl, "_api", api), mock.patch.object(S.time, "sleep"):
+            with self.assertRaises(KeyboardInterrupt):
+                self.sl.run_forever()
+        self.assertEqual(self.status(), {"ok": False, "error": "slack apps.connections.open: invalid_auth"})
+        with mock.patch.object(self.sl, "_api", return_value={"url": "wss://x"}), mock.patch.object(S.wsclient, "connect") as conn, \
+                mock.patch.object(self.sl, "serve", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.sl.run_forever()
+        conn.return_value.close.assert_called_once()
+        self.assertEqual(self.status(), {"ok": True, "error": ""})
+
+
 class Envelopes(Base):
     def test_a_button_is_acknowledged_before_it_is_acted_on(self):
         ws = FakeWS()

@@ -25,6 +25,21 @@ SECRETS = {
     "slack_app": ("Slack app-level token (xapp-)", lambda c: c.slack_app_token_file),
 }
 SLACK_PREFIX = {"slack_bot": "xoxb-", "slack_app": "xapp-"}
+# The Slack app the factory needs: a bot that may post and own /factory, interactivity for the buttons, Socket Mode (no public URL).
+SLACK_MANIFEST = {
+    "display_information": {"name": "Shikumi"},
+    "features": {"bot_user": {"display_name": "Shikumi", "always_online": True},
+                 "slash_commands": [{"command": "/factory", "description": "Control the factory", "usage_hint": "status | usage | pause | resume | help",
+                                     "should_escape": False}]},
+    "oauth_config": {"scopes": {"bot": ["chat:write", "commands"]}},
+    "settings": {"interactivity": {"is_enabled": True}, "socket_mode_enabled": True, "org_deploy_enabled": False, "token_rotation_enabled": False},
+}
+
+
+def slack_create_url() -> str:
+    """Slack's 'create an app from this manifest' link: the person picks a workspace and confirms; nothing is sent from here."""
+    from urllib.parse import quote
+    return "https://api.slack.com/apps?new_app=1&manifest_json=" + quote(json.dumps(SLACK_MANIFEST, separators=(",", ":")))
 
 
 def secret_path(cfg: Config, name: str) -> Path | None:
@@ -147,6 +162,16 @@ def slack_check(bot_token: str) -> dict:
     if s == 200 and body.get("ok"):
         return {"ok": True, "message": f"The bot token works (workspace {str(body.get('team', ''))[:60]}, bot {str(body.get('user', ''))[:40]})."}
     return {"ok": False, "message": _scrub(f"Slack rejected the token: {str(body.get('error', f'HTTP {s}'))[:80]}", bot_token)}
+
+
+def slack_app_check(app_token: str) -> dict:
+    """The app-level token can open a Socket Mode connection (only the address is asked for; no connection is made)."""
+    s, body = _http("https://slack.com/api/apps.connections.open", app_token, {})
+    if s == 200 and body.get("ok"):
+        return {"ok": True, "message": "The app-level token works and Socket Mode is on."}
+    err = str(body.get("error", f"HTTP {s}"))[:80]
+    hint = " Turn on Socket Mode in the app's settings." if err in ("not_allowed_token_type", "socket_mode_not_enabled") else ""
+    return {"ok": False, "message": _scrub(f"Slack rejected the token: {err}.", app_token) + hint}
 
 
 def slack_send(bot_token: str, channel: str, text: str) -> dict:

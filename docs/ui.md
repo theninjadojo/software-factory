@@ -34,9 +34,9 @@ The top bar has four tabs: Factory, Tickets (with the count of tickets that need
 |---|---|
 | Settings | Poll interval, dry run (go live), confidence threshold, labels, who may apply them, repositories, projects, routing (tier → harness/model/effort), role agents, classifier (Jev or labels, label → kind aliases, with a **Try it** box), the code reviewer (on/off, automatic or by label, model, harness), sandbox limits and allowed hosts, CI feedback, merge conflicts, agent prompts (your own instructions per agent, with the built-in prompt shown read-only). |
 | Harnesses | Enable or disable an agent harness; edit its image, command and hosts; set its key. Routes and roles choose among the enabled ones. |
-| Credentials | GitHub token, Claude credential (subscription token or API key), OpenRouter key, Telegram bot token, Slack bot and app tokens. Write-only. GitHub, OpenRouter and the Slack bot token have a Test button. |
+| Credentials | GitHub token, Claude credential (subscription token or API key), OpenRouter key, Telegram bot token, Slack bot and app tokens (also on the Slack page). Write-only. GitHub, OpenRouter and both Slack tokens have a Test button. |
 | Telegram | Your chat id (with *Find my chat id*), a test message, and how chatty it is: a level, or an explicit list of events. |
-| Slack | The channel id and your member id (people who used the app are listed so you can pick yours), a test message, and how chatty it is. |
+| Slack | The whole set-up: a link that creates the Slack app from its manifest, the bot and app-level tokens (each with a Test button), whether the factory is connected, the people who typed `/factory` (*Use this* sets your member id and the channel), the channel and member ids by hand, the UI address for *Open in UI*, how chatty it is, and a test message. |
 | Labels | Add, remove or swap labels on issues, one repository at a time (filter by state, label, title or `#number`). Only labels that already exist in the repository can be applied. Writes happen on the server with the stored GitHub token, so GitHub shows them as the factory's account; the factory trusts that account for triggers when it has write access. The write is applied directly (not via the read-only database), and logged to the UI log. |
 
 ### How a change is applied
