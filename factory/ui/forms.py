@@ -1,4 +1,4 @@
-"""HTML forms for settings, credentials and Telegram. Values come from the effective configuration, never from secrets."""
+"""HTML forms for settings, credentials, Telegram and Slack. Values come from the effective configuration, never from secrets."""
 import json
 import time
 
@@ -14,7 +14,7 @@ EVENT_HELP = {
     "ci_result": "CI passed, or finished without a fix", "ci_fix": "CI failed and an agent fix round is starting", "recovery": "An interrupted run was requeued",
     "conflict": "A factory pull request conflicts with its base branch, or a conflict was resolved",
     "worker_offline": "Verification jobs are waiting and no worker has been seen (or a worker is back)",
-    "fallback": "A model was unavailable (limit or API error) and the next fallback model was tried", "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from Telegram",
+    "fallback": "A model was unavailable (limit or API error) and the next fallback model was tried", "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from chat",
     "info": "Anything else",
 }
 TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("pm", "Project manager"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts"), ("screens", "Screens"), ("prompts", "Agent prompts")]
@@ -36,7 +36,7 @@ def _fmt(f: S.Field, v) -> str:
 
 SIDE = [("general", "General", "/settings?section=general"), ("routing", "Routing", "/settings?section=routing"),
         ("roles", "Role agents", "/settings?section=roles"), ("projects", "Projects", "/settings?section=projects"),
-        ("harnesses", "Harnesses", "/harnesses"), ("workers", "Workers", "/workers"), ("schedules", "Schedules", "/schedules"), ("credentials", "Credentials", "/credentials"), ("telegram", "Telegram", "/telegram"),
+        ("harnesses", "Harnesses", "/harnesses"), ("workers", "Workers", "/workers"), ("schedules", "Schedules", "/schedules"), ("credentials", "Credentials", "/credentials"), ("telegram", "Telegram", "/telegram"), ("slack", "Slack", "/slack"),
         ("labels", "Labels", "/settings?section=labels"), ("backup", "Backup", "/backup")]
 SIDE_MORE = [(k, t, f"/settings?section={k}") for k, t in TABS if k not in {s[0] for s in SIDE}]
 
@@ -155,13 +155,48 @@ def credentials_page(cfg, csrf: str, result: str = "") -> str:
             extra = ('<div class="field"><label class="check"><input type="radio" name="kind" value="subscription" checked> Subscription token '
                      '(<code>claude setup-token</code>)</label> <label class="check"><input type="radio" name="kind" value="apikey"> API key</label>'
                      '<div class="muted">Unattended use of a subscription is a gray area in Anthropic\'s terms; an API key is the supported route.</div></div>')
-        test = f'<button name="action" value="test" formaction="/credentials/test">Test</button>' if name in ("github", "openrouter") else ""
+        test = f'<button name="action" value="test" formaction="/credentials/test">Test</button>' if name in ("github", "openrouter", "slack_bot") else ""
         cards.append(
             f'<form method="post" action="/credentials/save" class="card cred">{csrf_field(csrf)}<input type="hidden" name="name" value="{esc(name)}">'
             f'<h3>{esc(label)}</h3><p>{status}</p>{extra}<div class="field"><input type="password" name="value" placeholder="paste a new value to replace it" autocomplete="off" class="wide"></div>'
             f'<button>Save</button> {test}</form>')
     return ('<p class="muted">Credentials are stored as files readable only by the factory user and are <strong>never shown again</strong>. '
             'Saving restarts the orchestrator when it is next idle.</p>' + result + '<div class="cards">' + "".join(cards) + "</div>")
+
+
+def slack_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") -> str:
+    sl = eff.get("slack", {})
+    mode_events = isinstance(sl.get("events"), list)
+    chosen = set(sl.get("events") or [])
+    level = sl.get("verbosity", "normal")
+    bot, app = secret_status(cfg, "slack_bot"), secret_status(cfg, "slack_app")
+    checks = "".join(
+        f'<label class="check evt"><input type="checkbox" name="slack.events" value="{esc(e)}"{" checked" if e in chosen else ""}> <strong>{esc(e)}</strong> '
+        f'<span class="muted">{esc(EVENT_HELP.get(e, ""))}</span></label>' for e in sorted(ALL_EVENTS, key=lambda x: (x not in LEVELS["quiet"], x not in LEVELS["normal"], x)))
+    lv = "".join(f'<option{" selected" if v == level else ""}>{v}</option>' for v in ("quiet", "normal", "verbose"))
+    found = ""
+    if unknown:
+        found = ("<h2>People who used the app</h2><table class=stack><thead><tr><th>Name</th><th>Id</th><th></th></tr></thead><tbody>" + "".join(
+            f'<tr><td data-l="Name">{esc(u["name"])}</td><td data-l="Id">{esc(u["id"])}</td><td data-l="Actions">'
+            f'<form method="post" action="/slack/use" class="inline">{csrf_field(csrf)}<input type="hidden" name="user_id" value="{esc(u["id"])}"><button>Use this id</button></form></td></tr>'
+            for u in unknown) + "</tbody></table><p class=muted>Only this account will ever be obeyed. Check the id is yours.</p>")
+    return (
+        f'<p>{badge("bot token set", "good") if bot["set"] else badge("bot token not set", "warn")} '
+        f'{badge("app token set", "good") if app["set"] else badge("app token not set", "warn")} '
+        '<span class="muted">Create a Slack app (see the README, "Slack"), then paste its bot token (xoxb-) and app-level token (xapp-) on the '
+        f'<a href="/credentials">Credentials</a> page.</span></p>{result}'
+        f'<form method="post" action="/slack/save" class="settings">{csrf_field(csrf)}'
+        f'<div class="field"><label>Channel id</label><input name="slack.channel" value="{esc(sl.get("channel", ""))}" autocomplete="off" placeholder="C0123ABCDEF">'
+        '<div class="muted">Alerts go here and buttons are only accepted from here. Open the channel\'s details in Slack for its id, and invite the bot with /invite. Empty turns Slack off.</div></div>'
+        f'<div class="field"><label>Your member id</label><input name="slack.user_id" value="{esc(sl.get("user_id", ""))}" autocomplete="off" placeholder="U0123ABCDEF">'
+        '<div class="muted">The only person the factory will obey (profile → ⋮ → Copy member ID). Empty turns Slack off.</div></div>'
+        f'<div class="field"><label>How chatty</label><label class="check"><input type="radio" name="slack.mode" value="level"{"" if mode_events else " checked"}> Use a level</label> '
+        f'<select name="slack.verbosity">{lv}</select>'
+        '<div class="muted">quiet: needs-a-person, failures, rate limits · normal: + PR ready, stage done, CI results · verbose: everything</div>'
+        f'<label class="check"><input type="radio" name="slack.mode" value="events"{" checked" if mode_events else ""}> Pick the events myself</label>'
+        f'<div class="events">{checks}</div></div><button>Save Slack settings</button></form>'
+        f'<h2>Check</h2><p class="muted">Messages and button clicks from anyone else are never acted on. If someone else uses the app, they are listed below.</p>'
+        f'<form method="post" action="/slack/test" class="inline">{csrf_field(csrf)}<button>Send a test message</button></form>{found}')
 
 
 def telegram_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") -> str:

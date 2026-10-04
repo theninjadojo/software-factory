@@ -1,4 +1,4 @@
-"""Routes that show or change settings, credentials and Telegram. All POSTs arrive here already CSRF-checked."""
+"""Routes that show or change settings, credentials, Telegram and Slack. All POSTs arrive here already CSRF-checked."""
 import json
 import re
 import shutil
@@ -19,6 +19,7 @@ FLASH = {
     "saved": "Saved. The factory applies it at its next idle moment (never mid-task).",
     "secret": "Saved. The factory restarts when it is next idle so it picks the credential up.",
     "id": "Chat id saved. Press 'Send a test message' to confirm.",
+    "slack_id": "Member id saved. Press 'Send a test message' to confirm.",
     "run": "Run requested. The factory runs it within a poll (up to a minute) and opens a real ticket, whatever dry-run says.",
     "sched_saved": "Schedule saved. The factory applies it at its next idle moment (never mid-task).",
     "sched_deleted": "Schedule deleted. Snapshots already on disk were kept.",
@@ -42,12 +43,12 @@ def _files(h):
     return base, deep_merge(base, S.overrides_raw(h.app.config_path))
 
 
-def _unknown_senders(h) -> list:
+def _unknown_senders(h, key: str = "telegram_unknown_senders") -> list:
     db = h.app.ro_db()
     if db is None:
         return []
     try:
-        return json.loads((dbm.get_status(db).get("telegram_unknown_senders") or {}).get("value", "[]"))
+        return json.loads((dbm.get_status(db).get(key) or {}).get("value", "[]"))
     finally:
         db.close()
 
@@ -140,6 +141,9 @@ def credentials_test(h, form, csrf: str) -> None:
     if name == "openrouter":
         r = I.check_openrouter(secret, cfg.jev_model)
         return _send_page(h, 200, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
+    if name == "slack_bot":
+        r = I.slack_check(secret)
+        return _send_page(h, 200, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
     _send_page(h, 400, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, "There is no test for that credential.", "bad")
 
 
@@ -214,6 +218,41 @@ def telegram_test(h, form, csrf: str) -> None:
         return _telegram(h, csrf, "Set the bot token and your chat id first.", "bad", 400)
     r = I.telegram_send(token, cfg.telegram_chat_id, "Test message from the Shikumi UI. Telegram is set up correctly.")
     _telegram(h, csrf, r["message"], "ok" if r["ok"] else "bad")
+
+
+# ------------------------------------------------------------------ slack
+def _slack(h, csrf: str, flash=None, kind="ok", status: int = 200) -> None:
+    _, eff = _files(h)
+    _send_page(h, status, "Slack", forms.slack_page(h.app.cfg(), eff, csrf, _unknown_senders(h, "slack_unknown_senders")), "/slack", csrf, flash, kind)
+
+
+def slack_get(h, q: dict, csrf: str) -> None:
+    _slack(h, csrf, FLASH.get(q.get("ok", "")))
+
+
+def slack_save(h, form, csrf: str) -> None:
+    try:
+        S.save_slack(h.app.config_path, h.app.state_dir(), form)
+    except S.SettingsError as e:
+        return _slack(h, csrf, " · ".join(e.messages), "bad", 422)
+    h._redirect("/slack?ok=saved")
+
+
+def slack_use(h, form, csrf: str) -> None:
+    try:
+        S.set_slack_user(h.app.config_path, h.app.state_dir(), form.get("user_id", ""))
+    except S.SettingsError:
+        return _slack(h, csrf, "That is not a valid member id.", "bad", 400)
+    h._redirect("/slack?ok=slack_id")
+
+
+def slack_test(h, form, csrf: str) -> None:
+    cfg = h.app.cfg()
+    token = I.read_secret(cfg, "slack_bot")
+    if not token or not cfg.slack_channel:
+        return _slack(h, csrf, "Set the bot token and the channel id first.", "bad", 400)
+    r = I.slack_send(token, cfg.slack_channel, "Test message from the Shikumi UI. Slack is set up correctly.")
+    _slack(h, csrf, r["message"], "ok" if r["ok"] else "bad")
 
 
 # ------------------------------------------------------------------ verification workers
@@ -407,11 +446,11 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
     h._redirect("/backup?ok=restore")
 
 
-GET = {"/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
+GET = {"/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/review": RV.board_review_get}
 POST = {"/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
-        "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
+        "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/use": slack_use, "/slack/test": slack_test,
         "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/local/comment": LT.comment, "/tickets/local/edit": LT.edit, "/tickets/local/state": LT.set_state, "/tickets/import": L.import_issues, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
         "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/save": SB.save, "/screens/delete": SB.delete, "/screens/issue": RV.board_issue}

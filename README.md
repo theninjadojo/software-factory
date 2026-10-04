@@ -1,7 +1,7 @@
 # Shikumi (仕組み)
 
 *Shikumi* is Japanese for a mechanism, a way of building a system so that it works. Label a GitHub issue and sandboxed AI agents analyse it, design it, plan it, build it and open pull requests, with a
-person kept in the loop on Telegram.
+person kept in the loop on Telegram or Slack.
 
 It is built around one assumption: **the agent will be prompt-injected by something it reads, so make that not matter.**
 Agents run with no network, no credentials and no way to reach the host. All they can produce is data (a patch or a
@@ -74,6 +74,8 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   force-push; at most 10 attempts per PR. Off by default.
 - **Telegram.** Alerts with a verbosity setting, `/status /usage /pause /resume`, and Run/Skip buttons for tickets that need a
   person. Only your Telegram user id is obeyed.
+- **Slack.** The same, instead of or alongside Telegram: alerts, Run/Skip/answer buttons, and `/factory status|usage|pause|resume`.
+  Socket Mode, so no public URL is needed. Only your Slack member id is obeyed.
 - **Recovery.** If the orchestrator restarts mid-task, leftovers are cleared and the ticket is requeued. A run that crashes (for example GitHub timing out after the agent finished) marks the ticket `factory:failed` with a comment and an alert, and reads and label changes are retried when GitHub times out.
 - **Admin UI.** See what is happening and what happened (runs, decisions, PRs and CI, an event timeline), and change settings,
   credentials, Telegram and agent harnesses without editing files. Authenticated, loopback by default. See [docs/ui.md](docs/ui.md).
@@ -90,7 +92,7 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   **Actions** *read* for the CI feedback (Commit statuses *read* is optional; the Checks permission is not needed). No Workflows, no Administration.
 - **Model credentials** for the agent: `ANTHROPIC_API_KEY` (the supported route for unattended use) or a Claude
   subscription token from `claude setup-token` (see [caveats](#limits-and-honest-caveats)).
-- Optional: a **Telegram bot** (BotFather) and your numeric Telegram id; an **OpenRouter key** for Jev.
+- Optional: a **Telegram bot** (BotFather) and your numeric Telegram id, or a **Slack app** (below); an **OpenRouter key** for Jev.
 
 ### Option 1: install from a release (recommended; no git, no build)
 
@@ -227,11 +229,54 @@ Create a bot with BotFather, put its token in `secrets/telegram_token`, message 
 `https://api.telegram.org/bot<TOKEN>/getUpdates` (`message.from.id`) and set `chat_id` in `[telegram]`. Choose
 `verbosity` = `quiet` | `normal` | `verbose`, or list `events` explicitly (see `config.example.toml`).
 
+### Slack
+
+Slack works instead of Telegram or alongside it. It uses **Socket Mode**: the factory opens an outbound connection to Slack, so
+nothing needs to be reachable from the internet.
+
+1. At <https://api.slack.com/apps> choose **Create New App → From a manifest**, pick your workspace and paste:
+
+   ```yaml
+   display_information:
+     name: Shikumi
+   features:
+     bot_user:
+       display_name: Shikumi
+     slash_commands:
+       - command: /factory
+         description: Control the factory
+         usage_hint: status | usage | pause | resume | help
+         should_escape: false
+   oauth_config:
+     scopes:
+       bot:
+         - chat:write
+         - commands
+   settings:
+     interactivity:
+       is_enabled: true
+     socket_mode_enabled: true
+     org_deploy_enabled: false
+     token_rotation_enabled: false
+   ```
+
+2. **Install to Workspace** and copy the *Bot User OAuth Token* (`xoxb-...`). Under **Basic Information → App-Level Tokens** make one with the
+   `connections:write` scope and copy it (`xapp-...`).
+3. Create a channel (or use a DM with the bot), run `/invite @Shikumi` in it, and note the channel id (channel details, at the bottom) and your
+   own member id (your profile → ⋮ → *Copy member ID*).
+4. In the UI, paste both tokens on **Credentials**, then on the **Slack** page enter the channel id and your member id, save, and press
+   *Send a test message*. Or by hand: put the tokens in `secrets/slack_bot_token` and `secrets/slack_app_token` (mode 0600) and set
+   `channel` and `user_id` in `[slack]`. Slack stays off until both ids are set. Choose `verbosity` = `quiet` | `normal` | `verbose`, or
+   list `events` (see `config.example.toml`).
+
+Only the member id you configure is obeyed (button clicks must also come from the configured channel). Someone else who clicks a button or
+runs `/factory` is ignored and listed on the Slack page, by id and display name only, so you can check your own id.
+
 ## Configuration
 
 Everything is in one TOML file (plus the optional `config.overrides.toml` the UI writes); `config.example.toml` documents every key. The parts you will touch first:
 `[github]` (repos, trigger label), `[[projects]]` (repos that work together, with a one-line role for each),
-`[routing.*]` (tier → model and effort), `[runner]` (engine, image, allowed hosts), `[classifier]`, `[telegram]`, `[ci]`.
+`[routing.*]` (tier → model and effort), `[runner]` (engine, image, allowed hosts), `[classifier]`, `[telegram]`, `[slack]`, `[ci]`.
 
 ## Limits and honest caveats
 

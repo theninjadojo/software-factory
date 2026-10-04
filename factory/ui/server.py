@@ -87,7 +87,7 @@ class App:
         return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
 
     def add_approval(self, repo: str, issue: int, action: str) -> None:
-        """Queue a person's decision for the orchestrator, exactly as the Telegram buttons do: it runs the ticket without asking the
+        """Queue a person's decision for the orchestrator, exactly as the Telegram and Slack buttons do: it runs the ticket without asking the
         classifier again. The only write the UI makes to the database; the caller has validated repo, issue and action."""
         db = sqlite3.connect(self.cfg().db_path, timeout=10)
         try:
@@ -109,7 +109,8 @@ class App:
     def overview(self) -> dict:
         cfg, db = self.cfg(), self.ro_db()
         summary = {"poll_seconds": cfg.poll_seconds, "live": not cfg.dry_run, "classifier": cfg.classifier_backend,
-                   "telegram": f"{cfg.telegram_verbosity}" if cfg.telegram_chat_id else "not set up", "ci": "on" if cfg.ci.enabled else "off"}
+                   "telegram": f"{cfg.telegram_verbosity}" if cfg.telegram_chat_id else "not set up",
+                   "slack": f"{cfg.slack_verbosity}" if cfg.slack_channel and cfg.slack_user_id else "not set up", "ci": "on" if cfg.ci.enabled else "off"}
         summary["max_parallel"] = cfg.runner.max_parallel
         summary["review"], summary["conflicts"] = cfg.review.enabled, cfg.conflicts.enabled
         summary["roles"], summary["workers"] = [r.name for r in cfg.roles], cfg.workers.enabled

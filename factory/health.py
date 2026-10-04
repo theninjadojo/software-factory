@@ -1,5 +1,5 @@
 """Health watchdog: checks the things that silently stop the factory (full disk, a hung or dead orchestrator, a dead container
-engine or proxy, an expired GitHub token, runs that keep failing) and alerts on Telegram when one changes state.
+engine or proxy, an expired GitHub token, runs that keep failing) and alerts on Telegram and/or Slack when one changes state.
 
 It is a separate process (factory-health.timer runs `python3 -m factory.health`), so it still reports when the orchestrator itself
 is hung or dead. Alerts fire when a check turns bad or worse, repeat every `repeat_hours` while it stays bad, and say so when it
@@ -236,7 +236,7 @@ def format_report(results: list[Result]) -> str:
 
 
 def run(cfg: Config, send=None, now: float | None = None) -> list[Result]:
-    """One pass: check, store the results for the UI/ctl, alert on changes. `send(text)` defaults to the configured Telegram bot."""
+    """One pass: check, store the results for the UI/ctl, alert on changes. `send(text)` defaults to the configured Telegram bot and/or Slack app."""
     now = now or time.time()
     results = run_checks(cfg)
     state_dir = Path(cfg.db_path).parent
@@ -253,12 +253,33 @@ def run(cfg: Config, send=None, now: float | None = None) -> list[Result]:
         text = "Factory health\n" + "\n".join(msgs)
         log.warning("%s", text)
         if send is None:
-            send = telegram_sender(cfg)
-        if send and event_enabled(cfg.telegram_verbosity, "health", cfg.telegram_events):
-            send(text)
+            senders = chat_senders(cfg)
+        else:
+            senders = [send] if event_enabled(cfg.telegram_verbosity, "health", cfg.telegram_events) else []
+        for one in senders:
+            one(text)
     if cfg.health.heartbeat_url and not any(r.level == "crit" for r in results):
         heartbeat(cfg.health.heartbeat_url)
     return results
+
+
+def chat_senders(cfg: Config) -> list:
+    """The send functions of each configured chat channel whose verbosity lets health alerts through."""
+    out = []
+    if event_enabled(cfg.telegram_verbosity, "health", cfg.telegram_events) and (t := telegram_sender(cfg)):
+        out.append(t)
+    if event_enabled(cfg.slack_verbosity, "health", cfg.slack_events) and (s := slack_sender(cfg)):
+        out.append(s)
+    return out
+
+
+def slack_sender(cfg: Config):
+    sb, sa = cfg.slack_bot_token_file, cfg.slack_app_token_file
+    if not (sb and sa and cfg.slack_channel and cfg.slack_user_id and Path(sb).is_file() and Path(sa).is_file()):
+        return None
+    from .slack import Slack
+    return Slack(Path(sb).read_text().strip(), Path(sa).read_text().strip(), cfg.slack_channel, cfg.slack_user_id,
+                 str(Path(cfg.db_path).parent), cfg.db_path, cfg.repos).send
 
 
 def telegram_sender(cfg: Config):

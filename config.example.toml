@@ -68,6 +68,16 @@ verbosity = "normal"   # quiet: needs-a-person, failures, rate limits | normal: 
 # ui_url = "https://factory.example.internal"   # optional: an "Open in UI" button on open-question messages
 # All events: needs_human failure rate_limit health pr_ready stage_done ci_result ci_fix recovery worker_offline started startup skipped info
 
+# Slack works alongside Telegram (either, both or neither). Socket Mode: no public URL needed. See README, "Slack".
+[slack]
+bot_token_file = "/srv/factory/secrets/slack_bot_token"   # xoxb-...  (scope chat:write, commands)
+app_token_file = "/srv/factory/secrets/slack_app_token"   # xapp-...  (scope connections:write)
+# channel = "C0123ABCDEF"   # the channel (or DM, D...) alerts go to; buttons and /factory are only obeyed there
+# user_id = "U0123ABCDEF"   # the only Slack user the factory obeys. Both must be set to turn Slack on
+verbosity = "normal"   # as for Telegram
+# events = ["needs_human", "failure", "pr_ready"]   # optional explicit list; overrides verbosity
+# ui_url = "https://factory.example.internal"   # optional: an "Open in UI" button on open-question messages
+
 [classifier]
 backend = "rules"   # "jev" classifies with TypeSafe Jev via OpenRouter; falls back to labels on any error
 key_file = "/srv/factory/secrets/openrouter_key"
