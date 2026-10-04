@@ -156,6 +156,9 @@
       }
       if (msg) { out.push(msg); bad["t:" + id] = 1; }
     });
+    var tp = terrainProblems(ids);
+    out = out.concat(tp.problems);
+    Object.keys(tp.bad).forEach(function (k) { bad[k] = 1; });
     var lp = loops();
     (meta.workers || []).forEach(function (w) {
       if (!lp[w]) out.push("No track loop for " + label(w) + ": lay track from the yard to it, from it to the Train station, and from the Train station back to the yard.");
@@ -273,6 +276,8 @@
     el("path", {d: "M " + G + " 0 L 0 0 0 " + G, "class": "fe-gridline"}, pat);
     el("rect", {width: W, height: H, fill: "url(#fe-grid)", "class": "fe-ground"}, svg);
     Object.keys(meta.nodes).forEach(function (id) { if (AREAS[id]) drawNode(id); });
+    var tn = doc.terrain || {};
+    el("g", {"class": "fe-terrain under"}, svg).innerHTML = FT.svg(tn, G, W, H, doc.walls, doc.trees, "under");
     Object.keys(meta.districts).forEach(function (name) {
       var d = dbox(name);
       if (!d) return;
@@ -282,12 +287,7 @@
       el("text", {x: d.x * G + 6, y: d.y * G + 14}, g, name);
       el("rect", {"class": "fe-resize", "data-resize": name, x: (d.x + d.w) * G - 10, y: (d.y + d.h) * G - 10, width: 10, height: 10}, g);
     });
-    doc.walls.forEach(function (w, i) { el("polyline", {points: poly(w), "class": "fp-wall fe-wall", "data-wall": i}, svg); });
-    doc.trees.forEach(function (t, i) {
-      var g = el("g", {"class": "fp-tree fe-tree", "data-tree": i}, svg);
-      el("circle", {"class": "fp-crown", cx: t[0] * G, cy: t[1] * G, r: 9}, g);
-      el("circle", {"class": "fp-leaf", cx: t[0] * G - 3, cy: t[1] * G - 3, r: 4}, g);
-    });
+    el("g", {"class": "fe-terrain over"}, svg).innerHTML = FT.svg(tn, G, W, H, doc.walls, doc.trees, "over");
     // the railway: a turnaround loop round each rail building, the track, and stubs into the junctions
     Object.keys(meta.nodes).forEach(function (id) {
       var b = box(id);
@@ -344,7 +344,9 @@
       el("rect", {"class": "fe-handle", x: mx - 6, y: my - 6, width: 12, height: 12, transform: "rotate(45 " + mx + " " + my + ")"}, svg);
     }
     railAnim(res);
-    if (drawing) el("polyline", {points: poly(drawing), "class": (tool === "wall" ? "fp-wall" : "fe-belt") + " drawing"}, svg);
+    el("g", {"class": "fe-terrain top"}, svg).innerHTML = FT.svg(tn, G, W, H, doc.walls, doc.trees, "top");
+    drawTerrainPreview();
+    if (drawing) el("polyline", {points: poly(drawing), "class": "fe-belt drawing"}, svg);
     if (link && link.pts) el("polyline", {points: poly(link.pts), "class": (link.rail ? "fe-track-draw" : "fe-belt drawing") + (link.to && !link.hop ? " bad" : "")}, svg);
     if (carryIn && carryIn.at) {
       var cm = meta.nodes[carryIn.id], cb = spot(carryIn.id, carryIn.at);
@@ -355,18 +357,211 @@
     if (focused) { var f = svg.querySelector('[data-node="' + focused + '"]'); if (f && document.activeElement !== f && svg.contains(document.activeElement || null)) f.focus(); }
   }
 
+  // ---- terrain (terrain.py; window.FT draws it): scenery, water, ground, fences, gates, roads, hazard zones, light
+  var TERRAIN = {tree: "item", pine: "item", bush: "item", rock: "item", pond: "item", lamp: "item", fog: "item", shade: "item", river: "river",
+                 "g-grass": "tile", "g-dirt": "tile", "g-sand": "tile", "g-concrete": "tile", "g-water": "tile",
+                 wall: "line", fence: "line", road: "line", gate: "gate", hazard: "rect"};
+  var paint = null;
+  function terrain() {
+    if (!doc.terrain) doc.terrain = {};
+    var t = doc.terrain;
+    ["items", "rivers", "fences", "gates", "roads", "hazards"].forEach(function (k) { if (!t[k]) t[k] = []; });
+    if (!t.tiles) t.tiles = {};
+    return t;
+  }
+  function tidyTerrain() {
+    // empty parts are left out, so a layout without terrain stays as it was
+    var t = doc.terrain;
+    if (!t) return;
+    Object.keys(t).forEach(function (k) { if ((Array.isArray(t[k]) && !t[k].length) || (k === "tiles" && !Object.keys(t[k]).length)) delete t[k]; });
+    if (!Object.keys(t).length) delete doc.terrain;
+  }
+  function pointPx(e) {
+    var m = svg.getScreenCTM();
+    if (!m) return [0, 0];
+    var pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    var q = pt.matrixTransform(m.inverse());
+    return [Math.max(0, Math.min(meta.w * G, Math.round(q.x))), Math.max(0, Math.min(meta.h * G, Math.round(q.y)))];
+  }
+  function tileSets() {
+    var t = terrain(), sets = {};
+    FT.GROUNDS.forEach(function (k) { sets[k] = {}; FT.cellsOf(t.tiles[k]).forEach(function (c) { sets[k][c[0] + "," + c[1]] = c; }); });
+    return sets;
+  }
+  function storeTiles(sets) {
+    var lists = {};
+    FT.GROUNDS.forEach(function (k) { lists[k] = Object.keys(sets[k]).map(function (key) { return sets[k][key]; }); });
+    terrain().tiles = FT.runs(lists);
+  }
+  function tileCount(sets) { return FT.GROUNDS.reduce(function (n, k) { return n + Object.keys(sets[k]).length; }, 0); }
+  function paintTile(sets, kind, c) {
+    var key = c[0] + "," + c[1];
+    if (c[0] < 0 || c[1] < 0 || (c[0] + 1) * FT.TILE > meta.w * G || (c[1] + 1) * FT.TILE > meta.h * G) return;
+    FT.GROUNDS.forEach(function (k) { delete sets[k][key]; });
+    if (kind && tileCount(sets) < 6000) sets[kind][key] = c;
+  }
+  function placeItem(kind, p) {
+    var t = terrain();
+    if (t.items.length >= 600) return null;
+    var it = [kind, p[0], p[1], FT.sizeFor(kind, Math.random()), Math.floor(Math.random() * 4294967295)];
+    t.items.push(it);
+    return it;
+  }
+  function segDist(p, a, b) {
+    var dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy, u = L2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)) : 0;
+    return Math.hypot(p[0] - (a[0] + u * dx), p[1] - (a[1] + u * dy));
+  }
+  function nearLine(p, pts, scale, r) {
+    for (var i = 1; i < pts.length; i++) if (segDist(p, [pts[i - 1][0] * scale, pts[i - 1][1] * scale], [pts[i][0] * scale, pts[i][1] * scale]) <= r) return true;
+    return false;
+  }
+  function eraseTerrainAt(p) {
+    // whatever terrain is under the pointer, topmost first: an item, a gate, a fence, a wall, a road, a river, a hazard zone, an
+    // older tree, then the ground tile
+    var t = terrain(), i;
+    for (i = t.items.length - 1; i >= 0; i--) {
+      var it = t.items[i], r = it[0] === "lamp" ? 14 : (it[0] === "fog" || it[0] === "shade") ? it[3] / 4 : Math.max(10, it[3] / 2);
+      if (Math.hypot(p[0] - it[1], p[1] - it[2]) <= r) { t.items.splice(i, 1); return true; }
+    }
+    for (i = t.gates.length - 1; i >= 0; i--) if (Math.hypot(p[0] - t.gates[i][0] * G, p[1] - t.gates[i][1] * G) <= 14) { t.gates.splice(i, 1); return true; }
+    for (i = t.fences.length - 1; i >= 0; i--) if (nearLine(p, t.fences[i], G, 8)) { t.fences.splice(i, 1); return true; }
+    for (i = doc.walls.length - 1; i >= 0; i--) if (nearLine(p, doc.walls[i], G, 9)) { doc.walls.splice(i, 1); return true; }
+    for (i = t.roads.length - 1; i >= 0; i--) if (nearLine(p, t.roads[i], G, 10)) { t.roads.splice(i, 1); return true; }
+    for (i = t.rivers.length - 1; i >= 0; i--) if (nearLine(p, t.rivers[i], 1, 16)) { t.rivers.splice(i, 1); return true; }
+    for (i = t.hazards.length - 1; i >= 0; i--) {
+      var h = t.hazards[i];
+      if (p[0] >= h[0] * G && p[0] <= (h[0] + h[2]) * G && p[1] >= h[1] * G && p[1] <= (h[1] + h[3]) * G) { t.hazards.splice(i, 1); return true; }
+    }
+    for (i = doc.trees.length - 1; i >= 0; i--) if (Math.hypot(p[0] - doc.trees[i][0] * G, p[1] - doc.trees[i][1] * G) <= 14) { doc.trees.splice(i, 1); return true; }
+    var sets = tileSets(), c = [Math.floor(p[0] / FT.TILE), Math.floor(p[1] / FT.TILE)], key = c[0] + "," + c[1];
+    if (FT.GROUNDS.some(function (k) { return sets[k][key]; })) { paintTile(sets, null, c); storeTiles(sets); return true; }
+    return false;
+  }
+  function straight(a, b) {
+    // a wall, fence or road locks to one straight run across or down the grid
+    return Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? [b[0], a[1]] : [a[0], b[1]];
+  }
+  function startTerrain(kind, e) {
+    var p = point(e), px = pointPx(e), type = TERRAIN[kind];
+    paint = {kind: kind, type: type, id: e.pointerId, before: JSON.stringify(doc), start: p, end: p, last: px, pts: [px]};
+    if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
+    if (type === "item") { var it = placeItem(kind, px); paint.lastSize = it ? it[3] : 30; }
+    else if (type === "tile") { paint.sets = tileSets(); paint.tile = [Math.floor(px[0] / FT.TILE), Math.floor(px[1] / FT.TILE)]; paintTile(paint.sets, kind.slice(2), paint.tile); storeTiles(paint.sets); }
+    else if (type === "gate") {
+      var t = terrain(), way = "h";
+      t.fences.forEach(function (f) { for (var i = 1; i < f.length; i++) if (f[i][0] === f[i - 1][0] && f[i][0] === p[0] && Math.min(f[i][1], f[i - 1][1]) <= p[1] && p[1] <= Math.max(f[i][1], f[i - 1][1])) way = "v"; });
+      if (t.gates.length < 40) t.gates.push([p[0], p[1], way]);
+    }
+    else if (kind === "erase-terrain") eraseTerrainAt(px);
+    draw();
+  }
+  function moveTerrain(e) {
+    var p = point(e), px = pointPx(e);
+    if (paint.type === "item") {
+      if (Math.hypot(px[0] - paint.last[0], px[1] - paint.last[1]) >= Math.max(24, paint.lastSize * 0.9)) { var it = placeItem(paint.kind, px); if (it) paint.lastSize = it[3]; paint.last = px; }
+    } else if (paint.type === "river") {
+      if (Math.hypot(px[0] - paint.last[0], px[1] - paint.last[1]) >= 14 && paint.pts.length < 160) { paint.pts.push(px); paint.last = px; }
+    } else if (paint.type === "tile") {
+      var c = [Math.floor(px[0] / FT.TILE), Math.floor(px[1] / FT.TILE)], a = paint.tile, n = Math.max(Math.abs(c[0] - a[0]), Math.abs(c[1] - a[1]));
+      for (var k = 1; k <= n; k++) paintTile(paint.sets, paint.kind.slice(2), [Math.round(a[0] + (c[0] - a[0]) * k / n), Math.round(a[1] + (c[1] - a[1]) * k / n)]);
+      paint.tile = c;
+      storeTiles(paint.sets);
+    } else if (paint.type === "line") paint.end = straight(paint.start, p);
+    else if (paint.type === "rect") paint.end = p;
+    else if (paint.kind === "erase-terrain") eraseTerrainAt(px);
+    draw();
+  }
+  function endTerrain() {
+    var t = terrain(), a = paint.start, b = paint.end;
+    if (paint.type === "river" && paint.pts.length >= 2 && t.rivers.length < 12) t.rivers.push(paint.pts);
+    if (paint.type === "line" && (a[0] !== b[0] || a[1] !== b[1])) (paint.kind === "wall" ? doc.walls : paint.kind === "fence" ? t.fences : t.roads).push([a.slice(), b.slice()]);
+    if (paint.type === "rect" && t.hazards.length < 40) {
+      var x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]);
+      t.hazards.push([x, y, Math.max(1, Math.abs(b[0] - a[0])), Math.max(1, Math.abs(b[1] - a[1]))]);
+    }
+    tidyTerrain();
+    if (JSON.stringify(doc) !== paint.before) { past.push(paint.before); future = []; }
+    paint = null;
+    draw();
+  }
+  function drawTerrainPreview() {
+    if (!paint) return;
+    var a = paint.start, b = paint.end;
+    if (paint.type === "river" && paint.pts.length >= 2) el("g", {"class": "fe-preview"}, svg).innerHTML = FT.svg({rivers: [paint.pts]}, G, meta.w * G, meta.h * G, [], [], "under");
+    if (paint.type === "line") {
+      var d = "M " + a[0] * G + " " + a[1] * G + " L " + b[0] * G + " " + b[1] * G;
+      el("path", {d: d, "class": (paint.kind === "wall" ? "fp-wall" : paint.kind === "fence" ? "fc-rail" : "rd-road") + " fe-preview"}, svg);
+    }
+    if (paint.type === "rect") {
+      var x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]);
+      el("rect", {"class": "hz-zone fe-preview", x: x * G, y: y * G, width: Math.max(1, Math.abs(b[0] - a[0])) * G, height: Math.max(1, Math.abs(b[1] - a[1])) * G}, svg);
+    }
+  }
+  function terrainCounts() {
+    var t = doc.terrain || {}, objects = (t.items || []).length + (t.rivers || []).length + (t.fences || []).length + (t.roads || []).length +
+      (t.gates || []).length + (t.hazards || []).length + doc.walls.length + doc.trees.length, tiles = 0;
+    Object.keys(t.tiles || {}).forEach(function (k) { t.tiles[k].forEach(function (r) { tiles += r[2]; }); });
+    return objects + " objects, " + tiles + " tiles";
+  }
+  function terrainProblems(ids) {
+    // the same rules the server checks (floorplan.terrain_rules)
+    var t = doc.terrain || {}, out = [], bad = {};
+    var ponds = (t.items || []).filter(function (it) { return it[0] === "pond"; }), rivers = t.rivers || [], water = {};
+    FT.cellsOf((t.tiles || {}).water).forEach(function (c) { water[c[0] + "," + c[1]] = 1; });
+    var wet = function (p) {
+      return ponds.some(function (it) { return Math.hypot(p[0] - it[1], p[1] - it[2]) <= it[3] / 2; }) || rivers.some(function (r) { return nearLine(p, r, 1, 13); }) ||
+        !!water[Math.floor(p[0] / FT.TILE) + "," + Math.floor(p[1] / FT.TILE)];
+    };
+    var walls = {}, fences = {};
+    doc.walls.forEach(function (w) { cells(w).forEach(function (c) { walls[c[0] + "," + c[1]] = 1; }); });
+    (t.fences || []).forEach(function (w) { cells(w).forEach(function (c) { fences[c[0] + "," + c[1]] = 1; }); });
+    (t.gates || []).forEach(function (g) { delete fences[g[0] + "," + g[1]]; delete fences[(g[2] === "h" ? g[0] + 1 : g[0]) + "," + (g[2] === "h" ? g[1] : g[1] + 1)]; });
+    var unders = doc.pieces.filter(function (q) { return q.kind === "underground"; });
+    var lines = meta.hops.filter(function (h) { return doc.belts[h[0] + ">" + h[1]]; }).map(function (h) { return ["belt", h[0] + ">" + h[1], doc.belts[h[0] + ">" + h[1]]]; })
+      .concat(Object.keys(doc.tracks).map(function (k) { return ["track", k, doc.tracks[k]]; }));
+    lines.forEach(function (l) {
+      var ab = l[1].split(">"), name = "The " + l[0] + " from " + label(ab[0]) + " to " + label(ab[1]), cs = cells(l[2]);
+      if (cs.some(function (c) { return wet([c[0] * G, c[1] * G]); })) { out.push(name + " crosses water: route it round, there is no bridge yet."); bad[(l[0] === "track" ? "t:" : "") + l[1]] = 1; }
+      var hit = cs.filter(function (c) { return walls[c[0] + "," + c[1]]; });
+      if (hit.length && l[0] === "track") { out.push(name + " runs into a wall."); bad["t:" + l[1]] = 1; }
+      else if (hit.length) {
+        var hidden = {};
+        unders.forEach(function (u) { if (sameRun(l[2], u.from, u.to)) cells([u.from, u.to]).slice(1, -1).forEach(function (c) { hidden[c[0] + "," + c[1]] = 1; }); });
+        if (hit.some(function (c) { return !hidden[c[0] + "," + c[1]]; })) { out.push(name + " crosses a wall: take it under with an underground belt."); bad[l[1]] = 1; }
+      }
+      if (l[0] === "track" && cs.some(function (c) { return fences[c[0] + "," + c[1]]; })) { out.push(name + " runs into a fence: put a gate where it crosses."); bad["t:" + l[1]] = 1; }
+    });
+    (t.hazards || []).forEach(function (h) {
+      ids.forEach(function (id) {
+        var b = !FREE[id] && box(id);
+        if (b && b[0] < h[0] + h[2] && h[0] < b[0] + b[2] && b[1] < h[1] + h[3] && h[1] < b[1] + b[3]) out.push(label(id) + " stands in a hazard zone.");
+      });
+    });
+    return {problems: out, bad: bad};
+  }
+
   // ---- the status line over the canvas: what the tool does, what is selected, why something was refused
   var TOOL_SAYS = {
     move: "Move: drag a building to move it, or a belt or track to slide it. Select a building and drag a corner to resize it. Drag the ground to pan.",
     belt: "Draw belt: drag from the building a ticket leaves onto the one it goes to.",
     rail: "Draw track: the yard to a worker, the worker to the Train station, the Train station back to the yard. Run tracks into a junction to join them; its signals take turns.",
     erase: "Erase: click a building to put it back in the tray, or a belt, track, piece, wall or tree to remove it.",
-    wall: "Wall: click the corners of a wall; click the last point again (or press Enter) to finish it.", tree: "Tree: click to plant one.",
+    wall: "Wall: drag a straight run on the grid. Belts cross a wall only with an underground belt; track never does.",
+    tree: "Tree: click or drag to plant round trees; each rolls its own size and green.", pine: "Pine: click or drag to plant pines.",
+    bush: "Bush: click or drag to plant bushes.", rock: "Rock: click or drag to place rocks.",
+    pond: "Pond: click to dig one; ducks move in. Belts and track cannot cross water (there is no bridge yet).",
+    river: "River: drag where it runs; it widens and narrows as it goes. Belts and track cannot cross it.",
+    "g-grass": "Grass: drag to paint ground tiles.", "g-dirt": "Dirt: drag to paint ground tiles (it suits roads).", "g-sand": "Sand: drag to paint ground tiles.",
+    "g-concrete": "Concrete: drag to paint ground tiles (it suits the factory pad).", "g-water": "Water: drag to paint water; it rounds into one body with a sandy shore, and ducks move in.",
+    fence: "Fence: drag a straight run. Crates pass it; trains need a gate.", gate: "Gate: click a gap in a fence; it swings open and shut.",
+    road: "Road: drag a straight run on the grid.", hazard: "Hazard zone: drag a rectangle; nothing may be built in it.",
+    lamp: "Lamp: click to place a warm light.", fog: "Fog: click to let a mist drift.", shade: "Shade: click to put a dark patch under trees or in a corner.",
     underground: "Underground: click where the belt goes under, then where it comes up.",
     splitter: "Splitter: click a belt to place one.", merger: "Merger: click a belt to place one.", sideload: "Side-load: click a belt to place one."};
   function drawStatus() {
     if (!msg) return;
-    var text = note || TOOL_SAYS[tool] || "", rm = "";
+    var text = note || ((TOOL_SAYS[tool] || "") + (TERRAIN[tool] || tool === "erase" ? " " + terrainCounts() + "." : "")), rm = "";
     if (!note && selBelt && doc.belts[selBelt]) {
       var ab = selBelt.split(">");
       text = "Belt " + label(ab[0]) + " → " + label(ab[1]) + ". Drag it sideways to slide it; it stays joined to both buildings.";
@@ -846,8 +1041,7 @@
     return [Math.max(0, Math.min(meta.w, Math.round(q.x / G))), Math.max(0, Math.min(meta.h, Math.round(q.y / G)))];
   }
   function finish() {
-    if (drawing && drawing.length >= 2 && tool === "wall") { remember(); doc.walls.push(simplify(drawing)); }
-    else if (drawing && drawing.length >= 2 && hopSel.value) { remember(); doc.belts[hopSel.value] = simplify(drawing); }
+    if (drawing && drawing.length >= 2 && hopSel.value) { remember(); doc.belts[hopSel.value] = simplify(drawing); }
     drawing = null;
     draw();
   }
@@ -913,8 +1107,9 @@
       if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
       return;
     }
-    if (tool === "belt" || tool === "wall") {
-      if (tool === "belt" && !hopSel.value) return;
+    if (TERRAIN[tool]) return startTerrain(tool, e);
+    if (tool === "belt") {
+      if (!hopSel.value) return;
       if (!drawing) { drawing = [p]; }
       else {
         var l = drawing[drawing.length - 1];
@@ -925,22 +1120,11 @@
       return draw();
     }
     if (tool === "erase") {
-      var wall = t.closest && t.closest("[data-wall]"), tree = t.closest && t.closest("[data-tree]");
-      if (!piece && !wall && !tree && trk) { remember(); delete doc.tracks[trk.getAttribute("data-track")]; return draw(); }
-      if (!piece && !wall && !tree && hop) { remember(); delete doc.belts[hop.getAttribute("data-hop")]; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); return draw(); }
-      if (!piece && !wall && !tree && node) return erase(node.getAttribute("data-node"));
-      if (!piece && !wall && !tree) return;
-      remember();
-      if (piece) doc.pieces.splice(Number(piece.getAttribute("data-piece")), 1);
-      else if (wall) doc.walls.splice(Number(wall.getAttribute("data-wall")), 1);
-      else doc.trees.splice(Number(tree.getAttribute("data-tree")), 1);
-      return draw();
-    }
-    if (tool === "tree") {
-      if (doc.trees.some(function (q) { return q[0] === p[0] && q[1] === p[1]; })) return;
-      remember();
-      doc.trees.push(p);
-      return draw();
+      if (piece) { remember(); doc.pieces.splice(Number(piece.getAttribute("data-piece")), 1); return draw(); }
+      if (trk) { remember(); delete doc.tracks[trk.getAttribute("data-track")]; return draw(); }
+      if (hop) { remember(); delete doc.belts[hop.getAttribute("data-hop")]; doc.pieces = doc.pieces.filter(function (q) { return pieceOk(q, doc.belts); }); return draw(); }
+      if (node && !AREAS[node.getAttribute("data-node")]) return erase(node.getAttribute("data-node"));
+      return startTerrain("erase-terrain", e);                          // terrain under the pointer; drag to erase more
     }
     if (tool === "underground") {
       if (!ugFrom) { ugFrom = p; return draw(); }
@@ -958,6 +1142,7 @@
       canvas.scrollTop = pan.t - (e.clientY - pan.y);
       return;
     }
+    if (paint && e.pointerId === paint.id) return moveTerrain(e);
     if (slide && e.pointerId === slide.id) {
       var q = point(e), r = slide.from[slide.run], s2 = slide.from[slide.run + 1], d = r[1] === s2[1] ? q[1] - slide.start[1] : q[0] - slide.start[0];
       var lines = slide.track ? doc.tracks : doc.belts;
@@ -980,6 +1165,7 @@
   });
   function drop(e) {
     if (pan && e.pointerId === pan.id) { pan = null; svg.removeAttribute("data-panning"); return; }
+    if (paint && e.pointerId === paint.id) return endTerrain();
     if (slide && e.pointerId === slide.id) {
       if (JSON.stringify(doc) !== slide.before) { past.push(slide.before); future = []; }
       slide = null;

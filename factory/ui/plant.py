@@ -24,7 +24,7 @@ station it is for. Animations start at the server clock's phase of their cycle, 
 All text is escaped; no style attributes."""
 import math
 
-from . import buildings, yard
+from . import buildings, terrain, yard
 from .views import esc
 from .yard import Path, _f, belt, underground, splitter, pipe, crate_trip, _still_crate, _station
 
@@ -34,6 +34,7 @@ BOT = 500                                 # the quality and shipping row
 BUILD = (860, 330)
 SEA_W, LAND_W = 300, 240
 FX = LAND_W + SEA_W                       # where the plant starts on the whole floor
+G_ = 20                                    # a saved layout's grid cell (floorplan.G)
 INTAKE = ("poll", "classify", "route")
 
 
@@ -1240,10 +1241,16 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
             return ""
         x, y, w, h = bx[nid]
         return f'<rect class="{cls}" x="{_f(x)}" y="{_f(y)}" width="{_f(w)}" height="{_f(h)}" rx="{rx}"/>'
+    tn = C.get("terrain") or {}
     loose = [p for hb in hops.values() for p in hb["pts"]] + [p for w in C.get("walls") or [] for p in w] + list(C.get("trees") or [])
+    loose += [(it[1] + it[3] / 2, it[2] + it[3] / 2) for it in tn.get("items") or []] + [tuple(p) for r in tn.get("rivers") or [] for p in r]
+    loose += [((c + n) * terrain.TILE, (r + 1) * terrain.TILE) for rs in (tn.get("tiles") or {}).values() for c, r, n in rs]
+    loose += [(p[0] * G_, p[1] * G_) for key in ("fences", "roads") for ln in tn.get(key) or [] for p in ln]
+    loose += [((x + w) * G_, (y + h) * G_) for x, y, w, h in tn.get("hazards") or []]
     right = max([x + w for x, _, w, _ in bx.values()] + [p[0] for p in loose])
     bottom = max([y + h for _, y, _, h in bx.values()] + [p[1] for p in loose])
     width, height = right + 40, bottom + 40
+    land = lambda layer: terrain.svg(tn, G_, width, height, C.get("wall_cells") or [], C.get("tree_cells") or [], layer)
     # the sea's dock and crane at the harbor's height (the harbor stands where a person put it; its belt takes the tickets on)
     trips = extras.get("schedules") or []
     dock = bx.get("harbor") or bx["receiving"]
@@ -1259,11 +1266,12 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
                      for nid in at if nid.startswith("notify:"))
     # the ground: the mainland and the sea, the districts, the buildings that are not stations
     back = (ground("mainland", "ap-land") + f'<g aria-hidden="true" transform="{tr("mainland", 0, 0)}">{mainland(1320)}</g>'
-            + water + f'<g transform="{tr("sea", 0, 0)}">{sea(trips, 1320, dock_y, water=False, coast=coast)}</g>' + _plan_districts(C.get("districts") or {})
+            + water + f'<g transform="{tr("sea", 0, 0)}">{sea(trips, 1320, dock_y, water=False, coast=coast)}</g>'
+            + f'<g aria-hidden="true">{land("under")}</g>' + _plan_districts(C.get("districts") or {})
             + ground("airfield", "ap-field", 6) + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
             + f'<text class="fm-lab" x="{_f(at["sources"][0])}" y="{_f(at["sources"][1] - 8)}">SOURCES</text>'
             + f'<g transform="{tr("sources", *SRC)}">{github()}</g><g transform="{tr("receiving", 12, 200)}">{receiving(len(queued))}</g>'
-            + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>' + harbor_svg + radios + scenery(C.get("walls") or [], C.get("trees") or []))
+            + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>' + harbor_svg + radios + f'<g aria-hidden="true">{land("over")}</g>')
     # the belts, cut where they go under, and the pieces on them
     belts, hoods = [], set()
     for hid, hb in hops.items():
@@ -1374,6 +1382,7 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
              + "".join(node(st(sid), lambda x, y: _station(sid, label, fl[sid], word(sid, fl[sid]), href(sid), (x, y, True), sid))
                        for sid, label, _ in order if st(sid) in at)
              + f'<g aria-hidden="true">{"".join(arms.values())}</g>'
-             + f'<g aria-hidden="true">{drones(now, poll.get("every"), poll.get("last"), pad("sources", PAD, SRC), pad("receiving", RECV_PAD, (12, 200)))}</g>')
+             + f'<g aria-hidden="true">{drones(now, poll.get("every"), poll.get("last"), pad("sources", PAD, SRC), pad("receiving", RECV_PAD, (12, 200)))}</g>'
+             + f'<g aria-hidden="true">{land("top")}</g>')
     return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor">'
-            f'<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>{plant}<g aria-hidden="true">{flights}</g></svg>')
+            f'{terrain.defs()}<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>{plant}<g aria-hidden="true">{flights}</g></svg>')

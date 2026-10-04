@@ -887,3 +887,27 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 .ft-handling dl { margin:0; } .ft-row { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 16px; padding:10px 0; border-bottom:1px solid var(--line); }
 .ft-row:last-child { border-bottom:0; } .ft-row dt { color:var(--muted); font-size:14px; } .ft-row dd { margin:0; text-align:right; overflow-wrap:anywhere; }
 @media (max-width:700px) { .side.on-home { flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; } .side.on-home a { flex:none; } .ft-cell { flex-basis:50%; border-bottom:1px solid var(--line); } .ft-cell:nth-child(2n) { border-right:0; } .ft-search { flex-basis:100%; } .ft-row dd { text-align:left; } }
+
+/* terrain (terrain.py, static/terrain.js): scenery, water, ground, fences, roads, hazard zones, light, birds and ducks */
+.tr-shadow { fill:rgba(0,0,0,.35); } .tr-berry { fill:#e05a4f; }
+.rk-main { fill:#59636b; stroke:#2c333a; stroke-width:1.5; } .rk-lit { fill:none; stroke:#8a949c; stroke-width:1.5; stroke-linecap:round; } .rk-pebble { fill:#6b757d; stroke:#2c333a; }
+.wt-sand { fill:#7c6c43; } .wt-water { fill:#102838; stroke:#2f6f8f; stroke-width:1.5; } .wt-ripple { fill:none; stroke:#3f7f9f; stroke-width:1.4; stroke-linecap:round; opacity:.8; }
+.wt-bank { fill:none; stroke:#7c6c43; stroke-width:42; stroke-linecap:round; stroke-linejoin:round; }
+.wt-shimmer { fill:none; stroke:#5fa8c4; stroke-width:1.5; stroke-dasharray:6 10; opacity:.6; animation:wt-shim 3s linear infinite; } @keyframes wt-shim { to { stroke-dashoffset:-32; } }
+.gd-grass { fill:url(#tl-grass); } .gd-dirt { fill:url(#tl-dirt); } .gd-sand { fill:url(#tl-sand); } .gd-concrete { fill:url(#tl-concrete); }
+.fc-rail { fill:none; stroke:#a77f45; stroke-width:2.2; } .fc-post { fill:#c4955a; stroke:#5a4228; } .fc-leaf { stroke:#c4955a; stroke-width:3; stroke-linecap:round; }
+.rd-road { fill:none; stroke:#2f363c; stroke-width:18; stroke-linejoin:round; } .rd-line { fill:none; stroke:#9aa3a9; stroke-width:2; stroke-dasharray:9 9; }
+.hz-zone { fill:url(#tl-hazard); stroke:#e0b33a; stroke-width:2; stroke-dasharray:6 4; }
+.lt-pool { fill:url(#lg-lamp); animation:lt-flicker 3.2s ease-in-out infinite; } .lt-post { fill:#fff3c4; stroke:#3b3320; }
+@keyframes lt-flicker { 0%, 100% { opacity:1; } 45% { opacity:.78; } 50% { opacity:.95; } 70% { opacity:.86; } }
+.lt-fog { fill:url(#lg-fog); animation:lt-drift 14s ease-in-out infinite alternate; } @keyframes lt-drift { to { transform:translateX(40px); } }
+.lt-shade { fill:url(#lg-shade); }
+.dk-body { fill:#9aa3a9; } .dk-head { fill:#2f7f5a; } .dk-bill { fill:#f2a93b; } .dk-hen { fill:#8a6f4f; } .dk-henhead { fill:#6f5a40; }
+.dk-ripple { fill:none; stroke:#7fb3c8; stroke-width:1.2; }
+.bd-wing { fill:#7a5a3a; } .bd-body { fill:#d0703a; } .bd-head { fill:#9aa3a9; } .bd-bill { fill:#f2a93b; } .bd-tail { fill:#6a4a2a; } .bd-shadow ellipse { fill:rgba(0,0,0,.35); }
+.tr-tree, .tr-pine, .tr-bush, .tr-rock, .tr-pond, .tr-river, .tr-ground, .lt-lamp, .lt-fog, .lt-shade, .fc-gate, .dk-duck, .dk-ripple, .bd-bird, .bd-shadow-wrap, .hz-zone, .rd-road, .rd-line, .fc-rail, .fc-post { pointer-events:none; }
+@media (prefers-reduced-motion:reduce) { .wt-shimmer, .lt-pool, .lt-fog { animation:none !important; } }
+.fe-terrain-tools .fe-group { display:inline-flex; flex-wrap:wrap; align-items:center; gap:.3rem; margin-right:.6rem; } .fe-terrain-tools .lab { margin-right:.1rem; }
+.sw { display:inline-block; width:10px; height:10px; margin-right:6px; border:1px solid #59636b; vertical-align:-1px; }
+.sw-grass { background:#1d3624; } .sw-dirt { background:#3a2a1b; } .sw-sand { background:#5b5132; } .sw-concrete { background:#30363b; } .sw-water { background:#102838; }
+.fe-terrain, .fe-preview { pointer-events:none; } .fe-preview { opacity:.8; }

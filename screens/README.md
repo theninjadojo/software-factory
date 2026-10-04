@@ -46,6 +46,21 @@ path = "screens/pages/floor-editor-belt.html"
 viewports = ["desktop"]
 journey = "floor"
 step = 4
+
+[[screens.pages]]
+repo = "theninjadojo/software-factory"
+name = "floor-editor-terrain"
+path = "screens/pages/floor-editor-terrain.html"
+viewports = ["desktop"]
+journey = "floor"
+step = 5
+
+[[screens.pages]]
+repo = "theninjadojo/software-factory"
+name = "factory-terrain"
+path = "screens/pages/factory-terrain.html"
+journey = "floor"
+step = 6
 ```
 
 The viewports are the defaults (desktop 1440 by 900, mobile 390 by 844). The design canvas itself is an interactive prototype with a

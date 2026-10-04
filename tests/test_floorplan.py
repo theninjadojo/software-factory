@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from factory.ui import board, floorplan as F, plant, server
+from factory.ui import board, floorplan as F, plant, server, terrain
 from test_ui_admin import AdminCase
 from test_yard import ROLES
 
@@ -296,7 +296,7 @@ class Drawn(unittest.TestCase):
         x, y = d["nodes"]["power:claude-code"]["x"] * F.G, d["nodes"]["power:claude-code"]["y"] * F.G
         self.assertIn(f'transform="translate({x} {y}) scale(1.2) translate(0 0)"', svg)
         self.assertIn('<path class="fp-wall" d="M 3000 200 L 3400 200 L 3400 600"/>', svg)
-        self.assertIn('<circle class="fp-crown" cx="3000" cy="800" r="9"/>', svg)
+        self.assertIn(terrain.tree(3000, 800, 36, terrain.seed_of(150, 40)), svg)            # an older single tree, in the new tree's look
         self.assertGreaterEqual(float(re.search(r'<svg class="fm" viewBox="0 0 ([\d.]+)', svg).group(1)), 3400)
         self.assertNotIn("style=", svg)
 
@@ -376,6 +376,19 @@ class Editing(AdminCase):
         self.assertIn("javascript", h["Content-Type"])
         self.assertNotIn(".style", js)                                   # attributes only: the CSP forbids inline styles
         self.assertIn("Edit layout", self.req("GET", "/", cookie=cookie)[2])
+
+    def test_a_layout_with_a_big_terrain_saves_past_the_usual_body_limit(self):
+        cookie, csrf = self.session()
+        doc, rev, _ = self.doc(cookie)
+        doc["terrain"] = {"items": [[["tree", "pine", "bush", "rock"][k % 4], 40 + (k * 37) % 3900, 2000 + (k * 53) % 350,
+                                     40 if k % 4 < 2 else 24 if k % 4 == 2 else 30, 1000000 + k] for k in range(600)]}
+        body = json.dumps(doc)
+        self.assertGreater(len(body), 20000)
+        s, h, _ = self.post(cookie, csrf, "/floor/layout/save", {"plan": body, "rev": rev})
+        self.assertEqual((s, h.get("Location")), (303, "/?ok=layout_saved"))
+        self.assertEqual(len(json.loads((self.state / F.FILE).read_text())["terrain"]["items"]), 600)
+        s, _, _ = self.post(cookie, csrf, "/floor/layout/save", {"plan": "x" * (300 * 1024), "rev": F.rev(self.state)})
+        self.assertEqual(s, 413)                                         # the layout's own limit, still bounded
 
     def test_save_reload_and_reset(self):
         cookie, csrf = self.session()
@@ -532,3 +545,140 @@ class Railway(unittest.TestCase):
             self.assertTrue(all(motion[w][-1] == (T, marks[w]["len"]) for w in run))
         self.assertIn('values="0.15;1;0.15"', plant.lamps([5.0], 20.0, "0s"))     # green for a moment as its train goes by
         self.assertIn('class="g off"', plant.lamps([], 20.0, "0s"))
+
+
+def scene(ctx=CTX):
+    """The default layout with a patch of every kind of terrain, away from the buildings and belts."""
+    d = json.loads(json.dumps(F.default_plan(ctx)))
+    d["terrain"] = {"items": [["tree", 600, 2200, 60, 7], ["pine", 700, 2200, 50, 3], ["bush", 800, 2200, 24, 9], ["rock", 900, 2200, 40, 11],
+                              ["pond", 1100, 2250, 100, 5], ["lamp", 1300, 2200, 130, 1], ["fog", 1500, 2200, 140, 2], ["shade", 1700, 2200, 90, 3]],
+                    "rivers": [[[2000, 2150], [2060, 2180], [2120, 2160], [2180, 2200], [2240, 2190]]],
+                    "tiles": terrain.runs({"grass": {(10, 57), (11, 57), (12, 57)}, "water": {(20, 57), (21, 57), (22, 57), (20, 58)}}),
+                    "fences": [[[120, 112], [130, 112]]], "gates": [[131, 112, "h"]], "roads": [[[120, 116], [140, 116]]], "hazards": [[150, 110, 4, 3]]}
+    return d
+
+
+class Terrain(unittest.TestCase):
+    def test_a_scene_of_every_kind_is_valid_kept_and_drawn(self):
+        d = scene()
+        self.assertEqual(F.validate(d, CTX), [])
+        self.assertEqual(F.canonical(d)["terrain"], d["terrain"])
+        m = F.merge(d, CTX)
+        self.assertEqual(m["terrain"], d["terrain"])
+        svg = Drawn().draw(d)
+        for cls in ("tr-tree", "tr-pine", "tr-bush", "tr-rock", "tr-pond", "tr-river", "gd-grass", "fc-rail", "fc-gate", "rd-road", "hz-zone",
+                    "lt-pool", "lt-fog", "lt-shade", "dk-duck", "bd-bird", 'id="tl-grass"'):
+            self.assertIn(cls, svg, cls)
+        self.assertIn(terrain.svg(d["terrain"], F.G, 0, 0, d["walls"], d["trees"], "under")[:400], svg)
+        self.assertNotIn("style=", svg)
+
+    def test_the_terrain_shape_is_checked(self):
+        good = scene()
+
+        def bad(change, needle):
+            d = json.loads(json.dumps(good))
+            change(d["terrain"])
+            errs = F.validate(d, CTX)
+            self.assertTrue(any(needle in e for e in errs), (needle, errs))
+        bad(lambda t: t.update(lava=[]), "Unknown terrain")
+        bad(lambda t: t["items"].append(["castle", 1, 1, 40, 1]), "A terrain item is")
+        bad(lambda t: t["items"].append(["tree", 1, 1, 400, 1]), "its size in range")
+        bad(lambda t: t["items"].append(["tree", 99999, 1, 40, 1]), "inside the floor")
+        bad(lambda t: t.update(items=[["rock", 1, 1, 30, 1]] * (terrain.LIMITS["items"] + 1)), "at most 600")
+        bad(lambda t: t["rivers"].append([[1, 1]]), "A river is 2 to")
+        bad(lambda t: t["tiles"].update(lava=[[0, 0, 1]]), "grass, dirt, sand, concrete or water")
+        bad(lambda t: t["tiles"]["grass"].append([20, 57, 1]), "only one kind")             # already water
+        bad(lambda t: t["tiles"]["grass"].append([0, 0, 999]), "inside the floor")
+        bad(lambda t: t["fences"].append([[1, 1], [2, 2]]), "straight across or down")
+        bad(lambda t: t["gates"].append([1, 1, "x"]), "A gate is")
+        bad(lambda t: t["hazards"].append([199, 1, 5, 5]), "A hazard zone is")
+
+    def test_belts_and_track_do_not_cross_water(self):
+        d = scene()
+        a, b = d["belts"]["receiving>station:poll"][0], d["belts"]["receiving>station:poll"][-1]
+        mid = d["belts"]["receiving>station:poll"][1]
+        d["terrain"]["items"].append(["pond", mid[0] * F.G, mid[1] * F.G, 80, 4])
+        self.assertTrue(any("The belt from Receiving to Poll crosses water" in e for e in F.validate(d, CTX)))
+        d = scene()
+        p = d["belts"]["receiving>station:poll"][0]
+        d["terrain"]["tiles"] = terrain.runs({"water": {(p[0] * F.G // terrain.TILE, p[1] * F.G // terrain.TILE)}})
+        self.assertTrue(any("crosses water" in e for e in F.validate(d, CTX)))
+        d = scene()
+        q = d["belts"]["receiving>station:poll"][-1]
+        d["terrain"]["rivers"].append([[q[0] * F.G - 60, q[1] * F.G], [q[0] * F.G + 60, q[1] * F.G]])
+        self.assertTrue(any("crosses water" in e for e in F.validate(d, CTX)))
+        d = scene(RAIL)
+        tid, pts = next(iter(d["tracks"].items()))
+        d["terrain"]["items"].append(["pond", pts[0][0] * F.G, pts[0][1] * F.G, 70, 4])
+        self.assertTrue(any("The track from" in e and "crosses water" in e for e in F.validate(d, RAIL)))
+
+    def test_a_belt_crosses_a_wall_only_underground_and_track_never(self):
+        d = scene()
+        pts = d["belts"]["station:poll>station:classify"]
+        (x1, y1), (x2, y2) = pts[0], pts[-1]
+        assert y1 == y2 and x2 - x1 >= 3, pts                           # a straight run along the intake row
+        wx = x1 + 1
+        d["walls"] = [[[wx, y1 - 1], [wx, y1 + 1]]]
+        self.assertTrue(any("crosses a wall: take it under with an underground belt" in e for e in F.validate(d, CTX)))
+        d["pieces"].append({"kind": "underground", "from": [x1, y1], "to": [x1 + 2, y1]})
+        self.assertFalse(any("crosses a wall" in e for e in F.validate(d, CTX)), F.validate(d, CTX))
+        r = scene(RAIL)
+        tid, tp = next((k, v) for k, v in r["tracks"].items() if k == "depot>yard")
+        (a, b) = tp[0], tp[1]
+        c = ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2)
+        r["walls"] = [[[c[0], c[1] - 1], [c[0], c[1] + 1]]] if a[1] == b[1] else [[[c[0] - 1, c[1]], [c[0] + 1, c[1]]]]
+        self.assertTrue(any("The track from The Train station to The Verify yard runs into a wall" in e for e in F.validate(r, RAIL)))
+
+    def test_track_passes_a_fence_only_at_a_gate(self):
+        r = scene(RAIL)
+        tp = r["tracks"]["depot>yard"]
+        a, b = tp[0], tp[1]
+        c = ((a[0] + b[0]) // 2, (a[1] + b[1]) // 2)
+        across = a[1] == b[1]
+        r["terrain"]["fences"] = [[[c[0], c[1] - 2], [c[0], c[1] + 2]]] if across else [[[c[0] - 2, c[1]], [c[0] + 2, c[1]]]]
+        self.assertTrue(any("runs into a fence: put a gate where it crosses" in e for e in F.validate(r, RAIL)))
+        r["terrain"]["gates"] = [[c[0], c[1], "v" if across else "h"]]
+        self.assertFalse(any("runs into a fence" in e for e in F.validate(r, RAIL)), F.validate(r, RAIL))
+        d = scene()                                                       # belts carry crates through a fence
+        pts = d["belts"]["station:poll>station:classify"]
+        wx = (pts[0][0] + pts[-1][0]) // 2
+        d["terrain"]["fences"] = [[[wx, pts[0][1] - 1], [wx, pts[0][1] + 1]]]
+        self.assertFalse(any("fence" in e for e in F.validate(d, CTX)))
+
+    def test_nothing_is_built_in_a_hazard_zone(self):
+        d = scene()
+        n = d["nodes"]["station:build"]
+        d["terrain"]["hazards"].append([n["x"] + 1, n["y"] + 1, 2, 2])
+        self.assertTrue(any("Build stands in a hazard zone" in e for e in F.validate(d, CTX)))
+
+    def test_ground_runs_and_cells_round_trip(self):
+        cells = {"grass": {(0, 0), (1, 0), (2, 0), (5, 0), (0, 1)}, "water": {(3, 3)}}
+        r = terrain.runs(cells)
+        self.assertEqual(r["grass"], [[0, 0, 3], [5, 0, 1], [0, 1, 1]])
+        self.assertEqual(terrain.cells_of(r)["grass"], cells["grass"])
+
+    def test_ducks_live_on_each_body_of_water_two_at_most_and_birds_land_by_trees(self):
+        t = {"items": [["pond", 100, 100, 70, 1], ["pond", 400, 100, 100, 2], ["tree", 50, 50, 40, 1], ["bush", 80, 80, 20, 1], ["tree", 90, 90, 40, 1],
+                       ["tree", 120, 90, 40, 1]],
+             "rivers": [[[0, 300], [100, 300], [200, 300], [300, 300], [400, 300], [500, 300], [600, 300], [700, 300], [800, 300], [900, 300], [1000, 300]]],
+             "tiles": terrain.runs({"water": {(30, 30), (31, 30)}})}                         # two tiles: too few for a duck yet
+        self.assertEqual([b[0] for b in terrain.bodies(t)], ["pond", "pond", "river"])
+        self.assertEqual(terrain.ducks(t).count('class="dk-duck"'), 1 + 2 + 2)              # a small pond 1, a big one 2, a long river 2
+        self.assertEqual(terrain.birds(t, 2000, 2000).count('class="bd-bird"'), 3)          # one per tree or bush, three at most
+        t["tiles"] = terrain.runs({"water": {(30, 30), (31, 30), (32, 30), (30, 31), (31, 31)}})
+        self.assertEqual(terrain.ducks(t).count('class="dk-duck"'), 1 + 2 + 2 + 2)
+
+    def test_terrain_is_the_same_every_time_and_each_item_its_own_shape(self):
+        a = terrain.svg(scene()["terrain"], F.G, 4000, 2400)
+        self.assertEqual(a, terrain.svg(scene()["terrain"], F.G, 4000, 2400))
+        self.assertNotEqual(terrain.tree(0, 0, 60, 1), terrain.tree(0, 0, 60, 2))
+        self.assertEqual(terrain.f(0.25), "0.3")                         # half up, as terrain.js rounds
+        self.assertEqual(terrain.f(-0.04), "0")
+        r = terrain.rng(42)
+        self.assertAlmostEqual(r(), 0.6011037519201636)                 # mulberry32's first number for 42
+
+    def test_a_big_terrain_fits_the_document_and_the_save(self):
+        d = scene()
+        d["terrain"]["items"] = [[["tree", "pine", "bush", "rock"][k % 4], 40 + (k * 37) % 3900, 2000 + (k * 53) % 350, 40 if k % 4 < 2 else 24 if k % 4 == 2 else 30, k] for k in range(600)]
+        self.assertEqual(F.validate(d, CTX), [])
+        self.assertLess(len(json.dumps(F.canonical(d), separators=(",", ":"))), F.MAX_BYTES)
