@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import ci, conflicts, designfiles, mockups, pause, pm, reviewnotes, runner, schedules, subtasks, usage, verify
+from . import backup, ci, conflicts, designfiles, mockups, pause, pm, reviewnotes, runner, schedules, subtasks, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -991,6 +991,7 @@ def main() -> None:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             raise SystemExit("another orchestrator is already running")
+    restored = None if args.once else backup.apply_pending(Path(cfg.db_path).parent, cfg.db_path)   # a restore staged in the UI, before the database is opened
     clf = RuleClassifier(cfg.kind_aliases)
     if cfg.classifier_backend == "jev" and cfg.openrouter_key_file and Path(cfg.openrouter_key_file).exists():
         clf = JevClassifier(Path(cfg.openrouter_key_file).read_text().strip(), cfg.jev_model, kind_aliases=cfg.kind_aliases)
@@ -1008,6 +1009,9 @@ def main() -> None:
         stranded = dbm.mark_interrupted(conn)
         emit("startup", f"orchestrator started ({'dry-run' if cfg.dry_run else 'LIVE'}), {len(cfg.repos)} repo(s)"
                         + (f"; {stranded} run(s) were interrupted by the restart" if stranded else ""))
+        if restored:
+            emit("restore", f"restored from a backup made by factory {restored.get('factory_version') or '?'}; the factory is paused until you resume it "
+                            f"(the previous database is state/{restored['previous']})")
     global tg
     tf = cfg.telegram_token_file
     if tf and cfg.telegram_chat_id and Path(tf).exists() and not args.once:

@@ -35,7 +35,7 @@ def _fmt(f: S.Field, v) -> str:
 SIDE = [("general", "General", "/settings?section=general"), ("routing", "Routing", "/settings?section=routing"),
         ("roles", "Role agents", "/settings?section=roles"), ("projects", "Projects", "/settings?section=projects"),
         ("harnesses", "Harnesses", "/harnesses"), ("workers", "Workers", "/workers"), ("schedules", "Schedules", "/schedules"), ("credentials", "Credentials", "/credentials"), ("telegram", "Telegram", "/telegram"),
-        ("labels", "Labels", "/settings?section=labels")]
+        ("labels", "Labels", "/settings?section=labels"), ("backup", "Backup", "/backup")]
 SIDE_MORE = [(k, t, f"/settings?section={k}") for k, t in TABS if k not in {s[0] for s in SIDE}]
 
 

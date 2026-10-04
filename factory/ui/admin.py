@@ -1,8 +1,11 @@
 """Routes that show or change settings, credentials and Telegram. All POSTs arrive here already CSRF-checked."""
 import json
 import re
+import shutil
+import sqlite3
 from pathlib import Path
 
+from .. import backup as B
 from .. import db as dbm
 from ..config import deep_merge
 from ..router import decide
@@ -21,6 +24,8 @@ FLASH = {
     "sched_deleted": "Schedule deleted. Snapshots already on disk were kept.",
     "live": "Going live. The factory applies it at its next idle moment (never mid-task); after that it starts agents and opens PRs for labeled issues.",
     "dry": "Back to dry run. The factory applies it at its next idle moment: it only logs decisions and writes nothing.",
+    "restore": "Restore staged. The configuration is already replaced; the factory swaps in the database when it is next idle and stays paused until you resume it. "
+               "Enter the credentials again on the Credentials and Harnesses pages.",
 }
 
 
@@ -336,9 +341,74 @@ def schedules_delete(h, form, csrf: str) -> None:
     h._redirect("/schedules?ok=sched_deleted")
 
 
-GET = {"/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
+# ------------------------------------------------------------------ backup and restore
+def _size(n: float) -> str:
+    return f"{n / 1048576:.1f} MB" if n >= 1048576 else f"{max(1, int(n / 1024))} KB"
+
+
+def _backup_page(h, csrf: str, status: int = 200, flash=None, kind="ok") -> None:
+    state, cfg = h.app.state_dir(), h.app.cfg()
+    try:
+        size = _size(Path(cfg.db_path).stat().st_size)
+    except OSError:
+        size = "no database yet"
+    last = B.last_backup(state)
+    pending = (state / B.MARKER).exists()
+    body = (
+        f'<p class="muted">The database is {esc(size)}. Last backup downloaded: {esc(views.ago(last["at"])) if last else "never"}.</p>'
+        + ('<p class="warn">A restore is staged and waits for the factory\'s next idle moment.</p>' if pending else "")
+        + f'<form method="post" action="/backup/download" class="card">{views.csrf_field(csrf)}<h3>Download a backup</h3>'
+          '<p>A zip with the database (tickets, runs, events, PRs, schedules, design files and images), <code>config.toml</code> and the settings overrides. '
+          'It <strong>leaves out</strong> every credential file, the UI password, run output and logs, agent-written patches, and queued approvals and jobs. '
+          'Keep it somewhere private anyway: it names your repositories, tickets and settings.</p><button>Download backup</button></form>'
+        + f'<form method="post" action="/backup/restore" enctype="multipart/form-data" class="card">{views.csrf_field(csrf)}<h3>Restore from a backup</h3>'
+          '<p><strong>This replaces this factory\'s database and both config files</strong> (the old config files are kept as <code>.bak</code>, '
+          'the old database as <code>factory.db.pre-restore-&lt;time&gt;</code> next to it). Credentials are not in a backup: enter them again afterwards. '
+          'The factory stays paused until you resume it.</p>'
+          '<div class="field"><input type="file" name="file" accept=".zip" required></div>'
+          '<div class="field"><label class="check"><input type="checkbox" name="confirm" value="1"> I understand this replaces the current data</label></div>'
+          '<button>Restore</button></form>')
+    _send_page(h, status, "Backup", body, "/backup", csrf, flash, kind, section="backup")
+
+
+def backup_get(h, q: dict, csrf: str) -> None:
+    _backup_page(h, csrf, flash=FLASH.get(q.get("ok", "")))
+
+
+def backup_download(h, form, csrf: str) -> None:
+    cfg, state = h.app.cfg(), h.app.state_dir()
+    if not Path(cfg.db_path).exists():
+        return _backup_page(h, csrf, 404, "The orchestrator has not created its database yet.", "bad")
+    work = B.tmpdir(state, B.TMP_BACKUP)
+    try:
+        try:
+            bundle = B.build_bundle(h.app.config_path, cfg.db_path, work)
+        except (B.BackupError, sqlite3.Error, OSError) as e:
+            return _backup_page(h, csrf, 500, f"The backup failed: {e}", "bad")
+        h._send_file(bundle, "application/zip", time.strftime("shikumi-backup-%Y%m%d-%H%M%S.zip", time.gmtime()))
+        B.record_backup(state, bundle.stat().st_size)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> None:
+    """The upload is saved at `body` (its file part is `span`); the CSRF token has been checked. Nothing changes unless it all validates."""
+    if fields.get("confirm") != "1":
+        return _backup_page(h, csrf, 400, "Tick the box to confirm the restore.", "bad")
+    if span is None or span[1] <= span[0]:
+        return _backup_page(h, csrf, 400, "Choose a backup file.", "bad")
+    zp = work / "upload.zip"
+    B.copy_span(body, span, zp)
+    try:
+        B.stage_restore(h.app.config_path, h.app.state_dir(), zp)
+    except B.BackupError as e:
+        return _backup_page(h, csrf, 422, f"Not restored: {e}", "bad")
+    h._redirect("/backup?ok=restore")
+
+
+GET = {"/backup": backup_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/ticket/review": RV.review_get}
-POST = {"/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
+POST = {"/backup/download": backup_download, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
