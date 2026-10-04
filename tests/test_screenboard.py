@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlencode
 
-from factory import config, screenboard as SB
+from factory import config, reviewnotes as RN, screenboard as SB
 from factory import db as dbm
 from factory.config import RunnerCfg, ScreenPage, ScreensCfg, load
 
@@ -177,11 +177,14 @@ path = "site/index.html"
 '''
 
 
-class Page(UiCase):
+class BoardUi(UiCase):
     def setUp(self):
         super().setUp()
         p = self.root / "config.toml"
         p.write_text(p.read_text() + SCREENS_TOML)
+
+
+class Page(BoardUi):
 
     def test_needs_a_session(self):
         self.assertEqual(self.req("GET", "/screens")[0], 303)
@@ -224,6 +227,65 @@ class Page(UiCase):
         html = self.req("GET", "/screens", cookie=cookie)[2]
         self.assertIn("Asked for new shots", html)
         self.assertIn("Refreshing…", html)
+
+
+class Review(BoardUi):
+    """A board screen opens in the review tool; its notes are kept apart from every ticket until a person turns them into one."""
+    def setUp(self):
+        super().setUp()
+        for page, view, w in (("pay", "desktop", 1440), ("pay", "design", 1200), ("basket", "desktop", 1440)):
+            SB.store(self.db, REPO, page, view, SHA, png(w, 900))
+        self.db.commit()
+        self.pay = SB.key(REPO, "pay", "desktop", SHA)
+        self.cookie, self.csrf = self.session()
+
+    def post(self, path, **fields):
+        return self.req("POST", path, urlencode({"csrf": self.csrf, **fields}), cookie=self.cookie)
+
+    def page(self, img=""):
+        s, _, html = self.req("GET", "/screens/review" + ("?" + urlencode({"img": img}) if img else ""), cookie=self.cookie)
+        self.assertEqual(s, 200)
+        return html
+
+    def test_a_shot_on_the_board_opens_the_review_tool_with_that_screen_only(self):
+        board = self.req("GET", "/screens", cookie=self.cookie)[2]
+        self.assertIn("/screens/review?img=" + urlencode({"x": self.pay})[2:], board)
+        html = self.page(self.pay)
+        self.assertIn("data-review", html)
+        self.assertIn(">pay · designed", html)
+        self.assertIn(">pay · desktop", html)
+        self.assertNotIn(">basket · desktop", html)                           # another screen is not a tab here
+        self.assertIn(SB.src(self.pay).replace("&", "&amp;"), html)
+
+    def test_a_board_note_is_stored_apart_from_tickets_and_shown_on_the_board(self):
+        s, h, _ = self.post("/review/add", board="1", img=self.pay, x="10", y="20", w="30", h="5", text="Too tight")
+        self.assertEqual((s, h["Location"]), (303, "/screens/review?" + urlencode({"img": self.pay})))
+        n = RN.notes(self.db, *RN.BOARD)
+        self.assertEqual([(x["image"], x["x"], x["y"], x["w"], x["h"], x["text"]) for x in n], [(self.pay, 100, 200, 300, 50, "Too tight")])
+        self.assertIn('class="rv-box"', self.page(self.pay))
+        self.assertIn("1 note</span>", self.req("GET", "/screens", cookie=self.cookie)[2])
+        self.post("/review/delete", board="1", id=str(n[0]["id"]), img=self.pay)
+        self.assertEqual(RN.notes(self.db, *RN.BOARD), [])
+
+    def test_only_board_images_take_board_notes_and_a_ticket_cannot_take_them(self):
+        for img in (SB.key(REPO, "pay", "mobile", SHA), "mockup:x/y:docs/design/previews/factory-5-a.png", "screen:../x"):
+            self.post("/review/add", board="1", img=img, x="1", y="1", text="t")
+        self.post("/review/add", repo=REPO, n="5", img=self.pay, x="1", y="1", text="t")
+        self.assertEqual(RN.notes(self.db, *RN.BOARD), [])
+        self.assertEqual(RN.notes(self.db, REPO, 5), [])
+
+    def test_an_older_shot_with_a_note_stays_reviewable_after_a_new_one(self):
+        RN.add(self.db, *RN.BOARD, self.pay, (0, 0, 10, 10), "old")
+        SB.store(self.db, REPO, "pay", "desktop", "b" * 40, png(1440, 900), now=9e9)
+        self.db.commit()
+        html = self.page(self.pay)
+        self.assertIn(f">pay · desktop · {SHA[:7]}", html)
+        self.assertIn('class="rv-box"', html)
+
+    def test_no_shots_yet_says_so(self):
+        self.db.execute("DELETE FROM screen_shots")
+        self.db.commit()
+        self.assertIn("no screens to review yet", self.page())
 
 
 if __name__ == "__main__":

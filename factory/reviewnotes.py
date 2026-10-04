@@ -16,6 +16,8 @@ from .render import png_ok
 SCALE = 1000
 MAX_TEXT = 1000
 MAX_OPEN = 30
+MAX_OPEN_BOARD = 100
+BOARD = ("", 0)                          # the Screens board's notes, before a person turns them into a ticket
 MAX_IMAGES = 8
 MOCKUP_KEY = re.compile(r"mockup:([\w.-]+/[\w.-]+):(.+)")
 RUN_KEY = re.compile(r"run:(\d{1,9}):(built|verify):([a-z0-9][a-z0-9-]{0,80})")
@@ -89,7 +91,10 @@ def add(db, repo: str, issue: int, image: str, box: tuple, text: str) -> int:
     if not text or len(text) > MAX_TEXT:
         raise ValueError(f"write a note of up to {MAX_TEXT} characters")
     x, y, w, h = area(*box)
-    if len(notes(db, repo, issue, open_only=True)) >= MAX_OPEN:
+    if (repo, int(issue)) == BOARD:
+        if len(notes(db, repo, issue, open_only=True)) >= MAX_OPEN_BOARD:
+            raise ValueError(f"the screens can hold {MAX_OPEN_BOARD} open notes; turn some into tickets first")
+    elif len(notes(db, repo, issue, open_only=True)) >= MAX_OPEN:
         raise ValueError(f"a ticket can hold {MAX_OPEN} open notes; send these to the designer first")
     cur = db.execute("INSERT INTO review_notes (repo, issue, image, x, y, w, h, text, created) VALUES (?,?,?,?,?,?,?,?,?)",
                      (repo, int(issue), image, x, y, w, h, text, time.time()))

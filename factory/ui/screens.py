@@ -5,6 +5,7 @@ import logging
 import sqlite3
 from urllib.parse import urlencode
 
+from .. import reviewnotes as RN
 from .. import screenboard as SB
 from . import labels as L
 from . import views
@@ -23,8 +24,8 @@ def title(journey: str) -> str:
 
 
 def open_url(k: str) -> str:
-    """Where a screen opens when clicked."""
-    return SB.src(k)
+    """Where a screen opens when clicked: the review tool, to mark it up."""
+    return "/screens/review?" + urlencode({"img": k})
 
 
 def figure(label: str, shot: dict | None, alt: str, empty: str) -> str:
@@ -34,7 +35,9 @@ def figure(label: str, shot: dict | None, alt: str, empty: str) -> str:
             f'<img src="{esc(SB.src(shot["key"]))}" alt="{esc(alt)}" loading="lazy"></a></figure>')
 
 
-def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey: str, view: str, csrf: str) -> str:
+def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey: str, view: str, csrf: str,
+               noted: dict | None = None) -> str:
+    """noted: (repo, page) -> open notes on that screen."""
     sc = cfg.screens
     if not sc.pages:
         return ('<p class="muted">No screens are configured. List them under <code>[[screens.pages]]</code> in the config, with a '
@@ -76,7 +79,9 @@ def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey
                     + figure("Built", built, f"{p.name}, built, {view}",
                              "Not shot yet." if view in views_of else f"Not checked at {view}."))
             repo = f'<span class="muted">{esc(p.repo)}</span>' if multi else ""
-            cards += (f'<li class="sb-step"><h3><span class="sb-num">{k}</span>{esc(p.name)}</h3>{repo}'
+            c = (noted or {}).get((p.repo, p.name), 0)
+            badge = f' <span class="rv-count" title="Open notes">{c} note{"" if c == 1 else "s"}</span>' if c else ""
+            cards += (f'<li class="sb-step"><h3><span class="sb-num">{k}</span>{esc(p.name)}{badge}</h3>{repo}'
                       f'<div class="sb-pair">{figs}</div></li>')
         out += f'<section class="sb-journey"><h2>{esc(title(j))}</h2><ol class="sb-steps">{cards}</ol></section>'
     return head + tabs + vtabs + out
@@ -85,13 +90,16 @@ def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey
 def board_get(h, q: dict, csrf: str) -> None:
     cfg = h.app.cfg()
     db = h.app.ro_db()
-    shots, st, pending = {}, {}, False
+    shots, st, pending, noted = {}, {}, False, {}
     if db is not None:
         try:
             shots, st, pending = SB.latest(db), SB.status(db), SB.requested(db)
+            for x in RN.notes(db, *RN.BOARD, open_only=True):
+                if (m := SB.KEY.fullmatch(x["image"])):
+                    noted[m.group(1, 2)] = noted.get(m.group(1, 2), 0) + 1
         finally:
             db.close()
-    body = board_body(cfg, shots, st, pending, SB.running(), q.get("journey", ""), q.get("view", ""), csrf)
+    body = board_body(cfg, shots, st, pending, SB.running(), q.get("journey", ""), q.get("view", ""), csrf, noted)
     shown = L.flash_pop(csrf)
     h._send(200, views.page("Screens", body, "/screens", csrf, wide=True,
                             flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))

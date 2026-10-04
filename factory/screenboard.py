@@ -241,3 +241,27 @@ def journeys(pages: tuple[ScreenPage, ...]) -> list[tuple[str, list[ScreenPage]]
         groups.setdefault(p.journey, []).append(p)
     order = sorted(j for j in groups if j) + ([""] if "" in groups else [])
     return [(j, sorted(groups[j], key=lambda p: (p.step, p.name, p.repo))) for j in order]
+
+
+def board_images(db, sc, noted: list[str] = ()) -> list[dict]:
+    """Every screen image a person can mark up on the board: per page in journey order, its canvas then each viewport's newest shot,
+    then any older shot of it that an open note is on. [{key, label, src, screen: (repo, page)}]."""
+    have = latest(db)
+    older: dict[tuple[str, str], list[str]] = {}
+    for k in dict.fromkeys(noted):
+        m = KEY.fullmatch(k)
+        if m and k not in {x["key"] for x in have.values()} and image(db, k) is not None:
+            older.setdefault((m.group(1), m.group(2)), []).append(k)
+    names = [v.name for v in sc.viewports]
+    out = []
+    for _, pages in journeys(sc.pages):
+        for p in pages:
+            for v in [DESIGN] + list(p.viewports or names):
+                if (x := have.get((p.repo, p.name, v))):
+                    out.append({"key": x["key"], "label": f"{p.name} · {'designed' if v == DESIGN else v}", "src": src(x["key"]),
+                                "screen": (p.repo, p.name)})
+            for k in older.get((p.repo, p.name), []):
+                v, sha = KEY.fullmatch(k).group(3, 4)
+                out.append({"key": k, "label": f"{p.name} · {'designed' if v == DESIGN else v} · {sha[:7]}", "src": src(k),
+                            "screen": (p.repo, p.name)})
+    return out

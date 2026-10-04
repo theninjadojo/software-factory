@@ -8,6 +8,7 @@ import urllib.error
 from urllib.parse import urlencode
 
 from .. import reviewnotes as RN
+from .. import screenboard as SB
 from . import labels as L
 from . import views
 from .views import csrf_field, esc
@@ -17,6 +18,8 @@ DESIGNER = "designer"
 
 
 def url(repo: str, n: int, img: str = "") -> str:
+    if not repo:
+        return "/screens/review" + ("?" + urlencode({"img": img}) if img else "")
     return "/ticket/review?" + urlencode({"repo": repo, "n": int(n), **({"img": img} if img else {})})
 
 
@@ -24,11 +27,28 @@ def _ticket(h, repo: str, n: str) -> tuple[str, int]:
     return L._repo(h.app.cfg(), repo), L._number(n)
 
 
+def _scope(h, form) -> tuple[str, int]:
+    """(repo, issue) the form is about: a configured ticket, or the Screens board, whose notes are kept as ("", 0) until a person
+    turns them into a ticket. Raises L.Refused."""
+    if form.get("board") == "1":
+        return RN.BOARD
+    return _ticket(h, form.get("repo", ""), form.get("n", ""))
+
+
+def _hidden(repo: str, n: int, csrf: str) -> str:
+    if (repo, n) == RN.BOARD:
+        return f'{csrf_field(csrf)}<input type="hidden" name="board" value="1">'
+    return f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
+
+
 def _images(h, repo: str, n: int) -> list[dict]:
     db = h.app.ro_db()
     if db is None:
         return []
     try:
+        if (repo, n) == RN.BOARD:
+            cfg = h.app.cfg()
+            return SB.board_images(db, cfg.screens, [x["image"] for x in RN.notes(db, *RN.BOARD, open_only=True)])
         return RN.images(db, repo, n)
     finally:
         db.close()
@@ -68,15 +88,34 @@ def marks(notes: list[tuple[int, dict]]) -> str:
 
 
 def page_body(repo: str, n: int, imgs: list[dict], sel: dict | None, notes: list[dict], queued: bool, can_send: bool, csrf: str) -> str:
-    hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
+    """A ticket's review page."""
+    hidden = _hidden(repo, n, csrf)
     head = (f'<p>{views.ticket_link(repo, n)} · <a href="/ticket?repo={esc(repo)}&amp;n={int(n)}">Pipeline</a> · '
             f'<a href="{views.doc_url(repo, n, DESIGNER)}">Design document</a></p>')
     if not imgs:
         return head + ('<p class="muted">This ticket has no screens to review yet. They appear here once the design stage renders its '
                        'mockups, or a build keeps screenshots.</p>')
+    k = sum(1 for x in notes if x["sent"] is None)
+    if queued:
+        send = ('<p class="flash ok">A design run is queued. The open notes go with it, along with any you add before it starts.</p>')
+    elif not can_send:
+        send = '<p class="muted">The design stage is not configured, so these notes wait for a person to pass them on.</p>'
+    else:
+        send = (f'<form method="post" action="/review/send" class="rv-send">{hidden}'
+                f'<button{" disabled" if not k else ""}>Send {k} note{"" if k == 1 else "s"} to the designer</button>'
+                '<p class="muted">The design stage runs again with the notes and the screens they are on. Notes you leave here go with '
+                'the next design run anyway.</p></form>')
+    return head + review_ui(repo, n, imgs, imgs, sel, notes, send, "Notes for the designer", csrf)
+
+
+def review_ui(repo: str, n: int, imgs: list[dict], known: list[dict], sel: dict, notes: list[dict], send: str, notes_title: str,
+              csrf: str) -> str:
+    """The screen with its marks, the new-note form and the list of notes. `imgs` are the tabs over the screen; `known` is every
+    image a note of this scope may be on (for its label and link)."""
+    hidden = _hidden(repo, n, csrf)
     opened = [x for x in notes if x["sent"] is None]
     num = {x["id"]: k for k, x in enumerate(opened, 1)}           # the numbers the designer gets
-    label = {i["key"]: i["label"] for i in imgs}
+    label = {i["key"]: i["label"] for i in known}
     count = {}
     for x in opened:
         count[x["image"]] = count.get(x["image"], 0) + 1
@@ -112,21 +151,11 @@ def page_body(repo: str, n: int, imgs: list[dict], sel: dict | None, notes: list
 
     listed = ("<ol class=\"rv-list\">" + "".join(item(x, False) for x in opened) + "</ol>" if opened else
               '<p class="rv-empty">No notes yet. Mark an area of a screen to start.</p>')
-    k = len(opened)
-    if queued:
-        send = ('<p class="flash ok">A design run is queued. The open notes go with it, along with any you add before it starts.</p>')
-    elif not can_send:
-        send = '<p class="muted">The design stage is not configured, so these notes wait for a person to pass them on.</p>'
-    else:
-        send = (f'<form method="post" action="/review/send" class="rv-send">{hidden}'
-                f'<button{" disabled" if not k else ""}>Send {k} note{"" if k == 1 else "s"} to the designer</button>'
-                '<p class="muted">The design stage runs again with the notes and the screens they are on. Notes you leave here go with '
-                'the next design run anyway.</p></form>')
     sent = [x for x in notes if x["sent"] is not None]
     earlier = (f'<details class="rv-sent"><summary>Sent earlier ({len(sent)})</summary><ol class="rv-list">'
                + "".join(item(x, True) for x in reversed(sent)) + "</ol></details>") if sent else ""
-    side = (f'<aside class="rv-side" aria-label="Notes for the designer">{new}<h2>Notes for the designer</h2>{listed}{send}{earlier}</aside>')
-    return head + f'<div class="rv">{shot}{side}</div>'
+    side = (f'<aside class="rv-side" aria-label="{esc(notes_title)}">{new}<h2>{esc(notes_title)}</h2>{listed}{send}{earlier}</aside>')
+    return f'<div class="rv">{shot}{side}</div>'
 
 
 TRASH = ('<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" '
@@ -178,12 +207,12 @@ def _area(form) -> tuple[int, int, int, int]:
 
 def add(h, form, csrf: str) -> None:
     try:
-        repo, n = _ticket(h, form.get("repo", ""), form.get("n", ""))
+        repo, n = _scope(h, form)
     except L.Refused as e:
         return L._page(h, 400, "Review", "", csrf, str(e), "bad")
     img = form.get("img", "")
     if img not in {i["key"] for i in _images(h, repo, n)}:
-        return _back(h, csrf, repo, n, "", "That screen is no longer on this ticket. Nothing was saved.", "bad")
+        return _back(h, csrf, repo, n, "", "That screen is no longer here. Nothing was saved.", "bad")
     try:
         box = _area(form)
     except ValueError:
@@ -192,13 +221,13 @@ def add(h, form, csrf: str) -> None:
         _write(h, lambda db: RN.add(db, repo, n, img, box, form.get("text", "")))
     except ValueError as e:
         return _back(h, csrf, repo, n, img, f"Not saved: {e}.", "bad")
-    log.info("review: note added on %s#%d", repo, n)
+    log.info("review: note added on %s", f"{repo}#{n}" if repo else "the screens board")
     _back(h, csrf, repo, n, img, "Note added.")
 
 
 def delete(h, form, csrf: str) -> None:
     try:
-        repo, n = _ticket(h, form.get("repo", ""), form.get("n", ""))
+        repo, n = _scope(h, form)
         nid = L._number(form.get("id", ""))
     except L.Refused as e:
         return L._page(h, 400, "Review", "", csrf, str(e), "bad")
@@ -245,3 +274,34 @@ def send(h, form, csrf: str) -> None:
         L._needs_cache["rows"] = None
     log.info("review: design run queued for %s#%d with %d note(s)", repo, n, len(opened))
     _back(h, csrf, repo, n, "", f"Sent. The designer runs again with {len(opened)} note{'' if len(opened) == 1 else 's'} at the factory's next poll.")
+
+
+def board_review_get(h, q: dict, csrf: str) -> None:
+    """Review a screen of the Screens board. Its notes are kept apart from any ticket until a person turns them into one."""
+    cfg = h.app.cfg()
+    db = h.app.ro_db()
+    known, notes = [], []
+    if db is not None:
+        try:
+            notes = RN.notes(db, *RN.BOARD)
+            known = SB.board_images(db, cfg.screens, [x["image"] for x in notes if x["sent"] is None])
+        finally:
+            db.close()
+    sel = next((i for i in known if i["key"] == q.get("img")), known[0] if known else None)
+    head = '<p><a href="/screens">← Screens</a></p>'
+    if sel is None:
+        body = head + '<p class="muted">There are no screens to review yet. Take the shots on the Screens page first.</p>'
+    else:
+        tabs = [i for i in known if i["screen"] == sel["screen"]]
+        head = (f'<p><a href="/screens">← Screens</a> · {esc(sel["screen"][1])}'
+                + (f' <span class="muted">({esc(sel["screen"][0])})</span>' if len({i["screen"][0] for i in known}) > 1 else "") + "</p>")
+        body = head + review_ui(*RN.BOARD, tabs, known, sel, notes, board_send(notes, csrf), "Notes on the screens", csrf)
+    shown = L.flash_pop(csrf)
+    h._send(200, views.page("Review a screen", body, "/screens", csrf, wide=True,
+                            flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
+
+
+def board_send(notes: list[dict], csrf: str) -> str:
+    k = sum(1 for x in notes if x["sent"] is None)
+    return (f'<p class="muted">{k} open note{"" if k == 1 else "s"} on the screens. Notes stay here until they are turned into a '
+            'ticket.</p>')
