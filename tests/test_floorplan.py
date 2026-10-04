@@ -137,7 +137,8 @@ class Resized(unittest.TestCase):
         self.assertEqual((m["nodes"]["sea"]["w"], m["walls"], m["trees"]), (10, d["walls"], d["trees"]))
         C = F.compile_plan(d, CTX)
         self.assertEqual(C["box"]["sea"][2:], (200, 800))
-        self.assertEqual(C["scale"]["sea"], (10 / 15, 40 / 66))
+        k = 40 / 66                                                  # the smaller stretch: the picture keeps its proportions
+        self.assertEqual(C["scale"]["sea"], (k, (10 - 15 * k) * F.G / 2, 0))
         self.assertNotIn("mainland", C["scale"])
 
     def test_sizes_and_scenery_are_checked(self):
@@ -246,11 +247,26 @@ class Drawn(unittest.TestCase):
         d["trees"] = [[150, 40]]
         svg = self.draw(d)
         x, y = d["nodes"]["power:claude-code"]["x"] * F.G, d["nodes"]["power:claude-code"]["y"] * F.G
-        self.assertIn(f'transform="translate({x} {y}) scale(1.2 1.2) translate(0 0)"', svg)
+        self.assertIn(f'transform="translate({x} {y}) scale(1.2) translate(0 0)"', svg)
         self.assertIn('<path class="fp-wall" d="M 3000 200 L 3400 200 L 3400 600"/>', svg)
         self.assertIn('<circle class="fp-crown" cx="3000" cy="800" r="9"/>', svg)
         self.assertGreaterEqual(float(re.search(r'<svg class="fm" viewBox="0 0 ([\d.]+)', svg).group(1)), 3400)
         self.assertNotIn("style=", svg)
+
+    def test_a_stretched_building_keeps_its_proportions_and_a_resized_sea_fills_with_water(self):
+        d = F.default_plan(CTX)
+        d["nodes"]["power:claude-code"].update(w=20, h=5)                # twice as wide: drawn at its own size, centred
+        d["nodes"]["sea"].update(w=15, h=33)                             # half as tall: half the size, water either side
+        self.assertEqual(F.validate(d, CTX), [])
+        svg = self.draw(d)
+        p = d["nodes"]["power:claude-code"]
+        self.assertIn(f'transform="translate({p["x"] * F.G + 100} {p["y"] * F.G}) scale(1) translate(0 0)"', svg)
+        self.assertIn(f'<rect class="sh-sea" x="240" y="0" width="300" height="660" rx="0"/>', svg)
+        self.assertIn('transform="translate(315 0) scale(0.5) translate(0 0)"', svg)
+        C = F.compile_plan(d, CTX)
+        dock = (C["at"]["receiving"][1] + plant.MH / 2) / 0.5               # the crane at Receiving's height, in the sea's own units
+        self.assertIn(f'<circle class="sh-base" cx="{plant.SEA_W}" cy="{plant._f(max(100.0, min(900.0, dock)))}"', svg)
+        self.assertNotRegex(svg, r'scale\([\d.]+ [\d.]+\)')                 # never a stretch that squashes the text
 
     def test_inserters_stand_between_the_building_and_its_belt_and_have_hands(self):
         svg = self.draw(F.default_plan(CTX))

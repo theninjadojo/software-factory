@@ -7,7 +7,8 @@ text is still escaped and the page policy holds. Each hop being its own belt is 
 only saved when every hop of the route has a belt that starts beside one station and ends beside the next.
 
 Buildings and areas (all but the Verify yard, whose size follows its trains) can be resized: a node may carry "w" and "h", never
-below its minimum (MIN); the floor draws its picture stretched to that box. Walls (orthogonal lines of grid points) and trees (grid
+below its minimum (MIN); the floor draws its picture scaled evenly and centred in that box (fit_art). The editor keeps a building's
+proportions as it is resized; an area (the mainland, the sea, the airfield) may take any shape and fills the rest with its ground. Walls (orthogonal lines of grid points) and trees (grid
 points) are scenery: they block nothing.
 
 Districts are boxes of their own (optional: one left out is drawn round its stations). Moving a district moves its stations with it,
@@ -698,10 +699,18 @@ def compile_plan(doc: dict, ctx: Ctx) -> dict:
         under = [(px(p["from"]), px(p["to"])) for p in doc["pieces"] if p["kind"] == "underground" and _same_run(pts, p["from"], p["to"])]
         hops[hid] = {"src": a, "dst": b, "pts": [px(p) for p in pts], "under": under}
     dist = {n: (d["x"] * G, d["y"] * G, d["w"] * G, d["h"] * G) for n, d in district_boxes(doc, ctx, B).items()}
-    scale = {k: (B[k][2] / SIZE[k.split(":")[0]][0], B[k][3] / SIZE[k.split(":")[0]][1]) for k, v in nodes.items() if "w" in v}
+    scale = {k: fit_art(k, B[k]) for k, v in nodes.items() if "w" in v}
     return {"at": {k: px((v["x"], v["y"])) for k, v in nodes.items()}, "box": {k: tuple(c * G for c in v) for k, v in B.items()}, "districts": dist,
             "hops": hops, "pieces": [{**p, "at": px(p["at"])} for p in doc["pieces"] if p["kind"] != "underground"], "scale": scale,
             "walls": [[px(p) for p in w] for w in doc.get("walls") or []], "trees": [px(t) for t in doc.get("trees") or []]}
+
+
+def fit_art(nid: str, b) -> tuple[float, float, float]:
+    """How a resized node's picture sits in its box (cells), in pixels: (scale, x offset, y offset). The picture keeps its proportions
+    (one scale, the smaller of the two stretches) and is centred, so its text is never squashed; an area fills the rest with its ground."""
+    w0, h0 = SIZE[nid.split(":")[0]]
+    s = min(b[2] / w0, b[3] / h0)
+    return (s, (b[2] - w0 * s) * G / 2, (b[3] - h0 * s) * G / 2)
 
 
 def meta(ctx: Ctx) -> dict:
@@ -715,4 +724,4 @@ def meta(ctx: Ctx) -> dict:
         out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h, "min": None if nid == "yard" else MIN[nid.split(":")[0]]}
     dist = ctx.districts
     return {"grid": G, "w": W, "h": H, "nodes": out, "hops": [[a, b, f"{label(a)} → {label(b)}"] for a, b in ctx.hops()],
-            "districts": dist, "default": default_plan(ctx)}
+            "districts": dist, "under": MAX_UNDER, "default": default_plan(ctx)}
