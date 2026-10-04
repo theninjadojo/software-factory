@@ -661,6 +661,8 @@ main.full { max-width:none; }
 .ry-plat { fill:#3b3320; stroke:#5a4d30; } .ry-crane { fill:none; stroke:#c99a32; stroke-width:3; stroke-linecap:round; }
 .ry-roof { fill:#3b3320; stroke:#d9bf8a; stroke-width:1.5; }
 .ry-yard .fn-s, .ry-depot .fn-s { fill:#d9bf8a; }
+.ry-wicon { fill:none; stroke:var(--good); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; } .fm-w.off .ry-wicon { stroke:var(--muted); }
+.ry-buffer { fill:#4a3d2e; stroke:#1a1f24; } .ry-hood { fill:#3b464e; stroke:#c99a32; stroke-width:1.5; }
 .ry-junction circle { fill:#1b2126; stroke:#8a949c; stroke-width:2; } .ry-junction path { fill:none; stroke:#c9d1d7; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
 .fn-item { fill:#c88a3c; stroke:#7a4f1c; stroke-width:2; }
 .pw-area { fill:#13181c; stroke:var(--line); stroke-dasharray:6 6; }

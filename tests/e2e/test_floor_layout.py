@@ -316,7 +316,7 @@ def test_the_editor_says_what_is_selected_and_shows_the_sea_the_trains_and_the_l
     open_editor(pg, server)
     assert pg.locator(".fe-svg .sh-water").count() == 1
     assert pg.locator(".fe-belt.in").count() == 2
-    assert pg.locator(".fe-train").count() == 2
+    assert pg.locator(".fe-train .fm-loco").count() == 2                  # a locomotive per worker, its wagons behind it
     assert pg.locator(".fe-trains .fm-sig").count() >= 3
     assert [t.strip() for t in pg.locator(".fe-legend li").all_inner_texts()] == ["Belt", "Deliveries in", "Rail", "Notifier, wireless"]
     assert pg.inner_text(".fe-msg").startswith("Move:")
