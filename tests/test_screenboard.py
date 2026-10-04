@@ -4,11 +4,13 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 from urllib.parse import urlencode
 
 from factory import config, reviewnotes as RN, screenboard as SB
 from factory import db as dbm
 from factory.config import RunnerCfg, ScreenPage, ScreensCfg, load
+from factory.ui import integrations as I
 
 from test_review_notes import png
 from test_screens import mount
@@ -229,8 +231,7 @@ class Page(BoardUi):
         self.assertIn("Refreshing…", html)
 
 
-class Review(BoardUi):
-    """A board screen opens in the review tool; its notes are kept apart from every ticket until a person turns them into one."""
+class ReviewUi(BoardUi):
     def setUp(self):
         super().setUp()
         for page, view, w in (("pay", "desktop", 1440), ("pay", "design", 1200), ("basket", "desktop", 1440)):
@@ -247,6 +248,9 @@ class Review(BoardUi):
         self.assertEqual(s, 200)
         return html
 
+
+class Review(ReviewUi):
+    """A board screen opens in the review tool; its notes are kept apart from every ticket until a person turns them into one."""
     def test_a_shot_on_the_board_opens_the_review_tool_with_that_screen_only(self):
         board = self.req("GET", "/screens", cookie=self.cookie)[2]
         self.assertIn("/screens/review?img=" + urlencode({"x": self.pay})[2:], board)
@@ -286,6 +290,80 @@ class Review(BoardUi):
         self.db.execute("DELETE FROM screen_shots")
         self.db.commit()
         self.assertIn("no screens to review yet", self.page())
+
+
+class CreateTicket(ReviewUi):
+    """Board notes become a new ticket: the notes move onto it, so its design run gets them and their screens."""
+    def setUp(self):
+        super().setUp()
+        self.gh = mock.MagicMock()
+        self.gh.create_ticket.return_value = {"number": 42}
+        self.gh.repo_labels.return_value = [{"name": load(str(self.root / "config.toml")).auto_label}]
+        I.save_secret(load(str(self.root / "config.toml")), "github", "ghp_" + "a" * 36, "subscription")
+        p = mock.patch("factory.ui.labels.GitHub", return_value=self.gh)
+        p.start()
+        self.addCleanup(p.stop)
+        self.a = RN.add(self.db, *RN.BOARD, self.pay, (100, 200, 300, 50), "Too tight\n@someone look")
+        self.b = RN.add(self.db, *RN.BOARD, SB.key(REPO, "basket", "desktop", SHA), (500, 500, 0, 0), "Icon")
+
+    def create(self, notes, **fields):
+        body = urlencode({"csrf": self.csrf, "board": "1", "img": self.pay, "repo": REPO, "title": "Pay spacing", "start": "",
+                          **fields}) + "".join(f"&note={n}" for n in notes)
+        return self.req("POST", "/screens/issue", body, cookie=self.cookie)
+
+    def test_the_form_ticks_the_notes_on_this_screen(self):
+        html = self.page(self.pay)
+        self.assertIn(f'name="note" value="{self.a}" checked', html)
+        self.assertIn(f'name="note" value="{self.b}">', html)
+        self.assertIn('action="/screens/issue"', html)
+
+    def test_the_picked_notes_become_a_ticket_and_move_onto_it(self):
+        s, h, _ = self.create([self.a])
+        self.assertEqual((s, h["Location"]), (303, "/ticket/review?" + urlencode({"repo": REPO, "n": 42})))
+        repo, title, body = self.gh.create_ticket.call_args[0]
+        self.assertEqual((repo, title), (REPO, "Pay spacing"))
+        self.assertIn("1. **pay · desktop**", body)
+        self.assertIn(f"`{SHA[:7]}`", body)
+        self.assertIn("30% × 5% at 10%, 20%", body)
+        self.assertIn("> Too tight\n> @someone look", body)
+        self.assertNotIn("Icon", body)
+        self.gh.add_labels.assert_not_called()                                   # "Don't start it" adds no label
+        self.assertEqual([x["id"] for x in RN.notes(self.db, *RN.BOARD)], [self.b])
+        self.assertEqual([x["id"] for x in RN.notes(self.db, REPO, 42)], [self.a])
+        html = self.req("GET", f"/ticket/review?repo={REPO}&n=42", cookie=self.cookie)[2]
+        self.assertIn("Created your-org/standalone-service#42 with 1 note.", html)
+        self.assertIn(SB.src(self.pay).replace("&", "&amp;"), html)              # the board shot is on the ticket's review page
+        self.assertIn('class="rv-box"', html)
+
+    def test_the_designer_gets_the_board_shot_with_the_note(self):
+        self.create([self.a])
+        pkg = RN.for_designer(self.db, REPO, 42)
+        self.assertEqual([(n["file"], n["width"], n["x"], n["w"]) for n in pkg["notes"]], [("screen-1.png", 1440, 144, 432)])
+        self.assertIn("screen-1.png", pkg["files"])
+
+    def test_start_auto_labels_it_and_design_queues_the_designer(self):
+        self.create([self.a], start="auto")
+        self.gh.add_labels.assert_called_once()
+        self.assertEqual(self.gh.add_labels.call_args[0][:2], (REPO, 42))
+        self.gh.create_ticket.return_value = {"number": 43}
+        self.create([self.b], start="design", title="Icon")
+        self.assertEqual(self.db.execute("SELECT repo, issue, action FROM approvals").fetchall(), [(REPO, 43, "stage:designer")])
+
+    def test_bad_requests_create_nothing(self):
+        for notes, fields in (([], {}), ([self.a], {"title": ""}), ([self.a], {"title": "x" * 201}), ([self.a], {"repo": "evil/x"}),
+                              ([self.a], {"start": "ready"}), ([999], {})):
+            s, _, _ = self.create(notes, **fields)
+            self.assertEqual(s, 303, (notes, fields))
+            self.assertIn('class="flash bad"', self.page(self.pay), (notes, fields))
+        self.gh.create_ticket.assert_not_called()
+        self.assertEqual(len(RN.notes(self.db, *RN.BOARD)), 2)
+
+    def test_a_github_failure_keeps_the_notes_on_the_board(self):
+        import urllib.error
+        self.gh.create_ticket.side_effect = urllib.error.URLError("down")
+        self.create([self.a])
+        self.assertEqual(len(RN.notes(self.db, *RN.BOARD)), 2)
+        self.assertIn("Nothing was created", self.page(self.pay))
 
 
 if __name__ == "__main__":
