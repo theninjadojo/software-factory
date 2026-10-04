@@ -3,7 +3,7 @@ import sqlite3
 import threading
 import time
 
-from . import designfiles, jobs, reviewnotes, schedules
+from . import designfiles, jobs, reviewnotes, schedules, screenboard
 from .render import png_ok
 
 _local = threading.local()
@@ -95,6 +95,7 @@ def connect(path: str) -> sqlite3.Connection:
     jobs.ensure_tables(db)
     schedules.ensure_tables(db)
     reviewnotes.ensure_tables(db)
+    screenboard.ensure_tables(db)
     return db
 
 

@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from .. import backup
 from .. import db as dbm
 from .. import designfiles
-from .. import pause, updates, version
+from .. import pause, screenboard, updates, version
 from .. import questions as Q
 from ..config import load
 from . import admin, board, floor, views
@@ -469,6 +469,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/workerimg":
                 job, name = q.get("job", ""), q.get("name", "")
                 png = WK.artifact_png(db, int(job), name) if job.isdigit() and len(job) < 10 else None
+                return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
+            if path == "/screenimg":
+                png = screenboard.image(db, q.get("key", ""))
                 return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
             if path == "/mockup":
                 repo, pth = q.get("repo", ""), q.get("path", "")
