@@ -25,9 +25,10 @@ FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it 
 MAX_TITLE, MAX_BODY = 200, 5000
 DUP_SECONDS = 10
 CLOSE_COMMENT = "Closed from the factory admin UI. It can be reopened if this was a mistake."
+CLOSE_BUSY_COMMENT = "Closed from the factory admin UI. The factory stops its work on this ticket. It can be reopened if this was a mistake."
 VERBS = {"analyst": "Analyze", "designer": "Design", "architect": "Architect"}
 NEEDS_PERSON = "needs a person"
-BUSY = ("closed", "running", "queued", "starting", NEEDS_PERSON)     # statuses in which a ticket cannot be closed from the UI
+BUSY = ("running", "queued", "starting", NEEDS_PERSON)     # statuses in which closing a ticket also stops the factory's work on it
 NO_TOKEN = "Save a GitHub token on the Credentials page first."
 
 
@@ -364,13 +365,20 @@ def new_ticket_form(cfg, repo: str, csrf: str) -> str:
             '<button>Create ticket</button></form></details>')
 
 
-def close_form(repo: str, i: dict, csrf: str, back: str) -> str:
+def trigger_labels(cfg) -> tuple:
+    """Every label that makes the factory start work on a ticket."""
+    return (cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else []),
+            *([cfg.conflicts.label] if cfg.conflicts.enabled else []))
+
+
+def close_form(repo: str, i: dict, csrf: str, back: str, busy: bool = False) -> str:
     n = int(i["number"])
+    stops = " The factory stops the work it is doing on it." if busy else ""
     title = (i.get("title") or "")[:60]
     return (f'<details class="disclose"><summary aria-label="Close ticket {esc(tracker.display(n))}">Close</summary>'
             f'<form method="post" action="/tickets/close" class="inline">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}">'
             f'<input type="hidden" name="n" value="{n}"><input type="hidden" name="back" value="{esc(back)}">'
-            f'<p>Close {esc(tracker.display(n))} “{esc(title)}”? This closes the issue on GitHub and adds a comment. You can reopen it there.</p>'
+            f'<p>Close {esc(tracker.display(n))} “{esc(title)}”? This closes the issue on GitHub and adds a comment. You can reopen it there.{esc(stops)}</p>'
             '<button class="secondary">Close ticket</button></form></details>')
 
 
@@ -585,9 +593,7 @@ def table(cfg, repo, issues, decisions, csrf, asked: dict | None = None, approve
             out += " " + question_popup(repo, i, asked[i["number"]], csrf, back, alone=len(issues) == 1)
         if status == "closed":
             return out
-        if status in BUSY or i["number"] in asked:
-            return out + ' <span class="muted">Can\'t close while work is running or waiting for an answer.</span>'
-        return out + " " + close_form(repo, i, csrf, back)
+        return out + " " + close_form(repo, i, csrf, back, status in BUSY or i["number"] in asked)
 
     def stage_of(i) -> str:
         """The one stage a ticket is in. Failed counts as Needs you (a person must act); queued and ready tickets show the stage they are about to run."""
@@ -775,8 +781,7 @@ def start(h, form, csrf: str) -> None:
                 gh.add_labels(repo, n, [chosen])             # add first: if it fails nothing has changed
             if status == NEEDS_PERSON:                       # skipping covers the whole ticket: clear every trigger label
                 held = set(_names(issue))
-                for lab in (cfg.trigger_label, cfg.auto_label, *(r.label for r in cfg.roles), *([cfg.review.label] if cfg.review.enabled else []),
-                            *([cfg.conflicts.label] if cfg.conflicts.enabled else [])):
+                for lab in trigger_labels(cfg):
                     if lab in held and lab != chosen:
                         gh.remove_label(repo, n, lab)
         with _needs_lock:
@@ -873,8 +878,8 @@ def _create_local(h, form, csrf: str, cfg, repo: str, title: str, body: str, lab
 
 
 def close(h, form, csrf: str) -> None:
-    """Close an open ticket with no active work, after a fixed comment. The ticket is re-read first, so a stale page cannot close
-    something that is running, queued or waiting for a person."""
+    """Close an open ticket, after a fixed comment. The ticket is re-read first. One that is running, queued or waiting for a person
+    is closed too: its trigger labels come off, and the orchestrator stops the work once it sees the ticket is closed."""
     cfg = h.app.cfg()
     try:
         repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
@@ -890,9 +895,12 @@ def close(h, form, csrf: str) -> None:
         status, _ = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)), (repo, n) in _approved(h))
         if status == "closed":
             raise Refused("This ticket is already closed.")
-        if status in BUSY:
-            raise Refused("This ticket is busy. Wait for the run to finish, or answer its question first.")
-        gh.comment(repo, n, CLOSE_COMMENT)
+        busy = status in BUSY
+        gh.comment(repo, n, CLOSE_BUSY_COMMENT if busy else CLOSE_COMMENT)
+        held = set(_names(issue))                        # a reopen on GitHub must not silently restart the work
+        for lab in (*trigger_labels(cfg), Q.NEEDS_ANSWERS):
+            if lab in held:
+                gh.remove_label(repo, n, lab)
         gh.update_issue(repo, n, state="closed")
     except Refused as e:
         return _done(h, form, csrf, str(e), "bad")

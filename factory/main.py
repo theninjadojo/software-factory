@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import backup, ci, conflicts, designfiles, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, usage, verify
+from . import backup, ci, conflicts, designfiles, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -362,6 +362,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
                 review_changes(cfg, gh, repo, issue, prs)
             except Exception:
                 log.exception("automatic review failed")           # a review problem must never undo a finished build
+    elif res.status == "cancelled":                  # the ticket was closed: no failure label, no comment
+        gh.remove_label(repo, num, WORKING)
     else:
         gh.add_labels(repo, num, [FAILED])
         gh.comment(repo, num, f"Factory run did not produce a PR ({res.status}). A person should take a look.")
@@ -497,6 +499,8 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             assumed = "".join(f"\n{q.id}. {Q.describe(q, None)}" for q in qs or [])
             alert(done + ("\nContinuing automatically: " + (hint or "next stage") + assumed if go_on else (f"\nWaiting for you: {hint}" if hint else "")),
                   event="stage_done")
+    elif res.status == "cancelled":
+        gh.remove_label(repo, num, working)
     else:
         gh.add_labels(repo, num, [FAILED])
         gh.comment(repo, num, f"Factory {role.name} run did not produce a document ({res.status}). A person should take a look.")
@@ -586,6 +590,8 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
         gh.add_labels(repo, num, [cfg.review.done_label])
         verdict = next((v for v in ("Blocking issues", "Needs changes", "Looks good") if v.lower() in res.output[:600].lower()), "see the PR")
         alert(f"Review done: {repo}#{num}: {verdict}\n" + "\n".join(links), event="review_done")
+    elif res.status == "cancelled":
+        pass                                                  # the ticket was closed: nothing to post
     else:
         alert(f"Review failed: {repo}#{num} ({res.status})\n{res.detail[:300]}", event="failure")
     return res
@@ -628,6 +634,8 @@ def run_fix(cfg: Config, gh: GitHub, repo: str, number: int, issue_repo: str, is
     if not branch.startswith("factory/") or pr["head"]["repo"]["full_name"] != repo:
         return False                                     # never touch a branch the factory did not create
     issue = gh.get_issue(issue_repo, issue_num)
+    if issue.get("state") == "closed":                  # a closed ticket gets no more CI fix rounds
+        return False
     res, _ = run_chain(cfg, gh, "fix", issue_repo, issue, cfg.routes["medium"], prior=stage_outputs(gh, issue_repo, issue_num),
                        comments=human_comments(gh, issue_repo, issue_num), fix_branch=branch, failures=failures)
     if res.status == "rate-limited":
@@ -642,6 +650,9 @@ def run_fix(cfg: Config, gh: GitHub, repo: str, number: int, issue_repo: str, is
 def fix_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, label: str) -> str:
     """The conflicts label: merge the base branch into every conflicting factory PR of the ticket. Returns the outcome."""
     num = issue["number"]
+    if issue.get("state") == "closed":              # a closed ticket gets no more conflict rounds
+        gh.remove_label(repo, num, label)
+        return "closed"
     gh.remove_label(repo, num, label)               # prevents re-dispatch; factory:pr-open stays, the PRs are still open
     gh.add_labels(repo, num, [working_label("conflicts")])
     try:
@@ -692,6 +703,8 @@ def resolve_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, lab
         if res.status == "rate-limited":
             requeue_rate_limited(cfg, gh, repo, num, label, "conflicts")          # the attempt is not counted
             return "rate-limited"
+        if res.status == "cancelled":                    # the ticket was closed: the attempt is not counted and nothing is posted
+            return "cancelled"
         pushed, links = res.status == "pr", "\n".join(u for _, _, _, u, _ in prs)
         # Our own validation messages are safe to show; an agent's log tail (in failed / no-change) only goes to the chat and the UI.
         why = res.detail[:300] if res.status in ("pr", "needs-person", "rejected") else res.status
@@ -979,6 +992,24 @@ def github_poll_due(cfg: Config, conn) -> bool:
     return True
 
 
+def stop_closed(cfg: Config, gh: GitHub, conn) -> None:
+    """Stop the work on a ticket that was closed (from the UI or on GitHub) while a job runs for it. The issue state is the signal:
+    the job kills its container and publishes nothing, and its queued worker checks are cancelled."""
+    names = {r.lower(): r for r in cfg.repos}
+    for job in pool.running():
+        repo, num = names.get(job["repo"]), job["issue"]
+        if repo is None or num <= 0:
+            continue
+        try:
+            if gh.get_issue(repo, num).get("state") != "closed" or not pool.cancel(jobkey(repo, num)):
+                continue
+            jobs.cancel_for(conn, repo, num, time.time())
+            dbm.set_questions(conn, repo, num, "", 0)
+            emit("run:cancelling", "the ticket was closed: stopping its work", repo, num)
+        except Exception:
+            log.exception("could not check whether %s#%s was closed", repo, num)       # never stops the poll
+
+
 def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     queued.clear()
     github_due = github_poll_due(cfg, conn)
@@ -990,6 +1021,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         except Exception:
             log.exception("import of GitHub issues failed")      # never stops the poll
     if not cfg.dry_run:
+        stop_closed(cfg, gh, conn)
         process_approvals(cfg, gh, conn, classifier)
     for repo in cfg.repos:
         handled: set[int] = set()

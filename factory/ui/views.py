@@ -316,7 +316,7 @@ def prs_cards(prs: list[dict], fix_rounds: int = 1) -> str:
 
 def runs_page(runs: list[dict], status: str, repo: str, page_no: int, has_more: bool, summary: dict | None = None) -> str:
     opts = "".join(f'<option value="{esc(v)}"{" selected" if v == status else ""}>{esc(v or "any status")}</option>'
-                   for v in ("", "running", "passed", "pr", "stage", "failed", "rejected", "no-change", "rate-limited", "interrupted"))
+                   for v in ("", "running", "passed", "pr", "stage", "failed", "rejected", "no-change", "rate-limited", "interrupted", "cancelled"))
     bar = chips((("", "All"), ("running", "Running"), ("passed", "Passed"), ("failed", "Failed")), status,
                 lambda v: "/runs?" + urlencode({"status": v, "repo": repo}))
     form = (f'<form method="get" class="filters"><select name="status">{opts}</select>'
