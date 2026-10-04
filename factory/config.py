@@ -285,6 +285,9 @@ class ScreenPage:
     viewports: tuple[str, ...] = ()      # empty: every viewport
     mask: tuple[str, ...] = ()           # CSS selectors of dynamic regions, painted over before comparing
     wait_for: str = ""                   # CSS selector to wait for before the screenshot
+    journey: str = ""                    # the Screens board groups pages by journey ([a-z0-9-]); empty: "Other screens"
+    step: int = 0                        # order within the journey
+    design: str = ""                     # optional: the Claude Design canvas (*.dc.html) of this screen, rendered beside it on the board
 
 
 @dataclass(frozen=True)
@@ -299,6 +302,7 @@ class ScreensCfg:
     viewports: tuple[Viewport, ...] = (Viewport("desktop", 1440, 900), Viewport("mobile", 390, 844))
     pages: tuple[ScreenPage, ...] = ()
     label: str = "factory:screens-changed"   # put on the draft PR when a patch changes baseline images
+    board_every: str = ""                # the Screens board: shoot every page on the default branch this often ("6h", "1d"); "" = only on request
 
 
 @dataclass(frozen=True)
@@ -575,6 +579,11 @@ def _screens(raw: dict, repos: list[str]) -> ScreensCfg:
     names = [v.name for v in c.viewports]
     if len(set(names)) != len(names):
         raise ValueError("screens.viewports names must be unique")
+    if "design" in names:
+        raise ValueError("screens.viewports: the name 'design' is reserved for the design canvases on the Screens board")
+    from .schedules import parse_every
+    if not isinstance(c.board_every, str) or (c.board_every and parse_every(c.board_every) is None):
+        raise ValueError('screens.board_every must be like "6h", "1d" or "1w", or empty')
     for v in c.viewports:
         if not _SCREEN_NAME.fullmatch(v.name):
             raise ValueError("screens.viewports names must match [a-z0-9-]")
@@ -597,6 +606,14 @@ def _screens(raw: dict, repos: list[str]) -> ScreensCfg:
         if (len(p.mask) > 20 or any(not isinstance(m, str) or not 0 < len(m) <= 200 for m in p.mask)
                 or not isinstance(p.wait_for, str) or len(p.wait_for) > 200):
             raise ValueError(f"screens.pages.{p.name}: mask and wait_for must be short CSS selectors")
+        if not isinstance(p.journey, str) or (p.journey and not _SCREEN_NAME.fullmatch(p.journey)):
+            raise ValueError(f"screens.pages.{p.name}: journey must match [a-z0-9-]")
+        if not isinstance(p.step, int) or isinstance(p.step, bool) or not 0 <= p.step <= 999:
+            raise ValueError(f"screens.pages.{p.name}: step must be a whole number from 0 to 999")
+        dparts = p.design.split("/") if isinstance(p.design, str) else [""]
+        if p.design and (not isinstance(p.design, str) or not _SCREEN_PATH.fullmatch(p.design) or not p.design.endswith(".dc.html")
+                         or p.design.startswith("/") or ".." in dparts or "" in dparts or any(x.lower() == ".git" for x in dparts)):
+            raise ValueError(f"screens.pages.{p.name}: design must be a relative path to a .dc.html file inside the repo")
     return c
 
 

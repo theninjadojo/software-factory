@@ -10,12 +10,14 @@ import sqlite3
 import time
 from urllib.parse import urlencode
 
-from . import designfiles
+from . import designfiles, screenboard
 from .render import png_ok
 
 SCALE = 1000
 MAX_TEXT = 1000
 MAX_OPEN = 30
+MAX_OPEN_BOARD = 100
+BOARD = ("", 0)                          # the Screens board's notes, before a person turns them into a ticket
 MAX_IMAGES = 8
 MOCKUP_KEY = re.compile(r"mockup:([\w.-]+/[\w.-]+):(.+)")
 RUN_KEY = re.compile(r"run:(\d{1,9}):(built|verify):([a-z0-9][a-z0-9-]{0,80})")
@@ -26,7 +28,7 @@ def ensure_tables(db) -> None:
     db.execute(
         """CREATE TABLE IF NOT EXISTS review_notes (
             id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, issue INTEGER NOT NULL,
-            image TEXT NOT NULL,                        -- an images() key: mockup:<repo>:<path> or run:<id>:<kind>:<name>
+            image TEXT NOT NULL,                        -- an images() key: mockup:<repo>:<path>, run:<id>:<kind>:<name> or screen:... (screenboard.KEY)
             x INTEGER NOT NULL, y INTEGER NOT NULL, w INTEGER NOT NULL, h INTEGER NOT NULL,   -- thousandths of the image
             text TEXT NOT NULL, created REAL NOT NULL,
             sent REAL)                                  -- when a design run took it; NULL while it is open"""
@@ -55,6 +57,10 @@ def images(db, repo: str, issue: int) -> list[dict]:
         if RUN_KEY.fullmatch(key):
             out.append({"key": key, "label": f"{name} · run #{int(rid)}",
                         "src": "/runimg?" + urlencode({"run": int(rid), "kind": kind, "name": name})})
+    for key in dict.fromkeys(x["image"] for x in notes(db, repo, issue)):     # Screens board shots its notes came from
+        if (m := screenboard.KEY.fullmatch(key)) and screenboard.image(db, key) is not None:
+            view = "designed" if m.group(3) == screenboard.DESIGN else m.group(3)
+            out.append({"key": key, "label": f"{m.group(2)} · {view} · {m.group(4)[:7]}", "src": screenboard.src(key)})
     return out
 
 
@@ -65,6 +71,8 @@ def png_of(db, key: str) -> bytes | None:
         png = dbm.mockup_image(db, m.group(1), m.group(2))
     elif (m := RUN_KEY.fullmatch(key)):
         png = dbm.run_image(db, int(m.group(1)), m.group(2), m.group(3))
+    elif screenboard.KEY.fullmatch(key):
+        png = screenboard.image(db, key)
     else:
         return None
     return png if png and png_ok(png) else None
@@ -89,7 +97,10 @@ def add(db, repo: str, issue: int, image: str, box: tuple, text: str) -> int:
     if not text or len(text) > MAX_TEXT:
         raise ValueError(f"write a note of up to {MAX_TEXT} characters")
     x, y, w, h = area(*box)
-    if len(notes(db, repo, issue, open_only=True)) >= MAX_OPEN:
+    if (repo, int(issue)) == BOARD:
+        if len(notes(db, repo, issue, open_only=True)) >= MAX_OPEN_BOARD:
+            raise ValueError(f"the screens can hold {MAX_OPEN_BOARD} open notes; turn some into tickets first")
+    elif len(notes(db, repo, issue, open_only=True)) >= MAX_OPEN:
         raise ValueError(f"a ticket can hold {MAX_OPEN} open notes; send these to the designer first")
     cur = db.execute("INSERT INTO review_notes (repo, issue, image, x, y, w, h, text, created) VALUES (?,?,?,?,?,?,?,?,?)",
                      (repo, int(issue), image, x, y, w, h, text, time.time()))
@@ -113,6 +124,16 @@ def notes(db, repo: str, issue: int, open_only: bool = False) -> list[dict]:
         return []
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def move_to_ticket(db, ids: list[int], repo: str, issue: int) -> int:
+    """Hand open Screens board notes to a ticket (one a person just created from them). Returns how many moved."""
+    n = 0
+    for i in ids:
+        n += db.execute("UPDATE review_notes SET repo=?, issue=? WHERE id=? AND repo=? AND issue=? AND sent IS NULL",
+                        (repo, int(issue), int(i), *BOARD)).rowcount
+    db.commit()
+    return n
 
 
 def mark_sent(db, ids: list[int], when: float | None = None) -> None:
