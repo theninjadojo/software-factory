@@ -587,7 +587,9 @@ def _events(v):
 
 
 def _github_poll(gh: dict, default: int) -> int:
-    v = gh.get("poll_seconds", default)
+    if "poll_seconds" not in gh:
+        return default
+    v = gh["poll_seconds"]
     if isinstance(v, bool) or not isinstance(v, int) or not 5 <= v <= 86400:
         raise ValueError("github.poll_seconds must be a whole number of seconds from 5 to 86400")
     return v

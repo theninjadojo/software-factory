@@ -256,7 +256,7 @@ def refusal(db, repo: str, issue: dict) -> str | None:
         return "That issue was already moved."
     if issue.get("state") == "closed":
         return "That issue is closed."
-    if any(n and (n.startswith("factory:working") or n == "factory:needs-answers") for n in names):
+    if "factory:needs-answers" in names or any(n and n.startswith("factory:working-") for n in names):
         return "That issue is busy: wait for the run to finish or answer its question first."
     r = db.execute("SELECT status FROM runs WHERE repo=? AND issue=? ORDER BY id DESC LIMIT 1", (repo, num)).fetchone()
     if r and r[0] in RUNNING:
