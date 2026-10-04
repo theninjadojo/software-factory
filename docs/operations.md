@@ -58,6 +58,21 @@ It cannot see an expired Claude subscription token before a run fails; the `run-
 `ssh -L 8787:127.0.0.1:8787 host`. It writes `config.overrides.toml` next to `config.toml`, so both files must be readable by
 the orchestrator and the proxy, and the UI must be able to write the overrides, the state directory and the secrets directory.
 
+### Backup and restore
+
+The UI's **Backup** page (Settings side list) downloads a zip: `manifest.json` (format 1, factory version, row counts, checksums), `factory.db`, `config.toml` and `config.overrides.toml`.
+The database copy is taken with SQLite's online backup, so it is consistent while the orchestrator runs, and then cleaned: **left out** are
+every file under `secrets/`, the UI password, `runs.output` and `log_tail`, `verify_jobs` patches and logs, and anything queued (approvals,
+"run now" requests, unfinished verification jobs). Images are kept. Temporary files live in `state/.backup-tmp` and are removed after the download.
+
+To restore, upload the zip on the same page and tick the confirmation. The UI validates it (known members only, checksums, a format and
+version check, the configuration must parse and keep the same `db_path`), copies its rows into a fresh database (triggers, views and unknown
+tables never come across), replaces `config.toml` and `config.overrides.toml` (the old ones become `.bak`), writes `PAUSED` and `RESTART`, and
+stages the database in `state/restore/`. At its next idle restart the orchestrator renames the old database (and `-wal`, `-shm`) to
+`factory.db.pre-restore-<time>`, moves the new one in and records a `restore` event. Uploads are capped at 512 MiB. Afterwards enter the
+credentials again (Credentials and Harnesses pages) and press Resume. To roll back, stop the factory, move `factory.db.pre-restore-<time>`
+back to `factory.db` and the `.bak` config files back. Old pre-restore copies are never removed automatically.
+
 ### Verification workers
 
 Optional (see [workers.md](workers.md)). Set `[workers] enabled = true` and add `[[workers.checks]]`, create a token per worker
