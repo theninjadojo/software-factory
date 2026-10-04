@@ -10,7 +10,8 @@
   var hopSel = root.querySelector(".fe-hop"), dirSel = root.querySelector(".fe-dir");
   var G = meta.grid, NS = "http://www.w3.org/2000/svg";
   var doc = parse(area.value) || clone(meta["default"]);
-  var past = [], future = [], tool = "move", drawing = null, drag = null, ugFrom = null, focused = null;
+  if (!doc.districts) doc.districts = {};
+  var past = [], future = [], tool = "move", drawing = null, drag = null, ugFrom = null, focused = null, focusedDist = null;
   var details = document.querySelector(".fe-data");
   if (details) details.removeAttribute("open");
 
@@ -36,6 +37,25 @@
   function box(id) {
     var n = doc.nodes[id], m = meta.nodes[id];
     return n && m ? [n.x + m.dx, n.y + m.dy, m.w, m.h] : null;
+  }
+  // a district: its saved box, or the smallest one round its stations (as the server draws it)
+  function fit(name) {
+    var bs = meta.districts[name].map(box).filter(Boolean);
+    if (!bs.length) return null;
+    var x0 = Math.min.apply(null, bs.map(function (b) { return b[0]; })) - 1, y0 = Math.min.apply(null, bs.map(function (b) { return b[1]; })) - 2;
+    var x1 = Math.max.apply(null, bs.map(function (b) { return b[0] + b[2]; })) + 1, y1 = Math.max.apply(null, bs.map(function (b) { return b[1] + b[3]; })) + 2;
+    return {x: x0, y: y0, w: x1 - x0, h: y1 - y0};
+  }
+  function dbox(name) { return doc.districts[name] || fit(name); }
+  function grow() {
+    // a district always holds its stations: moving one out stretches the box round it
+    Object.keys(doc.districts).forEach(function (name) {
+      var d = doc.districts[name], f = fit(name);
+      if (!f || !meta.districts[name]) { delete doc.districts[name]; return; }
+      var x0 = Math.min(d.x, f.x), y0 = Math.min(d.y, f.y), x1 = Math.max(d.x + d.w, f.x + f.w), y1 = Math.max(d.y + d.h, f.y + f.h);
+      x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(meta.w, x1); y1 = Math.min(meta.h, y1);
+      doc.districts[name] = {x: x0, y: y0, w: x1 - x0, h: y1 - y0};
+    });
   }
   function inside(p, b) { return b[0] <= p[0] && p[0] <= b[0] + b[2] && b[1] <= p[1] && p[1] <= b[1] + b[3]; }
   function beside(p, id) {
@@ -83,6 +103,7 @@
   // ---- drawing the plan
   function poly(pts) { return pts.map(function (p) { return p[0] * G + "," + p[1] * G; }).join(" "); }
   function draw() {
+    if (!doc.districts) doc.districts = {};
     area.value = JSON.stringify(doc);
     var res = check();
     while (list.firstChild) list.removeChild(list.firstChild);
@@ -97,13 +118,13 @@
     el("path", {d: "M " + G + " 0 L 0 0 0 " + G, "class": "fe-gridline"}, pat);
     el("rect", {width: W, height: H, fill: "url(#fe-grid)", "class": "fe-ground"}, svg);
     Object.keys(meta.districts).forEach(function (name) {
-      var bs = meta.districts[name].map(box).filter(Boolean);
-      if (!bs.length) return;
-      var x0 = Math.min.apply(null, bs.map(function (b) { return b[0]; })) - 1, y0 = Math.min.apply(null, bs.map(function (b) { return b[1]; })) - 1;
-      var x1 = Math.max.apply(null, bs.map(function (b) { return b[0] + b[2]; })) + 1, y1 = Math.max.apply(null, bs.map(function (b) { return b[1] + b[3]; })) + 2;
-      var g = el("g", {"class": "fe-dist", "data-district": name}, svg);
-      el("rect", {x: x0 * G, y: y0 * G, width: (x1 - x0) * G, height: (y1 - y0) * G, rx: 4}, g);
-      el("text", {x: x0 * G + 6, y: y0 * G + 14}, g, name);
+      var d = dbox(name);
+      if (!d) return;
+      var g = el("g", {"class": "fe-dist" + (name === focusedDist ? " sel" : ""), "data-district": name, tabindex: 0, role: "button",
+                       "aria-label": "District " + name + ", at " + d.x + ", " + d.y + ", " + d.w + " by " + d.h}, svg);
+      el("rect", {x: d.x * G, y: d.y * G, width: d.w * G, height: d.h * G, rx: 4}, g);
+      el("text", {x: d.x * G + 6, y: d.y * G + 14}, g, name);
+      el("rect", {"class": "fe-resize", "data-resize": name, x: (d.x + d.w) * G - 10, y: (d.y + d.h) * G - 10, width: 10, height: 10}, g);
     });
     Object.keys(meta.nodes).forEach(function (id) {
       var b = box(id);
@@ -136,6 +157,7 @@
     });
     if (drawing) el("polyline", {points: poly(drawing), "class": "fe-belt drawing"}, svg);
     if (ugFrom) el("circle", {"class": "fe-end drawing", cx: ugFrom[0] * G, cy: ugFrom[1] * G, r: 6}, svg);
+    if (focusedDist && !focused) { var fd = svg.querySelector('[data-district="' + focusedDist + '"]'); if (fd && document.activeElement !== fd && svg.contains(document.activeElement || null)) fd.focus(); }
     if (focused) { var f = svg.querySelector('[data-node="' + focused + '"]'); if (f && document.activeElement !== f && svg.contains(document.activeElement || null)) f.focus(); }
   }
 
@@ -170,8 +192,16 @@
     if (atEnd) out.reverse();
     return out;
   }
-  function moveNodes(ids, dx, dy, from) {
+  function moveNodes(ids, dx, dy, from, dists) {
     var nodes = from.nodes, belts = from.belts, moved = {};
+    dists = dists || [];
+    doc.districts = clone(from.districts || {});
+    dists.forEach(function (name) {
+      if (!doc.districts[name]) doc.districts[name] = fitIn(from, name);
+      var d = doc.districts[name];
+      dx = Math.max(-d.x, Math.min(meta.w - d.w - d.x, dx));
+      dy = Math.max(-d.y, Math.min(meta.h - d.h - d.y, dy));
+    });
     // the group stops at the floor's edge as one, so its belts move by the same step as its buildings
     ids.forEach(function (id) {
       var n = nodes[id], m = meta.nodes[id], x = n.x + m.dx, y = n.y + m.dy;
@@ -179,6 +209,7 @@
       dy = Math.max(-y, Math.min(meta.h - m.h - y, dy));
     });
     ids.forEach(function (id) { moved[id] = 1; doc.nodes[id] = {x: nodes[id].x + dx, y: nodes[id].y + dy}; });
+    dists.forEach(function (name) { var d = doc.districts[name]; doc.districts[name] = {x: d.x + dx, y: d.y + dy, w: d.w, h: d.h}; });
     meta.hops.forEach(function (h) {
       var id = h[0] + ">" + h[1], pts = belts[id];
       if (!pts || pts.length < 2) return;
@@ -187,6 +218,15 @@
       else if (moved[h[1]]) doc.belts[id] = follow(pts, true, dx, dy);
       else doc.belts[id] = pts;
     });
+    grow();
+  }
+  function fitIn(state, name) { var keep = doc; doc = state; var f = fit(name); doc = keep; return f; }
+  function resize(name, dx, dy, from) {
+    // the corner handle: never smaller than the stations it holds, never off the floor
+    var d = (from.districts || {})[name] || fitIn(from, name), f = fit(name);
+    doc.districts = clone(from.districts || {});
+    var x1 = Math.min(meta.w, Math.max(f.x + f.w, d.x + d.w + dx)), y1 = Math.min(meta.h, Math.max(f.y + f.h, d.y + d.h + dy));
+    doc.districts[name] = {x: d.x, y: d.y, w: Math.max(1, x1 - d.x), h: Math.max(1, y1 - d.y)};
   }
   function point(e) {
     var m = svg.getScreenCTM();
@@ -216,10 +256,14 @@
     var piece = t.closest && t.closest("[data-piece]"), hop = t.closest && t.closest("[data-hop]");
     if (tool === "move") {
       if (hop && !node) { hopSel.value = hop.getAttribute("data-hop"); draw(); return; }
-      var ids = node ? [node.getAttribute("data-node")] : dist ? meta.districts[dist.getAttribute("data-district")].slice() : null;
+      var grip = t.closest && t.closest("[data-resize]");
+      var name = !node && dist ? dist.getAttribute("data-district") : null;
+      var ids = node ? [node.getAttribute("data-node")] : name ? meta.districts[name].slice() : null;
       if (!ids) return;
       focused = node ? ids[0] : null;
-      drag = {ids: ids, start: p, from: clone(doc), before: JSON.stringify(doc), id: e.pointerId};
+      focusedDist = name;
+      drag = {ids: ids, dists: name ? [name] : [], resize: grip ? grip.getAttribute("data-resize") : null, start: p, from: clone(doc),
+              before: JSON.stringify(doc), id: e.pointerId};
       if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
       e.preventDefault();
       return;
@@ -255,7 +299,8 @@
   svg.addEventListener("pointermove", function (e) {
     if (!drag || e.pointerId !== drag.id) return;
     var p = point(e);
-    moveNodes(drag.ids, p[0] - drag.start[0], p[1] - drag.start[1], drag.from);
+    if (drag.resize) resize(drag.resize, p[0] - drag.start[0], p[1] - drag.start[1], drag.from);
+    else moveNodes(drag.ids, p[0] - drag.start[0], p[1] - drag.start[1], drag.from, drag.dists);
     draw();
   });
   function drop(e) {
@@ -266,15 +311,23 @@
   }
   svg.addEventListener("pointerup", drop);
   svg.addEventListener("pointercancel", drop);
-  svg.addEventListener("focusin", function (e) { var n = e.target.closest && e.target.closest("[data-node]"); if (n) focused = n.getAttribute("data-node"); });
+  svg.addEventListener("focusin", function (e) {
+    var n = e.target.closest && e.target.closest("[data-node]"), dn = e.target.closest && e.target.closest("[data-district]");
+    if (n) { focused = n.getAttribute("data-node"); focusedDist = null; }
+    else if (dn) { focusedDist = dn.getAttribute("data-district"); focused = null; }
+  });
   svg.addEventListener("keydown", function (e) {
-    var n = e.target.closest && e.target.closest("[data-node]");
+    var n = e.target.closest && e.target.closest("[data-node]"), dn = e.target.closest && e.target.closest("[data-district]");
     var step = {ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]}[e.key];
-    if (!n || !step) return;
+    if (!step || !(n || dn)) return;
     e.preventDefault();
-    focused = n.getAttribute("data-node");
     remember();
-    moveNodes([focused], step[0], step[1], clone(doc));
+    if (n) { focused = n.getAttribute("data-node"); focusedDist = null; moveNodes([focused], step[0], step[1], clone(doc)); }
+    else {
+      focusedDist = dn.getAttribute("data-district"); focused = null;
+      if (e.shiftKey) resize(focusedDist, step[0], step[1], clone(doc));            // Shift+arrows resize
+      else moveNodes(meta.districts[focusedDist].slice(), step[0], step[1], clone(doc), [focusedDist]);
+    }
     draw();
   });
   document.addEventListener("keydown", function (e) {

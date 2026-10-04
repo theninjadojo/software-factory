@@ -740,6 +740,8 @@ main.full { max-width:none; }
 .fe-ground { stroke:none; }
 .fe-dist rect { fill:rgba(255,255,255,.02); stroke:var(--line2); stroke-width:1.5; stroke-dasharray:8 5; cursor:move; }
 .fe-dist text { fill:#59636b; font:700 10px var(--sans); letter-spacing:.14em; pointer-events:none; }
+.fe-dist { outline:none; } .fe-dist:focus rect, .fe-dist.sel rect { stroke:var(--accent); }
+.fe-dist rect.fe-resize { fill:var(--line2); stroke:none; stroke-dasharray:none; cursor:nwse-resize; } .fe-dist:hover rect.fe-resize, .fe-dist.sel rect.fe-resize { fill:var(--accent); }
 .fe-node { cursor:grab; outline:none; }
 .fe-node rect { fill:var(--panel2); stroke:var(--line2); stroke-width:1.5; }
 .fe-node text { fill:var(--text); font:600 12px var(--sans); pointer-events:none; }

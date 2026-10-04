@@ -469,37 +469,39 @@ CARGO = '<rect class="sh-load" x="-10" y="-4" width="12" height="8"/><rect class
 DOCK = (276, 250)
 
 
-def sea(trips: list[dict], height: float) -> str:
-    """In the sea's own coordinates (x 0..300; Receiving's sea wall is at x 300)."""
+def sea(trips: list[dict], height: float, dock_y: float = DOCK[1]) -> str:
+    """In the sea's own coordinates (x 0..300; Receiving's sea wall is at x 300). dock_y: the height of the dock and the crane, which
+    a saved layout sets to Receiving's."""
+    dock = (DOCK[0], dock_y)
     out = [f'<rect class="sh-sea" x="0" y="0" width="{SEA_W}" height="{_f(height)}"/>', f'<text class="fm-lab" x="16" y="24">THE SEA · SCHEDULED JOBS</text>']
     out += [f'<path class="sh-wave w{i % 3}" d="M {20 + (i * 61) % 250} {60 + (i * 137) % int(height - 80)} q 6 -4 12 0 t 12 0"/>' for i in range(30)]
     lines = marks = ships = ""
     for k, t in enumerate(trips[:4]):
         xo, xr = 26 + 66 * k, 60 + 66 * k
         yf = height - 200 - 40 * k
-        p = (Path(*DOCK).L(xo + 14, DOCK[1] - 14).A(14, 0, xo, DOCK[1]).L(xo, yf).A(17, 0, xr, yf).L(xr, DOCK[1] + 28)
-             .A(14, 1, xr + 14, DOCK[1] + 14).L(*DOCK))
+        p = (Path(*dock).L(xo + 14, dock[1] - 14).A(14, 0, xo, dock[1]).L(xo, yf).A(17, 0, xr, yf).L(xr, dock[1] + 28)
+             .A(14, 1, xr + 14, dock[1] + 14).L(*dock))
         due = t["due"]
         lines += f'<path class="sh-course{" due" if due else ""}" d="{p.d}"/>'
         mx = (xo + xr) / 2
         marks += (f'<g class="sh-src"><circle cx="{_f(mx)}" cy="{_f(yf + 17)}" r="7"/><text class="sh-srcname" x="{_f(mx)}" y="{_f(yf + 40)}">{esc(t["source"][:8])}</text></g>'
-                  f'<g transform="translate({_f(mx + 4)} 330) rotate(90)"><text class="sh-name" x="0" y="0">{esc(t["name"][:24])}</text>'
+                  f'<g transform="translate({_f(mx + 4)} {_f(dock[1] + 80)}) rotate(90)"><text class="sh-name" x="0" y="0">{esc(t["name"][:24])}</text>'
                   f'<text class="sh-when{" due" if due else ""}" x="0" y="11">{esc(t["when"])}</text></g>')
         f = max(0.0, min(1.0, t["progress"]))
         place = f'<animateMotion path="{p.d}" keyPoints="{f:.4f};{f:.4f}" keyTimes="0;1" calcMode="linear" dur="1s" rotate="auto" fill="freeze"/>'
         ships += (f'<g class="sh-ship{" due" if due else ""}" role="img" aria-label="Schedule {esc(t["name"])}: {esc(t["when"])}">{place}'
                   f'<g class="sh-rock">{SHIP}{CARGO if f >= 0.5 else ""}</g></g>')
-    crane = f'<g class="sh-crane"><line class="sh-jib" x1="{SEA_W}" y1="250" x2="{SEA_W - 22}" y2="250"/><circle class="sh-base" cx="{SEA_W}" cy="250" r="7"/></g>'
+    crane = f'<g class="sh-crane"><line class="sh-jib" x1="{SEA_W}" y1="{_f(dock[1])}" x2="{SEA_W - 22}" y2="{_f(dock[1])}"/><circle class="sh-base" cx="{SEA_W}" cy="{_f(dock[1])}" r="7"/></g>'
     if any(t["due"] for t in trips):
         Tc = 4.0
-        crane = (f'<g class="sh-crane"><g><animateTransform attributeName="transform" type="rotate" values="0 {SEA_W} 250;0 {SEA_W} 250;180 {SEA_W} 250;180 {SEA_W} 250;0 {SEA_W} 250" '
-                 f'keyTimes="0;.15;.5;.6;1" dur="{Tc}s" repeatCount="indefinite"/><line class="sh-jib" x1="{SEA_W}" y1="250" x2="{SEA_W - 22}" y2="250"/>'
-                 f'<rect class="sh-cargo" x="{SEA_W - 27}" y="245" width="10" height="10" opacity="0"><animate attributeName="opacity" values="0;1;0" keyTimes="0;.15;.5" '
-                 f'calcMode="discrete" dur="{Tc}s" repeatCount="indefinite"/></rect></g><circle class="sh-base" cx="{SEA_W}" cy="250" r="7"/></g>')
+        crane = (f'<g class="sh-crane"><g><animateTransform attributeName="transform" type="rotate" values="0 {SEA_W} {_f(dock[1])};0 {SEA_W} {_f(dock[1])};180 {SEA_W} {_f(dock[1])};180 {SEA_W} {_f(dock[1])};0 {SEA_W} {_f(dock[1])}" '
+                 f'keyTimes="0;.15;.5;.6;1" dur="{Tc}s" repeatCount="indefinite"/><line class="sh-jib" x1="{SEA_W}" y1="{_f(dock[1])}" x2="{SEA_W - 22}" y2="{_f(dock[1])}"/>'
+                 f'<rect class="sh-cargo" x="{SEA_W - 27}" y="{_f(dock[1] - 5)}" width="10" height="10" opacity="0"><animate attributeName="opacity" values="0;1;0" keyTimes="0;.15;.5" '
+                 f'calcMode="discrete" dur="{Tc}s" repeatCount="indefinite"/></rect></g><circle class="sh-base" cx="{SEA_W}" cy="{_f(dock[1])}" r="7"/></g>')
     if not trips:
         lines = (f'<text class="sh-when" x="20" y="60">No scheduled jobs yet.</text>'
                  f'<a class="sh-add" href="/schedules"><text x="20" y="76">Add one in Settings, Schedules</text></a>')
-    return "".join(out) + lines + marks + ships + f'<rect class="sh-wall" x="{SEA_W - 4}" y="196" width="8" height="108"/>' + crane
+    return "".join(out) + lines + marks + ships + f'<rect class="sh-wall" x="{SEA_W - 4}" y="{_f(dock[1] - 54)}" width="8" height="108"/>' + crane
 
 
 # ---------------------------------------------------------------- the mainland's airport, the plant's airfield, and a 747
@@ -652,11 +654,6 @@ def floor_map(order: list[tuple[str, str, str]], fl: dict, workers: list[dict], 
 
 
 # ---------------------------------------------------------------- a saved layout (floorplan.py): the same parts, where a person put them
-def district_of(sid: str) -> str:
-    return ("INTAKE" if sid in INTAKE else "PRODUCTION" if sid == "build" else "QUALITY" if sid in ("review", "ci")
-            else "SHIPPING" if sid == "pr" else "PLANNING")
-
-
 R = 10                                      # a belt's corner radius
 
 
@@ -741,19 +738,13 @@ def _piece(p) -> str:
             f'{buildings.cog(*c1, 5.5, 6, "cog fn-cog")}{buildings.cog(*c2, 5.5, 6, "cog ccw fn-cog")}</g>')
 
 
-def _plan_districts(ids, bx) -> str:
-    groups = {}
-    for s in ids:
-        groups.setdefault(district_of(s), []).append(bx[f"station:{s}"])
+def _plan_districts(dist: dict) -> str:
     out = ""
     for name in ("INTAKE", "PLANNING", "PRODUCTION", "QUALITY", "SHIPPING"):
-        if name not in groups:
-            continue
-        b = groups[name]
-        x0, y0 = min(x for x, _, _, _ in b) - 16, min(y for _, y, _, _ in b) - 24
-        x1, y1 = max(x + w for x, _, w, _ in b) + 16, max(y + h for _, y, _, h in b) + 32
-        out += (f'<rect class="f3-dist" x="{_f(x0)}" y="{_f(y0)}" width="{_f(x1 - x0)}" height="{_f(y1 - y0)}" rx="4"/>'
-                f'<text class="f3-dlab" x="{_f(x0 + 8)}" y="{_f(y0 + 14)}">{name}</text>')
+        if name in dist:
+            x, y, w, h = dist[name]
+            out += (f'<rect class="f3-dist" x="{_f(x)}" y="{_f(y)}" width="{_f(w)}" height="{_f(h)}" rx="4"/>'
+                    f'<text class="f3-dlab" x="{_f(x + 8)}" y="{_f(y + 14)}">{name}</text>')
     return out
 
 
@@ -770,9 +761,19 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     right = max([x + w for x, _, w, _ in bx.values()] + [p[0] for hb in hops.values() for p in hb["pts"]])
     bottom = max([y + h for _, y, _, h in bx.values()] + [p[1] for hb in hops.values() for p in hb["pts"]])
     width, height = right + 40, bottom + 40
+    # the sea's dock and crane at Receiving's height, and a belt from the crane to Receiving when they stand apart
+    sx, sy = at["sea"]
+    rx0, ry0 = at["receiving"]
+    dock_y = max(100.0, min(1320 - 420.0, ry0 + MH / 2 - sy))
+    qy, wall = sy + dock_y, sx + SEA_W
+    quay = ""
+    if rx0 - wall > 24:
+        cy = ry0 + MH / 2
+        quay = belt(f"M {_f(wall)} {_f(qy)} " + (f"H {_f(rx0)}" if abs(cy - qy) < 1 else f"H {_f((wall + rx0) / 2)} V {_f(cy)} H {_f(rx0)}"),
+                    "fn-belt thin")
     # the ground: the mainland and the sea, the districts, the buildings that are not stations
     back = (f'<g aria-hidden="true" transform="{tr("mainland", 0, 0)}">{mainland(1320)}</g>'
-            f'<g transform="{tr("sea", 0, 0)}">{sea(extras.get("schedules") or [], 1320)}</g>' + _plan_districts(ids, bx)
+            f'<g transform="{tr("sea", 0, 0)}">{sea(extras.get("schedules") or [], 1320, dock_y)}</g>{quay}' + _plan_districts(C.get("districts") or {})
             + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
             + f'<text class="fm-lab" x="{_f(at["sources"][0])}" y="{_f(at["sources"][1] - 8)}">SOURCES</text>'
             + f'<g transform="{tr("sources", *SRC)}">{github()}</g><g transform="{tr("receiving", 12, 200)}">{receiving(len(queued))}</g>'

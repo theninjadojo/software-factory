@@ -26,6 +26,8 @@ def moved(doc, nid, dx, dy):
     keep = {k: v for k, v in d["belts"].items() if nid not in k.split(">")}
     d["belts"] = F._route_all(d["nodes"], keep, CTX)
     d["pieces"] = []
+    if nid.startswith("station:"):                                   # its district is drawn round it again, as the editor would grow it
+        d["districts"].pop(F.district_of(nid.split(":")[1]), None)
     return d
 
 
@@ -82,6 +84,42 @@ class Validate(unittest.TestCase):
         cx = b["station:classify"][0]
         d["belts"][hop] = [[x + 3, y - 1], [x + 3, y + h + 1], [cx + 3, y + h + 1]]   # from above Poll, down through it, to Classify
         self.assertIn("The belt from Poll to Classify runs through Poll.", F.validate(d, CTX))
+
+
+class Districts(unittest.TestCase):
+    def test_a_saved_district_must_hold_its_stations_and_exist(self):
+        d = json.loads(json.dumps(F.default_plan(CTX)))
+        self.assertEqual(set(d["districts"]), set(CTX.districts))
+        d["districts"]["PRODUCTION"]["x"] += 20                          # the box moved away from Build
+        self.assertIn("The Production district must hold Build.", F.validate(d, CTX))
+        d = json.loads(json.dumps(F.default_plan(CTX)))
+        d["districts"]["NOWHERE"] = {"x": 1, "y": 1, "w": 2, "h": 2}
+        self.assertTrue(any("no district NOWHERE" in e for e in F.validate(d, CTX)))
+        for box in ({"x": 1, "y": 1, "w": 0, "h": 2}, {"x": 1.5, "y": 1, "w": 2, "h": 2}, {"x": 1, "y": 1, "w": 2}, {"x": F.W, "y": 1, "w": 2, "h": 2}):
+            d["districts"] = {"INTAKE": box}
+            self.assertTrue(any("District INTAKE" in e for e in F.validate(d, CTX)), box)
+
+    def test_a_district_moved_with_its_stations_and_resized_is_valid_and_drawn_there(self):
+        d = json.loads(json.dumps(F.default_plan(CTX)))
+        d["districts"]["QUALITY"]["w"] += 4
+        d["districts"]["QUALITY"]["h"] += 2
+        self.assertEqual(F.validate(d, CTX), [])
+        x, y, w, h = (v * F.G for v in (d["districts"]["QUALITY"][k] for k in ("x", "y", "w", "h")))
+        svg = Drawn().draw(d)
+        self.assertIn(f'<rect class="f3-dist" x="{x}" y="{y}" width="{w}" height="{h}"', svg)
+
+    def test_a_layout_without_districts_draws_them_round_the_stations(self):
+        d = json.loads(json.dumps(F.default_plan(CTX)))
+        del d["districts"]
+        self.assertEqual(F.validate(d, CTX), [])
+        self.assertEqual(F.compile_plan(d, CTX)["districts"], F.compile_plan(F.default_plan(CTX), CTX)["districts"])
+
+    def test_merge_grows_a_district_round_a_new_station(self):
+        small = ctx({**ROLES, "roles": ["analyst"]}, 2)
+        big = ctx({**ROLES, "roles": ["analyst", "architect"]}, 2)
+        m = F.merge(F.default_plan(small), big)
+        self.assertEqual(F.validate(m, big), [])
+        self.assertTrue(F.holds(m["districts"]["PLANNING"], F.boxes(m["nodes"], big)["station:architect"]))
 
 
 class Merge(unittest.TestCase):
@@ -151,6 +189,17 @@ class Drawn(unittest.TestCase):
         starts = [tuple(float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", p)[:2]) for p in crates]
         self.assertIn(tuple(map(float, hop["pts"][-1])), ends)
         self.assertIn(tuple(map(float, hop["pts"][0])), starts)
+
+    def test_the_dock_and_crane_follow_receiving_and_a_quay_joins_them(self):
+        d = moved(F.default_plan(CTX), "receiving", 2, 4)              # lower and further from the sea wall
+        self.assertEqual(F.validate(d, CTX), [])
+        svg = self.draw(d, extras={"schedules": [{"name": "n", "source": "gh", "when": "soon", "progress": 0.2, "due": False}]})
+        C = F.compile_plan(d, CTX)
+        dock = C["at"]["receiving"][1] + plant.MH / 2 - C["at"]["sea"][1]
+        self.assertIn(f'<circle class="sh-base" cx="{plant.SEA_W}" cy="{plant._f(dock)}"', svg)
+        wall, rx = C["at"]["sea"][0] + plant.SEA_W, C["at"]["receiving"][0]
+        self.assertGreater(rx - wall, 0)
+        self.assertIn(f"M {plant._f(wall)} {plant._f(C['at']['sea'][1] + dock)} H {plant._f(rx)}", svg)
 
     def test_the_default_floor_is_unchanged_without_a_layout(self):
         order = board.floor_order(ROLES)

@@ -6,7 +6,8 @@ placed on the belts (splitters, mergers, side-loads, underground pairs). The ser
 text is still escaped and the page policy holds. Each hop being its own belt is what keeps every station reachable: a layout is
 only saved when every hop of the route has a belt that starts beside one station and ends beside the next.
 
-Districts are not stored: each is drawn round its stations, and the editor moves a district by moving its stations together.
+Districts are boxes of their own (optional: one left out is drawn round its stations). Moving a district moves its stations with it,
+it can be resized, and it must always hold its stations: the editor grows it when one of them is moved out.
 
 Without a saved layout the floor is drawn as before (plant.floor_map). A saved layout that cannot be read falls back to that; one
 that is stale (the config gained or lost a station, an agent or the workers) is merged: what is gone is dropped, and what is new
@@ -34,6 +35,7 @@ DIRS = {"n": (0, -1), "e": (1, 0), "s": (0, 1), "w": (-1, 0)}
 KINDS = ("splitter", "merger", "sideload", "underground")
 NAMES = {"mainland": "The mainland", "sea": "The sea", "sources": "Sources", "receiving": "Receiving", "queue": "The queue",
          "airfield": "The airfield", "yard": "The Verify yard"}
+DISTRICTS = ("INTAKE", "PLANNING", "PRODUCTION", "QUALITY", "SHIPPING")
 YARD_TOP = 590                             # the yard's feeder top in yard.py's coordinates (yard.BOT_Y + yard.MH + 30)
 
 
@@ -46,6 +48,9 @@ class Ctx:
         self.ids, self.harnesses, self.yard_on, self.trains = tuple(ids), tuple(harnesses), bool(yard_on), max(0, min(5, int(trains)))
         self.key = (self.ids, self.harnesses, self.yard_on, self.trains)
         self.roles = [s for s in self.ids if s not in INTAKE + LATER]
+        self.districts: dict[str, list[str]] = {}
+        for s in self.ids:
+            self.districts.setdefault(district_of(s), []).append(f"station:{s}")
 
     def nodes(self) -> list[str]:
         return (list(SINGLE) + [f"station:{s}" for s in self.ids] + [f"power:{h}" for h in self.harnesses]
@@ -75,6 +80,29 @@ class Ctx:
         if self.yard_on and "build" in has:
             out.append((s("build"), "yard"))
         return out
+
+
+def district_of(sid: str) -> str:
+    return ("INTAKE" if sid in INTAKE else "PRODUCTION" if sid == "build" else "QUALITY" if sid in ("review", "ci")
+            else "SHIPPING" if sid == "pr" else "PLANNING")
+
+
+def fit(members: list, B: dict) -> dict:
+    """The smallest district round its stations' boxes, with room for its name: a cell aside and below, two above."""
+    bs = [B[m] for m in members if m in B]
+    x0, y0 = min(b[0] for b in bs) - 1, min(b[1] for b in bs) - 2
+    x1, y1 = max(b[0] + b[2] for b in bs) + 1, max(b[1] + b[3] for b in bs) + 2
+    return {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
+
+
+def holds(d: dict, b) -> bool:
+    return d["x"] <= b[0] and d["y"] <= b[1] and b[0] + b[2] <= d["x"] + d["w"] and b[1] + b[3] <= d["y"] + d["h"]
+
+
+def district_boxes(doc: dict, ctx: "Ctx", B: dict) -> dict:
+    """Each district of the config: the saved box, or the one round its stations."""
+    saved = doc.get("districts") or {}
+    return {n: dict(saved[n]) if n in saved else fit(m, B) for n, m in ctx.districts.items()}
 
 
 def hop_id(a: str, b: str) -> str:
@@ -288,6 +316,7 @@ def default_plan(ctx: Ctx) -> dict:
     nodes = _default_pos(ctx)
     belts = _route_all(nodes, {}, ctx)
     doc = {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts or {}, "pieces": _pieces_for(belts or {})}
+    doc["districts"] = district_boxes(doc, ctx, boxes(nodes, ctx))
     if len(_DEFAULTS) > 32:
         _DEFAULTS.clear()
     _DEFAULTS[ctx.key] = doc
@@ -328,7 +357,7 @@ def structure(doc) -> list[str]:
     if not isinstance(doc, dict):
         return ["The layout must be a JSON object."]
     errs = []
-    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces"}
+    extra = set(doc) - {"version", "grid", "nodes", "belts", "pieces", "districts"}
     if extra:
         errs.append("Unknown keys: " + ", ".join(sorted(str(k)[:30] for k in extra)[:5]) + ".")
     if doc.get("version") != VERSION or doc.get("grid") != G:
@@ -336,6 +365,14 @@ def structure(doc) -> list[str]:
     nodes, belts, pieces = doc.get("nodes"), doc.get("belts"), doc.get("pieces")
     if not isinstance(nodes, dict) or not isinstance(belts, dict) or not isinstance(pieces, list):
         return errs + ["The layout needs nodes and belts (objects) and pieces (a list)."]
+    dists = doc.get("districts", {})
+    if not isinstance(dists, dict):
+        errs.append("The districts are an object of boxes.")
+    else:
+        for k, v in dists.items():
+            if not (isinstance(v, dict) and set(v) == {"x", "y", "w", "h"} and all(_int(v[c]) for c in v) and v["x"] >= 0 and v["y"] >= 0
+                    and v["w"] >= 1 and v["h"] >= 1 and v["x"] + v["w"] <= W and v["y"] + v["h"] <= H):
+                errs.append(f"District {str(k)[:40]}: a box is {{\"x\", \"y\", \"w\", \"h\"}} in whole cells inside the floor.")
     for k, v in nodes.items():
         if not (isinstance(v, dict) and set(v) == {"x", "y"} and _int(v["x"]) and _int(v["y"]) and 0 <= v["x"] <= W and 0 <= v["y"] <= H):
             errs.append(f"{str(k)[:40]}: a position is {{\"x\": whole number, \"y\": whole number}} inside the floor.")
@@ -420,6 +457,11 @@ def validate(doc, ctx: Ctx) -> list[str]:
         return errs
     B = boxes(nodes, ctx)
     errs += placement(B)
+    for name in doc.get("districts", {}):
+        if name not in ctx.districts:
+            errs.append(f"There is no district {str(name)[:40]} in this factory.")
+    for name, d in district_boxes(doc, ctx, B).items():
+        errs += [f"The {name.title()} district must hold {label(m)}." for m in ctx.districts[name] if not holds(d, B[m])]
     hops = [hop_id(a, b) for a, b in ctx.hops()]
     for k in doc["belts"]:
         if k not in hops:
@@ -473,7 +515,16 @@ def merge(doc: dict, ctx: Ctx) -> dict | None:
     on = list(belts.values())
     pieces = [p for p in doc["pieces"] if (p["kind"] == "underground" and any(_same_run(bp, p["from"], p["to"]) for bp in on))
               or (p["kind"] != "underground" and any(_on_line(bp, p["at"]) for bp in on))]
-    return {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts, "pieces": pieces}
+    dists = {}
+    for name, d in (doc.get("districts") or {}).items():
+        if name not in ctx.districts:
+            continue
+        f = fit(ctx.districts[name], B)                              # a new station of the district: the box grows round it
+        x0, y0 = min(d["x"], f["x"]), min(d["y"], f["y"])
+        x1, y1 = max(d["x"] + d["w"], f["x"] + f["w"]), max(d["y"] + d["h"], f["y"] + f["h"])
+        if x0 >= 0 and y0 >= 0 and x1 <= W and y1 <= H:
+            dists[name] = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
+    return {"version": VERSION, "grid": G, "nodes": nodes, "belts": belts, "pieces": pieces, "districts": dists}
 
 
 def _free_spot(nid, at, nodes, ctx):
@@ -567,7 +618,8 @@ def _tell(why: str) -> None:
 def canonical(doc: dict) -> dict:
     """Only what a layout holds, in a fixed order (the editor may send more than it needs)."""
     return {"version": VERSION, "grid": G, "nodes": {k: {"x": v["x"], "y": v["y"]} for k, v in doc["nodes"].items()},
-            "belts": {k: [list(p) for p in v] for k, v in doc["belts"].items()}, "pieces": doc.get("pieces", [])}
+            "belts": {k: [list(p) for p in v] for k, v in doc["belts"].items()}, "pieces": doc.get("pieces", []),
+            "districts": {k: {c: v[c] for c in ("x", "y", "w", "h")} for k, v in (doc.get("districts") or {}).items()}}
 
 
 def save(state_dir, doc: dict) -> None:
@@ -598,7 +650,8 @@ def compile_plan(doc: dict, ctx: Ctx) -> dict:
         pts = doc["belts"][hid]
         under = [(px(p["from"]), px(p["to"])) for p in doc["pieces"] if p["kind"] == "underground" and _same_run(pts, p["from"], p["to"])]
         hops[hid] = {"src": a, "dst": b, "pts": [px(p) for p in pts], "under": under}
-    return {"at": {k: px((v["x"], v["y"])) for k, v in nodes.items()}, "box": {k: tuple(c * G for c in v) for k, v in B.items()},
+    dist = {n: (d["x"] * G, d["y"] * G, d["w"] * G, d["h"] * G) for n, d in district_boxes(doc, ctx, B).items()}
+    return {"at": {k: px((v["x"], v["y"])) for k, v in nodes.items()}, "box": {k: tuple(c * G for c in v) for k, v in B.items()}, "districts": dist,
             "hops": hops, "pieces": [{**p, "at": px(p["at"])} for p in doc["pieces"] if p["kind"] != "underground"]}
 
 
@@ -611,9 +664,6 @@ def meta(ctx: Ctx) -> dict:
         else:
             (dx, dy), (w, h) = (0, 0), SIZE[nid.split(":")[0]]
         out[nid] = {"label": label(nid), "dx": dx, "dy": dy, "w": w, "h": h}
-    from .plant import district_of
-    dist = {}
-    for s in ctx.ids:
-        dist.setdefault(district_of(s), []).append(f"station:{s}")
+    dist = ctx.districts
     return {"grid": G, "w": W, "h": H, "nodes": out, "hops": [[a, b, f"{label(a)} → {label(b)}"] for a, b in ctx.hops()],
             "districts": dist, "default": default_plan(ctx)}
