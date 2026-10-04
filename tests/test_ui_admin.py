@@ -459,10 +459,19 @@ class Labels(AdminCase):
             self.post(cookie, csrf, "/tickets/create", f)
         self.gh.create_ticket.assert_not_called()
         self.assertEqual(self.post(cookie, csrf, "/tickets/create", {"repo": self.REPO, "title": "A <b>", "body": "d"})[0], 303)
-        self.gh.create_ticket.assert_called_once_with(self.REPO, "A <b>", "d")
+        self.gh.create_ticket.assert_called_once_with(self.REPO, "A <b>", "d", [])
         self.post(cookie, csrf, "/tickets/create", {"repo": self.REPO, "title": "A <b>"})
         self.gh.create_ticket.assert_called_once()
         self.gh.add_labels.assert_not_called()
+
+    def test_create_ticket_start_choice_is_allow_listed(self):
+        self.gh.create_ticket.return_value = {"number": 43}
+        cookie, csrf = self.session()
+        for bad in ("factory:ready", "build", "auto,analyst", "evil"):
+            self.post(cookie, csrf, "/tickets/create", {"repo": self.REPO, "title": "t" + bad, "start": bad})
+        self.gh.create_ticket.assert_not_called()
+        self.assertEqual(self.post(cookie, csrf, "/tickets/create", {"repo": self.REPO, "title": "Go", "start": "auto"})[0], 303)
+        self.gh.create_ticket.assert_called_once_with(self.REPO, "Go", "", ["factory:auto"])
 
     def test_close_comments_then_closes_and_refuses_busy_tickets(self):
         cookie, csrf = self.session()

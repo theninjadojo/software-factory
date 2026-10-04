@@ -311,6 +311,23 @@ def filters(cfg, repo, state, label, text, names, csrf: str = "", stage: str = "
             f'<nav class="nd-seg tk-seg" aria-label="Stage filter">{chips}</nav>')
 
 
+def start_options(cfg) -> list[tuple[str, str, str | None]]:
+    """What a new ticket may start with: (key, text, label). The first is the default and carries no label. Only Auto and the
+    read-only stages are offered (never Build). This list is also the allow-list `create` checks the browser's choice against."""
+    return ([("", "Just open the ticket", None), ("auto", "Auto", cfg.auto_label)]
+            + [(r.name, VERBS.get(r.name, r.name.capitalize()), r.label) for r in cfg.roles])
+
+
+def start_field(roles: list[str]) -> str:
+    """The Start select and its help text, shared by the Tickets form and the floor's Add a ticket (given the role names, in the
+    order start_options lists them; `create` still checks the choice against the configuration)."""
+    keys = [("", "Just open the ticket"), ("auto", "Auto")] + [(r, VERBS.get(r, r.capitalize())) for r in roles]
+    opts = "".join(f'<option value="{esc(k)}">{esc(t)}</option>' for k, t in keys)
+    return (f'<label>Start<select name="start" aria-describedby="start-help">{opts}</select></label>'
+            '<p class="muted" id="start-help">Choose a Start action to begin work right away. Leave it on "Just open the ticket" '
+            'to start it later from its row.</p>')
+
+
 def new_ticket_form(cfg, repo: str, csrf: str) -> str:
     if not csrf or not cfg.repos:
         return ""
@@ -320,7 +337,7 @@ def new_ticket_form(cfg, repo: str, csrf: str) -> str:
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="5" maxlength="{MAX_BODY}"></textarea></label>'
-            '<p class="muted">Creating a ticket does not start work. Use the buttons on its row when you are ready.</p>'
+            f'{start_field([r.name for r in cfg.roles])}'
             '<button>Create ticket</button></form></details>')
 
 
@@ -766,7 +783,8 @@ def flights(now: float, last: float = 20.0) -> list[dict]:
 
 
 def create(h, form, csrf: str) -> None:
-    """A person's new ticket: title and body only, no labels, so it never starts work. Validated before GitHub is called."""
+    """A person's new ticket: title, body and at most one start action, looked up in start_options (never a label from the
+    browser). No start action means no labels, so it does not start work. Validated before GitHub is called."""
     cfg = h.app.cfg()
     title, body = " ".join((form.get("title") or "").split()), (form.get("body") or "").strip()
     try:
@@ -777,6 +795,10 @@ def create(h, form, csrf: str) -> None:
             raise Refused(f"The title is too long ({MAX_TITLE} characters at most).")
         if len(body) > MAX_BODY:
             raise Refused(f"The description is too long ({MAX_BODY:,} characters at most).")
+        chosen = next((o for o in start_options(cfg) if o[0] == (form.get("start") or "").strip()), None)
+        if chosen is None:
+            raise Refused("That start action is not available.")
+        labels = [chosen[2]] if chosen[2] else []
     except Refused as e:
         return _done(h, form, csrf, str(e), "bad")
     gh = _gh(h)
@@ -790,18 +812,19 @@ def create(h, form, csrf: str) -> None:
             _recent.clear()
         _recent[(repo, title)] = now
     try:
-        n = gh.create_ticket(repo, title, body)["number"]
+        n = gh.create_ticket(repo, title, body, labels)["number"]
     except (urllib.error.URLError, OSError, KeyError, TypeError) as e:
         with _recent_lock:
             _recent.pop((repo, title), None)
         log.warning("tickets: create on %s failed", repo)
         return _done(h, form, csrf, _github_error(e) if isinstance(e, urllib.error.HTTPError)
                      else "GitHub did not accept the ticket. Nothing was created. Try again, or check the token under Credentials.", "bad")
-    log.info("tickets: created %s#%s from the UI", repo, n)
+    log.info("tickets: created %s#%s from the UI%s", repo, n, f" with {labels[0]}" if labels else "")
     with _flights_lock:
         _flights.append((time.time(), f"#{int(n)}"))
         del _flights[:-5]
-    _done(h, form, csrf, f"Created {repo}#{int(n)}.")
+    _done(h, form, csrf, f"Created {repo}#{int(n)} and started {chosen[1]}. The factory picks it up on its next poll." if labels
+          else f"Created {repo}#{int(n)}. Nothing started.")
 
 
 def close(h, form, csrf: str) -> None:

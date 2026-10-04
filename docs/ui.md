@@ -74,6 +74,8 @@ and **Review** (when enabled and a PR is open). A button applies the matching tr
 orchestrator starts the work at its next poll. A ticket that is running or queued shows its status instead of buttons. The browser
 only names an action; the label comes from config, and the ticket is re-read before the label is applied.
 
+**New ticket.** The *New ticket* form (and the floor's *Add a ticket*) has a **Start** choice: *Just open the ticket* (the default, no labels), **Auto**, or one of the stages (**Analyze**, **Design**, **Architect**). Build is not offered. The browser names a choice; the server looks it up in the configured list and sends that one label with the new issue, so a forged value is refused and nothing is created.
+
 **Needs a person.** When the factory has asked a person (the Telegram prompt), the same choices appear on the ticket row: the
 recommended stage, **Build anyway**, and **Skip**. They work from the labels, not the database, so they behave the same whichever
 place you answer: a stage or build applies its label and clears the trigger labels; Skip clears them and the factory leaves the

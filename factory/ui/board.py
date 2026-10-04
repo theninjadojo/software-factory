@@ -640,10 +640,10 @@ def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
               "flights": L.flights(now)}
     svg = plant.floor_map(order, fl, d.get("workers") or [], bool(d["cfg"].get("workers")), now, _floor_word,
                           lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras)
-    return snake(fl, [sid for sid, _, _ in order], svg, add_ticket(d["cfg"].get("repos") or [], csrf))
+    return snake(fl, [sid for sid, _, _ in order], svg, add_ticket(d["cfg"].get("repos") or [], csrf, roles))
 
 
-def add_ticket(repos: list[str], csrf: str) -> str:
+def add_ticket(repos: list[str], csrf: str, roles: list[str]) -> str:
     """The floor's Add a ticket: the same form as Tickets' New ticket, back to the floor, where the ticket arrives by air."""
     from . import labels as L
     if not csrf or not repos:
@@ -654,7 +654,8 @@ def add_ticket(repos: list[str], csrf: str) -> str:
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{L.MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="4" maxlength="{L.MAX_BODY}"></textarea></label>'
-            '<p class="muted">It is flown in from the mainland and lands at Receiving. Creating a ticket does not start work.</p>'
+            f'{L.start_field(roles)}'
+            '<p class="muted">It is flown in from the mainland and lands at Receiving. It starts work only if you choose a Start action.</p>'
             '<button>Send by air</button></form></details>')
 
 
