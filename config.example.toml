@@ -241,3 +241,21 @@ bypass_label = "factory:skip-mockup"
 # token_file = "/srv/factory/secrets/umami_key"
 # days = 7
 # metrics = ["path", "referrer", "browser", "device", "country"]
+
+# Code-smell scans (docs/scanner.md): on a timer a worker reads a repo for smells and the factory opens one ticket per smell.
+# Needs [workers] enabled and a worker with the smell-scan recipe (worker/recipes/smell-scan.py). Presets: todo-debt, long-files, missing-tests.
+# [scanner]
+# enabled = false
+# max_tickets = 5                      # opened per scan run
+# # labels = ["factory:analyze"]       # default is the analyst role's label: analysed, not built
+# [[scanner.smells]]                   # a custom smell: a regex per line, in files matching globs
+# id = "no-print"
+# name = "Debug prints"
+# pattern = '^\s*print\('
+# globs = ["**/*.py"]
+# [[scanner.scans]]
+# name = "shop-web-weekly"
+# repo = "your-org/shop-web"
+# every = "1w"                         # or cron = "0 6 * * 1" (UTC); at least 1h. The clock starts when first seen.
+# smells = ["todo-debt", "long-files", "missing-tests", "no-print"]
+# exclude = ["vendor/**", "**/*.min.js"]

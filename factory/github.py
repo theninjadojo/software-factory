@@ -158,6 +158,9 @@ class GitHub:
     def default_branch(self, repo: str) -> str:
         return self._get(f"/repos/{repo}")["default_branch"]
 
+    def branch_sha(self, repo: str, branch: str) -> str:
+        return self._get(f"/repos/{repo}/commits/{urllib.parse.quote(branch, safe='')}")["sha"]
+
     def comment(self, repo: str, issue: int, body: str) -> str:
         return self._req("POST", f"/repos/{repo}/issues/{issue}/comments", {"body": body})["html_url"]
 

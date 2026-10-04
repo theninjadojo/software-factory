@@ -71,7 +71,8 @@ def test_navigating_every_primary_and_secondary_destination(page, server, viewpo
 def test_the_floor_shows_what_is_running_and_pause_resume_works(page, server, viewport):
     running = page.get_by_role("region", name="Running now")
     expect(running.get_by_text("Add dark mode toggle")).to_be_visible()
-    expect(page.locator(".sd-mach.p6.run")).to_be_visible()                  # the Build station is lit
+    lit = ".sd-mach.p6.run" if viewport == "phone" else 'svg.fm a.fm-m.run[href*="at=build"]'      # the phone's column, or the map
+    expect(page.locator(lit)).to_be_visible()                                # the Build station is lit
     paused = server.root / "state" / "PAUSED"
     page.get_by_role("button", name="Pause").click()
     expect(page.get_by_role("button", name="Resume")).to_be_visible()

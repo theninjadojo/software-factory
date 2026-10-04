@@ -12,7 +12,7 @@ from ..router import decide
 import time
 
 from .. import schedules as sched
-from . import forms, integrations as I, labels as L, review as RV, schedules as SC, screens as SB, settings as S, views, workers as WK
+from . import flooredit as FE, forms, integrations as I, labels as L, review as RV, schedules as SC, screens as SB, settings as S, views, workers as WK
 from .views import esc
 
 FLASH = {
@@ -23,6 +23,7 @@ FLASH = {
     "sched_saved": "Schedule saved. The factory applies it at its next idle moment (never mid-task).",
     "sched_deleted": "Schedule deleted. Snapshots already on disk were kept.",
     "live": "Going live. The factory applies it at its next idle moment (never mid-task); after that it starts agents and opens PRs for labeled issues.",
+    "layout_saved": "Floor layout saved. The floor is drawn from it; Edit layout changes it again or resets it.",
     "dry": "Back to dry run. The factory applies it at its next idle moment: it only logs decisions and writes nothing.",
     "restore": "Restore staged. The configuration is already replaced; the factory swaps in the database when it is next idle and stays paused until you resume it. "
                "Enter the credentials again on the Credentials and Harnesses pages.",
@@ -406,9 +407,9 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
     h._redirect("/backup?ok=restore")
 
 
-GET = {"/backup": backup_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
+GET = {"/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/review": RV.board_review_get}
-POST = {"/backup/download": backup_download, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
+POST = {"/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,

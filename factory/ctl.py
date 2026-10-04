@@ -1,4 +1,4 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>|workers add <name>|schedules [list|run <name>]|health]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>|workers add <name>|schedules [list|run <name>]|scans [list|run <name>]|health]"""
 import os
 import secrets
 import sqlite3
@@ -171,6 +171,27 @@ def schedules_cmd(cfg, args: list[str]) -> int:
     return 0
 
 
+def scans_cmd(cfg, args: list[str]) -> int:
+    """`scans` lists each scan and its last result; `scans run <name>` asks the orchestrator to start one at its next poll."""
+    from . import db as dbm, scanner
+    db = dbm.local(cfg.db_path)
+    if args[:1] == ["run"] and len(args) == 2:
+        if args[1] not in {s.name for s in cfg.scanner.scans}:
+            print(f"no scan called {args[1]}")
+            return 1
+        scanner.request_run(db, args[1], time.time())
+        print(f"requested: {args[1]} starts at the next poll (not in dry-run or while paused)")
+        return 0
+    if args and args != ["list"]:
+        print("usage: scans [list|run <name>]")
+        return 1
+    for s in cfg.scanner.scans:
+        st = scanner.get_state(db, s.name) or {}
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(st["last_run"])) if st else "never"
+        print(f"{s.name:<24} {s.repo:<30} {s.every or s.cron:<12} {'on ' if s.enabled else 'off'} last: {when} {st.get('status', '')} {st.get('detail', '')}")
+    return 0
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     cfg = load(os.environ.get("FACTORY_CONFIG", "/srv/factory/config.toml"))
@@ -203,6 +224,8 @@ def main():
         sys.exit(1 if any(r.level == "crit" for r in results) else 0)
     if cmd == "schedules":
         sys.exit(schedules_cmd(cfg, sys.argv[2:]))
+    if cmd == "scans":
+        sys.exit(scans_cmd(cfg, sys.argv[2:]))
     if cmd == "pause":
         (state / "PAUSED").write_text("")
         print("paused")

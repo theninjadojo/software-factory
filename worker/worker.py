@@ -110,7 +110,8 @@ def prepare(cfg: Config, job: dict, dest: Path) -> str:
         r = _git(args, None, stdin)
         if r.returncode:
             return f"git clone failed: {r.stderr[-400:]}"
-    for args, stdin in ((["checkout", "--quiet", sha], None), (["apply", "--whitespace=nowarn", "-"], patch)):
+    steps = [(["checkout", "--quiet", sha], None)] + ([(["apply", "--whitespace=nowarn", "-"], patch)] if patch else [])   # a scan has no patch
+    for args, stdin in steps:
         r = _git(args, dest, stdin)
         if r.returncode:
             return f"git {args[0]} failed: {r.stderr[-400:]}"
@@ -164,10 +165,11 @@ def stop_group(proc: subprocess.Popen, grace: float | None = None) -> None:
     proc.wait()
 
 
-def run_recipe(recipe: Recipe, cwd: Path, logfile: Path, cancelled: threading.Event) -> tuple[int | None, str]:
+def run_recipe(recipe: Recipe, cwd: Path, logfile: Path, cancelled: threading.Event, extra_env: dict | None = None) -> tuple[int | None, str]:
     """Run the recipe's argv with a minimal environment. (exit code or None, note). Kills the whole process group on timeout or cancel."""
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp"), "LANG": "en_US.UTF-8", "CI": "true"}
     env.update({k: os.environ[k] for k in recipe.env_passthrough if k in os.environ})
+    env.update(extra_env or {})
     with open(logfile, "wb") as out:
         proc = subprocess.Popen(recipe.command, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                                 start_new_session=True)
@@ -188,6 +190,27 @@ def read_tail(path: Path) -> str:
             return f.read().decode(errors="replace")
     except OSError:
         return ""
+
+
+def scan_files(job: dict, tmp: Path) -> tuple[dict, Path | None]:
+    """For a scan job (one with params): write the rules outside the checkout and name where the recipe leaves its findings.
+    The repository can neither supply nor read the rules."""
+    params = job.get("params")
+    if not isinstance(params, dict):
+        return {}, None
+    pfile, ffile = tmp / "params.json", tmp / "findings.json"
+    pfile.write_text(json.dumps(params))
+    return {"FACTORY_JOB_PARAMS": str(pfile), "FACTORY_FINDINGS_FILE": str(ffile)}, ffile
+
+
+def read_findings(path: Path) -> list:
+    """What the recipe wrote (the orchestrator validates it again). No file means it found nothing."""
+    if not path.is_file():
+        return []
+    data = json.loads(path.read_text())
+    if not isinstance(data, list):
+        raise ValueError("the findings file must hold a JSON list")
+    return data
 
 
 def execute(cfg: Config, api: Api, job: dict) -> dict | None:
@@ -214,12 +237,16 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
         problem = prepare(cfg, job, checkout)
         if problem:
             return {"status": "error", "exit_code": None, "log": problem}
-        code, note = run_recipe(recipe, checkout, logfile, cancelled)
+        extra, findings_file = scan_files(job, tmp)
+        code, note = run_recipe(recipe, checkout, logfile, cancelled, extra)
         if cancelled.is_set():
             return None
         text = read_tail(logfile) + (f"\n[worker] {note}" if note else "")
-        return {"status": "passed" if code == 0 else "failed", "exit_code": code, "log": text,
-                "artifacts": collect_artifacts(recipe, checkout)}
+        result = {"status": "passed" if code == 0 else "failed", "exit_code": code, "log": text,
+                  "artifacts": collect_artifacts(recipe, checkout)}
+        if findings_file and code == 0:
+            result["findings"] = read_findings(findings_file)
+        return result
     except Exception as e:                                   # a worker bug is an error, never a verdict on the patch
         log.exception("job failed")
         return {"status": "error", "exit_code": None, "log": f"worker error: {type(e).__name__}: {e}"}

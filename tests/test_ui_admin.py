@@ -501,7 +501,7 @@ class Labels(AdminCase):
         self.assertIn("needs a person", html)
         self.assertLess(html.index('value="stage:architect"'), html.index('value="build"'))
         self.assertIn('value="skip"', html)
-        self.assertNotIn('value="auto"', html)
+        self.assertNotIn('value="auto"', html.split("<tbody>")[1])                 # the row's buttons (New ticket's Start list has Auto)
         self.assertEqual(self.post(cookie, csrf, "/tickets/start", self.fields(action="stage:architect"))[0], 303)
         self.assertEqual(self.approvals(), [(self.REPO, 7, "stage:architect")])        # the factory clears the labels and runs it itself
         self.gh.add_labels.assert_not_called()
@@ -593,8 +593,9 @@ class Labels(AdminCase):
         self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "stage:analysed"}]}
         self.gh.issues.return_value = ([self.gh.get_issue.return_value], False)
         _, _, html = self.req("GET", "/labels", cookie=self.session()[0])
-        self.assertNotIn('value="analyst"', html)
-        self.assertIn('value="designer"', html)
+        row = html.split("<tbody>")[1]                                             # not New ticket's Start list, which has every stage
+        self.assertNotIn('value="analyst"', row)
+        self.assertIn('value="designer"', row)
 
     def test_label_names_are_escaped_and_token_never_rendered(self):
         self.gh.get_issue.return_value["labels"] = [{"name": "<script>"}]
