@@ -483,10 +483,12 @@ class Railway(unittest.TestCase):
         self.assertIn('class="ry-yard"', svg)
         self.assertIn('class="ry-depot"', svg)
         self.assertEqual(svg.count('class="ry-junction"'), 2)
-        self.assertIn('aria-label="Worker linux-box: Online · job web"', svg)
+        self.assertIn('aria-label="Worker linux-box: Online · web check"', svg)
+        self.assertEqual(svg.count('class="ry-stop"'), 3)                # each worker's stop plate and loader, on its loop
+        self.assertIn('Verify stop', svg)
         moving = re.findall(r'<g class="fn-car">', svg)
         self.assertEqual(len(moving), plant.yard.CARS[0])                # only linux-box's train drives; the others wait at the yard
-        self.assertEqual(svg.count('class="fm-sig"'), 1 + 3)             # a signal on every track into each junction: one into A, three into B
+        self.assertEqual(svg.count('class="fm-sig"'), 3 + 1 + 3)         # one at each platform, one into junction A, three into B
         self.assertNotIn("style=", svg)
 
     def test_the_editor_offers_track_only_with_the_workers_on(self):

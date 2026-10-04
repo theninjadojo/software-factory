@@ -784,7 +784,7 @@ def _dedupe(pts):
     return out
 
 
-def trace(pts, under=()) -> tuple[Path, list]:
+def trace(pts, under=(), r=R) -> tuple[Path, list]:
     """A belt's line through its points with rounded corners, and the stretches (from, to distances) it runs underground."""
     pts = _dedupe(pts)
     p, hidden = Path(*pts[0]), []
@@ -801,9 +801,9 @@ def trace(pts, under=()) -> tuple[Path, list]:
         if abs(cross) < 1e-9:
             p.L(*b)
             continue
-        r = min(R, math.dist(a, b) / 2, math.dist(b, c) / 2)
-        p.L(b[0] - d1[0] * r, b[1] - d1[1] * r)
-        p.A(r, 1 if cross > 0 else 0, b[0] + d2[0] * r, b[1] + d2[1] * r)
+        rr = min(r, math.dist(a, b) / 2, math.dist(b, c) / 2)
+        p.L(b[0] - d1[0] * rr, b[1] - d1[1] * rr)
+        p.A(rr, 1 if cross > 0 else 0, b[0] + d2[0] * rr, b[1] + d2[1] * rr)
     return p, sorted((a, b) for a, b in hidden if a < b)
 
 
@@ -873,14 +873,26 @@ def scenery(walls, trees) -> str:
 RING = 20                                   # a rail building's turnaround loop runs one cell outside it, through the points beside it
 
 
-def loading_yard(x, y, trains: int = 0) -> str:
-    """The yard, 200 by 100 at (x, y): where Build's work comes down the feeder and is loaded into the workers' trains."""
-    return (f'<g class="ry-yard" role="img" aria-label="The Verify yard: Build\'s work is loaded into the workers\' trains here">'
-            f'<rect class="fm-box" x="{_f(x)}" y="{_f(y)}" width="200" height="100" rx="3"/>'
-            f'<rect class="ry-plat" x="{_f(x + 12)}" y="{_f(y + 14)}" width="176" height="14" rx="2"/><rect class="ry-plat" x="{_f(x + 12)}" y="{_f(y + 40)}" width="176" height="14" rx="2"/>'
-            f'<path class="ry-crane" d="M {_f(x + 100)} {_f(y + 4)} V {_f(y + 58)} M {_f(x + 86)} {_f(y + 10)} H {_f(x + 130)}"/>'
-            f'<text class="fn-n" x="{_f(x + 12)}" y="{_f(y + 78)}">Verify yard</text>'
-            f'<text class="fn-s" x="{_f(x + 12)}" y="{_f(y + 92)}">{int(trains)} train{"s" if trains != 1 else ""} · loading</text></g>')
+CURVE = 40                                  # track bends in wide curves, as the yard's always did
+PLAT0, PLAT_GAP, PARK, FEED = 40, 60, 50, 280  # the yard: first platform, platform spacing, where a train's head stops, the feeder (px)
+
+
+def platform_y(y, k: int) -> float:
+    return y + PLAT0 + PLAT_GAP * k
+
+
+def yard_picture(x, y, n: int) -> str:
+    """The yard at (x, y), with a platform for each of n trains: Build's work comes down the feeder on the right and along a lane
+    to each platform, where an inserter puts it in the waiting train's wagon. The platform tracks run west onto the yard's loop."""
+    n = max(1, n)
+    ax = x + FEED
+    lanes = [platform_y(y, k) - 34 for k in range(n)]
+    out = [f'<text class="fm-lab" x="{_f(x)}" y="{_f(y - 26)}">VERIFY YARD</text>', yard._stop(x + 100, y + 6, "Verify stop")]
+    out.append(rails([f"M {_f(x - RING)} {_f(platform_y(y, k))} H {_f(x + 230)}" for k in range(n)]))
+    out += [f'<rect class="ry-buffer" x="{_f(x + 230)}" y="{_f(platform_y(y, k) - 9)}" width="6" height="18" rx="1"/>' for k in range(n)]
+    out.append(belt(f"M {_f(ax)} {_f(y)} L {_f(ax)} {_f(lanes[-1] - 12)}", "fn-belt thin"))
+    out += [belt(f"M {_f(ax)} {_f(L - 12)} A 12 12 0 0 1 {_f(ax - 12)} {_f(L)} L {_f(x + PARK + yard.GAP)} {_f(L)}", "fn-belt thin") for L in lanes]
+    return f'<g class="ry-yard" role="img" aria-label="The Verify yard: Build\'s work is loaded into the workers\' trains on its platforms">{"".join(out)}</g>'
 
 
 def train_station(x, y) -> str:
@@ -892,16 +904,25 @@ def train_station(x, y) -> str:
             f'<text class="fn-n" x="{_f(x + 10)}" y="{_f(y + 60)}">Train station</text><text class="fn-s" x="{_f(x + 10)}" y="{_f(y + 73)}">Trains offload here</text></g>')
 
 
+WORKER_ICON = "M3 4h18v12H3zM8 20h8M12 16v4"
+
+
 def worker_stop(x, y, w: dict) -> str:
-    """A worker, 180 by 80 at (x, y): a train stop outside the factory, reached over the SSH tunnel."""
+    """A worker, 180 by 80 at (x, y): a train stop outside the factory, reached over the SSH tunnel. Its stop plate and the loader
+    that hands the train's crates in stand on its loop above it, where the train stops."""
     on = w.get("online")
     job = w.get("job")
-    state = ("Online · " + (f'job {job["recipe"]}' if job else "idle")) if on else "Offline"
-    ref = f'#{int(job["issue"])}' if job else "stop on the yard's railway"
-    return (f'<a class="fm-w{"" if on else " off"}" href="/workers" aria-label="Worker {esc(w["name"])}: {esc(state)}">'
+    state = ("Online · " + (f'{job["recipe"]} check' if job else "idle")) if on else "Offline"
+    ref = f'job #{int(job["issue"])} · {job["recipe"]}' if job else "stop on the yard's railway"
+    cx = x + 90
+    return (f'<g class="ry-stop">{yard._stop(x - 24, y - 32, w["name"])}'
+            + belt(f"M {_f(cx)} {_f(y - RING)} L {_f(cx)} {_f(y)}", "fn-belt thin")
+            + f'<rect class="ry-hood" x="{_f(cx - 7)}" y="{_f(y - 6)}" width="14" height="8" rx="2"/></g>'
+            f'<a class="fm-w{"" if on else " off"}" href="/workers" aria-label="Worker {esc(w["name"])}: {esc(state)}">'
             f'<rect class="fm-box" x="{_f(x)}" y="{_f(y)}" width="180" height="80" rx="3"/>'
+            f'<path class="ry-wicon" transform="translate({_f(x + 10)} {_f(y + 9)}) scale(.75)" d="{WORKER_ICON}"/>'
             f'<circle class="fm-on" cx="{_f(x + 164)}" cy="{_f(y + 18)}" r="4"/>'
-            f'<text class="fm-t" x="{_f(x + 12)}" y="{_f(y + 24)}">{esc(w["name"][:18])}</text>'
+            f'<text class="fm-t" x="{_f(x + 32)}" y="{_f(y + 24)}">{esc(w["name"][:16])}</text>'
             f'<text class="fm-s" x="{_f(x + 12)}" y="{_f(y + 46)}">{esc(state[:26])}</text>'
             f'<text class="fm-r" x="{_f(x + 12)}" y="{_f(y + 64)}">{esc(ref[:26])}</text></a>')
 
@@ -924,7 +945,7 @@ def ring_box(b):
 
 def ring_d(b) -> str:
     L, T, R, B = ring_box(b)
-    r = RING
+    r = min(CURVE, (R - L) / 2, (B - T) / 2)
     return (f"M {_f(L + r)} {_f(T)} H {_f(R - r)} A {r} {r} 0 0 1 {_f(R)} {_f(T + r)} V {_f(B - r)} A {r} {r} 0 0 1 {_f(R - r)} {_f(B)} "
             f"H {_f(L + r)} A {r} {r} 0 0 1 {_f(L)} {_f(B - r)} V {_f(T + r)} A {r} {r} 0 0 1 {_f(L + r)} {_f(T)} Z")
 
@@ -956,27 +977,11 @@ def rails(ds: list[str]) -> str:
                    for c in ("fm-ballast", "fm-ties", "fm-rail", "fm-rail-in", "fm-ties-in"))
 
 
-def circuit(C: dict, w: str) -> list:
-    """The points of a worker's train loop: out of the yard to the worker, round its loop, on to the Train station, round its loop,
-    back to the yard and round the yard's loop to the start."""
-    tr, bx = C["tracks"], C["box"]
-    legs = []
-    for edges in C["circuits"][w]:
-        pts = []
-        for i, tid in enumerate(edges):
-            if i:
-                jx, jy, jw, jh = bx[tr[tid]["src"]]
-                pts.append((jx + jw / 2, jy + jh / 2))               # through the junction
-            pts += [tuple(p) for p in tr[tid]["pts"]]
-        legs.append(pts)
-    out, back, home = legs
-    return (out + ring_route(bx[w], out[-1], back[0]) + back + ring_route(bx["depot"], back[-1], home[0]) + home
-            + ring_route(bx["yard"], home[-1], out[0]) + [out[0]])
-
-
 def circuit_marks(C: dict, w: str) -> tuple[list, dict]:
-    """A worker's loop as points (circuit) and where things are along it, in px from the start: each stretch of track (start, end),
-    the stop at the worker and the stop at the Train station (half way round their loops), and the whole length."""
+    """A worker's loop as points and where things are along it, in px from the start: each stretch of track (start, end), the stop
+    at the worker and the stop at the Train station (half way round their loops), and the whole length. It starts and ends with
+    the train's head at its platform in the yard: west off the platform onto the yard's loop, out to the worker, on to the Train
+    station, home, round the yard's loop and back onto the platform."""
     tr, bx = C["tracks"], C["box"]
     pts, at, run = [], {}, [0.0]
 
@@ -987,6 +992,9 @@ def circuit_marks(C: dict, w: str) -> tuple[list, dict]:
                 return
             run[0] += math.dist(pts[-1], q)
         pts.append(q)
+    yx, yy = bx["yard"][:2]
+    py = platform_y(yy, C["workers"].index(w))
+    park, edge = (yx + PARK, py), (yx - RING, py)
     legs = []
     for edges in C["circuits"][w]:
         leg = []
@@ -996,8 +1004,12 @@ def circuit_marks(C: dict, w: str) -> tuple[list, dict]:
                 leg.append(("j", (jx + jw / 2, jy + jh / 2)))
             leg.append((tid, tr[tid]["pts"]))
         legs.append(leg)
+    add(park)
+    add(edge)
+    for c in ring_route(bx["yard"], edge, tuple(legs[0][0][1][0])):
+        add(c)
     stops = {}
-    rings = [(w, legs[1]), ("depot", legs[2]), ("yard", legs[0])]
+    rings = [(w, legs[1][0][1][0]), ("depot", legs[2][0][1][0]), ("yard", edge)]
     for k, leg in enumerate(legs):
         for tid, q in leg:
             if tid == "j":
@@ -1010,10 +1022,11 @@ def circuit_marks(C: dict, w: str) -> tuple[list, dict]:
             at[tid] = (start, run[0])
         name, nxt = rings[k]
         before = run[0]
-        for c in ring_route(bx[name], pts[-1], tuple(nxt[0][1][0])):
+        for c in ring_route(bx[name], pts[-1], tuple(nxt)):
             add(c)
-        add(nxt[0][1][0]) if k < 2 else add(legs[0][0][1][0])
+        add(nxt)
         stops[name] = (before + run[0]) / 2
+    add(park)
     return pts, {"tracks": at, "stop": stops[w], "off": stops["depot"], "len": run[0]}
 
 
@@ -1104,46 +1117,46 @@ def lamps(times: list, T: float, begin: str) -> str:
 
 
 def railway(C: dict, workers: list[dict], now: float) -> tuple[str, str]:
-    """(track, loops and signals; the trains): a worker's train runs its loop while the worker has a job, otherwise it waits at the
-    yard. The trains keep to the timetable, so only one is ever on the shared track; a signal turns green as it lets a train on."""
+    """(track, loops, the yard and the signals; the trains and the loading). A worker's train waits at its platform in the yard and
+    runs its loop while the worker has a job; the trains keep to the timetable, so only one is ever on the shared track. A signal at
+    each platform turns green as its train leaves, and one on every track into a junction as it lets a train on."""
     at, bx = C["at"], C["box"]
-    ds = [trace(t["pts"])[0].d for t in C["tracks"].values()]
+    ds = [trace(t["pts"], r=CURVE)[0].d for t in C["tracks"].values()]
     for t in C["tracks"].values():                                  # into the middle of a junction
         for nid, (px_, py_) in ((t["src"], t["pts"][0]), (t["dst"], t["pts"][-1])):
             if nid.startswith("junction:"):
                 jx, jy, jw, jh = bx[nid]
                 ds.append(f"M {_f(px_)} {_f(py_)} L {_f(jx + jw / 2)} {_f(jy + jh / 2)}")
     ds += [ring_d(bx[n]) for n in bx if n in ("yard", "depot") or n.startswith("worker:")]
-    still = rails(ds)
+    yx, yy, _, _ = bx["yard"]
+    ws = C.get("workers") or []
+    still = rails(ds) + yard_picture(yx, yy, len(ws))
     moving = ""
     live = {f'worker:{w["name"]}': w for w in workers}
-    parked = 0
     running = [w for w in sorted(C["circuits"]) if (live.get(w) or {}).get("online") and (live.get(w) or {}).get("job")]
     T, motion = timetable(C, running)
     begin = f"{-(now % T):.2f}s" if T else "0s"
-    yx, yy, _, _ = bx["yard"]
-
-    def berth(slot, cars, show=""):
-        """A train standing in the yard, small, on one of its two platforms (three berths each)."""
-        px_, py_ = yx + 18 + 60 * (slot % 3), yy + 21 + 26 * (slot // 3)
-        return (f'<g transform="translate({_f(px_)} {_f(py_)}) scale(.45)">{show}' + "".join(
-            f'<g class="fn-car" transform="translate({_f((cars - 1 - c) * yard.GAP)} 0)">{yard.LOCO if c == 0 else yard.WAGON}</g>' for c in range(cars)) + "</g>")
-    for k, w in enumerate(sorted(C["circuits"])):
+    Pf = 8.4 / max(1, len(running))
+    for k, w in enumerate(ws):
         cars = yard.CARS[k % len(yard.CARS)]
+        py = platform_y(yy, k)
+        lane, arm_x, arm_y = py - 34, yx + PARK + yard.GAP, py - 17
+        depart = motion[w][1][0] if w in motion else None
+        still += yard._signal(yx + 20, py - 13, f"Signal at {w.split(':', 1)[1]}'s platform", yard._lamp(depart, T, begin))
         if w in motion:
             pts, m = circuit_marks(C, w)
-            p, _ = trace(pts)
+            p, _ = trace(pts, r=CURVE)
             scale = p.len / m["len"] if m["len"] else 1.0              # the drawn line rounds its corners, a little shorter
-            out, back = round(motion[w][1][0] / T, 4), round(motion[w][-2][0] / T, 4)    # it leaves the yard, and is back in it
-            keys, out_vals = (f"0;{back:.4f}", ("1;0", "0;1")) if out <= 0 else (f"0;{out:.4f};{back:.4f}", ("0;1;0", "1;0;1"))
-            seen = lambda vals: (f'<animate attributeName="opacity" values="{vals}" keyTimes="{keys}" calcMode="discrete" '
-                                 f'dur="{_f(T)}s" begin="{begin}" repeatCount="indefinite"/>')
-            moving += f'<g opacity="0">{seen(out_vals[0])}{yard._train(p, [(t, d * scale) for t, d in motion[w]], T, begin, cars)}</g>'
-            moving += berth(parked, cars, seen(out_vals[1])) if parked < 6 else ""
-            parked += 1
-        elif parked < 6:                                             # waiting in the yard
-            moving += berth(parked, cars)
-            parked += 1
+            moving += yard._train(p, [(t, d * scale) for t, d in motion[w]], T, begin, cars)
+            # Build's work comes down the feeder and along the lane, and is lifted into the train's first wagon
+            trip = Path(yx + FEED, yy).L(yx + FEED, lane - 12).A(12, 1, yx + FEED - 12, lane).L(arm_x + 2, lane)
+            b = -((now + running.index(w) * Pf / max(1, len(running))) % Pf)
+            crate, Tg = crate_trip(trip, [], "", Pf, b, small=True)
+            moving += crate + yard.taking_arm(arm_x, arm_y, False, Tg, Pf, b)
+        else:                                                        # waiting at its platform, facing out of the yard
+            moving += "".join(f'<g class="fn-car" transform="translate({_f(yx + PARK + c * yard.GAP)} {_f(py)}) rotate(180)">'
+                              f'{yard.LOCO if c == 0 else yard.WAGON}</g>' for c in range(cars)) if w in C["circuits"] else ""
+            moving += yard._arm(arm_x, arm_y, False)
     for j in (n for n in bx if n.startswith("junction:")):
         ins = [(tid, t) for tid, t in C["tracks"].items() if t["dst"] == j]
         for tid, t in ins:
@@ -1168,7 +1181,7 @@ def node_art(nid: str, label: str, trains: int = 0) -> str:
     layout editor stretches it to the box a person gives it). The yard is drawn with its trains, or not at all without any."""
     kind, _, name = nid.partition(":")
     if nid == "yard":
-        return loading_yard(0, 0, trains)
+        return yard_picture(0, 0, trains)
     if nid == "depot":
         return train_station(0, 0)
     if nid == "outside":
@@ -1266,7 +1279,7 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
         area = f'<g transform="{tr("outside", 0, 0)}">{outside(0, 0, *bx["outside"][2:])}</g>' if "outside" in at and "outside" not in sc else (
             outside(*bx["outside"]) if "outside" in at else "")
         track, yard_moving = railway(C, shown, now)
-        parts_ = [loading_yard(*bx["yard"][:2], len(C.get("circuits") or {}))]
+        parts_ = []
         parts_ += [node("depot", train_station)] if "depot" in at else []
         parts_ += [node(n, lambda x, y, n=n: worker_stop(x, y, live.get(n) or {"name": n.split(":", 1)[1], "online": False})) for n in at if n.startswith("worker:")]
         parts_ += [node(n, lambda x, y, n=n: junction(x, y, n.split(":", 1)[1])) for n in at if n.startswith("junction:")]
