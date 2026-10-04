@@ -256,6 +256,43 @@ class ScheduleCfg:
 
 
 @dataclass(frozen=True)
+class SmellCfg:
+    """A custom smell: lines matching the regex `pattern` in files matching `globs` (relative, `**` allowed). See factory/scanner.py."""
+    id: str
+    name: str
+    pattern: str
+    globs: tuple[str, ...] = ("**/*",)
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class ScanCfg:
+    """One repository scanned on `every` or `cron` for the listed smell ids (presets and custom)."""
+    name: str
+    repo: str
+    smells: tuple[str, ...]
+    every: str | None = None
+    cron: str | None = None
+    exclude: tuple[str, ...] = ()
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class ScannerCfg:
+    """Code-smell scans (factory/scanner.py, docs/scanner.md). Off by default. Needs [workers] and a worker with the recipe.
+    `labels` default to the analyst role's label: scan tickets are analysed, not built, unless the admin says otherwise."""
+    enabled: bool = False
+    recipe: str = "smell-scan"
+    platform: str = "any"
+    max_tickets: int = 5                   # opened per scan run; the rest is considered again next run
+    max_findings_per_ticket: int = 50
+    max_lines: int = 800                   # the long-files preset
+    labels: tuple[str, ...] | None = None
+    smells: tuple[SmellCfg, ...] = ()
+    scans: tuple[ScanCfg, ...] = ()
+
+
+@dataclass(frozen=True)
 class ProjectRepo:
     repo: str            # owner/name
     role: str = ""       # one line telling the agent and the classifier what this repo is for
@@ -358,6 +395,7 @@ class Config:
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
     health: HealthCfg = field(default_factory=HealthCfg)
     schedules: tuple[ScheduleCfg, ...] = ()
+    scanner: ScannerCfg = field(default_factory=ScannerCfg)
     prompts: PromptsCfg = field(default_factory=PromptsCfg)
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
@@ -686,6 +724,61 @@ def _schedules(raw: list, repos: list[str]) -> tuple[ScheduleCfg, ...]:
     return tuple(out)
 
 
+def _scanner(raw: dict, repos: list[str], workers: "WorkersCfg") -> ScannerCfg:
+    import re
+    from . import jobs, scanner as sn, schedules as sc
+    raw = dict(raw)
+    smells = tuple(SmellCfg(**_tuples(dict(s))) for s in raw.pop("smells", []))
+    scans = tuple(ScanCfg(**_tuples(dict(s))) for s in raw.pop("scans", []))
+    s = ScannerCfg(**{**_tuples(raw), "smells": smells, "scans": scans})
+    ids: set[str] = set(sn.PRESETS)
+    for m in s.smells:
+        w = f"scanner.smells.{m.id!r}"
+        if not isinstance(m.id, str) or not sc.NAME.fullmatch(m.id) or m.id in ids:
+            raise ValueError(f"{w}: id must be unique, not a preset id, and use lowercase letters, digits and dashes")
+        ids.add(m.id)
+        if not isinstance(m.name, str) or not m.name.strip() or len(m.name) > 80:
+            raise ValueError(f"{w}: name is required (at most 80 characters)")
+        if not isinstance(m.pattern, str) or not m.pattern or len(m.pattern) > 500:
+            raise ValueError(f"{w}: pattern is required (a regular expression, at most 500 characters)")
+        try:
+            if re.compile(m.pattern).search(""):
+                raise ValueError(f"{w}: pattern must not match an empty line")
+        except re.error as e:
+            raise ValueError(f"{w}: pattern is not a valid regular expression: {e}")
+        if not m.globs or not all(isinstance(g, str) and g and not g.startswith("/") and ".." not in g.split("/") for g in m.globs):
+            raise ValueError(f"{w}: globs must be relative patterns without ..")
+    seen: set[str] = set()
+    for c in s.scans:
+        w = f"scanner.scans.{c.name!r}"
+        if not isinstance(c.name, str) or not sc.NAME.fullmatch(c.name) or c.name in seen:
+            raise ValueError(f"{w}: name must be unique lowercase letters, digits and dashes")
+        seen.add(c.name)
+        if c.repo not in repos:
+            raise ValueError(f"{w}: repo {c.repo} is not one of the configured repos")
+        if (c.every is None) == (c.cron is None):
+            raise ValueError(f"{w}: set exactly one of every and cron")
+        if c.every is not None and (sc.parse_every(c.every) is None or sc.parse_every(c.every) < 3600):
+            raise ValueError(f"{w}: every must look like 6h, 2d or 1w and be at least 1h")
+        if c.cron is not None and sc.parse_cron(c.cron) is None:
+            raise ValueError(f"{w}: cron must be five fields (minute hour day month weekday), UTC")
+        if not c.smells or (bad := [x for x in c.smells if x not in ids]):
+            raise ValueError(f"{w}: smells must name at least one known smell" + (f" (unknown: {', '.join(map(str, bad))})" if c.smells else ""))
+        if not all(isinstance(g, str) and g and not g.startswith("/") and ".." not in g.split("/") for g in c.exclude):
+            raise ValueError(f"{w}: exclude must be relative patterns without ..")
+    if s.labels is not None and not all(isinstance(l, str) and l.strip() for l in s.labels):
+        raise ValueError("scanner.labels must be non-empty strings")
+    if not jobs.NAME.fullmatch(str(s.recipe)) or not re.fullmatch(r"[a-z0-9-]{1,40}", str(s.platform)):
+        raise ValueError("scanner.recipe and scanner.platform must match [a-z0-9-]")
+    for k, lo in (("max_tickets", 1), ("max_findings_per_ticket", 1), ("max_lines", 50)):
+        v = getattr(s, k)
+        if not isinstance(v, int) or isinstance(v, bool) or v < lo:
+            raise ValueError(f"scanner.{k} must be a whole number of at least {lo}")
+    if s.enabled and not workers.enabled:
+        raise ValueError("scanner.enabled needs [workers] enabled: scans read the code on a worker")
+    return s
+
+
 def parse(raw: dict) -> Config:
     g, gh = raw["general"], raw["github"]
     routes = {k: Route(**_tuples(v)) for k, v in raw["routing"].items()}
@@ -782,6 +875,7 @@ def parse(raw: dict) -> Config:
         health=health,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         schedules=_schedules(raw.get("schedules", []), repos),
+        scanner=_scanner(raw.get("scanner", {}), repos, workers),
         prompts=_prompts(raw.get("prompts", {})),
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),

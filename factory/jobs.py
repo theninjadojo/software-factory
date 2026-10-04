@@ -4,6 +4,7 @@ Both sides use the same SQLite file (WAL), so they can be separate processes. Ev
 validated here before it is stored; the orchestrator reads only the stored, validated verdict. See docs/workers.md."""
 import base64
 import binascii
+import json
 import re
 import sqlite3
 import time
@@ -16,6 +17,7 @@ REPORTED = ("passed", "failed", "error")          # what a worker may report
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 MAX_LOG = 200_000
 MAX_ARTIFACTS = 8
+MAX_FINDINGS, MAX_SNIPPET = 1000, 300
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -25,8 +27,12 @@ def ensure_tables(db: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, issue INTEGER NOT NULL DEFAULT 0, base_sha TEXT NOT NULL,
             patch TEXT NOT NULL, recipe TEXT NOT NULL, platform TEXT NOT NULL DEFAULT 'any',
             status TEXT NOT NULL DEFAULT 'queued', worker TEXT, attempts INTEGER NOT NULL DEFAULT 0,
-            created REAL NOT NULL, claimed REAL, heartbeat REAL, finished REAL, exit_code INTEGER, log TEXT NOT NULL DEFAULT '')"""
+            created REAL NOT NULL, claimed REAL, heartbeat REAL, finished REAL, exit_code INTEGER, log TEXT NOT NULL DEFAULT '', params TEXT NOT NULL DEFAULT '', findings TEXT NOT NULL DEFAULT '')"""
     )
+    have = {r[1] for r in db.execute("PRAGMA table_info(verify_jobs)")}
+    for col in ("params", "findings"):                    # added for code-smell scans; older databases get them here
+        if col not in have:
+            db.execute(f"ALTER TABLE verify_jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
     db.execute(
         """CREATE TABLE IF NOT EXISTS verify_artifacts (
             job_id INTEGER NOT NULL, name TEXT NOT NULL, png BLOB NOT NULL, PRIMARY KEY (job_id, name))"""
@@ -52,10 +58,11 @@ def artifacts(db, job_id: int) -> dict[str, bytes]:
     return {n: bytes(b) for n, b in db.execute("SELECT name, png FROM verify_artifacts WHERE job_id=? ORDER BY name", (job_id,))}
 
 
-def enqueue(db, repo: str, issue: int, base_sha: str, patch: str, recipe: str, platform: str = "any", now: float | None = None) -> int:
+def enqueue(db, repo: str, issue: int, base_sha: str, patch: str, recipe: str, platform: str = "any", now: float | None = None,
+            params: str = "") -> int:
     cur = db.execute(
-        "INSERT INTO verify_jobs (repo, issue, base_sha, patch, recipe, platform, created) VALUES (?,?,?,?,?,?,?)",
-        (repo, int(issue), base_sha, patch, recipe, platform, now if now is not None else time.time()))
+        "INSERT INTO verify_jobs (repo, issue, base_sha, patch, recipe, platform, created, params) VALUES (?,?,?,?,?,?,?,?)",
+        (repo, int(issue), base_sha, patch, recipe, platform, now if now is not None else time.time(), params))
     db.commit()
     return cur.lastrowid
 
@@ -97,7 +104,7 @@ def claim(db, worker: str, platform: str, recipes: list[str], now: float, lease:
             return None
         marks = ",".join("?" * len(recipes))
         cur = db.execute(f"SELECT * FROM verify_jobs WHERE status='queued' AND recipe IN ({marks}) AND platform IN ('any', ?) "
-                         "ORDER BY id LIMIT 1", (*recipes, platform))
+                         "ORDER BY params != '', id LIMIT 1", (*recipes, platform))     # verification jobs before scans
         row = cur.fetchone()
         job = _row(cur, row) if row else None
         if job:
@@ -160,7 +167,29 @@ def validate_result(body) -> tuple[dict | None, str]:
         if not png_ok(png):
             return None, f"artifact {a['name']}: not a PNG within the size limits"
         out[a["name"]] = png
-    return {"status": status, "exit_code": code, "log": clean_log(body.get("log")), "artifacts": out}, ""
+    found, why = validate_findings(body.get("findings", []))
+    if found is None:
+        return None, why
+    return {"status": status, "exit_code": code, "log": clean_log(body.get("log")), "artifacts": out, "findings": found}, ""
+
+
+def validate_findings(items) -> tuple[list[dict] | None, str]:
+    """Code-smell findings from a worker, strictly: bounded count, a smell id, a relative path, a line number, a short single-line snippet."""
+    if not isinstance(items, list) or len(items) > MAX_FINDINGS:
+        return None, f"findings must be a list of at most {MAX_FINDINGS}"
+    out = []
+    for f in items:
+        if (not isinstance(f, dict) or set(f) != {"smell", "path", "line", "snippet"} or not isinstance(f["smell"], str)
+                or not NAME.fullmatch(f["smell"]) or not isinstance(f["path"], str) or not isinstance(f["snippet"], str)):
+            return None, "each finding needs smell, path, line and snippet"
+        path, line = f["path"], f["line"]
+        if (not path or len(path) > 300 or path.startswith("/") or ".." in path.split("/") or _CONTROL.search(path) or "\n" in path):
+            return None, "a finding path must be relative, at most 300 characters, without .."
+        if not isinstance(line, int) or isinstance(line, bool) or not 0 <= line <= 10_000_000:
+            return None, "a finding line must be a whole number from 0 to 10000000"
+        snippet = _CONTROL.sub("", f["snippet"].replace("\n", " ").replace("\r", " "))[:MAX_SNIPPET]
+        out.append({"smell": f["smell"], "path": path, "line": line, "snippet": snippet})
+    return out, ""
 
 
 def complete(db, job_id: int, worker: str, body, now: float) -> str:
@@ -174,8 +203,9 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
                    (now, f"The worker sent an invalid result: {why}", job_id))
         db.commit()
         return why
-    db.execute("UPDATE verify_jobs SET status=?, exit_code=?, log=?, finished=? WHERE id=?",
-               (res["status"], res["exit_code"], res["log"], now, job_id))
+    findings = json.dumps(res["findings"]) if job["params"] and res["status"] == "passed" else ""    # only a scan job keeps findings
+    db.execute("UPDATE verify_jobs SET status=?, exit_code=?, log=?, finished=?, findings=? WHERE id=?",
+               (res["status"], res["exit_code"], res["log"], now, findings, job_id))
     for n, png in res["artifacts"].items():
         db.execute("INSERT OR REPLACE INTO verify_artifacts VALUES (?,?,?)", (job_id, n, png))
     db.commit()
