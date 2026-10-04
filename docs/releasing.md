@@ -37,7 +37,7 @@ cd shikumi && ./scripts/update.sh          # the latest release
 ./scripts/update.sh v0.2.0                 # a specific one, also how you go back
 ```
 
-It refuses to run while an agent run is in flight. It downloads the release files, pulls the new images, restarts, waits for the UI health check and
+It pauses the factory for the update and refuses to run while an agent run is in flight. It downloads the release files, pulls the new images, restarts, waits for the UI health check and
 the orchestrator, and **rolls back by itself** (previous files, `.env` and sandbox images) if the new version does not come up. Your `config/`,
 secrets, database and `.env` settings are never overwritten. The UI shows a banner when a newer release exists (`[updates] check = false` turns
 the check off; it is one cached read of the public releases API every few hours).
@@ -85,7 +85,7 @@ sudo -n -u factory bash -c 'T=$(cat /srv/factory/secrets/github_token_bot); R=th
 ```
 
 After that first update it is part of the install (`/srv/factory/app/deploy/update-native.sh`). It downloads the release's source tarball (a private repo needs a token: `SHIKUMI_TOKEN_FILE`, else `secrets/github_token_bot`, else
-`github_token`, whichever can read the repo), refuses while an agent run is in flight, **runs the tests on the new code first** (nothing
+`github_token`, whichever can read the repo), pauses the factory (so no run can start during the update; the pause is lifted afterwards unless you had paused it) and refuses while an agent run is in flight, **runs the tests on the new code first** (nothing
 changes if they fail), rebuilds the sandbox images, restarts the services and checks they stay up, and rolls back (previous code and
 images) if they do not. For the UI banner on a private repo set `[updates] token_file` to a token that can read it.
 `scripts/deploy.sh user@host` still deploys the working tree you have checked out (for development).

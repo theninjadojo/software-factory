@@ -47,10 +47,12 @@ class AutoUpdate(unittest.TestCase):
         (self.tmp / "app").mkdir(); (self.tmp / "state").mkdir(); (self.tmp / "bin").mkdir()
         (self.tmp / "app" / "VERSION").write_text("0.2.1\n")
         stub = self.tmp / "bin" / "podman"
-        stub.write_text('#!/bin/sh\n[ "$1" = ps ] && echo abc123\nexit 0\n'); stub.chmod(0o755)
+        # the stub notes whether the factory was paused when the update looked for runs in flight
+        stub.write_text('#!/bin/sh\nif [ "$1" = ps ]; then [ -e "$SHIKUMI_ROOT/state/PAUSED" ] && touch "$SHIKUMI_ROOT/paused-at-check"; echo abc123; fi\nexit 0\n')
+        stub.chmod(0o755)
 
     def run_auto(self, tag, busy=False):
-        env = {**os.environ, "SHIKUMI_ROOT": str(self.tmp), "PATH": (f"{self.tmp / 'bin'}:" if busy else "") + os.environ["PATH"], "XDG_RUNTIME_DIR": str(self.tmp)}
+        env = {**os.environ, "SHIKUMI_ROOT": str(self.tmp), "PATH": (f"{self.tmp / 'bin'}:" if busy else "") + os.environ["PATH"], "XDG_RUNTIME_DIR": str(self.tmp), "SHIKUMI_SETTLE": "0"}
         return subprocess.run(["bash", str(ROOT / "deploy" / "update-native.sh"), "--auto", tag], capture_output=True, text=True, env=env, cwd=self.tmp, timeout=60)
 
     def test_minor_and_major_releases_are_left_for_a_person(self):
@@ -68,6 +70,13 @@ class AutoUpdate(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("will try again at the next timer", r.stdout)
         self.assertEqual((self.tmp / "app" / "VERSION").read_text().strip(), "0.2.1")
+        self.assertTrue((self.tmp / "paused-at-check").exists())                 # no run could start between the check and a restart
+        self.assertFalse((self.tmp / "state" / "PAUSED").exists())               # and the pause is lifted again
+
+    def test_a_pause_a_person_set_is_left_in_place(self):
+        (self.tmp / "state" / "PAUSED").write_text("")
+        self.run_auto("v0.2.2", busy=True)
+        self.assertTrue((self.tmp / "state" / "PAUSED").exists())
 
 
 class Units(unittest.TestCase):

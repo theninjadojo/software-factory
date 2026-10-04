@@ -29,8 +29,9 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
    then `factory:ready`); an issue with several is handled one at a time.
 2. **Trust gate.** The issue timeline says who applied *that* label; their repo permission must be in `trusted_permissions`.
 3. **Classify.** The ticket, its human comments and the project description go to the classifier. Output is typed and
-   validated. A stage label skips this (a person already chose); `factory:auto` uses the classifier's stage, and may skip stages straight to a build (high complexity goes to the architect first; no stage means the analyst).
-4. **Claim.** The trigger label is swapped for a working label, so a crash or restart leaves a visible, recoverable state.
+   validated. A stage label skips this (a person already chose); `factory:auto` uses the classifier's stage, and may skip stages straight to a build (high complexity goes to the architect first; no stage means the analyst, but only before any stage has run: auto never goes back to an earlier stage).
+4. **Claim.** The trigger label is swapped for a working label, so a crash or restart leaves a visible, recoverable state. The working label
+   comes off only after the outcome (comment and labels) is on the ticket; a job that crashes before that marks the ticket `factory:failed`.
 5. **Run.** The orchestrator clones each repo of the project (twice: a pristine `base/` it controls and a `work/` copy
    for the agent), writes the prompt, and starts the sandbox. The agent edits `work/` and exits; a `git diff` per repo is
    written to the output directory.
