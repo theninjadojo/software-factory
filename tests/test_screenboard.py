@@ -1,6 +1,7 @@
 """The Screens board: shots of every configured screen on the default branch, and its design canvas, grouped by journey."""
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -241,6 +242,97 @@ class Page(BoardUi):
         self.assertIn("Asked for new shots", html)
         self.assertIn("Refreshing…", html)
 
+
+
+class Manage(BoardUi):
+    """Screens are added, edited and removed on the board itself; the edits land in the overrides file, never in config.toml."""
+    def setUp(self):
+        super().setUp()
+        self.cookie, self.csrf = self.session()
+
+    def overrides(self):
+        p = config.overrides_path(str(self.root / "config.toml"))
+        return tomllib.loads(p.read_text()) if p.exists() else {}
+
+    def post(self, url, **fields):
+        body = urlencode({"csrf": self.csrf, **fields}, doseq=True)
+        return self.req("POST", url, body, cookie=self.cookie)
+
+    def pages(self):
+        return {p.name: p for p in load(str(self.root / "config.toml")).screens.pages}
+
+    def test_the_board_links_to_add_and_edit(self):
+        html = self.req("GET", "/screens", cookie=self.cookie)[2]
+        self.assertIn('href="/screens/edit"', html)
+        self.assertIn('href="/settings?section=screens"', html)
+        self.assertIn(f'href="/screens/edit?repo={REPO.replace("/", "%2F")}&amp;name=pay"', html)
+        s, _, html = self.req("GET", f"/screens/edit?repo={REPO}&name=pay", cookie=self.cookie)
+        self.assertEqual(s, 200)
+        self.assertIn('value="docs/design/pay.dc.html"', html)
+        self.assertIn("Remove screen", html)
+        self.assertEqual(self.req("GET", f"/screens/edit?repo={REPO}&name=nope", cookie=self.cookie)[0], 404)
+
+    def test_add_a_screen(self):
+        base = (self.root / "config.toml").read_text()
+        s, h, _ = self.post("/screens/save", repo=REPO, name="cart", path="site/cart.html", journey="checkout", step="3",
+                            viewport=["mobile"], mask="#clock\n.avatar", wait_for="main")
+        self.assertEqual((s, h["Location"]), (303, "/screens?journey=checkout"))
+        cart = self.pages()["cart"]
+        self.assertEqual((cart.path, cart.journey, cart.step, cart.viewports, cart.mask, cart.wait_for),
+                         ("site/cart.html", "checkout", 3, ("mobile",), ("#clock", ".avatar"), "main"))
+        self.assertEqual(set(self.pages()), {"basket", "pay", "home", "cart"})      # the hand-written ones were carried across
+        self.assertEqual((self.root / "config.toml").read_text(), base)
+        self.assertTrue((self.state / "RESTART").exists())
+        self.assertEqual(self.post("/screens/save", repo=REPO, name="cart", path="x.html")[0], 422)    # taken
+
+    def test_bad_input_keeps_the_form_and_writes_nothing(self):
+        for over, text in (({"name": "Bad Name"}, "Name"), ({"repo": "o/other"}, "Repository"), ({"path": ""}, "Page"),
+                           ({"step": "x"}, "Step"), ({"path": "../etc/passwd"}, "path"), ({"design": "x.html"}, "design")):
+            s, _, html = self.post("/screens/save", **{"repo": REPO, "name": "cart", "path": "site/cart.html", **over})
+            self.assertEqual(s, 422, over)
+            self.assertIn(text, html)
+            self.assertIn('action="/screens/save"', html)
+        self.assertEqual(self.overrides(), {})
+
+    def test_edit_and_remove(self):
+        s, _, _ = self.post("/screens/save", orig_repo=REPO, orig_name="pay", repo="o/x", name="renamed", path="site/pay2.html",
+                            journey="checkout", step="2", viewport=["desktop", "mobile"])
+        self.assertEqual(s, 303)
+        pay = self.pages()["pay"]
+        self.assertEqual((pay.repo, pay.path, pay.design, pay.viewports), (REPO, "site/pay2.html", "", ()))
+        self.assertEqual(self.post("/screens/delete", repo=REPO, name="pay")[0], 400)
+        s, h, _ = self.post("/screens/delete", repo=REPO, name="pay", confirm="1")
+        self.assertEqual((s, h["Location"]), (303, "/screens"))
+        self.assertNotIn("pay", self.pages())
+        self.assertEqual(self.post("/screens/delete", repo=REPO, name="pay", confirm="1")[0], 404)
+
+    def test_removing_every_screen_says_how_to_add_one(self):
+        for n in ("basket", "pay", "home"):
+            self.post("/screens/delete", repo=REPO, name=n, confirm="1")
+        self.assertEqual(self.overrides()["screens"]["pages"], [])
+        html = self.req("GET", "/screens", cookie=self.cookie)[2]
+        self.assertIn("Add the first one", html)
+        self.assertNotIn("[[screens.pages]]", html)
+
+    def test_board_settings(self):
+        s, _, html = self.req("GET", "/settings?section=screens", cookie=self.cookie)
+        self.assertEqual(s, 200)
+        self.assertIn("desktop 1440x900\nmobile 390x844", html)
+        form = {"section": "screens", "screens.board_every": "6h", "screens.viewports": "desktop 1280x800\ntablet 768x1024",
+                "screens.baseline_dir": "screens/baselines", "screens.threshold": "0.1", "screens.max_diff_ratio": "0.001",
+                "screens.timeout_seconds": "300", "screens.label": "factory:screens-changed"}
+        s, h, _ = self.post("/settings/save", **form)
+        self.assertEqual((s, h["Location"]), (303, "/settings?section=screens&ok=saved"))
+        sc = load(str(self.root / "config.toml")).screens
+        self.assertEqual((sc.board_every, [(v.name, v.width, v.height) for v in sc.viewports]),
+                         ("6h", [("desktop", 1280, 800), ("tablet", 768, 1024)]))     # mobile is gone: a list replaces the table
+        self.assertEqual(set(self.overrides()["screens"]), {"board_every", "viewports"})
+        self.assertEqual(self.post("/settings/save", **{**form, "screens.board_every": "soon"})[0], 422)
+        self.assertEqual(self.post("/settings/save", **{**form, "screens.viewports": "design 10x10"})[0], 422)
+        self.post("/screens/save", repo=REPO, name="cart", path="site/cart.html", viewport=["tablet"])
+        s, _, html = self.post("/settings/save", **{**form, "screens.viewports": "desktop 1280x800"})
+        self.assertEqual(s, 422)                                                        # cart still needs tablet
+        self.assertIn("unknown viewport", html)
 
 class ReviewUi(BoardUi):
     def setUp(self):

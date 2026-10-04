@@ -617,6 +617,8 @@ _SCREEN_PATH = re.compile(r"[A-Za-z0-9_./-]{1,200}")
 def _screens(raw: dict, repos: list[str]) -> ScreensCfg:
     raw = dict(raw)
     pages_raw, vps_raw = raw.pop("pages", []), raw.pop("viewports", None)
+    if isinstance(vps_raw, list):         # the UI writes a list, so its overrides replace config.toml's viewports instead of merging into them
+        vps_raw = {v["name"]: {"width": v["width"], "height": v["height"]} for v in vps_raw}
     vps = ScreensCfg().viewports if vps_raw is None else tuple(Viewport(str(k), v["width"], v["height"]) for k, v in vps_raw.items())
     pages = tuple(ScreenPage(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in p.items()}) for p in pages_raw)
     c = ScreensCfg(**{**raw, "viewports": vps, "pages": pages})

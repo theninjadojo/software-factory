@@ -408,10 +408,10 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
 
 
 GET = {"/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/harnesses": harnesses_get,
-       "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/review": RV.board_review_get}
+       "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/review": RV.board_review_get}
 POST = {"/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test,
         "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/import": L.import_issues, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
-        "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/issue": RV.board_issue}
+        "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/save": SB.save, "/screens/delete": SB.delete, "/screens/issue": RV.board_issue}
