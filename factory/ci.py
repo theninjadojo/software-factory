@@ -91,15 +91,28 @@ def recheck_failed(gh, conn, notify) -> None:
             log.exception("ci recheck failed for %s#%s", repo, number)
 
 
+def sync_closed(gh, conn, statuses=("passed", "no-ci", "timed-out")) -> None:
+    """A PR that finished CI is no longer watched, but a person may still merge or close it. Mark it closed so the ticket leaves PRs & CI."""
+    for repo, number in dbm.unclosed_prs(conn, tuple(statuses)):
+        try:
+            pr = gh.get_pr(repo, number)
+            if pr["state"] != "open":
+                dbm.update_pr(conn, repo, number, status="closed", summary="merged" if pr.get("merged") else "closed")
+        except Exception:
+            log.exception("merge check failed for %s#%s", repo, number)
+
+
 def watch_ci(cfg, gh, conn, notify, fix, submit=None) -> None:
     """One pass over every PR being watched. `fix(repo, number, issue_repo, issue_num, failures)` runs a fix round and
     returns True if it pushed a change (CI will restart), False otherwise. `submit(issue_repo, issue_num, job)` runs
     job(db) for the round (on a worker, with that thread's connection) and returns False when the ticket is busy or no
     slot is free: then nothing is posted and the next pass tries again. By default the round runs here, on conn."""
     if not cfg.ci.enabled:
+        sync_closed(gh, conn, ("watching", "failed", "passed", "no-ci", "timed-out"))   # a light sync: merge state only, no CI
         return
     submit = submit or _inline(conn)
     recheck_failed(gh, conn, notify)
+    sync_closed(gh, conn)
     for repo, number, issue_repo, issue_num, rounds, started, last in dbm.watching(conn):
         try:
             pr = gh.get_pr(repo, number)

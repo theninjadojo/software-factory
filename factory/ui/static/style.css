@@ -644,8 +644,7 @@ button.rv-del:hover { color:var(--bad); }
 /* ---- The plant (plant.py): districts, power, sources and drones, the sea, the airports and the 747 ---- */
 main.full { max-width:none; }
 .fm-wrap .fm { min-width:1500px; }
-.fn-addt { margin-left:auto; } .fn-addt[open] { flex-basis:100%; } .fn-addt form { max-width:34rem; margin-top:10px; }
-.f3-dist { fill:rgba(255,255,255,.015); stroke:var(--line); stroke-width:1.5; stroke-dasharray:8 5; }
+.fn-addt { margin-left:auto; }.f3-dist { fill:rgba(255,255,255,.015); stroke:var(--line); stroke-width:1.5; stroke-dasharray:8 5; }
 .f3-dlab { fill:#59636b; font:700 10px var(--sans); letter-spacing:.14em; }
 /* each district its own colour, faintly filled */
 .f3-dist.d-intake { stroke:#6fa8dc; fill:rgba(111,168,220,.06); } .f3-dlab.d-intake { fill:#6fa8dc; }

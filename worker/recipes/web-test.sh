@@ -25,11 +25,9 @@ cd "$DIR" 2>/dev/null || { echo "[web-test] no folder $DIR in the checkout" >&2;
 [ -f package.json ] || { echo "[web-test] no package.json in $DIR: this recipe is for JavaScript/TypeScript projects" >&2; exit 2; }
 
 step() { echo "[web-test] == $*"; }
-has_script() {   # has_script <name>: a script exists and is not npm's placeholder (plain sh: the worker may have no python3)
-  v=$(tr '\n' ' ' < package.json | sed -n 's/.*"scripts"[[:space:]]*:[[:space:]]*{\([^}]*\)}.*/\1/p' |
-      grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -n 1 | sed 's/^[^:]*:[[:space:]]*"//; s/"$//')
-  case "$v" in ""|*"no test specified"*) return 1 ;; esac
-  return 0
+has_script() {   # has_script <name>: a script exists and is not npm's placeholder (sh and grep only: the worker may have no python)
+  entry=$(grep -oE "\"$1\"[[:space:]]*:[[:space:]]*\"([^\"\\\\]|\\\\.)+\"" package.json | head -n 1)
+  [ -n "$entry" ] && ! printf '%s' "$entry" | grep -q "no test specified"
 }
 run() { "$@" || { echo "[web-test] FAILED: $*" >&2; exit 1; }; }
 

@@ -81,6 +81,17 @@ def request_import(path: str, repo: str, numbers: list[int], close: bool) -> Non
         db.close()
 
 
+def taken(path: str, repo: str) -> set[int]:
+    """GitHub issue numbers of the repository already moved or waiting in the import queue."""
+    db = sqlite3.connect(path, timeout=10)
+    try:
+        ensure_tables(db)
+        return {r[0] for r in db.execute("SELECT gh_number FROM local_imports WHERE repo=? UNION SELECT gh_number FROM import_requests WHERE repo=?",
+                                         (repo, repo))}
+    finally:
+        db.close()
+
+
 class LocalTracker:
     """Issue-side calls against the database, in the shapes GitHub returns. `actor` is recorded on every label change."""
 
@@ -261,11 +272,11 @@ def refusal(db, repo: str, issue: dict) -> str | None:
         return "That issue was already moved."
     if issue.get("state") == "closed":
         return "That issue is closed."
-    if "factory:needs-answers" in names or any(n and n.startswith("factory:working-") for n in names):
-        return "That issue is busy: wait for the run to finish or answer its question first."
+    if any(n and n.startswith("factory:working-") for n in names):          # needs-answers moves: its questions are answered locally
+        return "That issue is busy: wait for the run to finish first."
     r = db.execute("SELECT status FROM runs WHERE repo=? AND issue=? ORDER BY id DESC LIMIT 1", (repo, num)).fetchone()
     if r and r[0] in RUNNING:
-        return "That issue is busy: wait for the run to finish or answer its question first."
+        return "That issue is busy: wait for the run to finish first."
     return None
 
 

@@ -160,6 +160,15 @@ class Watch(unittest.TestCase):
         self.assertEqual({c[1] for c in gh.comments}, {3, 1})              # PR and the ticket
         self.assertEqual(self.notes[0][0], "ci_result")
 
+    def test_a_merged_passed_pr_is_closed_on_the_next_pass(self):
+        self.assertEqual(self.go(FakeGH([run("a")]))[0], "passed")
+        self.assertEqual(self.go(FakeGH(state="closed"))[0], "closed")
+
+    def test_merge_state_is_synced_even_when_ci_is_disabled(self):
+        self.conn.execute("update prs set status='passed'"); self.conn.commit()
+        off = replace(CFG, ci=replace(CFG.ci, enabled=False))
+        self.assertEqual(self.go(FakeGH(state="closed"), cfg=off)[0], "closed")
+
     def test_failure_triggers_one_fix_round_then_reports_to_a_person(self):
         gh = FakeGH([run("unit", conclusion="failure")])
         self.assertEqual(self.go(gh)[:2], ("watching", 1))                 # fix pushed: watch the new run

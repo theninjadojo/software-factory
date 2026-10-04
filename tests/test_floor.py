@@ -383,3 +383,16 @@ class TicketsPopup(unittest.TestCase):
         self.assertIn("q=%237", html)                                              # scripts off: narrow to the ticket
         self.assertNotIn("<details", html)
         self.assertIn("<noscript><details open>", L.question_popup(REPO, issue, many(1), "tok", "/tickets", alone=True))
+
+
+class AddTicketPopup(unittest.TestCase):
+    def test_add_a_ticket_is_a_popup_with_a_csrf_form_and_a_no_js_fallback(self):
+        from factory.ui import board
+        html = board.add_ticket(["o/r"], "tok", [])
+        self.assertIn('data-dialog="fn-add-d"', html)
+        self.assertIn('<dialog id="fn-add-d" class="nd-dialog"', html)
+        self.assertIn('action="/tickets/create"', html.split("<dialog")[1])
+        self.assertIn("csrf", html.split("<dialog")[1].lower())
+        self.assertIn("<noscript><details", html)
+        self.assertEqual(board.add_ticket([], "tok", []), "")
+        self.assertEqual(board.add_ticket(["o/r"], "", []), "")

@@ -675,14 +675,14 @@ def add_ticket(repos: list[str], csrf: str, roles: list[str]) -> str:
     if not csrf or not repos:
         return ""
     opts = "".join(f'<option value="{esc(r)}">{esc(r)}</option>' for r in repos)
-    return ('<details class="disclose fn-addt"><summary class="btn">Add a ticket</summary>'
-            f'<form method="post" action="/tickets/create" class="field">{views.csrf_field(csrf)}<input type="hidden" name="back" value="/">'
+    form = (f'<form method="post" action="/tickets/create" class="field">{views.csrf_field(csrf)}<input type="hidden" name="back" value="/">'
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{L.MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="4" maxlength="{L.MAX_BODY}"></textarea></label>'
             f'{L.start_field(roles)}'
             '<p class="muted">It is flown in from the mainland and lands at Receiving. It starts work only if you choose a Start action.</p>'
-            '<button>Send by air</button></form></details>')
+            '<button>Send by air</button></form>')
+    return '<span class="fn-addt">' + L.ticket_dialog("fn-add-d", "Add a ticket", "Flown in from the mainland to Receiving.", form) + '</span>'
 
 
 def snake(fl: dict, order=SNAKE, floor_map: str = "", add: str = "") -> str:

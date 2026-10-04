@@ -252,7 +252,7 @@ def list_get(h, q: dict, csrf: str) -> None:
     if stage == "prs":                      # the pull requests and checks the factory is watching, across every repository (this was the PRs & CI page)
         db = h.app.ro_db()
         try:
-            prs = dbm.watched_prs(db, 300) if db is not None else []
+            prs = [p for p in dbm.watched_prs(db, 300) if p.get("status") != "closed"] if db is not None else []
         finally:
             if db is not None:
                 db.close()
@@ -343,17 +343,27 @@ def import_form(cfg, repo: str, csrf: str) -> str:
             f'<label>Repository<select name="repo">{opts}</select></label>'
             '<label>Issue number<input name="n" inputmode="numeric" maxlength="9"></label>'
             f'<label>Or every open issue with the label<input name="label" maxlength="50"></label>'
+            '<label><input type="checkbox" name="all" value="1"> Or every open issue (not pull requests)</label>'
             '<label><input type="checkbox" name="close" value="1"> Also close the issue on GitHub</label>'
-            f'<p class="muted">Copies the issue and its comments to a local ticket, then removes its trigger labels on GitHub, labels it <code>{tracker.MOVED_LABEL}</code> and links to the local ticket. At most {tracker.MAX_BULK} issues at a time.</p>'
+            '<label><input type="checkbox" name="confirm" value="1"> Confirm closing every issue imported with &ldquo;every open issue&rdquo;</label>'
+            f'<p class="muted">Copies the issue and its comments to a local ticket, then removes its trigger labels on GitHub, labels it <code>{tracker.MOVED_LABEL}</code> and links to the local ticket. At most {tracker.MAX_BULK} issues at a time; submit again for the rest.</p>'
             '<button>Import</button></form></details>')
+
+
+def ticket_dialog(dom_id: str, label: str, sub: str, form: str) -> str:
+    """A trigger button and the form in a popup (as Answer… does); without JavaScript the form is shown in the page."""
+    return (f'<button type="button" class="btn" data-dialog="{dom_id}">{esc(label)}</button>'
+            f'<noscript><details class="disclose" open><summary>{esc(label)}</summary>{form}</details></noscript>'
+            f'<dialog id="{dom_id}" class="nd-dialog" data-backdrop aria-label="{esc(label)}"><div class="nd-dhead"><div><strong>{esc(label)}</strong>'
+            f'<p class="muted">{esc(sub)}</p></div><button type="button" class="secondary" data-close aria-label="Close">Close</button></div>'
+            f'<div class="nd-form">{form}</div></dialog>')
 
 
 def new_ticket_form(cfg, repo: str, csrf: str) -> str:
     if not csrf or not cfg.repos:
         return ""
     opts = "".join(f'<option value="{esc(r)}"{" selected" if r == repo else ""}>{esc(r)}</option>' for r in cfg.repos)
-    return ('<details class="disclose"><summary class="btn">New ticket</summary>'
-            f'<form method="post" action="/tickets/create" class="field">{csrf_field(csrf)}'
+    form = (f'<form method="post" action="/tickets/create" class="field">{csrf_field(csrf)}'
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="5" maxlength="{MAX_BODY}"></textarea></label>'
@@ -362,7 +372,8 @@ def new_ticket_form(cfg, repo: str, csrf: str) -> str:
                '<p class="muted ft-note">It becomes a GitHub issue. Local tickets, kept in the factory, are off. '
                '<a href="/tickets?ask=local#tk-settings">Turn them on</a></p>')
             + f'{start_field([r.name for r in cfg.roles])}'
-            '<button>Create ticket</button></form></details>')
+            '<button>Create ticket</button></form>')
+    return ticket_dialog("nt-d", "New ticket", "Kept in the factory or filed on GitHub.", form)
 
 
 def trigger_labels(cfg) -> tuple:
@@ -913,6 +924,20 @@ def close(h, form, csrf: str) -> None:
     _done(h, form, csrf, f"Closed {views.ref(repo, n)}.")
 
 
+def _open_numbers(gh, cfg, repo: str, label: str, max_pages: int = 20) -> tuple[list[int], int]:
+    """The next batch (at most MAX_BULK) of open issues to import, in GitHub's order, and how many more wait behind it. Issues
+    already moved or queued are left out, so a second submit takes the next batch."""
+    taken = tracker.taken(cfg.db_path, repo)
+    found: list[int] = []
+    for page in range(1, max_pages + 1):
+        got, more = gh.issues(repo, "open", label or None, page)
+        found += [int(i["number"]) for i in got if int(i["number"]) not in taken
+                  and tracker.MOVED_LABEL not in {x.get("name") for x in i.get("labels", [])}]
+        if not more:
+            break
+    return found[:tracker.MAX_BULK], max(0, len(found) - tracker.MAX_BULK)
+
+
 def import_issues(h, form, csrf: str) -> None:
     """Queue GitHub issues to be moved into the local tracker: one by number, or the open issues with a label. The orchestrator
     re-reads and checks each one (a pull request, a moved or a busy issue is refused) before it changes anything."""
@@ -924,27 +949,33 @@ def import_issues(h, form, csrf: str) -> None:
         label = (form.get("label") or "").strip()
         if len(label) > 50:
             raise Refused("That label is not valid.")
-        if label and (form.get("n") or "").strip():
-            raise Refused("Give an issue number or a label, not both.")
-        numbers = [] if label else [_number((form.get("n") or "").strip())]
+        every = form.get("all") == "1"
+        if sum(map(bool, (label, (form.get("n") or "").strip(), every))) > 1:
+            raise Refused("Give an issue number, a label, or every open issue, not a mix.")
+        numbers = [] if label or every else [_number((form.get("n") or "").strip())]
         if any(tracker.is_local(n) for n in numbers):
             raise Refused("That is a local ticket, not a GitHub issue.")
     except Refused as e:
         return _done(h, form, csrf, str(e), "bad")
-    if label:
+    left = 0
+    if label or every:
         gh = _gh(h)
         if gh is None:
             return _done(h, form, csrf, NO_TOKEN, "bad")
         try:
-            found, _ = gh.issues(repo, "open", label)
+            numbers, left = _open_numbers(gh, cfg, repo, label)
         except (urllib.error.URLError, OSError) as e:
             return _done(h, form, csrf, _github_error(e), "bad")
-        numbers = [int(i["number"]) for i in found][:tracker.MAX_BULK]
         if not numbers:
-            return _done(h, form, csrf, "No open issue has that label.", "bad")
+            return _done(h, form, csrf, "No open issue has that label." if label else "No open issue is left to import.", "bad")
+        if every and form.get("close") == "1" and form.get("confirm") != "1":
+            more = f" (and {left} more after that)" if left else ""
+            return _done(h, form, csrf, f"This would import and close {len(numbers)} open issue(s) of {repo} on GitHub{more}. "
+                         "Nothing was queued: tick the confirmation to go ahead.", "bad")
     tracker.request_import(cfg.db_path, repo, numbers, form.get("close") == "1")
     log.info("tickets: queued %d import(s) from %s", len(numbers), repo)
-    _done(h, form, csrf, f"Queued {len(numbers)} issue(s) to move. The factory moves them at its next poll.")
+    rest = f" {left} more are left: import again for the next batch." if left else ""
+    _done(h, form, csrf, f"Queued {len(numbers)} issue(s) to move. The factory moves them at its next poll.{rest}")
 
 
 def _record(gh, cfg, h, repo: str, n: int, stage, picks, accept_all: bool) -> bool:

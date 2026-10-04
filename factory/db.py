@@ -188,6 +188,13 @@ def failed_prs(db) -> list[tuple]:
     return db.execute("SELECT repo, number, issue_repo, issue_num FROM prs WHERE status='failed' ORDER BY updated").fetchall()
 
 
+def unclosed_prs(db, statuses: tuple, max_age_days: int = 30) -> list[tuple]:
+    """Recently updated PRs in the given statuses, so a merge or close by a person can be noticed and the row closed."""
+    marks = ",".join("?" * len(statuses))
+    return db.execute(f"SELECT repo, number FROM prs WHERE status IN ({marks}) AND updated > ? ORDER BY updated",
+                      (*statuses, time.time() - max_age_days * 86400)).fetchall()
+
+
 def update_pr(db, repo: str, number: int, **fields) -> None:
     allowed = {"status", "rounds", "watch_started", "summary"}
     assert set(fields) <= allowed
