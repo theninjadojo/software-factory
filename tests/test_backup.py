@@ -3,6 +3,7 @@ import io
 import json
 import sqlite3
 import threading
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -153,7 +154,12 @@ class Restore(BackupCase):
         for name in ("PAUSED", "RESTART", B.MARKER, "restore/factory.db"):
             self.assertTrue((self.state / name).exists(), name)
         self.assertTrue((self.root / "config.toml.bak").exists())
-        self.assertEqual(list((self.state / B.TMP_RESTORE).iterdir()), [])
+        tmp = self.state / B.TMP_RESTORE
+        for _ in range(200):                # the handler removes its upload dir after the response is sent
+            if not any(tmp.iterdir()):
+                break
+            time.sleep(0.01)
+        self.assertEqual(list(tmp.iterdir()), [])
         self.assertEqual(sqlite3.connect(self.db_path).execute("SELECT COUNT(*) FROM events").fetchone()[0], 0)      # the live database is not touched yet
         info = B.apply_pending(self.state, self.db_path)                                                              # the orchestrator's next start
         self.assertTrue(info["previous"].startswith("factory.db.pre-restore-"))
