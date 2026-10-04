@@ -25,16 +25,9 @@ cd "$DIR" 2>/dev/null || { echo "[web-test] no folder $DIR in the checkout" >&2;
 [ -f package.json ] || { echo "[web-test] no package.json in $DIR: this recipe is for JavaScript/TypeScript projects" >&2; exit 2; }
 
 step() { echo "[web-test] == $*"; }
-has_script() {   # has_script <name>: a script exists and is not npm's placeholder
-  python3 - "$1" <<'PY'
-import json, sys
-try:
-    s = json.load(open("package.json")).get("scripts", {})
-except Exception:
-    sys.exit(1)
-v = s.get(sys.argv[1], "")
-sys.exit(0 if v and "no test specified" not in v else 1)
-PY
+has_script() {   # has_script <name>: a script exists and is not npm's placeholder (sh and grep only: the worker may have no python)
+  entry=$(grep -oE "\"$1\"[[:space:]]*:[[:space:]]*\"([^\"\\\\]|\\\\.)+\"" package.json | head -n 1)
+  [ -n "$entry" ] && ! printf '%s' "$entry" | grep -q "no test specified"
 }
 run() { "$@" || { echo "[web-test] FAILED: $*" >&2; exit 1; }; }
 
