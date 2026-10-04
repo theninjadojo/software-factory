@@ -108,7 +108,7 @@ class LocalTickets(AdminCase):
 class Settings(AdminCase):
     def test_local_tracker_and_github_interval_are_in_general_settings(self):
         cookie, csrf = self.session()
-        html = self.req("GET", "/settings", cookie=cookie)[2]
+        html = self.req("GET", "/settings?section=general", cookie=cookie)[2]
         self.assertIn('name="local.enabled"', html)
         self.assertIn('name="github.poll_seconds"', html)
         s, _, _ = self.post(cookie, csrf, "/settings/save", self.general_form(**{"local.enabled": "1", "github.poll_seconds": "300"}))

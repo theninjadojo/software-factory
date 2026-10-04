@@ -23,7 +23,7 @@ from .. import pause, screenboard, updates, version
 from .. import questions as Q
 from ..config import load
 from ..tracker import display, is_local
-from . import admin, board, floor, floorplan, views
+from . import admin, board, features, floor, floorplan, views
 from . import workers as WK
 from . import labels as L
 from . import localtickets as LT
@@ -415,8 +415,9 @@ class Handler(BaseHTTPRequestHandler):
                     if is_local(sel["issue"]) and (issue := LT.ticket(db, sel["repo"], sel["issue"])) is not None:
                         local = LT.card(cfg, issue, sel["repo"], csrf, back, L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])),
                                         (sel["repo"], sel["issue"]) in L._approved(self))
+                    decided = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])) or {}
                     detail = board.detail_html(sel, board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images,
-                                               local)
+                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")))
                 if path == "/fragment/detail":
                     return self._send(200, detail)
         finally:
@@ -424,7 +425,8 @@ class Handler(BaseHTTPRequestHandler):
         new = (L.new_ticket_form(cfg, cfg.repos[0], csrf) + L.import_form(cfg, cfg.repos[0], csrf)) if cfg.repos else ""
         shown = L.flash_pop(csrf)
         title = f"{display(int(sel['issue']))} · Tickets" if explicit and sel else "Tickets"
-        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf), path, csrf, wide=True,
+        strip = features.tickets_strip(cfg, csrf, q.get("ask") == "local")
+        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip), path, csrf, wide=True,
                                           badges=badges, bare=True, flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
@@ -436,6 +438,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/fragment/overview"):
             # the page itself never waits for GitHub: with no recent read, the Needs-you tray loads in place (the refresh reads GitHub)
             d = self.app.overview()
+            d["settings_strip"] = features.factory_strip(self.app.cfg(), d["paused"], csrf)
             needs = L.needs_you(self) if path == "/fragment/overview" else L.needs_cached()
             if needs is None and path == "/" and L.has_token(self):
                 d["needs_loading"] = True

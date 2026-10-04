@@ -95,7 +95,7 @@ class Settings(AdminCase):
 
     def test_widening_the_sandbox_allowlist_needs_confirmation_and_valid_hosts(self):
         cookie, csrf = self.session()
-        form = lambda hosts, **extra: [("section", "runner"), ("runner.timeout_seconds", "1800"), ("runner.max_turns", "40"),
+        form = lambda hosts, **extra: [("section", "runner"), ("runner.max_parallel", "1"), ("runner.timeout_seconds", "1800"), ("runner.max_turns", "40"),
                                        ("runner.rate_limit_backoff_seconds", "3600"), ("runner.memory", "3g"), ("runner.cpus", "2"),
                                        ("runner.allow_hosts", hosts)] + list(extra.items())
         self.assertEqual(self.post(cookie, csrf, "/settings/save", form("api.anthropic.com\nregistry.npmjs.org"))[0], 422)   # unconfirmed
@@ -763,7 +763,7 @@ class SettingsLayout(UiCase):
 
     def test_general_is_rows_with_one_save_button(self):
         cookie, _ = self.session()
-        _, _, html = self.req("GET", "/settings", cookie=cookie)
+        _, _, html = self.req("GET", "/settings?section=general", cookie=cookie)
         self.assertIn("Save changes", html)
         self.assertIn("Changes apply the next time the factory is idle.", html)
         self.assertEqual(html.count('class="srow"'), 8)

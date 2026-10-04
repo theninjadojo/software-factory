@@ -357,7 +357,9 @@ def new_ticket_form(cfg, repo: str, csrf: str) -> str:
             f'<label>Title<input name="title" required maxlength="{MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="5" maxlength="{MAX_BODY}"></textarea></label>'
             + ('<label>Keep it in<select name="where"><option value="local">The factory (local ticket)</option>'
-               '<option value="github">GitHub issues</option></select></label>' if cfg.local_enabled else "")
+               '<option value="github">GitHub issues</option></select></label>' if cfg.local_enabled else
+               '<p class="muted ft-note">It becomes a GitHub issue. Local tickets, kept in the factory, are off. '
+               '<a href="/tickets?ask=local#tk-settings">Turn them on</a></p>')
             + f'{start_field([r.name for r in cfg.roles])}'
             '<button>Create ticket</button></form></details>')
 

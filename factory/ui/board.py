@@ -506,8 +506,9 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float) -
 
 
 def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_rounds: int, now: float, live: bool, images: bool = False,
-                local_html: str = "") -> str:
-    """local_html: a local ticket's own card (description, comments, edit); it has no GitHub page to link to."""
+                local_html: str = "", handling: str = "") -> str:
+    """local_html: a local ticket's own card (description, comments, edit); it has no GitHub page to link to. handling: how the
+    settings apply to this ticket (features.ticket_handling)."""
     repo, n, j = r["repo"], r["issue"], r["journey"]
     gh = f"https://github.com/{repo}/issues/{n}"
     prs = "".join(f'<a href="https://github.com/{esc(p["repo"])}/pull/{int(p["number"])}" rel="noopener noreferrer" target="_blank">PR #{int(p["number"])} ↗</a>'
@@ -526,7 +527,7 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
             f'<div class="sd-dhead"><div class="sd-row"><span class="mono muted">{esc(views.ref(repo, n))}</span>'
             f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></div>'
             f'<h2>{esc(r["title"])}</h2><div class="sd-links">{links}</div></div>'
-            + _tiles(j, r["state"]) + needs_html + local_html + body + "</article>")
+            + _tiles(j, r["state"]) + needs_html + local_html + body + handling + "</article>")
 
 
 def needs_card(row: dict | None, csrf: str, back: str) -> str:
@@ -584,7 +585,8 @@ def phone_needs(rows: list[dict], csrf: str) -> str:
 
 
 def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: str, q: str, at: str, order: str, detail: str, new_ticket: str, now: float,
-                 csrf: str = "") -> str:
+                 csrf: str = "", settings: str = "") -> str:
+    """settings: the strip of settings that shape this page (features.tickets_strip)."""
     shown = pick(rows, flt, at, q, order)
     sel = (sel_row["repo"], sel_row["issue"]) if sel_row else None
     crumb = (f'<p class="sd-crumb muted">Tickets <span aria-hidden="true">/</span> <span class="mono">{esc(views.ref(sel_row["repo"], sel_row["issue"], short=True))}</span></p>'
@@ -592,7 +594,7 @@ def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: st
     back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at))}">← All tickets</a></p>'     # shown on a phone while a ticket is open
     return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead">{crumb}<div class="sd-h1row"><h1>Tickets</h1>{new_ticket}</div>'
             '<p class="muted sd-lede">Everything about a ticket in one place: what it needs from you, where it is on the floor, every run, and its pull requests and checks.</p></div>'
-            + phone_needs(rows, csrf) + filters_html(counts(rows), flt, q, at, order)
+            + settings + phone_needs(rows, csrf) + filters_html(counts(rows), flt, q, at, order)
             + f'<div class="sd-split"><section class="sd-list" aria-label="Ticket list">{list_html(shown, sel, flt, q, at, now, csrf)}</section>'
             + (detail or '<div class="sd-detail sd-none"><p class="muted">Pick a ticket to see its journey.</p></div>') + "</div>"
             + f'<template id="ld-detail"><div class="sd-detail sd-loading">{loader("Loading the ticket from GitHub")}</div></template></div>')
@@ -812,7 +814,7 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
              + _tile("/tickets?stage=failed", "Failed", len(fail_rows), "fail", f'#{fail_rows[0]["issue"]} {fail_rows[0]["why"]}'[:48] if fail_rows else "none"))
     head = (f'<div class="sd-dash-head"><div><p class="muted sd-fine">{esc(line)}</p><h1>Factory</h1></div>'
             f'<div class="sd-acts">{floor.pause_form(paused, csrf)}<a class="btn secondary" href="/?mode=confirm">Mode: {"live" if cfg["live"] else "dry run"}</a></div></div>')
-    return (f'<div class="sd-dash">{head}{mode_bar}<div class="sd-tiles five">{tiles}</div>{floor_card(d, rows, now, csrf)}'
+    return (f'<div class="sd-dash">{head}{mode_bar}{d.get("settings_strip", "")}<div class="sd-tiles five">{tiles}</div>{floor_card(d, rows, now, csrf)}'
             f'<div class="sd-cols">{slot("/fragment/needs-tray", "Asking GitHub what needs you", "sd-card sd-flush sd-needs", '<h2 class="sd-bar-h">Needs you</h2>') if d.get("needs_loading") else needs_tray(needs, csrf)}<div class="sd-side">{running_card(d, rows, now)}{usage_card(d, now)}</div></div></div>')
 
 
