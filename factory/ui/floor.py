@@ -2,7 +2,9 @@
 controls, and the Needs-you rows and tray (/needs), whose buttons post to the same /tickets actions as everywhere else
 (CSRF, re-validated server-side). Everything is server-rendered and escaped; the page policy forbids inline styles."""
 import time
+from urllib.parse import quote
 
+from ..tracker import is_local
 from . import views
 from .views import ago, badge, csrf_field, esc
 
@@ -41,8 +43,11 @@ def _row(k: int, n: dict, csrf: str, back: str) -> str:
     """One ticket waiting for a person: who and why on the left, the recommendation and the buttons on the right. A ticket with
     questions opens its question form below (inline for one or two questions, in a popup for more)."""
     from . import labels as L
-    ref = f'{esc(n["repo"].split("/")[-1])}#{int(n["issue"])}'
-    gh_link = views.gh_link(f'https://github.com/{n["repo"]}/issues/{int(n["issue"])}', n["title"]) if views.REPO.match(str(n["repo"])) else esc(n["title"])
+    ref = esc(views.ref(n["repo"], n["issue"], short=True))
+    if is_local(int(n["issue"])):
+        gh_link = f'<a href="/ticket?repo={quote(str(n["repo"]), safe="")}&amp;n={int(n["issue"])}">{esc(n["title"])}</a>'
+    else:
+        gh_link = views.gh_link(f'https://github.com/{n["repo"]}/issues/{int(n["issue"])}', n["title"]) if views.REPO.match(str(n["repo"])) else esc(n["title"])
     st = n.get("st")
     title = f'<span class="nd-t">{gh_link}</span>'
     age = esc(ago(n.get("at")))

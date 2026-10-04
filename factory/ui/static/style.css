@@ -779,3 +779,7 @@ main.full { max-width:none; }
 .fe-data textarea { width:100%; font:12px/1.4 var(--mono); }
 .fe-save, .fe-reset { margin-top:.8rem; }
 @media (max-width:760px) { .fe, .fe-save, .fe-reset, .fm-edit { display:none; } .fe-phone { display:block; } }
+.lt-card .lt-body { margin:.4rem 0; overflow-wrap:anywhere; } .lt-card h4 { margin:1rem 0 .4rem; }
+.lt-comments { list-style:none; margin:0 0 .8rem; padding:0; display:grid; gap:.6rem; }
+.lt-c { border-left:2px solid var(--line2); padding:.1rem 0 .1rem .7rem; overflow-wrap:anywhere; } .lt-by { margin:0 0 .2rem; font-size:13px; }
+.lt-card .sd-acts { flex-wrap:wrap; }

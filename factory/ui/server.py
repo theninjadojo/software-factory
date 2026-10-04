@@ -22,9 +22,11 @@ from .. import designfiles
 from .. import pause, screenboard, updates, version
 from .. import questions as Q
 from ..config import load
+from ..tracker import display, is_local
 from . import admin, board, floor, floorplan, views
 from . import workers as WK
 from . import labels as L
+from . import localtickets as LT
 from .auth import AuthStore, Sessions, Throttle
 from .settings import Form
 from .workerproc import WorkerApiProcess
@@ -407,14 +409,19 @@ class Handler(BaseHTTPRequestHandler):
                 if cold:
                     detail = board.slot("/fragment/detail?" + board._qs(repo=sel["repo"], n=sel["issue"]), "Loading the ticket from GitHub", "sd-detail sd-loading")
                 else:
-                    detail = board.detail_html(sel, board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images)
+                    local = ""
+                    if is_local(sel["issue"]) and (issue := LT.ticket(db, sel["repo"], sel["issue"])) is not None:
+                        local = LT.card(cfg, issue, sel["repo"], csrf, back, L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])),
+                                        (sel["repo"], sel["issue"]) in L._approved(self))
+                    detail = board.detail_html(sel, board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images,
+                                               local)
                 if path == "/fragment/detail":
                     return self._send(200, detail)
         finally:
             db.close()
         new = (L.new_ticket_form(cfg, cfg.repos[0], csrf) + L.import_form(cfg, cfg.repos[0], csrf)) if cfg.repos else ""
         shown = L.flash_pop(csrf)
-        title = f"#{int(sel['issue'])} · Tickets" if explicit and sel else "Tickets"
+        title = f"{display(int(sel['issue']))} · Tickets" if explicit and sel else "Tickets"
         return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf), path, csrf, wide=True,
                                           badges=badges, bare=True, flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
 

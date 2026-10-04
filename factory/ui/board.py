@@ -13,7 +13,8 @@ from urllib.parse import urlencode
 
 from .. import db as dbm
 from .. import questions as Q
-from . import floorplan, plant, views, yard
+from ..tracker import display, is_local
+from . import floorplan, localtickets as LT, plant, views, yard
 from .views import ago, esc, tok
 
 STATIONS = (("poll", "Poll"), ("classify", "Classify"), ("route", "Route"), ("analyst", "Analyst"), ("designer", "Designer"),
@@ -35,10 +36,10 @@ ICON = {
 STATE_WORD = {"done": "Done", "run": "Running", "wait": "Needs you", "fail": "Failed", "none": "Not reached"}
 # The ticket filters, in the order of the chips. The colour dot is the state a ticket in it is in.
 FILTERS = (("needs", "Needs you", "wait"), ("working", "Working", "run"), ("prs", "PRs & CI", "run"), ("failed", "Failed", "fail"),
-           ("done", "Done", "done"), ("all", "All", ""))
-TICKET_WORD = {"needs": "Needs you", "working": "Working", "prs": "PR and CI", "failed": "Failed", "done": "Done"}
-TICKET_TONE = {"needs": "wait", "working": "run", "prs": "run", "failed": "fail", "done": "done"}
-ORDER = {"needs": 0, "working": 1, "failed": 2, "prs": 3, "done": 4}
+           ("new", "Not started", "none"), ("done", "Done", "done"), ("all", "All", ""))
+TICKET_WORD = {"needs": "Needs you", "working": "Working", "prs": "PR and CI", "failed": "Failed", "new": "Not started", "done": "Done"}
+TICKET_TONE = {"needs": "wait", "working": "run", "prs": "run", "failed": "fail", "new": "none", "done": "done"}
+ORDER = {"needs": 0, "working": 1, "failed": 2, "prs": 3, "new": 4, "done": 5}
 _RUN_AT = {"analyst": "analyst", "designer": "designer", "architect": "architect", "build": "build", "review": "review",
            "ci": "ci", "conflicts": "pr"}
 _STEP = {"done": "done", "running": "run", "queued": "none", "failed": "fail", "waiting": "wait"}   # queued: interrupted or requeued, not running
@@ -173,6 +174,7 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
     except Exception:
         worked = []
     worked += [{"repo": r, "issue": n, "title": None, "detail": "", "decided_at": 0} for r, n in by_ticket]
+    worked += LT.rows(db)                       # every local ticket, started or not: the factory's database is its only home
     seen, out = set(), []
     for t in base + worked + [{"repo": r, "issue": n, "title": nr.get("title"), "detail": "", "decided_at": nr.get("at") or 0} for (r, n), nr in need.items()]:
         key = (t["repo"], t["issue"])
@@ -192,9 +194,13 @@ def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -
     if known and need is None:
         st = {k: ("done" if v == "wait" else v) for k, v in st.items()}
     state = ticket_state(st, need is not None, prs)
+    loc = LT.info(db, t["repo"], int(t["issue"])) if is_local(int(t["issue"])) else None
+    if loc and state == "done" and loc["state"] == "open" and not j["steps"] and not prs:
+        state = "new"                           # an open local ticket nothing has run on yet
     at = current(st)
     last = max([s["finished"] or s["started"] for s in j["steps"]] + [p.get("updated") or 0 for p in prs] + [t.get("decided_at") or 0])
-    return {"repo": t["repo"], "issue": int(t["issue"]), "title": title or (need or {}).get("title") or t.get("title") or f"Ticket #{int(t['issue'])}",
+    return {"repo": t["repo"], "issue": int(t["issue"]), "title": (loc or {}).get("title") or title or (need or {}).get("title") or t.get("title")
+            or f"Ticket {display(int(t['issue']))}",
             "state": state, "stations": st, "at": at, "when": last, "why": _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need}
 
 
@@ -227,6 +233,8 @@ def ticket_extras(db, repo: str, issue: int, j: dict) -> tuple[list, list, list,
 
 def _why(state: str, j: dict, prs: list, need, t: dict, at, now: float) -> str:
     runs = [s for s in j["steps"] if s["kind"] == "run"]
+    if state == "new":
+        return "Nothing has run yet"
     if state == "needs":
         w = j.get("waiting") or {}
         if w.get("pending"):
@@ -307,7 +315,7 @@ def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf
     for r in rows[:60]:
         on = sel is not None and (r["repo"], r["issue"]) == sel
         items += (f'<a class="sd-pick{" on" if on else ""}" href="{esc(ticket_url(r, flt, q, at))}"{" aria-current=page" if on else ""}>'
-                  f'<span class="sd-row"><span class="mono muted">{esc(r["repo"].split("/")[-1])}#{int(r["issue"])}</span>'
+                  f'<span class="sd-row"><span class="mono muted">{esc(views.ref(r["repo"], r["issue"], short=True))}</span>'
                   f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></span>'
                   f'<span class="sd-title">{esc(r["title"])}</span><span class="sd-why muted">{esc(r["why"])}</span>{progress(r["stations"])}'
                   f'<span class="mono muted sd-at">{esc("At " + LABEL[r["at"]] if r["at"] else "Not started")} · {esc(ago(r["when"], now) if r["when"] else "")}</span></a>')
@@ -340,7 +348,7 @@ def filters_html(c: dict, flt: str, q: str, at: str, order: str, repos=()) -> st
 
 def _tiles(j: dict, state: str) -> str:
     st, tk, models = j["status"], j["tokens"], j["models"]
-    sub = {"needs": "waiting for you", "working": "agents at work", "failed": "see the failed step", "prs": "pull request open", "done": "finished"}[state]
+    sub = {"needs": "waiting for you", "working": "agents at work", "failed": "see the failed step", "prs": "pull request open", "new": "nothing has run yet", "done": "finished"}[state]
     if state == "needs" and j.get("waiting"):
         sub = (plain(j["waiting"].get("message")) or sub)[:60]
     tin, tout = tk["in"], tk["out"]
@@ -497,14 +505,16 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float) -
             + prs_html(r["prs"], fix_rounds) + activity_html(events, now))
 
 
-def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_rounds: int, now: float, live: bool, images: bool = False) -> str:
+def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_rounds: int, now: float, live: bool, images: bool = False,
+                local_html: str = "") -> str:
+    """local_html: a local ticket's own card (description, comments, edit); it has no GitHub page to link to."""
     repo, n, j = r["repo"], r["issue"], r["journey"]
     gh = f"https://github.com/{repo}/issues/{n}"
     prs = "".join(f'<a href="https://github.com/{esc(p["repo"])}/pull/{int(p["number"])}" rel="noopener noreferrer" target="_blank">PR #{int(p["number"])} ↗</a>'
                   for p in r["prs"] if views.REPO.match(p["repo"]))
     prs += "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>'
                    for u in sorted({f.get("pr") for f in files if f.get("pr")}) if views.GH_URL.match(u))
-    links = (f'<a href="{esc(gh)}" rel="noopener noreferrer" target="_blank">Open on GitHub ↗</a>{prs}'
+    links = ("" if is_local(int(n)) else f'<a href="{esc(gh)}" rel="noopener noreferrer" target="_blank">Open on GitHub ↗</a>') + (f'{prs}'
              f'<a href="/labels/issue?{esc(_qs(repo=repo, n=n))}">Edit labels</a>'
              + "".join(f'<a href="{views.doc_url(repo, n, s)}">Read {esc(views.DOC_NOUN[s])}</a>' for s in docs)
              + (f'<a href="/ticket/images?{esc(_qs(repo=repo, n=n))}">View images</a>'
@@ -512,11 +522,11 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
     body = live_part(r, files, docs, events, fix_rounds, now)
     if live and j["status"] in ("running", "waiting", "queued"):
         body = f'<div id="live" data-src="/fragment/ticket">{body}</div>'
-    return (f'<article class="sd-detail" aria-label="Ticket {int(n)}">'
-            f'<div class="sd-dhead"><div class="sd-row"><span class="mono muted">{esc(repo)}#{int(n)}</span>'
+    return (f'<article class="sd-detail" aria-label="Ticket {esc(display(int(n)))}">'
+            f'<div class="sd-dhead"><div class="sd-row"><span class="mono muted">{esc(views.ref(repo, n))}</span>'
             f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></div>'
             f'<h2>{esc(r["title"])}</h2><div class="sd-links">{links}</div></div>'
-            + _tiles(j, r["state"]) + needs_html + body + "</article>")
+            + _tiles(j, r["state"]) + needs_html + local_html + body + "</article>")
 
 
 def needs_card(row: dict | None, csrf: str, back: str) -> str:
@@ -568,7 +578,7 @@ def phone_needs(rows: list[dict], csrf: str) -> str:
         refs = ",".join(f'{r["repo"]}#{int(r["issue"])}' for r in asking[:20])
         bulk = (f'<form method="post" action="/tickets/answer-all">{views.csrf_field(csrf)}<input type="hidden" name="tickets" value="{esc(refs)}">'
                 '<input type="hidden" name="back" value="/tickets"><button class="wide">Accept all recommendations</button></form>')
-    what = " · ".join(f'#{r["issue"]} {r["why"][:40]}' for r in need[:3])
+    what = " · ".join(f'{display(r["issue"])} {r["why"][:40]}' for r in need[:3])
     return (f'<section class="sd-card sd-needs sd-phneeds" aria-labelledby="pn-h"><h2 id="pn-h">{len(need)} ticket{"s" if len(need) != 1 else ""} need you</h2>'
             f'<p class="muted sd-fine">{esc(what)}</p>{bulk}</section>')
 
@@ -577,7 +587,7 @@ def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: st
                  csrf: str = "") -> str:
     shown = pick(rows, flt, at, q, order)
     sel = (sel_row["repo"], sel_row["issue"]) if sel_row else None
-    crumb = (f'<p class="sd-crumb muted">Tickets <span aria-hidden="true">/</span> <span class="mono">{esc(sel_row["repo"].split("/")[-1])}#{int(sel_row["issue"])}</span></p>'
+    crumb = (f'<p class="sd-crumb muted">Tickets <span aria-hidden="true">/</span> <span class="mono">{esc(views.ref(sel_row["repo"], sel_row["issue"], short=True))}</span></p>'
              if sel_row and explicit else "")
     back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at))}">← All tickets</a></p>'     # shown on a phone while a ticket is open
     return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead">{crumb}<div class="sd-h1row"><h1>Tickets</h1>{new_ticket}</div>'
