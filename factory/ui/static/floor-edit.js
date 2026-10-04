@@ -456,9 +456,12 @@
     return [[b[0] + b[2] + 1, my], [b[0] - 1, my], [mx, b[1] - 1], [mx, b[1] + b[3] + 1]];
   }
   function trackPorts(id) {
-    // track leaves or reaches a rail building in the middle of a side (never the yard's top, where its feeder comes in)
+    // track leaves or reaches a rail building in the middle of a side (never the yard's top, where its feeder comes in; a worker
+    // only at its left and right)
     var b = box(id), mx = b[0] + Math.floor(b[2] / 2), my = b[1] + Math.floor(b[3] / 2);
-    var out = [[b[0] + b[2] + 1, my], [b[0] - 1, my], [mx, b[1] + b[3] + 1]];
+    var out = [[b[0] + b[2] + 1, my], [b[0] - 1, my]];
+    if (id.indexOf("worker:") === 0) return out;                  // a worker's track comes in and goes out at its sides, clear of its neighbours
+    out.push([mx, b[1] + b[3] + 1]);
     if (id !== "yard") out.push([mx, b[1] - 1]);
     return out;
   }

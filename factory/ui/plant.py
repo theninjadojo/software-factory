@@ -938,9 +938,138 @@ def circuit(C: dict, w: str) -> list:
             + ring_route(bx["yard"], home[-1], out[0]) + [out[0]])
 
 
+def circuit_marks(C: dict, w: str) -> tuple[list, dict]:
+    """A worker's loop as points (circuit) and where things are along it, in px from the start: each stretch of track (start, end),
+    the stop at the worker and the stop at the Train station (half way round their loops), and the whole length."""
+    tr, bx = C["tracks"], C["box"]
+    pts, at, run = [], {}, [0.0]
+
+    def add(q):
+        q = tuple(q)
+        if pts:
+            if q == pts[-1]:
+                return
+            run[0] += math.dist(pts[-1], q)
+        pts.append(q)
+    legs = []
+    for edges in C["circuits"][w]:
+        leg = []
+        for i, tid in enumerate(edges):
+            if i:
+                jx, jy, jw, jh = bx[tr[tid]["src"]]
+                leg.append(("j", (jx + jw / 2, jy + jh / 2)))
+            leg.append((tid, tr[tid]["pts"]))
+        legs.append(leg)
+    stops = {}
+    rings = [(w, legs[1]), ("depot", legs[2]), ("yard", legs[0])]
+    for k, leg in enumerate(legs):
+        for tid, q in leg:
+            if tid == "j":
+                add(q)
+                continue
+            add(q[0])
+            start = run[0]
+            for p in q[1:]:
+                add(p)
+            at[tid] = (start, run[0])
+        name, nxt = rings[k]
+        before = run[0]
+        for c in ring_route(bx[name], pts[-1], tuple(nxt[0][1][0])):
+            add(c)
+        add(nxt[0][1][0]) if k < 2 else add(legs[0][0][1][0])
+        stops[name] = (before + run[0]) / 2
+    return pts, {"tracks": at, "stop": stops[w], "off": stops["depot"], "len": run[0]}
+
+
+def timetable(C: dict, running: list[str]) -> tuple[float, dict]:
+    """One cycle of the trains that drive. The track two or more loops share is one block, as in the default yard: a train leaves
+    the yard when the block is clear, unloads at its worker, waits at its signal until the block is clear again, offloads at the
+    Train station and comes home. Returns (cycle seconds, {worker: [(time, px along its loop), ...]})."""
+    marks = {w: circuit_marks(C, w)[1] for w in C["circuits"]}
+    uses = {}
+    for w in C["circuits"]:
+        for tid in marks[w]["tracks"]:
+            uses[tid] = uses.get(tid, 0) + 1
+    shared = {t for t, n in uses.items() if n > 1}
+    plan, free, t = {}, 0.0, 0.0
+    tail = lambda w: (yard.CARS[sorted(C["circuits"]).index(w) % len(yard.CARS)] * yard.GAP) / yard.SPEED + 0.6
+    for w in running:
+        m = marks[w]
+        out = [m["tracks"][tid] for tid in C["circuits"][w][0] if tid in shared]
+        out_end = max((e for _, e in out), default=0.0)
+        home, prev = m["off"], None                                  # where it waits: at the signal before the junction into the block
+        for tid in C["circuits"][w][1] + C["circuits"][w][2]:
+            if tid in shared and m["tracks"][tid][0] > m["stop"]:
+                if prev and C["tracks"][prev]["dst"].startswith("junction:"):
+                    s0, e0 = m["tracks"][prev]
+                    home = e0 - min(26.0, (e0 - s0) / 2)
+                else:
+                    home = m["tracks"][tid][0]
+                break
+            prev = tid
+        r = plan[w] = {"m": m, "home_at": home}
+        r["depart"] = max(t, free)
+        r["arrive"] = r["depart"] + m["stop"] / yard.SPEED
+        r["leave"] = r["arrive"] + yard.DWELL
+        r["signal"] = r["leave"] + (home - m["stop"]) / yard.SPEED
+        free = r["depart"] + out_end / yard.SPEED + tail(w)
+        t = r["depart"]
+    for w in sorted(running, key=lambda w: plan[w]["signal"]):
+        r, m = plan[w], plan[w]["m"]
+        r["go"] = max(r["signal"], free)
+        r["at_off"] = r["go"] + (m["off"] - r["home_at"]) / yard.SPEED
+        r["off_leave"] = r["at_off"] + yard.DWELL
+        r["home"] = r["off_leave"] + (m["len"] - m["off"]) / yard.SPEED
+        free = r["home"] + tail(w)
+    T = round(max((r["home"] for r in plan.values()), default=0.0) + yard.HOME_DWELL, 1)
+    out = {}
+    for w, r in plan.items():
+        m = r["m"]
+        out[w] = [(0.0, 0.0), (r["depart"], 0.0), (r["arrive"], m["stop"]), (r["leave"], m["stop"]), (r["signal"], r["home_at"]),
+                  (r["go"], r["home_at"]), (r["at_off"], m["off"]), (r["off_leave"], m["off"]), (r["home"], m["len"]), (T, m["len"])]
+    return T, out
+
+
+def at_time(points: list, d: float):
+    """When a train whose motion is points [(time, px)] passes px d (None if it never does)."""
+    for (t0, d0), (t1, d1) in zip(points, points[1:]):
+        if d1 > d0 and d0 <= d <= d1:
+            return t0 + (t1 - t0) * (d - d0) / (d1 - d0)
+    return None
+
+
+def lamps(times: list, T: float, begin: str) -> str:
+    """A two-lamp signal that turns green for a moment as each of its trains is let through, red the rest of the cycle."""
+    if not times or not T:
+        return '<circle class="r" cx="0" cy="-4" r="2.4"/><circle class="g off" cx="0" cy="4" r="2.4"/>'
+    spans = []
+    for t in sorted(times):                                          # green from just before to just after each train; overlaps join
+        a, b = max(0.0, t - 0.5) / T, min(T, t + 0.9) / T
+        if spans and a <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    keys, gv = [0.0], [0.15]
+    for a, b in spans:
+        if a <= keys[-1]:
+            gv[-1] = 1
+        else:
+            keys.append(a)
+            gv.append(1)
+        if b < 1:
+            keys.append(b)
+            gv.append(0.15)
+    keys = [round(k, 4) for k in keys]
+    ks = ";".join(f"{k:g}" for k in keys)
+    g = ";".join(f"{v:g}" for v in gv)
+    r = ";".join("1" if v != 1 else "0.15" for v in gv)
+    return (f'<circle class="r" cx="0" cy="-4" r="2.4"><animate attributeName="opacity" values="{r}" keyTimes="{ks}" calcMode="discrete" dur="{_f(T)}s" begin="{begin}" repeatCount="indefinite"/></circle>'
+            f'<circle class="g" cx="0" cy="4" r="2.4"><animate attributeName="opacity" values="{g}" keyTimes="{ks}" calcMode="discrete" dur="{_f(T)}s" begin="{begin}" repeatCount="indefinite"/></circle>')
+
+
 def railway(C: dict, workers: list[dict], now: float) -> tuple[str, str]:
     """(track, loops and signals; the trains): a worker's train runs its loop while the worker has a job, otherwise it waits at the
-    yard. A junction's signals give each track into it a turn."""
+    yard. The trains keep to the timetable, so only one is ever on the shared track; a signal turns green as it lets a train on."""
     at, bx = C["at"], C["box"]
     ds = [trace(t["pts"])[0].d for t in C["tracks"].values()]
     for t in C["tracks"].values():                                  # into the middle of a junction
@@ -953,41 +1082,47 @@ def railway(C: dict, workers: list[dict], now: float) -> tuple[str, str]:
     moving = ""
     live = {f'worker:{w["name"]}': w for w in workers}
     parked = 0
+    running = [w for w in sorted(C["circuits"]) if (live.get(w) or {}).get("online") and (live.get(w) or {}).get("job")]
+    T, motion = timetable(C, running)
+    begin = f"{-(now % T):.2f}s" if T else "0s"
+    yx, yy, _, _ = bx["yard"]
+
+    def berth(slot, cars, show=""):
+        """A train standing in the yard, small, on one of its two platforms (three berths each)."""
+        px_, py_ = yx + 18 + 60 * (slot % 3), yy + 21 + 26 * (slot // 3)
+        return (f'<g transform="translate({_f(px_)} {_f(py_)}) scale(.45)">{show}' + "".join(
+            f'<g class="fn-car" transform="translate({_f((cars - 1 - c) * yard.GAP)} 0)">{yard.LOCO if c == 0 else yard.WAGON}</g>' for c in range(cars)) + "</g>")
     for k, w in enumerate(sorted(C["circuits"])):
-        p, _ = trace(circuit(C, w))
-        T = max(4.0, p.len / yard.SPEED)
         cars = yard.CARS[k % len(yard.CARS)]
-        wk = live.get(w) or {}
-        if wk.get("online") and wk.get("job"):
-            b0 = -(now % T) - T - k * T / 3
-            moving += "".join(f'<g class="fn-car">{yard.LOCO if c == 0 else yard.WAGON}<animateMotion path="{p.d}" dur="{_f(T)}s" '
-                              f'begin="{b0 + c * yard.GAP / yard.SPEED:.2f}s" rotate="auto" repeatCount="indefinite"/></g>' for c in range(cars))
-        elif parked < 4:                                             # waiting in the yard, side by side on its two platforms
-            yx, yy, _, _ = bx["yard"]
-            px_, py_ = yx + 22 + 90 * (parked % 2), yy + 21 + 26 * (parked // 2)
-            moving += f'<g transform="translate({_f(px_)} {_f(py_)}) scale(.6)">' + "".join(
-                f'<g class="fn-car" transform="translate({_f((cars - 1 - c) * yard.GAP)} 0)">{yard.LOCO if c == 0 else yard.WAGON}</g>' for c in range(cars)) + "</g>"
+        if w in motion:
+            pts, m = circuit_marks(C, w)
+            p, _ = trace(pts)
+            scale = p.len / m["len"] if m["len"] else 1.0              # the drawn line rounds its corners, a little shorter
+            out, back = motion[w][1][0] / T, motion[w][-2][0] / T       # it leaves the yard, and is back in it
+            seen = lambda vals: (f'<animate attributeName="opacity" values="{vals}" keyTimes="0;{out:.4f};{back:.4f}" calcMode="discrete" '
+                                 f'dur="{_f(T)}s" begin="{begin}" repeatCount="indefinite"/>')
+            moving += f'<g opacity="0">{seen("0;1;0")}{yard._train(p, [(t, d * scale) for t, d in motion[w]], T, begin, cars)}</g>'
+            moving += berth(parked, cars, seen("1;0;1")) if parked < 6 else ""
+            parked += 1
+        elif parked < 6:                                             # waiting in the yard
+            moving += berth(parked, cars)
             parked += 1
     for j in (n for n in bx if n.startswith("junction:")):
-        ins = [t for t in C["tracks"].values() if t["dst"] == j]
-        n = len(ins)
-        P = 4.0 * max(1, n)
-        begin = f"{-(now % P):.2f}s"
-        for i, t in enumerate(ins):
+        ins = [(tid, t) for tid, t in C["tracks"].items() if t["dst"] == j]
+        for tid, t in ins:
             (ax, ay), (zx, zy) = t["pts"][-2], t["pts"][-1]
             d = math.dist((ax, ay), (zx, zy)) or 1
             ux, uy = (zx - ax) / d, (zy - ay) / d
             back = min(26.0, d / 2)
             sx, sy = zx - ux * back - uy * 14, zy - uy * back + ux * 14
-            if n == 1:
-                lamps = '<circle class="r off" cx="0" cy="-4" r="2.4"/><circle class="g" cx="0" cy="4" r="2.4"/>'
-            else:
-                a, b = i / n, (i + 1) / n
-                keys = f"0;{a:.4f};{b:.4f}" if a > 0 else f"0;{b:.4f}"
-                gv, rv = ("0.15;1;0.15", "1;0.15;1") if a > 0 else ("1;0.15", "0.15;1")
-                lamps = (f'<circle class="r" cx="0" cy="-4" r="2.4"><animate attributeName="opacity" values="{rv}" keyTimes="{keys}" calcMode="discrete" dur="{_f(P)}s" begin="{begin}" repeatCount="indefinite"/></circle>'
-                         f'<circle class="g" cx="0" cy="4" r="2.4"><animate attributeName="opacity" values="{gv}" keyTimes="{keys}" calcMode="discrete" dur="{_f(P)}s" begin="{begin}" repeatCount="indefinite"/></circle>')
-            still += yard._signal(sx, sy, f"Signal into {j.split(':')[1].upper()}", lamps)
+            passes = []                                              # when each train that runs this track goes by the signal
+            for w, pts_ in motion.items():
+                m = circuit_marks(C, w)[1]
+                if tid in m["tracks"]:
+                    when = at_time(pts_, m["tracks"][tid][1] - back)
+                    if when is not None:
+                        passes.append(when)
+            still += yard._signal(sx, sy, f"Signal into junction {j.split(':')[1].upper()}", lamps(passes, T, begin))
     return still, moving
 
 

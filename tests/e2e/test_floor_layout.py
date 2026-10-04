@@ -265,7 +265,10 @@ def test_workers_by_rail_lay_track_to_a_worker_and_back(wide, server):
 
     # Erase the branch to my-mac: its loop is broken and the checklist says so
     pg.click('[data-tool="erase"]')
-    pg.locator('[data-track="junction:a>worker:my-mac"] .fe-bed').click(force=True)
+    pts = plan(pg)["tracks"]["junction:a>worker:my-mac"]
+    (ax, ay), (bx, by) = max(zip(pts, pts[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
+    pg.locator('[data-track="junction:a>worker:my-mac"]').scroll_into_view_if_needed()
+    pg.mouse.click(*grid_to_client(pg, (ax + bx) / 2, (ay + by) / 2))
     assert "junction:a>worker:my-mac" not in plan(pg)["tracks"]
     assert "No track loop for my-mac" in problems(pg)
     assert "✗ Train loop: the yard → my-mac" in pg.inner_text(".fe-check")

@@ -491,3 +491,39 @@ class Railway(unittest.TestCase):
         self.assertEqual(F.meta(CTX if not CTX.yard_on else F.Ctx(RAIL.ids))["tracks"], [])
         self.assertTrue(F.meta(RAIL)["nodes"]["junction:c"]["optional"])
         self.assertEqual(F.meta(RAIL)["nodes"]["worker:win-pc"]["group"], "Workers and rail")
+
+    def test_the_timetable_keeps_the_shared_track_to_one_train_and_signals_go_green_for_them(self):
+        for n in (2, 3, 5):
+            names = [f"w{k}" for k in range(n)]
+            ctx = F.Ctx(RAIL.ids, RAIL.harnesses, True, n, workers=names)
+            C = F.compile_plan(F.default_plan(ctx), ctx)
+            run = sorted(C["circuits"])
+            T, motion = plant.timetable(C, run)
+            marks = {w: plant.circuit_marks(C, w)[1] for w in run}
+            uses = {}
+            for w in run:
+                for tid in marks[w]["tracks"]:
+                    uses[tid] = uses.get(tid, 0) + 1
+            shared = {t for t, k in uses.items() if k > 1}
+
+            def where(pts, t):
+                for (t0, d0), (t1, d1) in zip(pts, pts[1:]):
+                    if t0 <= t <= t1:
+                        return d0 if t1 == t0 else d0 + (d1 - d0) * (t - t0) / (t1 - t0)
+                return pts[-1][1]
+
+            def on_block(w, d):
+                L = marks[w]["len"]
+                if d <= 0.5 or d >= L - 0.5:                         # in the yard
+                    return False
+                for car in range(4):
+                    x = (d - car * plant.yard.GAP) % L
+                    if any(marks[w]["tracks"][t][0] + 1 < x < marks[w]["tracks"][t][1] for t in shared):
+                        return True
+                return False
+            for i in range(int(T * 10)):
+                on = [w for w in run if on_block(w, where(motion[w], i / 10))]
+                self.assertLessEqual(len(on), 1, (n, i / 10, on))
+            self.assertTrue(all(motion[w][-1] == (T, marks[w]["len"]) for w in run))
+        self.assertIn('values="0.15;1;0.15"', plant.lamps([5.0], 20.0, "0s"))     # green for a moment as its train goes by
+        self.assertIn('class="g off"', plant.lamps([], 20.0, "0s"))

@@ -292,17 +292,34 @@ def default_tracks(ctx: Ctx) -> list[tuple[str, str]]:
     return out + ([("junction:b", "depot")] if ctx.workers else []) + [("depot", "yard")]
 
 
-def track_port(nid: str, other, B: dict):
+def track_port(nid: str, other, B: dict, side: bool = False):
     """Where track leaves or reaches a rail building: the middle of the side facing the other end (never the yard's top, where its
-    feeder comes in)."""
+    feeder comes in). A worker's track comes in and goes out at its sides, so its neighbours' track never runs along its loop; a
+    junction branches up and down to the stops above and below it. side: also return which side ("n", "e", "s", "w")."""
     x, y, w, h = B[nid]
     ox, oy = other
     cx, cy = x + w / 2, y + h / 2
     sides = {"e": (x + w + 1, y + h // 2), "w": (x - 1, y + h // 2), "s": (x + w // 2, y + h + 1), "n": (x + w // 2, y - 1)}
     if nid == "yard":
         del sides["n"]
-    order = sorted(sides, key=lambda k: -((ox - cx) * DIRS[k][0] + (oy - cy) * DIRS[k][1]) / (w if k in "ew" else h))
-    return sides[order[0]]
+    if nid.startswith("worker:"):
+        k = "e" if ox > cx else "w"
+    elif nid.startswith("junction:") and abs(oy - cy) >= 2:
+        k = "s" if oy > cy else "n"
+    elif nid.startswith("junction:"):
+        k = "e" if ox > cx else "w"
+    else:
+        k = sorted(sides, key=lambda k: -((ox - cx) * DIRS[k][0] + (oy - cy) * DIRS[k][1]) / (w if k in "ew" else h))[0]
+    return (sides[k], k) if side else sides[k]
+
+
+def _bend(a, b, upright: bool, blocked: set):
+    """A track with one bend from a to b, leaving a straight up or down first (upright) or across first; None if it hits a building."""
+    mid = (a[0], b[1]) if upright else (b[0], a[1])
+    pts = [p for i, p in enumerate([a, mid, b]) if i == 0 or p != [a, mid, b][i - 1]]
+    if len(pts) < 2 or any(c in blocked for c in cells(pts)):
+        return None
+    return pts
 
 
 LOW = ("station:review", "station:ci", "station:pr")                 # the quality and shipping row, flowing west
@@ -484,7 +501,8 @@ def route_tracks(nodes: dict, keep: dict, pairs, ctx: Ctx, belts: dict) -> dict:
         if tid in out or a not in B or b not in B:
             continue
         ca, cb = (B[a][0] + B[a][2] / 2, B[a][1] + B[a][3] / 2), (B[b][0] + B[b][2] / 2, B[b][1] + B[b][3] / 2)
-        pts = autoroute(track_port(a, cb, B), track_port(b, ca, B), blocked, used)
+        (pa, sa), pb = track_port(a, cb, B, True), track_port(b, ca, B)
+        pts = _bend(pa, pb, sa in "ns", blocked) or autoroute(pa, pb, blocked, used)
         if pts and len(pts) >= 2:
             out[tid] = [list(p) for p in pts]
             used |= set(cells(pts))
