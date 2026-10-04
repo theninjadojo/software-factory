@@ -154,19 +154,31 @@
     });
     return out;
   }
+  function through(pts) {
+    var cs = cells(pts), ids = Object.keys(meta.nodes);
+    return cs.some(function (c) { return ids.some(function (id) { var b = box(id); return b && inside(c, b); }); });
+  }
   function follow(pts, atEnd, dx, dy) {
     // a building moved: its end of the belt moves with it and joins the rest with a bend
     var p = pts.map(function (q) { return q.slice(); });
     if (atEnd) p.reverse();
-    var a = [p[0][0] + dx, p[0][1] + dy], b = p[1];
-    var out = a[0] === b[0] || a[1] === b[1] ? [a].concat(p.slice(1)) : [a, [a[0], b[1]]].concat(p.slice(1));
+    var a = [p[0][0] + dx, p[0][1] + dy], b = p[1], rest = p.slice(1);
+    var ways = a[0] === b[0] || a[1] === b[1] ? [[a].concat(rest)] : [[a, [a[0], b[1]]].concat(rest), [a, [b[0], a[1]]].concat(rest)];
+    // of the two bends, take one that does not cut through a building
+    var out = ways.filter(function (w) { return !through(w); })[0] || ways[0];
     out = simplify(out);
     if (atEnd) out.reverse();
     return out;
   }
   function moveNodes(ids, dx, dy, from) {
     var nodes = from.nodes, belts = from.belts, moved = {};
-    ids.forEach(function (id) { moved[id] = 1; doc.nodes[id] = {x: Math.max(0, nodes[id].x + dx), y: Math.max(0, nodes[id].y + dy)}; });
+    // the group stops at the floor's edge as one, so its belts move by the same step as its buildings
+    ids.forEach(function (id) {
+      var n = nodes[id], m = meta.nodes[id], x = n.x + m.dx, y = n.y + m.dy;
+      dx = Math.max(-x, Math.min(meta.w - m.w - x, dx));
+      dy = Math.max(-y, Math.min(meta.h - m.h - y, dy));
+    });
+    ids.forEach(function (id) { moved[id] = 1; doc.nodes[id] = {x: nodes[id].x + dx, y: nodes[id].y + dy}; });
     meta.hops.forEach(function (h) {
       var id = h[0] + ">" + h[1], pts = belts[id];
       if (!pts || pts.length < 2) return;

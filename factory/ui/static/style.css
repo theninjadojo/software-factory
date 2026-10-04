@@ -728,3 +728,33 @@ main.full { max-width:none; }
   .sb-step { max-width:none; }
   .sb-shot { flex:1 1 0; width:auto; max-width:none; min-width:0; }
 }
+
+/* The floor's layout editor (/floor/edit, floor-edit.js): a plan of the buildings and belts on the layout's grid. Wide screens only. */
+.fe-phone { display:none; }
+.fe-tools { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; margin:0 0 .6rem; }
+.fe-tools button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
+.fe-tools select { width:auto; min-width:10rem; }
+.fe-canvas { overflow:auto; max-height:75vh; border:1px solid var(--line); border-radius:8px; background:var(--bg); }
+.fe-svg { display:block; font-family:var(--sans); touch-action:none; user-select:none; }
+.fe-gridline { fill:none; stroke:#1f262b; stroke-width:1; }
+.fe-ground { stroke:none; }
+.fe-dist rect { fill:rgba(255,255,255,.02); stroke:var(--line2); stroke-width:1.5; stroke-dasharray:8 5; cursor:move; }
+.fe-dist text { fill:#59636b; font:700 10px var(--sans); letter-spacing:.14em; pointer-events:none; }
+.fe-node { cursor:grab; outline:none; }
+.fe-node rect { fill:var(--panel2); stroke:var(--line2); stroke-width:1.5; }
+.fe-node text { fill:var(--text); font:600 12px var(--sans); pointer-events:none; }
+.fe-node:hover rect, .fe-node:focus rect, .fe-node.sel rect { stroke:var(--accent); stroke-width:2; }
+.fe-port { fill:var(--accent); }
+.fe-belt { fill:none; stroke:#4a565f; stroke-width:8; stroke-linejoin:round; stroke-linecap:round; cursor:pointer; }
+.fe-belt.sel { stroke:var(--link); } .fe-belt.bad { stroke:var(--bad); } .fe-belt.drawing { stroke:var(--accent); stroke-dasharray:6 4; pointer-events:none; }
+.fe-end { fill:#4a565f; pointer-events:none; } .fe-end.drawing { fill:var(--accent); }
+.fe-arrow { fill:none; stroke:var(--text); stroke-width:2; pointer-events:none; }
+.fe-piece rect { fill:#3a3020; stroke:var(--accent); stroke-width:1.5; }
+.fe-piece text { fill:var(--accent); font:700 11px var(--mono); text-anchor:middle; pointer-events:none; }
+.fe-piece line { stroke:var(--accent); stroke-width:2; stroke-dasharray:3 3; }
+.fe-svg[data-tool="erase"] .fe-piece { cursor:not-allowed; }
+.fe-svg[data-tool="belt"], .fe-svg[data-tool="splitter"], .fe-svg[data-tool="merger"], .fe-svg[data-tool="sideload"], .fe-svg[data-tool="underground"] { cursor:crosshair; }
+.fe-problems { margin:.6rem 0; padding-left:1.2rem; color:var(--bad); } .fe-problems li.ok { color:var(--good); list-style:none; margin-left:-1.2rem; }
+.fe-data textarea { width:100%; font:12px/1.4 var(--mono); }
+.fe-save, .fe-reset { margin-top:.8rem; }
+@media (max-width:760px) { .fe, .fe-save, .fe-reset, .fm-edit { display:none; } .fe-phone { display:block; } }

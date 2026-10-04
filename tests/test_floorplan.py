@@ -1,0 +1,230 @@
+import html
+import json
+import os
+import re
+import stat
+import tempfile
+import unittest
+from pathlib import Path
+
+from factory.ui import board, floorplan as F, plant, server
+from test_ui_admin import AdminCase
+from test_yard import ROLES
+
+SMALL = {"roles": [], "ci": "off", "review": False}
+
+
+def ctx(cfg=ROLES, trains=0):
+    return F.Ctx([s for s, _, _ in board.floor_order(cfg)], [h["name"] for h in cfg.get("power") or []], bool(cfg.get("workers")), trains)
+
+
+def moved(doc, nid, dx, dy):
+    """The layout with one building moved and its belts routed again round it."""
+    d = json.loads(json.dumps(doc))
+    d["nodes"][nid]["x"] += dx
+    d["nodes"][nid]["y"] += dy
+    keep = {k: v for k, v in d["belts"].items() if nid not in k.split(">")}
+    d["belts"] = F._route_all(d["nodes"], keep, CTX)
+    d["pieces"] = []
+    return d
+
+
+CTX = ctx(ROLES, 2)
+
+
+class Validate(unittest.TestCase):
+    def test_the_default_is_valid_for_every_config(self):
+        for cfg in (SMALL, ROLES, {**ROLES, "review": False, "ci": "off", "workers": False}):
+            for trains in (0, 1, 3, 5):
+                c = ctx(cfg, trains)
+                d = F.default_plan(c)
+                self.assertEqual(F.validate(d, c), [], (cfg, trains))
+                self.assertLess(len(json.dumps(d)), F.MAX_BYTES)
+
+    def test_a_moved_station_with_its_belts_rerouted_is_valid(self):
+        d = moved(F.default_plan(CTX), "station:build", 0, 3)
+        self.assertEqual(F.validate(d, CTX), [])
+
+    def test_bad_documents_are_refused(self):
+        good = F.default_plan(CTX)
+
+        def bad(change, needle):
+            d = json.loads(json.dumps(good))
+            change(d)
+            errs = F.validate(d, CTX)
+            self.assertTrue(errs, needle)
+            self.assertTrue(any(needle in e for e in errs), (needle, errs))
+
+        bad(lambda d: d.update(extra=1), "Unknown keys")
+        bad(lambda d: d.update(version=2), "version")
+        bad(lambda d: d["nodes"]["queue"].update(x=1.5), "whole number")
+        bad(lambda d: d["nodes"]["queue"].update(x=-1), "whole number")
+        bad(lambda d: d["nodes"]["queue"].update(x=F.W + 1), "whole number")
+        bad(lambda d: d["nodes"].update({'"><script>': {"x": 1, "y": 1}}), "Unknown buildings")
+        bad(lambda d: d["nodes"].pop("station:build"), "Missing buildings")
+        bad(lambda d: d["nodes"]["station:review"].update(d["nodes"]["station:ci"]), "overlaps")
+        bad(lambda d: d["nodes"]["airfield"].update(x=F.W - 2), "outside the floor")
+        hop = F.hop_id("station:build", "station:review")
+        bad(lambda d: d["belts"].pop(hop), "cannot be reached")
+        bad(lambda d: d["belts"].update({hop: [[1, 1], [5, 5]]}), "straight")
+        bad(lambda d: d["belts"].update({hop: [[0, 0], [0, 1]]}), "must start beside")
+        bad(lambda d: d["belts"].update({"x>y": [[0, 0], [0, 1]]}), "no hop")
+        bad(lambda d: d.update(pieces=[{"kind": "bomb", "at": [1, 1], "dir": "e"}]), "piece is")
+        bad(lambda d: d.update(pieces=[{"kind": "splitter", "at": [0, 0], "dir": "e"}]), "not on a belt")
+        bad(lambda d: d["belts"].update({hop: [[0, i % 2] for i in range(F.MAX_POINTS + 1)]}), "grid points")
+        self.assertEqual(F.validate([], CTX), ["The layout must be a JSON object."])
+
+    def test_a_belt_through_a_building_is_refused(self):
+        d = json.loads(json.dumps(F.default_plan(CTX)))
+        b = F.boxes(d["nodes"], CTX)
+        x, y, w, h = b["station:poll"]
+        hop = F.hop_id("station:poll", "station:classify")
+        cx = b["station:classify"][0]
+        d["belts"][hop] = [[x + 3, y - 1], [x + 3, y + h + 1], [cx + 3, y + h + 1]]   # from above Poll, down through it, to Classify
+        self.assertIn("The belt from Poll to Classify runs through Poll.", F.validate(d, CTX))
+
+
+class Merge(unittest.TestCase):
+    def test_a_new_station_gets_a_spot_and_a_belt(self):
+        small = ctx({**ROLES, "roles": ["analyst"]}, 2)
+        d = F.default_plan(small)
+        big = ctx({**ROLES, "roles": ["analyst", "architect"]}, 2)
+        m = F.merge(d, big)
+        self.assertIsNotNone(m)
+        self.assertIn("station:architect", m["nodes"])
+        self.assertEqual(F.validate(m, big), [])
+
+    def test_a_removed_station_is_dropped(self):
+        m = F.merge(F.default_plan(CTX), ctx({**ROLES, "review": False}, 2))
+        self.assertNotIn("station:review", m["nodes"])
+        self.assertFalse(any("station:review" in k for k in m["belts"]))
+
+    def test_a_yard_that_grows_into_a_neighbour_falls_back(self):
+        d = json.loads(json.dumps(F.default_plan(ctx(ROLES, 0))))
+        yx, yy = d["nodes"]["yard"]["x"], d["nodes"]["yard"]["y"]
+        d["nodes"]["airfield"] = {"x": yx + 6, "y": yy + 1}           # beside the small yard, under where five trains would go
+        big = ctx(ROLES, 5)
+        self.assertIsNone(F.merge(d, big))
+
+    def test_a_missing_or_broken_file_draws_the_default(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.assertEqual(F.current(t, CTX), (None, ""))
+            Path(t, F.FILE).write_text("{not json")
+            plan, why = F.current(t, CTX)
+            self.assertIsNone(plan)
+            self.assertIn("could not be read", why)
+            Path(t, F.FILE).write_text(json.dumps({**F.default_plan(CTX), "version": 9}))
+            self.assertIn("version", F.current(t, CTX)[1])
+            F.save(t, F.default_plan(CTX))
+            plan, why = F.current(t, CTX)
+            self.assertEqual(why, "")
+            self.assertIs(F.current(t, CTX)[0], plan)                 # merged once per file and config
+
+    def test_save_is_0600_even_over_a_leftover_tmp(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t, F.FILE).with_suffix(".tmp")
+            tmp.write_text("x")
+            os.chmod(tmp, 0o644)
+            F.save(t, F.default_plan(CTX))
+            self.assertEqual(stat.S_IMODE(Path(t, F.FILE).stat().st_mode), 0o600)
+
+
+class Drawn(unittest.TestCase):
+    def draw(self, doc, states=None, extras=None):
+        cfg, workers = ROLES, [{"name": "w1", "online": True, "job": {"issue": 7, "recipe": "web"}}, {"name": "w2", "online": True, "job": None}]
+        order = board.floor_order(cfg)
+        fl = {sid: {"state": "none", "refs": [], "count": 0} for sid, _, _ in order}
+        for sid, (state, refs) in (states or {}).items():
+            fl[sid] = {"state": state, "refs": refs, "count": len(refs)}
+        ex = {"power": [{**h, "on": True} for h in cfg["power"]], **(extras or {})}
+        return plant.floor_map(order, fl, workers, True, 1000.0, board._floor_word, lambda s: "#", ex, F.compile_plan(doc, CTX))
+
+    def test_crates_ride_the_saved_belts(self):
+        d = moved(F.default_plan(CTX), "station:build", 0, 3)
+        svg = self.draw(d, {"build": ("run", ['<b>"x"</b>']), "classify": ("run", ["acme/a#1"])})
+        self.assertNotIn("style=", svg)
+        self.assertNotIn('<b>"x"</b>', svg)
+        C = F.compile_plan(d, CTX)
+        hop = C["hops"][F.hop_id("station:architect", "station:build")]
+        crates = re.findall(r'<g class="fn-crate">(?:(?!</g>).)*?<animateMotion path="([^"]+)"', svg, re.S)
+        ends = [tuple(float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", p)[-2:]) for p in crates]
+        starts = [tuple(float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", p)[:2]) for p in crates]
+        self.assertIn(tuple(map(float, hop["pts"][-1])), ends)
+        self.assertIn(tuple(map(float, hop["pts"][0])), starts)
+
+    def test_the_default_floor_is_unchanged_without_a_layout(self):
+        order = board.floor_order(ROLES)
+        fl = {sid: {"state": "none", "refs": [], "count": 0} for sid, _, _ in order}
+        a = plant.floor_map(order, fl, [], True, 1000.0)
+        b = plant.floor_map(order, fl, [], True, 1000.0, plan=None)
+        self.assertEqual(a, b)
+        self.assertNotIn("fe-", a)
+
+
+class Editing(AdminCase):
+    def doc(self, cookie):
+        s, _, page = self.req("GET", "/floor/edit", cookie=cookie)
+        self.assertEqual(s, 200)
+        text = html.unescape(re.search(r'<textarea name="plan"[^>]*>(.*?)</textarea>', page, re.S).group(1))
+        rev = re.search(r'name="rev" value="([^"]*)"', page).group(1)
+        return json.loads(text), rev, page
+
+    def test_it_needs_a_session_and_csrf(self):
+        self.assertEqual(self.req("GET", "/floor/edit")[0], 303)
+        cookie, _ = self.session()
+        for path in ("/floor/layout/save", "/floor/layout/reset"):
+            self.assertIn(self.req("POST", path, "plan=x")[0], (303, 403), path)          # signed out
+            self.assertEqual(self.req("POST", path, "plan=x", cookie=cookie)[0], 403, path)
+        self.assertFalse((self.state / F.FILE).exists())
+
+    def test_the_page_and_the_script(self):
+        cookie, _ = self.session()
+        _, _, page = self.doc(cookie)
+        self.assertNotIn("style=", page)
+        self.assertIn('<script src="/static/floor-edit.js"', page)
+        self.assertIn("floor-edit.js", server.STATIC)
+        s, h, js = self.req("GET", "/static/floor-edit.js")
+        self.assertEqual(s, 200)
+        self.assertIn("javascript", h["Content-Type"])
+        self.assertNotIn(".style", js)                                   # attributes only: the CSP forbids inline styles
+        self.assertIn("Edit layout", self.req("GET", "/", cookie=cookie)[2])
+
+    def test_save_reload_and_reset(self):
+        cookie, csrf = self.session()
+        doc, rev, _ = self.doc(cookie)
+        self.assertEqual(rev, "")
+        s, h, _ = self.post(cookie, csrf, "/floor/layout/save", {"plan": json.dumps(doc), "rev": rev})
+        self.assertEqual((s, h.get("Location")), (303, "/?ok=layout_saved"))
+        f = self.state / F.FILE
+        self.assertEqual(stat.S_IMODE(f.stat().st_mode), 0o600)
+        again, rev2, _ = self.doc(cookie)
+        self.assertEqual(again["nodes"], doc["nodes"])
+        self.assertTrue(rev2)
+        self.assertEqual(self.post(cookie, csrf, "/floor/layout/save", {"plan": json.dumps(doc), "rev": ""})[0], 409)   # a stale tab
+        self.assertEqual(self.post(cookie, csrf, "/floor/layout/reset", {"rev": ""})[0], 409)
+        s, h, _ = self.post(cookie, csrf, "/floor/layout/reset", {"rev": rev2})
+        self.assertEqual((s, h.get("Location")), (303, "/floor/edit?ok=layout_reset"))
+        self.assertFalse(f.exists())
+
+    def test_invalid_layouts_are_refused_and_escaped(self):
+        cookie, csrf = self.session()
+        doc, rev, _ = self.doc(cookie)
+        doc["nodes"]['"><script>alert(1)</script>'] = {"x": 1, "y": 1}
+        s, _, page = self.post(cookie, csrf, "/floor/layout/save", {"plan": json.dumps(doc), "rev": rev})
+        self.assertEqual(s, 422)
+        self.assertNotIn("<script>alert(1)", page)
+        self.assertEqual(self.post(cookie, csrf, "/floor/layout/save", {"plan": "{nope", "rev": rev})[0], 422)
+        self.assertEqual(self.post(cookie, csrf, "/floor/layout/save", {"plan": " " * (F.MAX_BYTES + 1), "rev": rev})[0], 422)
+        self.assertFalse((self.state / F.FILE).exists())
+
+    def test_a_broken_saved_file_falls_back_and_says_so(self):
+        cookie, _ = self.session()
+        (self.state / F.FILE).write_text('{"version": 1, "grid": 20, "nodes": {}, "belts": {}, "pieces": [], "x": 1}')
+        s, _, home = self.req("GET", "/", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn('class="fm"', home)
+        self.assertIn("saved layout is not used", self.doc(cookie)[2])
+
+
+if __name__ == "__main__":
+    unittest.main()

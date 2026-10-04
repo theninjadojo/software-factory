@@ -4,12 +4,16 @@ form of the layout's coordinates; static/floor-edit.js adds dragging, drawing be
 column of stations and there is nothing to edit."""
 import json
 import logging
+import threading
 
 from . import board, floorplan, views
 from .views import esc
 
 log = logging.getLogger("factory.ui")
+LOCK = threading.Lock()                    # the server is threaded: the revision check and the write happen as one step
 FLASH = {"layout_reset": "Back to the default layout. The floor is drawn as it was before any layout was saved."}
+STALE = ("The layout was saved by someone else since you opened it. Save again to replace it with yours, or open the page again to "
+         "start from theirs.")
 TOOLS = (("move", "Move"), ("belt", "Draw belt"), ("splitter", "Splitter"), ("merger", "Merger"), ("sideload", "Side-load"),
          ("underground", "Underground"), ("erase", "Erase"))
 
@@ -47,7 +51,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'or down; pieces sit on a belt.</p>'
             f'<label>Layout (JSON)<textarea name="plan" rows="14" spellcheck="false">{esc(text)}</textarea></label></details>'
             '<button>Save layout</button></form>'
-            f'<form method="post" action="/floor/layout/reset" class="fe-reset">{views.csrf_field(csrf)}'
+            f'<form method="post" action="/floor/layout/reset" class="fe-reset">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
             '<button class="secondary">Reset to the default layout</button></form>'
             '<script src="/static/floor-edit.js" defer></script>')
     h._send(status, views.page("Floor layout", body, "/", csrf, wide=True, flash=flash, flash_kind=kind))
@@ -76,16 +80,24 @@ def save(h, form, csrf: str) -> None:
             errs = ["The layout is not valid JSON."]
     if errs:
         return _page(h, csrf, ctx, text, form.get("rev", ""), 422, "The layout was not saved. " + errs[0], "bad", errs)
-    now = floorplan.rev(state)
-    if form.get("rev", "") != now:
-        return _page(h, csrf, ctx, text, now, 409, "The layout was saved by someone else since you opened it. Save again to replace it "
-                                                   "with yours, or open the page again to start from theirs.", "bad")
-    floorplan.save(state, doc)
+    with LOCK:
+        now = floorplan.rev(state)
+        if form.get("rev", "") != now:
+            return _page(h, csrf, ctx, text, now, 409, STALE, "bad")
+        floorplan.save(state, doc)
     log.info("floor layout saved: %d buildings, %d belts, %d pieces", len(doc["nodes"]), len(doc["belts"]), len(doc["pieces"]))
     h._redirect("/?ok=layout_saved")
 
 
 def reset(h, form, csrf: str) -> None:
-    floorplan.reset(h.app.state_dir())
+    state = h.app.state_dir()
+    with LOCK:
+        now = floorplan.rev(state)
+        if form.get("rev", "") != now:
+            ctx = _ctx(h)
+            plan, _ = floorplan.current(state, ctx)
+            text = json.dumps(floorplan.canonical(plan or floorplan.default_plan(ctx)), separators=(",", ":"))
+            return _page(h, csrf, ctx, text, now, 409, STALE, "bad")
+        floorplan.reset(state)
     log.info("floor layout reset to the default")
     h._redirect("/floor/edit?ok=layout_reset")

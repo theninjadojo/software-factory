@@ -390,6 +390,18 @@ def _same_run(pts, u, v) -> bool:
     return False
 
 
+def placement(B: dict) -> list[str]:
+    """Every building inside the floor and no two overlapping."""
+    errs = [f"{label(nid)} is outside the floor." for nid, (x, y, w, h) in B.items() if x < 0 or y < 0 or x + w > W or y + h > H]
+    ids = list(B)
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            (ax, ay, aw, ah), (bx, by, bw, bh) = B[a], B[b]
+            if ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah:
+                errs.append(f"{label(a)} overlaps {label(b)}.")
+    return errs
+
+
 def validate(doc, ctx: Ctx) -> list[str]:
     """Everything a saved layout must satisfy: its shape, every building present once and inside the floor with no two overlapping,
     and every hop of the route on a belt that starts beside the station it leaves and ends beside the one it reaches."""
@@ -407,15 +419,7 @@ def validate(doc, ctx: Ctx) -> list[str]:
     if errs:
         return errs
     B = boxes(nodes, ctx)
-    for nid, (x, y, w, h) in B.items():
-        if x < 0 or y < 0 or x + w > W or y + h > H:
-            errs.append(f"{label(nid)} is outside the floor.")
-    ids = list(B)
-    for i, a in enumerate(ids):
-        for b in ids[i + 1:]:
-            (ax, ay, aw, ah), (bx, by, bw, bh) = B[a], B[b]
-            if ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah:
-                errs.append(f"{label(a)} overlaps {label(b)}.")
+    errs += placement(B)
     hops = [hop_id(a, b) for a, b in ctx.hops()]
     for k in doc["belts"]:
         if k not in hops:
@@ -455,6 +459,8 @@ def merge(doc: dict, ctx: Ctx) -> dict | None:
             return None
         nodes[nid] = {"x": spot[0], "y": spot[1]}
     B = boxes(nodes, ctx)
+    if placement(B):                                                 # the yard grew with the workers into a neighbour, or off the floor
+        return None
     keep = {}
     for a, b in ctx.hops():
         hid = hop_id(a, b)
@@ -487,6 +493,7 @@ def _free_spot(nid, at, nodes, ctx):
 
 # ---------------------------------------------------------------- the file
 _READ: dict = {}
+_MERGED: dict = {}
 _TOLD: set = set()
 
 
@@ -538,7 +545,12 @@ def usable(doc, why: str, ctx: Ctx) -> tuple[dict | None, str]:
         if why:
             _tell(why)
         return None, why
-    merged = merge(doc, ctx)
+    key = (id(doc), ctx.key)                                         # read() hands back the same object until the file changes
+    hit = _MERGED.get(key)
+    if hit is None or hit[0] is not doc:
+        _MERGED.clear()
+        hit = _MERGED[key] = (doc, merge(doc, ctx))
+    merged = hit[1]
     if merged is None:
         why = "it no longer fits the factory's stations"
         _tell(why)
@@ -563,6 +575,7 @@ def save(state_dir, doc: dict) -> None:
     p = path(state_dir)
     tmp = p.with_suffix(".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)                                             # a leftover .tmp keeps its old mode otherwise
     with os.fdopen(fd, "w") as f:
         json.dump(canonical(doc), f, separators=(",", ":"))
     os.replace(tmp, p)
