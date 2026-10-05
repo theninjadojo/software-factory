@@ -135,6 +135,11 @@
     }
     if (push) history.pushState({ ticket: true }, "", href);
     if (window.innerWidth <= 760) window.scrollTo(0, 0);
+    else {
+      // list scrolled down: bring the detail's top back into view
+      var shown = document.querySelector(".sd-detail"), gap = shown ? shown.getBoundingClientRect().top : 0;
+      if (gap < 0) window.scrollBy(0, gap - 16);
+    }
     calm();
     get("/fragment/detail" + url.search).then(function (html) {
       var spot = document.querySelector(".sd-detail");
