@@ -7,6 +7,7 @@ import logging
 import threading
 
 from . import board, floorplan, plant, terrain, views
+from .town_art import ART as TOWN
 from .views import esc
 
 log = logging.getLogger("factory.ui")
@@ -23,6 +24,9 @@ TERRAIN_TOOLS = (("Scenery", (("tree", "Tree"), ("pine", "Pine"), ("bush", "Bush
                  ("Build", (("wall", "Wall"), ("fence", "Fence"), ("gate", "Gate"), ("road", "Road"), ("hazard", "Hazard"))),
                  ("Light", (("lamp", "Lamp"), ("fog", "Fog"), ("shade", "Shade"))),
                  ("Park", (("fetch", "Fetch"), ("playground", "Playground"), ("picnic", "Picnic"), ("bench", "Bench"), ("dogwalk", "Dog walker"))))
+# the town (town_art.py, generated from the design): one group of tools per kind of piece, in the order the design shows them
+TERRAIN_TOOLS += tuple((g, tuple((k, a["name"]) for k, a in TOWN.items() if a["group"] == g))
+                       for g in dict.fromkeys(a["group"] for a in TOWN.values()))
 
 
 def _ctx(h) -> "floorplan.Ctx":
@@ -48,7 +52,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'ponds and rivers (belts and track cannot cross water), ground tiles, walls (a belt goes under one with an underground belt), '
             'fences and gates (trains pass only at a gate), roads, hazard zones (nothing may be built in one), lamps, fog and shade; birds '
             'and ducks move in by themselves. Cars drive on every road, and where track crosses a road it goes over a bridge. Add a park: '
-            'fetch with a dog, a playground, a picnic, a bench whose old man walks to the nearest water to feed the ducks, and a dog walker. '
+            'fetch with a dog, a playground, a picnic, a bench whose old man walks to the nearest water to feed the ducks, and a dog walker. A town goes in the same way: zones, shops, civic, leisure and utility buildings, landmarks, nature, vehicles and small moments. '
             'Buildings, the park and the trees, bushes, rocks and ponds have hitboxes, so nothing is placed on top of another (Show '
             'hitboxes draws them); cars, birds and trains pass over and under. The harbor goes anywhere: its belt takes the ships\' '
             'tickets to Receiving. Notifiers are wireless: put them anywhere, nothing to connect. Workers are train stops outside the factory: '
@@ -92,7 +96,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             '<button>Save layout</button></form>'
             f'<form method="post" action="/floor/layout/reset" class="fe-reset">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
             '<button class="secondary">Reset to the default layout</button></form>'
-            '<script src="/static/terrain.js" defer></script><script src="/static/floor-edit.js" defer></script>')
+            '<script src="/static/town.js" defer></script><script src="/static/terrain.js" defer></script><script src="/static/floor-edit.js" defer></script>')
     h._send(status, views.page("Floor layout", body, "/", csrf, wide=True, full=True, flash=flash, flash_kind=kind))
 
 

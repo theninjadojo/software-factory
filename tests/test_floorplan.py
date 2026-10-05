@@ -771,7 +771,8 @@ class Park(unittest.TestCase):
                      "OM_KEYS", "CAR_A", "CAR_B", "TRUCK_A", "TRUCK_B", "BRIDGE", "PK_CHECK"):
             self.assertIn(f"var {name} = {json.dumps(getattr(terrain, name))};", js, name)
         for kind, (w, h) in terrain.PARK.items():
-            self.assertIn(f"{kind}: [{w}, {h}]", js)
+            if kind not in terrain.TOWN:                                                              # the town's boxes come from town.js
+                self.assertIn(f"{kind}: [{w}, {h}]", js)
 
 
 class DefaultScenery(unittest.TestCase):

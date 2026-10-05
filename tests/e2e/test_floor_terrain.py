@@ -355,3 +355,28 @@ def test_the_park_goes_where_there_is_room_and_hitboxes_show_on_request(wide, se
     click_px(pg, *free)
     assert "bench" not in kinds(pg)
     assert pg.errors == []
+
+
+def test_the_town_is_placed_like_the_park_and_the_saved_floor_draws_it(wide, server):
+    pg = wide
+    editor(pg, server)
+    y = F.H * F.G - 200
+    xs = {"t-house": 300, "t-coffee": 520, "t-firetruck": 740, "t-lighthouse": 960}
+    show(pg, 700, y)
+    for k, x in xs.items():
+        tool(pg, k)
+        click_px(pg, x, y)
+    assert [k for k in kinds(pg) if k.startswith("t-")] == list(xs)
+    assert pg.locator(".fe-svg .tw-art").count() == len(xs)
+    assert pg.locator(".fe-svg .tw-art [style]").count() == 0
+    tool(pg, "t-bank")
+    click_px(pg, xs["t-house"] + 20, y)                                 # on the house: no room
+    assert "t-bank" not in kinds(pg) and "would stand on the house" in pg.inner_text(".fe-msg")
+    tool(pg, "erase")
+    click_px(pg, xs["t-lighthouse"], y)
+    assert "t-lighthouse" not in kinds(pg)
+    pg.click("text=Save layout")
+    pg.wait_for_load_state("networkidle")
+    pg.goto(server.url + "/")
+    assert pg.locator("svg .tw-art").count() == 3
+    assert pg.errors == []

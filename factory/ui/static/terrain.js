@@ -7,8 +7,10 @@
   // the park: each piece's box, width by height; its size is its width (terrain.py's PARK)
   var PARK = {fetch: [200, 120], playground: [180, 130], picnic: [110, 90], bench: [70, 40], dogwalk: [180, 90]};
   var PARK_NAMES = {fetch: "fetch with a dog", playground: "playground", picnic: "picnic", bench: "bench", dogwalk: "dog walker"};
+  var TOWN = window.TOWN_ART || {};         // static/town.js, generated: the town's buildings, vehicles and scenery stand like park pieces
+  Object.keys(TOWN).forEach(function (k) { PARK[k] = [TOWN[k].w, TOWN[k].h]; PARK_NAMES[k] = TOWN[k].name.toLowerCase(); });
   Object.keys(PARK).forEach(function (k) { SIZES[k] = [PARK[k][0], PARK[k][0]]; });
-  var SOLID = ["tree", "pine", "bush", "rock", "pond", "fetch", "playground", "picnic", "bench", "dogwalk"];
+  var SOLID = ["tree", "pine", "bush", "rock", "pond"].concat(Object.keys(PARK));
   var CAR_COLOURS = ["#d9675b", "#8fa8ff", "#e8edf0", "#f2a93b", "#52c7a1", "#59636b", "#c9a46a", "#b69cff"];
   var GROUNDS = ["grass", "dirt", "sand", "concrete", "water"];
   var DIRS = [[1.0, 0.0], [0.9659, 0.2588], [0.866, 0.5], [0.7071, 0.7071], [0.5, 0.866], [0.2588, 0.9659], [0.0, 1.0], [-0.2588, 0.9659],
@@ -164,6 +166,7 @@
     var kind = it[0], x = it[1], y = it[2], v = it[4], w = PARK[kind][0], h = PARK[kind][1], mirrored = v % 2 === 1;
     var tf = mirrored ? "translate(" + f(x + w / 2) + " " + f(y - h / 2) + ") scale(-1 1)" : "translate(" + f(x - w / 2) + " " + f(y - h / 2) + ")";
     var body = {fetch: PK_FETCH, playground: PK_PLAYGROUND, picnic: PK_PICNIC, dogwalk: PK_DOGWALK}[kind];
+    if (TOWN[kind]) body = '<g class="tw-art">' + TOWN[kind].svg + "</g>";
     if (kind === "bench") body = PK_BENCH + oldMan(it, t, mirrored);
     return '<g class="pk-' + kind + '" transform="' + tf + '">' + body + "</g>";
   }

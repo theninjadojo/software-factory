@@ -34,7 +34,7 @@ from .workerproc import WorkerApiProcess
 
 log = logging.getLogger("factory.ui")
 STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascript; charset=utf-8",
-          "floor-edit.js": "application/javascript; charset=utf-8", "terrain.js": "application/javascript; charset=utf-8", "fonts/space-grotesk-latin.woff2": "font/woff2", "fonts/jetbrains-mono-latin.woff2": "font/woff2"}
+          "floor-edit.js": "application/javascript; charset=utf-8", "terrain.js": "application/javascript; charset=utf-8", "town.js": "application/javascript; charset=utf-8", "town.css": "text/css; charset=utf-8", "fonts/space-grotesk-latin.woff2": "font/woff2", "fonts/jetbrains-mono-latin.woff2": "font/woff2"}
 MAX_BODY = 64 * 1024
 MAX_LAYOUT_BODY = 256 * 1024             # saving the floor layout, terrain and all (signed in, CSRF-checked like every form)
 PAGE = 50

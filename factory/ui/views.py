@@ -135,7 +135,7 @@ def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | N
         body = f'<div class="with-side">{side}<div class="side-body">{body}</div></div>'
     note = f'<div class="flash {esc(flash_kind)}" role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
-            f'<meta name="color-scheme" content="dark"><title>{esc(title)} · Shikumi</title>{ICON}<link rel="stylesheet" href="/static/style.css"></head><body>'
+            f'<meta name="color-scheme" content="dark"><title>{esc(title)} · Shikumi</title>{ICON}<link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/town.css"></head><body>'
             f'<header><a class="brand" href="/">{BRAND}Software factory</a>{nav_html}'
             f'<form method="post" action="/logout" class="signout">{csrf_field(csrf)}<button class="link">Sign out</button></form>'
             f'<details class="ph-menu"><summary aria-label="Menu">{MENU_ICON}</summary><div class="ph-menu-list">'
