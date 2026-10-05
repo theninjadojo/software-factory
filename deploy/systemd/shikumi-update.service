@@ -1,5 +1,5 @@
 [Unit]
-Description=Shikumi: apply a newer patch release (opt-in; see docs/releasing.md)
+Description=Shikumi: apply a newer release automatically (opt-in: Settings -> Updates; see docs/releasing.md)
 After=network-online.target
 
 [Service]

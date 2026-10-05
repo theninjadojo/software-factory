@@ -70,7 +70,7 @@ class Banner(unittest.TestCase):
     def test_banner_only_for_valid_values(self):
         self.assertEqual(views.update_banner(), "")
         views.UPDATE.update(tag="v0.2.0", url="https://github.com/o/r/releases/tag/v0.2.0")
-        self.assertIn("update.sh", views.update_banner())
+        self.assertIn('href="/updates"', views.update_banner())
         views.UPDATE.update(tag="<script>", url="https://github.com/o/r")
         self.assertEqual(views.update_banner(), "")
         views.UPDATE.update(tag="v0.2.0", url="javascript:alert(1)")

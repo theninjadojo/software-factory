@@ -67,16 +67,15 @@ class App:
                 return
             state = self.state_dir()
             if updates.due(state):
-                tf = c.updates.token_file or c.token_file
-                try:
-                    token = Path(tf).read_text().strip() if tf and Path(tf).is_file() else ""
-                except OSError:
-                    token = ""
-                threading.Thread(target=updates.refresh, args=(state, c.updates.repo), kwargs={"token": token}, daemon=True).start()
+                threading.Thread(target=updates.refresh, args=(state, c.updates.repo), kwargs={"token": self.update_token(c)}, daemon=True).start()
             got = updates.available(state, have) or {}
             views.UPDATE.update(tag=got.get("tag", ""), url=got.get("url", ""))
         except Exception:
             log.exception("update notice failed")
+
+    @staticmethod
+    def update_token(c) -> str:
+        return updates.token_for(c)
 
     def state_dir(self) -> Path:
         return Path(self.cfg().db_path).parent

@@ -92,7 +92,7 @@ class Doctor(unittest.TestCase):
         out = lines()
         self.assertIn(("ok", f"1 worker token(s) in {cfg.workers.tokens_file}"), out)
         self.assertTrue(any(l == "warn" and "no worker has connected" in m or l == "warn" and "no worker has polled" in m for l, m in out), out)
-        db.execute("INSERT OR REPLACE INTO workers VALUES ('mac','macos','ios-test',?,1)", (time.time(),))
+        db.execute("INSERT OR REPLACE INTO workers (name, platform, recipes, last_seen, version) VALUES ('mac','macos','ios-test',?,1)", (time.time(),))
         db.commit()
         self.assertTrue(any(l == "ok" and "polled" in m for l, m in lines()), lines())
         (tmp / "tokens").write_text("")
@@ -219,6 +219,43 @@ class Install(InstallBase):
         self.assertEqual((self.inst / "worker.toml").read_text(), toml_before)
         self.assertEqual((self.inst / "secrets" / "token").read_text(), TOKEN)
         self.assertTrue((self.inst / ".shikumi-worker-backup" / "worker" / "worker.py").is_file())
+
+    def serve(self, base: str):
+        """A worker API stand-in that hands out the files of the release folder `base`, as the factory does."""
+        d = Path(base[len("file://"):])
+
+        class Api:
+            calls = []
+
+            def call(_, path, body, timeout=60):
+                import base64
+                Api.calls.append(body.get("name"))
+                return 200, {"name": body["name"], "b64": base64.b64encode((d / body["name"]).read_bytes()).decode()}
+        return Api()
+
+    def test_the_worker_updates_itself_with_the_real_script_from_files_the_factory_serves(self):
+        from unittest import mock
+        self.install(self.rel.make("v0.2.0"))
+        new = self.rel.make("v0.2.1", lambda src: (src / "worker" / "worker.py").write_text((src / "worker" / "worker.py").read_text() + "\n# v0.2.1\n"))
+        files = ["VERSION", "shikumi-worker.tar.gz", "setup-worker.sh", "update-worker.sh"]
+        with mock.patch.dict(os.environ, {"SKIP_IMAGE": "1"}):
+            why = W.self_update(mock.Mock(work_dir=self.inst / "work"), self.serve(new), "v0.2.1", files, self.inst)
+        self.assertEqual(why, "")
+        self.assertIn("# v0.2.1", (self.inst / "worker" / "worker.py").read_text())
+        self.assertEqual((self.inst / "VERSION").read_text().strip(), "0.2.1")
+        self.assertEqual(list((self.inst / "work").glob("factory-update-*")), [])
+
+    def test_a_broken_release_installed_by_the_worker_rolls_back_and_says_why(self):
+        from unittest import mock
+        self.install(self.rel.make("v0.2.0"))
+        good = (self.inst / "worker" / "worker.py").read_text()
+        bad = self.rel.make("v0.2.1", lambda src: (src / "worker" / "worker.py").write_text("import sys\nsys.exit('this version is broken')\n"))
+        files = ["VERSION", "shikumi-worker.tar.gz", "setup-worker.sh", "update-worker.sh"]
+        with mock.patch.dict(os.environ, {"SKIP_IMAGE": "1"}):
+            why = W.self_update(mock.Mock(work_dir=self.inst / "work"), self.serve(bad), "v0.2.1", files, self.inst)
+        self.assertIn("rolling back", why)
+        self.assertEqual((self.inst / "worker" / "worker.py").read_text(), good)
+        self.assertEqual((self.inst / "VERSION").read_text().strip(), "0.2.0")
 
     def test_a_broken_update_rolls_back(self):
         self.install(self.rel.make("v0.2.0"))

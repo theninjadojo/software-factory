@@ -1,19 +1,23 @@
 """Routes that show or change settings, credentials, Telegram and Slack. All POSTs arrive here already CSRF-checked."""
 import json
+import logging
 import re
 import shutil
 import sqlite3
 from pathlib import Path
 
 from .. import backup as B
+from .. import selfupdate as SU, updates, version, workerupdate
 from .. import db as dbm
 from ..config import deep_merge
 from ..router import decide
 import time
 
 from .. import schedules as sched
-from . import features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, release as REL, review as RV, schedules as SC, screens as SB, settings as S, views, workers as WK
+from . import features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, release as REL, review as RV, schedules as SC, screens as SB, settings as S, updatespage as UP, views, workers as WK
 from .views import esc
+
+log = logging.getLogger("factory.ui")
 
 FLASH = {
     "saved": "Saved. The factory applies it at its next idle moment (never mid-task).",
@@ -325,10 +329,33 @@ def workers_get(h, q: dict, csrf: str) -> None:
             if body is None:
                 return _send_page(h, 404, "Workers", '<p class="muted">No such job.</p>', "/workers", csrf, section="workers")
             return _send_page(h, 200, f"Job #{int(q['id'])}", body, "/workers", csrf, section="workers")
-        _send_page(h, 200, "Workers", WK.workers_page(h.app.cfg(), db, csrf=csrf), "/workers", csrf, section="workers")
+        shown = L.flash_pop(csrf)
+        _send_page(h, 200, "Workers", WK.workers_page(h.app.cfg(), db, csrf=csrf), "/workers", csrf,
+                   shown[0] if shown else None, shown[1] if shown else "ok", section="workers")
     finally:
         if db is not None:
             db.close()
+
+
+def workers_update(h, form, csrf: str) -> None:
+    """The Update worker button: the worker updates to the factory's release the next time it is idle and asks."""
+    db = sqlite3.connect(h.app.cfg().db_path, timeout=10)
+    try:
+        ok = workerupdate.request(db, form.get("worker", ""), time.time())
+    finally:
+        db.close()
+    log.info("workers: update %s for %s", "requested" if ok else "refused", form.get("worker", "")[:41])
+    L.flash_set(csrf, "The worker updates the next time it is idle (within a minute or two). It restarts through its service." if ok
+                else "That is not a known worker.", "ok" if ok else "bad")
+    h._redirect("/workers")
+
+
+def workers_auto_update(h, form, csrf: str) -> None:
+    on = form.get("on") == "1"
+    workerupdate.set_auto(h.app.state_dir(), on)
+    log.info("workers: automatic updates %s", "on" if on else "off")
+    L.flash_set(csrf, "Workers will update by themselves when they are behind." if on else "Workers update only when you press Update worker.")
+    h._redirect("/workers")
 
 
 def workers_add(h, form, csrf: str) -> None:
@@ -440,6 +467,52 @@ def schedules_delete(h, form, csrf: str) -> None:
     h._redirect("/schedules?ok=sched_deleted")
 
 
+# ------------------------------------------------------------------ updates
+def updates_get(h, q: dict, csrf: str) -> None:
+    shown = L.flash_pop(csrf)
+    _send_page(h, 200, "Updates", UP.page_body(h.app.cfg(), h.app.state_dir(), csrf), "/updates", csrf,
+               shown[0] if shown else None, shown[1] if shown else "ok", section="updates")
+
+
+def updates_status(h, q: dict, csrf: str) -> None:
+    h._send(200, UP.live_body(h.app.state_dir(), csrf))
+
+
+def updates_check(h, form, csrf: str) -> None:
+    cfg, state = h.app.cfg(), h.app.state_dir()
+    updates.refresh(state, cfg.updates.repo, token=h.app.update_token(cfg))
+    got = updates._read(state).get("latest")
+    if not got:
+        L.flash_set(csrf, "Could not read the releases. Check the internet connection and that the factory's GitHub token can read the repository.", "bad")
+    elif updates.available(state, version.current()):
+        L.flash_set(csrf, f"{got['tag']} is available.")
+    else:
+        L.flash_set(csrf, f"You are up to date ({got['tag']} is the latest release).")
+    h.app.refresh_update_notice()
+    h._redirect("/updates")
+
+
+def updates_apply(h, form, csrf: str) -> None:
+    state = h.app.state_dir()
+    got = updates.available(state, version.current())
+    if not got or form.get("tag") != got["tag"]:
+        L.flash_set(csrf, "That release is no longer the newest one. Check again.", "bad")
+        return h._redirect("/updates")
+    why = SU.start(state, got["tag"])
+    log.info("updates: update to %s %s", got["tag"], "started" if not why else f"refused: {why}")
+    L.flash_set(csrf, why or f"Updating to {got['tag']}. The factory restarts when it is done; this page may be unreachable for a minute.", "bad" if why else "ok")
+    h._redirect("/updates")
+
+
+def updates_auto(h, form, csrf: str) -> None:
+    mode = form.get("mode", "")
+    why = SU.set_auto(h.app.state_dir(), mode)
+    log.info("updates: auto-update %s %s", mode, "set" if not why else f"refused: {why}")
+    L.flash_set(csrf, why or {"off": "Automatic updates are off.", "patch": "Patch releases will install themselves every night.",
+                              "all": "Every new release will install itself every night."}[mode], "bad" if why else "ok")
+    h._redirect("/updates")
+
+
 # ------------------------------------------------------------------ backup and restore
 def _size(n: float) -> str:
     return f"{n / 1048576:.1f} MB" if n >= 1048576 else f"{max(1, int(n / 1024))} KB"
@@ -505,9 +578,9 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
     h._redirect("/backup?ok=restore")
 
 
-GET = {"/release": REL.release_get, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
+GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get}
-POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
+POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,

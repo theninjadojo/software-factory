@@ -3,8 +3,9 @@
 # Run as the factory user on the host:
 #   sudo -n -u factory /srv/factory/app/deploy/update-native.sh            # the latest release
 #   sudo -n -u factory /srv/factory/app/deploy/update-native.sh v0.2.1     # a specific one (also how you go back)
-#   update-native.sh --auto          # for the optional timer (deploy/systemd/shikumi-update.timer): applies a newer PATCH release only,
-#                                    # and quietly does nothing while a run is in flight or when the release is a new minor/major version
+#   update-native.sh --auto          # for the optional timer (deploy/systemd/shikumi-update.timer): applies a newer PATCH release only
+#                                    # (or any newer release when $ROOT/state/AUTO_UPDATE says "all", which Settings -> Updates writes),
+#                                    # and quietly does nothing while a run is in flight
 # It reads the release's source tarball from GitHub (a private repo needs a token: SHIKUMI_TOKEN_FILE, default
 # /srv/factory/secrets/github_token_bot, else github_token), refuses while an agent run is in flight, runs the tests on the new code,
 # rebuilds the sandbox images, restarts the services and checks they stay up. Docker-compose installs use scripts/update.sh instead.
@@ -38,11 +39,13 @@ if [ -z "$TAG" ]; then
 fi
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "not a release tag: $TAG"
 [ "v$HAVE" = "$TAG" ] && { echo "Already on $TAG."; exit 0; }
-if [ -n "$AUTO" ]; then       # unattended: only a newer patch release of the version already running
-  python3 - "$HAVE" "$TAG" <<'PY' || { echo "Automatic update: $TAG is not a newer patch of v$HAVE, leaving it for a person (run update-native.sh by hand)."; exit 0; }
+if [ -n "$AUTO" ]; then       # unattended: a newer patch release of the version already running, or any newer one when the mode file says "all"
+  MODE="$(cat "$ROOT/state/AUTO_UPDATE" 2>/dev/null || echo patch)"
+  python3 - "$HAVE" "$TAG" "$MODE" <<'PY' || { echo "Automatic update ($MODE): $TAG is not an update I may apply to v$HAVE, leaving it for a person (run update-native.sh by hand)."; exit 0; }
 import sys
 have, new = (tuple(int(x) for x in v.lstrip("v").split(".")) for v in sys.argv[1:3])
-sys.exit(0 if new[:2] == have[:2] and new[2] > have[2] else 1)
+ok = new > have if sys.argv[3].strip() == "all" else (new[:2] == have[:2] and new[2] > have[2])
+sys.exit(0 if ok else 1)
 PY
 fi
 echo "Updating: v$HAVE -> $TAG"

@@ -4,6 +4,7 @@ A separate process from the orchestrator and the admin UI; it shares only the SQ
 (`name token` lines in workers.tokens_file); a worker can only touch jobs it claimed. Everything in a request body is untrusted and
 is validated in jobs.py. Standard library only. Loopback by default: put TLS or a VPN / SSH tunnel in front of it for a remote worker."""
 import argparse
+import base64
 import hmac
 import json
 import logging
@@ -17,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import db as dbm
-from . import jobs
+from . import jobs, releasefiles, updates, version, workerupdate
 from .config import WORKER_NAME, Config, load
 
 log = logging.getLogger("factory.workerapi")
@@ -98,7 +99,9 @@ class Api:
                 return 400, {"error": "platform and recipes are required"}
             if data.get("version", PROTOCOL) != PROTOCOL:
                 return 400, {"error": f"this server speaks protocol {PROTOCOL}"}
-            job = jobs.claim(db, worker, platform, recipes, now, w.lease_seconds, w.claim_wait_seconds, w.max_attempts)
+            app = data.get("app_version")
+            job = jobs.claim(db, worker, platform, recipes, now, w.lease_seconds, w.claim_wait_seconds, w.max_attempts,
+                             app if isinstance(app, str) else "")
             if not job:
                 return 204, None
             reply = {"id": job["id"], "repo": job["repo"], "base_sha": job["base_sha"], "patch": job["patch"],
@@ -106,6 +109,20 @@ class Api:
             if job["params"]:
                 reply["params"] = json.loads(job["params"])
             return 200, reply
+        if path == "/v1/update":                         # "should I update?": yes when behind the factory and a person (or the auto setting) said so
+            app = data.get("app_version")
+            have = version.current()
+            tag = workerupdate.wanted(db, Path(cfg.db_path).parent, worker, app, have) if isinstance(app, str) and jobs.APP_VERSION.fullmatch(app) and have != "dev" else ""
+            return 200, {"update": bool(tag), "tag": tag, "files": list(releasefiles.FILES) if tag else []}
+        if path == "/v1/release":                        # one worker file of the release the factory runs, read with the factory's token
+            name, tag = data.get("name"), data.get("tag")
+            have = version.current()
+            if have == "dev" or tag != "v" + have or name not in releasefiles.FILES:
+                return 404, {"error": "not a file of the release this factory runs"}
+            blob = releasefiles.get(Path(cfg.db_path).parent, cfg.updates.repo, tag, name, updates.token_for(cfg))
+            if blob is None:
+                return 502, {"error": "could not read that file from the release"}
+            return 200, {"name": name, "b64": base64.b64encode(blob).decode()}
         m = JOB_PATH.fullmatch(path)
         if not m:
             return 404, {"error": "not found"}

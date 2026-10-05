@@ -45,6 +45,9 @@ def ensure_tables(db: sqlite3.Connection) -> None:
             name TEXT PRIMARY KEY, platform TEXT NOT NULL DEFAULT '', recipes TEXT NOT NULL DEFAULT '', last_seen REAL NOT NULL,
             version INTEGER NOT NULL DEFAULT 1)"""
     )
+    if "app_version" not in {r[1] for r in db.execute("PRAGMA table_info(workers)")}:       # the release a worker runs (it reports it when it polls)
+        db.execute("ALTER TABLE workers ADD COLUMN app_version TEXT NOT NULL DEFAULT ''")
+    db.execute("CREATE TABLE IF NOT EXISTS worker_updates (worker TEXT PRIMARY KEY, requested REAL NOT NULL)")      # the Update worker button
 
 
 def _row(cur, row) -> dict:
@@ -70,8 +73,15 @@ def enqueue(db, repo: str, issue: int, base_sha: str, patch: str, recipe: str, p
     return cur.lastrowid
 
 
-def touch_worker(db, name: str, platform: str, recipes: list[str], version: int, now: float) -> None:
-    db.execute("INSERT OR REPLACE INTO workers VALUES (?,?,?,?,?)", (name, platform, ",".join(recipes), now, version))
+APP_VERSION = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
+
+
+def touch_worker(db, name: str, platform: str, recipes: list[str], version: int, now: float, app_version: str = "") -> None:
+    """Note that a worker polled. `app_version` is the release it says it runs; a poll without one keeps what was known."""
+    keep = db.execute("SELECT app_version FROM workers WHERE name=?", (name,)).fetchone()
+    app = app_version if APP_VERSION.fullmatch(app_version or "") else (keep[0] if keep and not app_version else "")
+    db.execute("INSERT OR REPLACE INTO workers (name, platform, recipes, last_seen, version, app_version) VALUES (?,?,?,?,?,?)",
+               (name, platform, ",".join(recipes), now, version, app))
 
 
 def online_workers(db, now: float, within: float) -> list[dict]:
@@ -96,11 +106,12 @@ def expire_stale(db, now: float, lease: int, claim_wait: int, max_attempts: int)
     return n + cur.rowcount
 
 
-def claim(db, worker: str, platform: str, recipes: list[str], now: float, lease: int, claim_wait: int, max_attempts: int) -> dict | None:
+def claim(db, worker: str, platform: str, recipes: list[str], now: float, lease: int, claim_wait: int, max_attempts: int,
+          app_version: str = "") -> dict | None:
     """Atomically hand the oldest matching queued job to `worker`. A job for platform 'any' matches every worker."""
     db.execute("BEGIN IMMEDIATE")
     try:
-        touch_worker(db, worker, platform, recipes, 1, now)
+        touch_worker(db, worker, platform, recipes, 1, now, app_version)
         expire_stale(db, now, lease, claim_wait, max_attempts)
         if not recipes:
             db.commit()
