@@ -792,10 +792,14 @@ def snake(fl: dict, order=SNAKE, floor_map: str = "", add: str = "") -> str:
 
 
 def _time_buttons() -> str:
-    """The floor's time of day (static/app.js): Auto cycles day, dusk and night; the others hold one. Shown only with the script."""
-    return ('<span class="fm-time" role="group" aria-label="Time of day"><span class="lab">Time</span>'
-            + "".join(f'<button type="button" class="secondary" data-tod="{k}" aria-pressed="{"true" if k == "auto" else "false"}">{n}</button>'
-                      for k, n in (("auto", "Auto"), ("day", "Day"), ("dusk", "Dusk"), ("night", "Night"))) + '</span>')
+    """The floor's time of day and weather (static/app.js): Auto cycles day, dusk and night, the others hold one; the weather is clear
+    or rain, snow or fog over the floor. Shown only with the script."""
+    group = lambda label, attr, first, opts: (
+        f'<span class="fm-time" role="group" aria-label="{label}"><span class="lab">{label.split()[0]}</span>'
+        + "".join(f'<button type="button" class="secondary" data-{attr}="{k}" aria-pressed="{"true" if k == first else "false"}">{n}</button>'
+                  for k, n in opts) + '</span>')
+    return (group("Time of day", "tod", "auto", (("auto", "Auto"), ("day", "Day"), ("dusk", "Dusk"), ("night", "Night")))
+            + group("Weather", "wx", "clear", (("clear", "Clear"), ("rain", "Rain"), ("snow", "Snow"), ("fog", "Fog"))))
 
 
 def _tile(href: str, lab: str, num, tone: str, sub: str, hot: bool = False) -> str:

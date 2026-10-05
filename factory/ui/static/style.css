@@ -974,7 +974,7 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 @keyframes tod-sky { 0%, 30% { fill:rgba(58, 31, 74, 0); } 40% { fill:rgba(58, 31, 74, .3); } 52%, 86% { fill:rgba(6, 10, 34, .46); } 94% { fill:rgba(58, 31, 74, .26); } 100% { fill:rgba(58, 31, 74, 0); } }
 @keyframes tod-lamp { 0%, 36% { opacity:0; } 46%, 88% { opacity:1; } 96%, 100% { opacity:0; } }
 .fm-time { display:none; align-items:center; gap:4px; } .js .fm-time { display:inline-flex; }
-.fm-time .lab { margin-right:2px; } .fm-time button { padding:6px 10px; } .fm-time button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
+.fm-time .lab { margin-right:2px; } .fm-time button { padding:6px 10px; } .fm-time + .fm-time { margin-left:10px; } .fm-time button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
 @media (max-width:760px) { .js .fm-time { display:none; } }
 @media (prefers-reduced-motion:reduce) { [data-tod=auto] .fm-tod, [data-tod=auto] .fm-nglow { animation:none; } }
 /* the build panel: categories, filter, tool rows (a tool is a .fe-part row that is pressed, not dragged) */
@@ -990,3 +990,23 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 .fe-tool[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
 .fe-tool .sw { flex:none; margin-right:0; } .fe-tool span { flex:1; }
 .fe-none { margin-top:.6rem; } .fe-none .secondary { width:100%; }
+
+/* weather over the floor (plant._weather; static/app.js sets data-wx on the page and the lightning's phase) */
+.fm-wx { pointer-events:none; } .fm-wx > g { display:none; }
+[data-wx=rain] .fm-rain, [data-wx=snow] .fm-snow, [data-wx=fog] .fm-mist { display:inline; }
+.fm-wx-tint.rain { fill:rgba(28, 44, 70, .2); } .fm-wx-tint.snow { fill:rgba(220, 232, 245, .05); }
+#wx-rain-a path, #wx-rain-b path { fill:none; stroke:#9cc4e0; stroke-width:1.4; stroke-linecap:round; opacity:.55; }
+#wx-snow-a circle, #wx-snow-b circle { fill:#eef4fa; opacity:.85; }
+.fm-fall-a { animation:wx-fall-a .8s linear infinite; } .fm-fall-b { animation:wx-fall-b .62s linear infinite; } .fm-fall-c { animation:wx-fall-c 5s linear infinite; }
+.fm-snow .fm-fall-a { animation-duration:6s; }
+@keyframes wx-fall-a { to { transform:translateY(240px); } } @keyframes wx-fall-b { to { transform:translateY(160px); } } @keyframes wx-fall-c { to { transform:translateY(140px); } }
+.fm-snow .fm-fall-a { animation-name:wx-fall-s; } @keyframes wx-fall-s { to { transform:translateY(200px); } }
+.fm-bolt { fill:#fff6c8; opacity:0; animation:wx-bolt 6s linear infinite; } .fm-flash { fill:#dfe9ff; opacity:0; animation:wx-flash 6s linear infinite; }
+@keyframes wx-bolt { 0%, 90% { opacity:0; } 91% { opacity:1; } 92% { opacity:.2; } 93% { opacity:1; } 95%, 100% { opacity:0; } }
+@keyframes wx-flash { 0%, 90% { opacity:0; } 91% { opacity:.28; } 92% { opacity:.05; } 93% { opacity:.22; } 95%, 100% { opacity:0; } }
+.fm-bank { fill:url(#lg-fog); animation:lt-drift 14s ease-in-out infinite alternate; }
+/* the emergency call-out (plant._emergency) */
+.em-lamp { fill:#ff5a4d; } .em-halo { fill:url(#em-halo); } .em-jet path { fill:none; stroke:#8fd3e6; stroke-width:2; stroke-linecap:round; stroke-dasharray:3 6; animation:em-flow .4s linear infinite; }
+@keyframes em-flow { to { stroke-dashoffset:-18; } }
+.em { pointer-events:none; }
+@media (prefers-reduced-motion:reduce) { .fm-fall-a, .fm-fall-b, .fm-fall-c, .fm-bolt, .fm-flash, .fm-bank, .em * { animation:none !important; } }

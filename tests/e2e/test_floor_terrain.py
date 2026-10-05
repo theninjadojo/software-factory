@@ -403,3 +403,21 @@ def test_the_floor_has_a_time_of_day_that_is_kept(wide, server):
     pg.wait_for_timeout(5600)                                           # the live refresh redraws the floor; the choice stays
     assert pg.get_attribute('.fm-time [data-tod="night"]', "aria-pressed") == "true" and sky()[1] == "1"
     assert pg.errors == []
+
+
+def test_the_floors_weather_is_chosen_with_buttons_and_kept(wide, server):
+    pg = wide
+    pg.goto(server.url + "/")
+    pg.wait_for_load_state("networkidle")
+    shown = lambda cls: pg.evaluate("c => getComputedStyle(document.querySelector(c)).display", cls)
+    assert shown(".fm-rain") == "none" and shown(".fm-snow") == "none" and shown(".fm-mist") == "none"      # clear to begin with
+    for mode, cls in (("rain", ".fm-rain"), ("snow", ".fm-snow"), ("fog", ".fm-mist")):
+        pg.click(f'.fm-time [data-wx="{mode}"]')
+        assert shown(cls) != "none" and pg.get_attribute("html", "data-wx") == mode
+        assert pg.get_attribute(f'.fm-time [data-wx="{mode}"]', "aria-pressed") == "true"
+    pg.click('.fm-time [data-wx="rain"]')
+    pg.reload()
+    pg.wait_for_load_state("networkidle")
+    assert pg.get_attribute("html", "data-wx") == "rain" and shown(".fm-rain") != "none"
+    pg.click('.fm-time [data-wx="clear"]')
+    assert shown(".fm-rain") == "none" and pg.errors == []

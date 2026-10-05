@@ -52,3 +52,47 @@ class NightTest(unittest.TestCase):
         self.assertEqual(html.count("<circle"), 2)
         self.assertNotIn("style=", html)
         self.assertEqual(plant._night({}, 800, 600).count("<circle"), 0)
+
+
+class WeatherTest(unittest.TestCase):
+    def test_the_weather_is_drawn_for_any_floor_size_with_no_style_attribute(self):
+        from factory.ui import plant
+        for w, h in ((800, 600), (4000, 2400)):
+            html = plant._weather(w, h)
+            self.assertEqual(html, plant._weather(w, h))
+            for part in ("fm-rain", "fm-snow", "fm-mist", "fm-bolt", "fm-flash"):
+                self.assertIn(part, html)
+            self.assertNotIn("style=", html)
+            self.assertLess(len(html), 20000)               # tiled patterns: a few elements cover the floor
+
+
+class EmergencyTest(unittest.TestCase):
+    BOX = {"station:build": (400, 300, 160, 100)}
+    FAIL = {"build": {"state": "fail", "refs": ["#1"]}, "ci": {"state": "run", "refs": ["#2"]}}
+    TOWN = {"items": [["t-firestation", 200, 500, 120, 1], ["t-policestation", 900, 500, 120, 1], ["t-hospital", 600, 700, 120, 1]]}
+
+    def test_a_failed_machine_gets_a_light_and_vehicles_from_the_buildings_that_stand(self):
+        from factory.ui import plant
+        html = plant._emergency(self.FAIL, self.BOX, self.TOWN, 7.0)
+        self.assertEqual(html.count('class="em"'), 1)
+        self.assertEqual(html.count("<animateMotion"), 3)
+        self.assertIn("em-jet", html)
+        self.assertNotIn("style=", html)
+        only = plant._emergency(self.FAIL, self.BOX, {"items": [["t-hospital", 600, 700, 120, 1]]}, 7.0)
+        self.assertEqual(only.count("<animateMotion"), 1)
+        self.assertNotIn("em-jet", only)                    # no fire station, no fire truck
+        self.assertIn("em-lamp", plant._emergency(self.FAIL, self.BOX, {}, 7.0))
+
+    def test_nothing_happens_while_nothing_fails_and_the_call_out_does_not_restart_on_a_refresh(self):
+        from factory.ui import plant
+        self.assertEqual(plant._emergency({"build": {"state": "run", "refs": ["#1"]}}, self.BOX, self.TOWN, 1.0), "")
+        a, b = (plant._emergency(self.FAIL, self.BOX, self.TOWN, t) for t in (7.0, 7.0 + plant.EM_T))
+        self.assertEqual(a, b)                              # the same moment of the loop one loop later
+        self.assertNotEqual(a, plant._emergency(self.FAIL, self.BOX, self.TOWN, 8.0))
+
+    def test_the_default_floor_stands_the_emergency_services(self):
+        from factory.ui import floorplan
+        ctx = floorplan.Ctx(["poll", "classify", "route", "analyst", "designer", "architect", "build", "ci", "pr"], ["claude-code"], True, 2,
+                            workers=["a", "b"])
+        kinds = {it[0] for it in floorplan.default_plan(ctx)["terrain"]["items"]}
+        self.assertTrue({"t-firestation", "t-hospital", "t-policestation"} <= kinds)
