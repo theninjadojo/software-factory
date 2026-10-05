@@ -1,0 +1,57 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Update progress</title><script src="./support.js"></script></head>
+<body><x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono&display=swap"><style>body{margin:0;background:#12161a}</style></helmet>
+<div style="display:flex;flex-wrap:wrap;gap:24px;padding:24px;align-items:flex-start;font-family:'Space Grotesk',sans-serif;color:#e8edf0;font-size:15px;line-height:1.45">
+
+<div style="width:680px"><div style="color:#a9b5bd;font-size:12px;margin-bottom:6px">1. Running (step 3 of 7)</div>
+<div style="background:#12161a;border:1px solid #2d363d;padding:24px">
+<h1 style="font-size:32px;margin:0 0 12px">Updates</h1>
+<p>You are on <strong>v1.3.2</strong>. <strong>v1.4.0</strong> is available. <span style="color:#a9b5bd">Last checked 2 minutes ago.</span></p>
+<div style="background:#1b2126;border:1px solid #2d363d;padding:14px 16px">
+<h3 style="font-size:12.8px;text-transform:uppercase;letter-spacing:.06em;color:#a9b5bd;margin:0 0 8px">Updating to v1.4.0</h3>
+<p style="margin:0">Step 3 of 7: <strong>Run its tests</strong> <span style="color:#a9b5bd">· 1m 12s</span></p>
+<div role="progressbar" aria-label="Update steps" aria-valuenow="3" aria-valuemin="0" aria-valuemax="7" style="height:6px;background:#232a30;margin:8px 0"><div style="height:6px;width:43%;background:#f2a93b"></div></div>
+<ul style="margin:0;padding:0;list-style:none">
+<li style="padding:5px 0;color:#52c7a1">✓ Pause and check no agent run is in flight</li>
+<li style="padding:5px 0;color:#52c7a1">✓ Download the release</li>
+<li style="padding:5px 0;color:#f2a93b">● Run its tests <span style="color:#a9b5bd;font-size:13px">now</span></li>
+<li style="padding:5px 0;color:#a9b5bd">○ Back up and install</li>
+<li style="padding:5px 0;color:#a9b5bd">○ Rebuild sandbox images</li>
+<li style="padding:5px 0;color:#a9b5bd">○ Restart services</li>
+<li style="padding:5px 0;color:#a9b5bd">○ Health check</li></ul>
+<details style="margin-top:8px"><summary style="color:#8fd3e6">Show log</summary>
+<pre style="background:#12161a;border:1px solid #2d363d;border-radius:8px;padding:12px;font:13px/1.45 'JetBrains Mono',monospace;white-space:pre-wrap">Updating: v1.3.2 -&gt; v1.4.0</pre></details>
+</div></div></div>
+
+<div style="width:680px"><div style="color:#a9b5bd;font-size:12px;margin-bottom:6px">2. Restarting (page unreachable, then reconnects)</div>
+<div style="background:#12161a;border:1px solid #2d363d;padding:24px">
+<div style="background:#1b2126;border:1px solid #2d363d;padding:14px 16px">
+<h3 style="font-size:12.8px;text-transform:uppercase;letter-spacing:.06em;color:#a9b5bd;margin:0 0 8px">Reconnecting</h3>
+<p role="status" style="margin:0">The factory is restarting. This page will reconnect by itself. <span style="color:#a9b5bd">Last step seen: 6 of 7, Restart services.</span></p></div></div></div>
+
+<div style="width:680px"><div style="color:#a9b5bd;font-size:12px;margin-bottom:6px">3. Finished</div>
+<div style="background:#12161a;border:1px solid #2d363d;padding:24px">
+<div style="background:#1b2126;border:1px solid #2d363d;padding:14px 16px">
+<h3 style="font-size:12.8px;text-transform:uppercase;letter-spacing:.06em;color:#a9b5bd;margin:0 0 8px">Last update <span style="color:#52c7a1;border:1px solid #52c7a1;border-radius:99px;padding:1px 8px;font-size:12px;text-transform:none;letter-spacing:0">finished</span></h3>
+<p style="margin:0">Now on v1.4.0. It took 3m 40s. All 7 steps passed.</p></div></div></div>
+
+<div style="width:680px"><div style="color:#a9b5bd;font-size:12px;margin-bottom:6px">4. Rolled back</div>
+<div style="background:#12161a;border:1px solid #2d363d;padding:24px">
+<div style="background:#1b2126;border:1px solid #2d363d;padding:14px 16px">
+<h3 style="font-size:12.8px;text-transform:uppercase;letter-spacing:.06em;color:#a9b5bd;margin:0 0 8px">Last update <span style="color:#f2a93b;border:1px solid #f2a93b;border-radius:99px;padding:1px 8px;font-size:12px;text-transform:none;letter-spacing:0">rolled back</span></h3>
+<p style="margin:0 0 6px">The new version did not come up healthy, so v1.3.2 is running again.</p>
+<p style="margin:0;color:#ff6b5e">✕ Health check did not pass</p>
+<details open style="margin-top:8px"><summary style="color:#8fd3e6">Log</summary>
+<pre style="background:#12161a;border:1px solid #2d363d;border-radius:8px;padding:12px;font:13px/1.45 'JetBrains Mono',monospace;white-space:pre-wrap">The new version did not come up healthy: rolling back to v1.3.2</pre></details></div></div></div>
+
+<div style="width:680px"><div style="color:#a9b5bd;font-size:12px;margin-bottom:6px">5. Did not finish (tests failed) — refused uses the same card with "waiting for an agent run"</div>
+<div style="background:#12161a;border:1px solid #2d363d;padding:24px">
+<div style="background:#1b2126;border:1px solid #2d363d;padding:14px 16px">
+<h3 style="font-size:12.8px;text-transform:uppercase;letter-spacing:.06em;color:#a9b5bd;margin:0 0 8px">Last update <span style="color:#ff6b5e;border:1px solid #ff6b5e;border-radius:99px;padding:1px 8px;font-size:12px;text-transform:none;letter-spacing:0">did not finish</span></h3>
+<p style="margin:0 0 6px">The tests failed on v1.4.0. Nothing was changed.</p>
+<p style="margin:0;color:#ff6b5e">✕ Run its tests</p>
+<details open style="margin-top:8px"><summary style="color:#8fd3e6">Log</summary>
+<pre style="background:#12161a;border:1px solid #2d363d;border-radius:8px;padding:12px;font:13px/1.45 'JetBrains Mono',monospace;white-space:pre-wrap">TESTS FAILED on v1.4.0: nothing was changed</pre></details></div></div></div>
+
+</div></x-dc></body></html>

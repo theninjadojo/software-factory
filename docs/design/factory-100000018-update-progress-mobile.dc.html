@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Update progress mobile</title><script src="./support.js"></script></head>
+<body><x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono&display=swap"><style>body{margin:0;background:#12161a}</style></helmet>
+<div style="display:flex;flex-wrap:wrap;gap:24px;padding:24px;align-items:flex-start;font-family:'Space Grotesk',sans-serif;color:#e8edf0;font-size:15px;line-height:1.45">
+
+<div style="width:390px"><div style="color:#a9b5bd;font-size:12px;margin-bottom:6px">Running (phone, 390 px)</div>
+<div style="background:#12161a;border:1px solid #2d363d;padding:14px">
+<h1 style="font-size:26px;margin:0 0 10px">Updates</h1>
+<p style="margin:0 0 10px">You are on <strong>v1.3.2</strong>. <strong>v1.4.0</strong> is available.</p>
+<div style="background:#1b2126;border:1px solid #2d363d;padding:14px">
+<h3 style="font-size:12.8px;text-transform:uppercase;letter-spacing:.06em;color:#a9b5bd;margin:0 0 8px">Updating to v1.4.0</h3>
+<p style="margin:0">Step 3 of 7: <strong>Run its tests</strong></p>
+<div role="progressbar" aria-label="Update steps" aria-valuenow="3" aria-valuemin="0" aria-valuemax="7" style="height:6px;background:#232a30;margin:8px 0"><div style="height:6px;width:43%;background:#f2a93b"></div></div>
+<ul style="margin:0;padding:0;list-style:none">
+<li style="padding:8px 0;color:#52c7a1">✓ Check no agent run is in flight</li>
+<li style="padding:8px 0;color:#52c7a1">✓ Download the release</li>
+<li style="padding:8px 0;color:#f2a93b">● Run its tests <span style="color:#a9b5bd;font-size:13px">now</span></li>
+<li style="padding:8px 0;color:#a9b5bd">○ Back up and install</li>
+<li style="padding:8px 0;color:#a9b5bd">○ Rebuild sandbox images</li>
+<li style="padding:8px 0;color:#a9b5bd">○ Restart services</li>
+<li style="padding:8px 0;color:#a9b5bd">○ Health check</li></ul>
+<details style="margin-top:6px"><summary style="color:#8fd3e6;min-height:44px;display:flex;align-items:center">Show log</summary></details>
+</div></div></div>
+
+<div style="width:390px"><div style="color:#a9b5bd;font-size:12px;margin-bottom:6px">Rolled back (phone)</div>
+<div style="background:#12161a;border:1px solid #2d363d;padding:14px">
+<div style="background:#1b2126;border:1px solid #2d363d;padding:14px">
+<h3 style="font-size:12.8px;text-transform:uppercase;letter-spacing:.06em;color:#a9b5bd;margin:0 0 8px">Last update <span style="color:#f2a93b;border:1px solid #f2a93b;border-radius:99px;padding:1px 8px;font-size:12px;text-transform:none;letter-spacing:0">rolled back</span></h3>
+<p style="margin:0 0 6px">The new version did not come up healthy, so v1.3.2 is running again.</p>
+<p style="margin:0;color:#ff6b5e">✕ Health check did not pass</p>
+<pre style="background:#12161a;border:1px solid #2d363d;border-radius:8px;padding:12px;font:13px/1.45 'JetBrains Mono',monospace;white-space:pre-wrap;overflow-wrap:anywhere">The new version did not come up healthy: rolling back to v1.3.2</pre></div></div></div>
+
+</div></x-dc></body></html>
