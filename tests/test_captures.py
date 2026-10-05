@@ -215,6 +215,85 @@ class Board(UiCase):
         self.assertEqual(self.req("GET", "/screens/captures")[0], 303)
 
 
+class SetUp(UiCase):
+    """Everything is set up from the Screens page: nothing needs a config file."""
+    def setUp(self):
+        super().setUp()
+        self.cookie, self.csrf = self.session()
+        self.path = self.root / "config.toml"
+
+    def save(self, repos, **extra):
+        fields = [("csrf", self.csrf)] + [("repo", r) for r in repos] + list(extra.items())
+        return self.req("POST", "/screens/captures/save", urlencode(fields), cookie=self.cookie)
+
+    def overrides(self):
+        import tomllib
+        from factory import config
+        p = config.overrides_path(str(self.path))
+        return tomllib.loads(p.read_text()) if p.exists() else {}
+
+    def page(self):
+        return self.req("GET", "/screens", cookie=self.cookie)[2]
+
+    def test_the_first_visit_explains_what_is_missing_and_offers_the_repos(self):
+        html = self.page()
+        self.assertIn("Set up Playwright runs", html)
+        self.assertIn("<details class=\"cp-setup\" open>", html)
+        self.assertIn("Settings → Workers", html)
+        self.assertIn("No online worker has the Playwright recipe", html)
+        self.assertIn('name="repo" value="your-org/shop-web"', html)
+        self.assertNotIn(">Build screens</button>", html)
+
+    def test_choosing_repos_saves_to_the_overrides_and_shows_the_buttons(self):
+        before = self.path.read_text()
+        s, h, _ = self.save([SHOP, SOLO], recipe_0="", platform_0="")
+        self.assertEqual((s, h["Location"]), (303, "/screens"))
+        caps = self.overrides()["screens"]["captures"]
+        self.assertEqual({c["repo"] for c in caps}, {SHOP, SOLO})
+        self.assertTrue(all(set(c) == {"repo"} for c in caps))                       # defaults are not written
+        self.assertEqual(self.path.read_text(), before)                              # config.toml is untouched
+        self.assertTrue((self.state / "RESTART").exists())
+        html = self.page()
+        self.assertIn(">Build screens</button>", html)
+        self.assertIn("Saved.", html)
+
+    def test_recipe_and_platform_per_repo_and_switching_everything_off(self):
+        repos = list(dict.fromkeys(list(load("config.example.toml").repos) + ["your-org/shop-web", "your-org/shop-mobile", "your-org/shop-packages"]))
+        i = repos.index(SHOP)
+        self.save([SHOP], **{f"recipe_{i}": "pw-web", f"platform_{i}": "linux"})
+        self.assertEqual(self.overrides()["screens"]["captures"], [{"repo": SHOP, "recipe": "pw-web", "platform": "linux"}])
+        self.save([])
+        self.assertEqual(self.overrides().get("screens", {}).get("captures", []), [])
+        self.assertIn("Playwright runs switched off.", self.page())
+
+    def test_unknown_repos_and_bad_names_write_nothing(self):
+        self.save(["your-org/unknown"])
+        self.assertEqual(self.overrides(), {})
+        self.assertIn("Choose repositories the factory handles.", self.page())
+        repos = list(dict.fromkeys(list(load("config.example.toml").repos) + ["your-org/shop-web", "your-org/shop-mobile", "your-org/shop-packages"]))
+        self.save([SHOP], **{f"recipe_{repos.index(SHOP)}": "rm -rf"})
+        self.assertEqual(self.overrides(), {})
+        self.assertIn("The configuration would be invalid", self.page())
+
+    def test_the_checklist_ticks_off_as_things_are_ready(self):
+        p = self.path
+        p.write_text(p.read_text() + f'\n[workers]\nenabled = true\n[screens]\n[[screens.captures]]\nrepo = "{SHOP}"\n')
+        jobs.touch_worker(self.db, "arch-laptop", "linux", ["playwright-screens", "web-test"], 1, __import__("time").time())
+        self.db.commit()
+        html = self.page()
+        self.assertIn("A worker with the Playwright recipe is online (arch-laptop).", html)
+        self.assertIn("1 repository chosen.", html)
+        self.assertNotIn("<details class=\"cp-setup\" open>", html)                   # all ready: folded away
+        jobs.touch_worker(self.db, "arch-laptop", "linux", ["web-test"], 1, __import__("time").time())     # same worker, no such recipe
+        self.db.commit()
+        self.assertIn("No online worker has the Playwright recipe", self.page())
+
+    def test_needs_a_session_and_a_csrf_token(self):
+        self.assertEqual(self.req("POST", "/screens/captures/save", "repo=" + SHOP)[0], 303)
+        self.assertEqual(self.req("POST", "/screens/captures/save", "repo=" + SHOP, cookie=self.cookie)[0], 403)
+        self.assertEqual(self.overrides(), {})
+
+
 class Collect(unittest.TestCase):
     def test_a_screens_run_may_return_many_but_within_a_total_budget(self):
         with tempfile.TemporaryDirectory() as d:

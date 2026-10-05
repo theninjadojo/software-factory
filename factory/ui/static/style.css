@@ -760,6 +760,13 @@ main.full { max-width:none; }
 }
 
 /* Playwright runs on the Screens board: a card per repo under its project, a grid of what the suite screenshotted. */
+.cp-setup { margin:1.2rem 0 0; background:var(--panel); border:1px solid var(--line); padding:.6rem .8rem; }
+.cp-setup summary { cursor:pointer; font-weight:600; }
+.cp-steps { list-style:none; margin:.6rem 0; padding:0; }
+.cp-steps li { margin:.3rem 0; }
+.cp-setup td input:not([type=checkbox]) { width:100%; min-width:8rem; }
+.cp-setup td label { display:flex; align-items:center; gap:.5rem; overflow-wrap:anywhere; }
+.cp-setup td input[type=checkbox] { flex:none; width:auto; min-width:0; }
 .cp-project { margin:1.4rem 0 0; }
 .cp-head { display:flex; align-items:center; gap:.8rem; flex-wrap:wrap; }
 .cp-project h2 { margin:0; }

@@ -95,15 +95,18 @@ The worker must be able to **clone** the repos it verifies, with its own credent
 A worker can also run a project's Playwright suite on request and send back what it screenshotted, so the **Screens** tab can show
 the real app, grouped by project. Nothing is gated: no patch, no ticket, and a failing suite is not an error.
 
-- **Factory** (`config.toml`): one entry per repo whose suite the button may run, and workers enabled. The recipe is a name defined on
-  the worker; `platform` must be one the worker declares.
+- **Everything is set up in the UI.** The **Set up Playwright runs** box at the bottom of the Screens tab (open until everything is ready)
+  shows what is still to do, in order: turn workers on (Settings → Workers), add a worker with the recipe `screens` (Workers → *Add a
+  worker* prints the install command for that machine), and tick the repositories whose suite the button may run. The tick boxes are
+  saved to the overrides file like every other UI setting; `config.toml` is not touched. Per repo you can change the recipe name and the
+  platform (defaults `playwright-screens` and `any`). The equivalent config, if you prefer a file:
   ```toml
   [[screens.captures]]
   repo = "your-org/shop-web"
   recipe = "playwright-screens"     # the default
   platform = "any"                  # the default
   ```
-- **Worker**: `WORKER_RECIPES="screens"` (or `"web screens"`) when running `scripts/setup-worker.sh`, or add the recipe to `worker.toml` by hand:
+- **Worker machine**: the install command from the UI runs `scripts/setup-worker.sh` with `WORKER_RECIPES="screens"` (or `"web screens"`). To add the recipe to an existing `worker.toml` by hand:
   ```toml
   [recipes.playwright-screens]
   command = ["/path/to/worker/recipes/playwright-screens.sh"]      # add "--dir", "web" to run only one folder

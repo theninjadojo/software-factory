@@ -74,7 +74,8 @@ JS
     dir=$(dirname "$f" | sed 's#^test-results-screens/*##'); stem=$(basename "$f" .png)
     label="$PREFIX$(slug "$dir")"; [ "$stem" != "test-finished-1" ] && label="$label-$(slug "$stem")"
     sum=$(printf '%s' "$D/$f" | cksum | cut -d' ' -f1)
-    cp "$f" "$OUT/$(printf '%s' "$label" | cut -c1-46)-$sum.png"
+    if [ ${#label} -gt 46 ]; then label="$(printf '%s' "$label" | cut -c1-22)-$(printf '%s' "$label" | rev | cut -c1-23 | rev)"; fi   # keep both ends: the project is last
+    cp "$f" "$OUT/$label-$sum.png"
   done
   cd "$ROOT"
 done

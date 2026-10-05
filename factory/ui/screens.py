@@ -6,6 +6,7 @@ import copy
 import logging
 import re
 import sqlite3
+import time
 from urllib.parse import urlencode
 
 from .. import captures as CP
@@ -16,6 +17,7 @@ from ..config import deep_merge
 from . import labels as L
 from . import settings as S
 from . import views
+from ..verify import ONLINE_SECONDS
 from .views import ago, badge, csrf_field, dur, esc
 
 log = logging.getLogger("factory.ui")
@@ -104,6 +106,77 @@ def captures_body(cfg, db, csrf: str) -> str:
              f'<button>Build all</button></form>') if len(groups) > 1 else ""
     return (f'<div class="sb-head"><p class="muted">Playwright runs: each project\'s test suite runs on a worker against the default branch and the '
             f'screenshots it takes appear here.</p>{every}</div>{out}')
+
+
+def setup_body(cfg, db, csrf: str) -> str:
+    """Everything needed to run Playwright from the board, set up on the page itself: workers on, a worker with the recipe, and which repos."""
+    on = {c.repo: c for c in cfg.screens.captures}
+    recipes = sorted({c.recipe for c in cfg.screens.captures} or {"playwright-screens"})
+    online = []
+    if db is not None:
+        try:
+            now = time.time()
+            online = [w for w in jobs.online_workers(db, now, ONLINE_SECONDS)]
+        except sqlite3.OperationalError:
+            online = []
+    able = [w["name"] for w in online if set(recipes) & set(w["recipes"].split(","))]
+    steps = [
+        (cfg.workers.enabled, 'Verification workers are on.' if cfg.workers.enabled else
+         'Turn verification workers on: <a href="/settings?section=workers">Settings → Workers</a>.'),
+        (bool(able), f'A worker with the Playwright recipe is online ({esc(", ".join(able))}).' if able else
+         'No online worker has the Playwright recipe yet. <a href="/workers">Workers</a> → <em>Add a worker</em> with the recipe <code>screens</code> '
+         'gives you the install command for the machine that will run the tests.'),
+        (bool(on), f'{len(on)} repositor{"y" if len(on) == 1 else "ies"} chosen.' if on else "Choose the repositories below."),
+    ]
+    ticks = "".join(f'<li>{badge("done", "good") if ok else badge("to do", "warn")} {text}</li>' for ok, text in steps)
+    repos = list(dict.fromkeys(list(cfg.repos) + [r.repo for p in cfg.projects for r in p.repos]))
+    rows = "".join(
+        f'<tr><td data-l="Repository"><label class="check"><input type="checkbox" name="repo" value="{esc(r)}"{" checked" if r in on else ""}> {esc(r)}</label></td>'
+        f'<td data-l="Worker recipe"><input name="recipe_{i}" value="{esc(on[r].recipe if r in on else "playwright-screens")}" maxlength=60 pattern="[a-z0-9][a-z0-9-]*" autocomplete="off"></td>'
+        f'<td data-l="Platform"><input name="platform_{i}" value="{esc(on[r].platform if r in on else "any")}" maxlength=60 pattern="[a-z0-9][a-z0-9-]*" autocomplete="off"></td></tr>'
+        for i, r in enumerate(repos))
+    form = (f'<form method="post" action="/screens/captures/save" class="settings">{csrf_field(csrf)}'
+            '<table class="stack"><thead><tr><th>Run Playwright in</th><th>Worker recipe</th><th>Worker platform</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table>'
+            '<p class="muted">The recipe is a name defined on the worker (the <code>screens</code> option installs <code>playwright-screens</code>). '
+            'The platform is the one the worker declares; <code>any</code> matches every worker.</p><button>Save</button></form>')
+    return (f'<details class="cp-setup"{"" if on and cfg.workers.enabled and able else " open"}><summary>Set up Playwright runs</summary>'
+            f'<ul class="cp-steps">{ticks}</ul>{form}</details>')
+
+
+def captures_save(h, form, csrf: str) -> None:
+    """Choose the repos whose Playwright suite the Build screens button runs. Written to the overrides file like every other UI setting."""
+    cfg, path = h.app.cfg(), h.app.config_path
+    repos = list(dict.fromkeys(list(cfg.repos) + [r.repo for p in cfg.projects for r in p.repos]))
+    chosen = set(form.getall("repo"))
+    out = []
+    for i, r in enumerate(repos):
+        if r in chosen:
+            entry = {"repo": r}
+            for k, d in (("recipe", "playwright-screens"), ("platform", "any")):
+                v = str(form.get(f"{k}_{i}", "")).strip() or d
+                if v != d:
+                    entry[k] = v
+            out.append(entry)
+    if chosen - set(repos):
+        L.flash_set(csrf, "Choose repositories the factory handles.", "bad")
+        return h._redirect("/screens")
+    base, ov = S.base_raw(path), copy.deepcopy(S.overrides_raw(path))
+    sc = ov.setdefault("screens", {})
+    if out == base.get("screens", {}).get("captures", []):
+        sc.pop("captures", None)
+    else:
+        sc["captures"] = out
+    if not sc:
+        ov.pop("screens")
+    try:
+        S._commit(path, h.app.state_dir(), ov)
+    except S.SettingsError as e:
+        L.flash_set(csrf, " · ".join(e.messages), "bad")
+        return h._redirect("/screens")
+    log.info("screens: Playwright runs set for %s", ", ".join(c["repo"] for c in out) or "no repository")
+    L.flash_set(csrf, "Saved. The factory applies it at its next idle moment." if out else "Playwright runs switched off.")
+    h._redirect("/screens")
 
 
 def captures_fragment(h, q: dict, csrf: str) -> None:
@@ -207,10 +280,10 @@ def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey
 def board_get(h, q: dict, csrf: str) -> None:
     cfg = h.app.cfg()
     db = h.app.ro_db()
-    shots, st, pending, noted, runs = {}, {}, False, {}, ""
+    shots, st, pending, noted, runs, setup = {}, {}, False, {}, "", setup_body(cfg, None, csrf)
     if db is not None:
         try:
-            runs = captures_body(cfg, db, csrf)
+            runs, setup = captures_body(cfg, db, csrf), setup_body(cfg, db, csrf)
             shots, st, pending = SB.latest(db), SB.status(db), SB.requested(db)
             for x in RN.notes(db, *RN.BOARD, open_only=True):
                 if (m := SB.KEY.fullmatch(x["image"])):
@@ -218,11 +291,11 @@ def board_get(h, q: dict, csrf: str) -> None:
         finally:
             db.close()
     body = board_body(cfg, shots, st, pending, SB.running(), q.get("journey", ""), q.get("view", ""), csrf, noted)
-    if cfg.screens.captures:
-        if not cfg.screens.pages:
-            body = ('<p class="muted">Pages shot straight from a repository (no test suite needed) can be added too: '
-                    '<a href="/screens/edit">Add a screen</a>.</p>')
-        body = f'<div id="live" data-src="/screens/captures">{runs}</div>' + body
+    if cfg.screens.captures and not cfg.screens.pages:
+        body = ('<p class="muted">Pages shot straight from a repository (no test suite needed) can be added too: '
+                '<a href="/screens/edit">Add a screen</a>.</p>')
+    live = f'<div id="live" data-src="/screens/captures">{runs}</div>' if cfg.screens.captures else ""
+    body = (setup + live + body) if not cfg.screens.captures else (live + setup + body)
     shown = L.flash_pop(csrf)
     h._send(200, views.page("Screens", body, "/screens", csrf, wide=True,
                             flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
