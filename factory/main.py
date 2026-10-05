@@ -788,6 +788,22 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
     if not cfg.dry_run and (why_paused := pause.paused(Path(cfg.db_path).parent)):
         log.info("paused (%s); leaving %s#%d queued", why_paused, repo, num)
         return "paused"
+    tracked = (dbm.conflicts_for_issue(conn, repo, num)
+               if kind == "auto" and DONE in [lb["name"] for lb in issue.get("labels", [])] else [])
+    if tracked or (kind == "auto" and DONE in [lb["name"] for lb in issue.get("labels", [])] and dbm.prs_for_issue(conn, repo, num)):
+        # Open factory PRs already exist: auto must not build again (the Build label does that, on purpose).
+        if cfg.conflicts.enabled and any(c["state"] == "conflicting" for c in tracked):
+            kind = "conflicts"                      # resolve_conflicts re-reads each PR and keeps the attempt limit and branch checks
+            emit("decision", "auto: open PR has merge conflicts; resolving them instead of rebuilding", repo, num)
+        else:
+            msg = (f"This ticket already has open factory pull requests (`{DONE}`), so `{label}` did not start a new build. "
+                   f"Apply `{cfg.trigger_label}` to build again on purpose, or comment on what should change.")
+            dbm.record(conn, repo, num, updated, "human", f"{why}; auto skipped: open PRs exist")
+            emit("decision", "needs a person: auto skipped, the ticket already has open PRs", repo, num)
+            if not cfg.dry_run:
+                gh.comment(repo, num, sanitize_markdown(msg))
+                gh.remove_label(repo, num, label)
+            return None
     if kind == "review":
         prs = dbm.prs_for_issue(conn, repo, num)
         if cfg.dry_run:

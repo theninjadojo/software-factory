@@ -173,6 +173,32 @@ class Resolution(unittest.TestCase):
         self.assertTrue(any(n == 9 and "Merged `main`" in b for _, n, b in gh.posted))
         self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "run:pr")
 
+    def auto(self, gh, conn):
+        fake, calls = fake_runner()
+        with mock.patch.object(m.runner, "run_task", side_effect=fake), tempfile.TemporaryDirectory() as d:
+            m.handle_issue(replace(ON, db_path=d + "/f.db"), gh, conn, FakeClf(), "o/r",
+                           issue(labels=["factory:auto", "factory:pr-open"]), "auto", "factory:auto")
+        return calls
+
+    def test_auto_on_a_ticket_with_a_conflicting_pr_resolves_conflicts_instead_of_building(self):
+        gh, conn = GH({("o/r", 9): pr()}), tracked(("o/r", 9))
+        dbm.update_conflict(conn, "o/r", 9, state="conflicting")
+        self.assertEqual([c["fix_branch"] for c in self.auto(gh, conn)], [BRANCH])
+        self.assertEqual(row(conn)[2], 1)
+
+    def test_auto_on_a_ticket_with_clean_open_prs_does_not_build_and_says_so(self):
+        gh, conn = GH({("o/r", 9): pr(mergeable=True)}), tracked(("o/r", 9))
+        self.assertEqual(self.auto(gh, conn), [])
+        self.assertTrue(any("did not start a new build" in b for _, _, b in gh.posted))
+        self.assertIn(("rm", "factory:auto"), gh.calls)
+
+    def test_untrusted_auto_on_a_ticket_with_open_prs_is_ignored(self):
+        gh, conn = GH({("o/r", 9): pr()}, perm="read"), tracked(("o/r", 9))
+        dbm.update_conflict(conn, "o/r", 9, state="conflicting")
+        self.assertEqual(self.auto(gh, conn), [])
+        self.assertEqual(gh.posted, [])
+        self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "ignored")
+
     def test_untrusted_label_is_ignored(self):
         gh, conn = GH({("o/r", 9): pr()}, perm="read"), tracked(("o/r", 9))
         self.assertEqual(self.go(gh, conn), [])
