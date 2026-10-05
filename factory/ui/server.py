@@ -67,16 +67,15 @@ class App:
                 return
             state = self.state_dir()
             if updates.due(state):
-                tf = c.updates.token_file or c.token_file
-                try:
-                    token = Path(tf).read_text().strip() if tf and Path(tf).is_file() else ""
-                except OSError:
-                    token = ""
-                threading.Thread(target=updates.refresh, args=(state, c.updates.repo), kwargs={"token": token}, daemon=True).start()
+                threading.Thread(target=updates.refresh, args=(state, c.updates.repo), kwargs={"token": self.update_token(c)}, daemon=True).start()
             got = updates.available(state, have) or {}
             views.UPDATE.update(tag=got.get("tag", ""), url=got.get("url", ""))
         except Exception:
             log.exception("update notice failed")
+
+    @staticmethod
+    def update_token(c) -> str:
+        return updates.token_for(c)
 
     def state_dir(self) -> Path:
         return Path(self.cfg().db_path).parent
@@ -461,7 +460,7 @@ class Handler(BaseHTTPRequestHandler):
                 files, docs, events, images = board.ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
                 sel["verify"] = board.ticket_verify(db, sel["repo"], sel["issue"])
                 if path == "/fragment/ticket":
-                    return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now))
+                    return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now, csrf))
                 back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}" + (f"&project={quote(project, safe='')}" if project else "")
                 if cold:
                     detail = board.slot("/fragment/detail?" + board._qs(repo=sel["repo"], n=sel["issue"], project=project), "Loading the ticket from GitHub", "sd-detail sd-loading")
@@ -474,7 +473,7 @@ class Handler(BaseHTTPRequestHandler):
                     close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
                                                                           sel["state"] in ("working", "needs"))
                     detail = board.detail_html(sel, (board.summary_card(db, sel["repo"], sel["issue"], docs, files) if sel["need"] else "") + board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images,
-                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close)
+                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close, csrf)
                 if path == "/fragment/detail":
                     return self._send(200, detail)
         finally:

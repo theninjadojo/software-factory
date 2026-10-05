@@ -99,7 +99,7 @@ def seed_captures(db) -> None:
     import base64
     from factory import jobs
     jid = jobs.enqueue(db, REPO, 0, "c" * 40, "", "playwright-screens", "any", time.time() - 600, '{"purpose": "screens"}')
-    jobs.claim(db, "arch-laptop", "linux", ["playwright-screens"], time.time() - 590, 120, 99999, 2)
+    jobs.claim(db, "arch-laptop", "linux", ["playwright-screens"], time.time() - 590, 120, 99999, 2, "0.1.0")        # a release behind: the Workers page offers an update
     names = [f"{page}-{view}" for page in ("home", "tickets", "settings") for view in ("desktop", "tablet", "phone")] + ["login-spec-user-signs-in-chromium"]
     sizes = {"desktop": (1280, 900), "tablet": (820, 1100), "phone": (390, 800)}
     arts = [{"name": n, "png_b64": base64.b64encode(solid_png(*sizes.get(n.rpartition("-")[2], (1280, 800)), (40 + 20 * i, 60, 120 + 8 * i))).decode()}

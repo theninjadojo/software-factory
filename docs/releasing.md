@@ -12,6 +12,8 @@ Releases are automatic. To release:
    (the `.env` template), `setup.sh`, `update.sh`, `install.sh`, `update-native.sh` and the worker files.
 3. On every other merge to `main` the same workflow exits within seconds: the tag for that `VERSION` already exists.
 
+From the UI: **Settings > Releases** opens a `release/vX.Y.Z` pull request that bumps `VERSION` (patch, minor or major above the highest of `main` and the latest release), and **Merge and release** merges it, which starts the build. It needs a GitHub token that can write to `[updates] repo`. A pull request whose checks passed also has a **Merge** button on its ticket page.
+
 Pushing a tag by hand (`git tag v0.3.0 && git push origin v0.3.0`) still works and runs the same release; the tag must match `VERSION`.
 If a release run fails before it publishes, fix the cause and re-run the workflow (nothing is tagged until the release is created).
 
@@ -90,9 +92,16 @@ changes if they fail), rebuilds the sandbox images, restarts the services and ch
 images) if they do not. For the UI banner on a private repo set `[updates] token_file` to a token that can read it.
 `scripts/deploy.sh user@host` still deploys the working tree you have checked out (for development).
 
-**Optional: update by itself.** Copy `deploy/systemd/shikumi-update.service` and `.timer` to `~factory/.config/systemd/user/` and run
+**From the UI (native installs).** Settings → **Updates** shows the running version and the latest release, with **Check now** (it reads the
+release with the token the factory already has for the repository: `[updates] token_file`, else the `[github]` token), **Update to vX.Y.Z**
+(starts `update-native.sh` as its own transient systemd unit, `shikumi-update-now`, so restarting the UI cannot kill it; its output is
+shown on the page and kept in `state/update.log`) and the nightly auto-update: **Off**, **Patch releases** or **Every release**. Choosing
+one installs `shikumi-update.service`/`.timer` for the factory user, writes `state/AUTO_UPDATE` (`patch` or `all`, read by `--auto`) and
+enables the timer. The UI only offers this on a native install; Docker installs still use `scripts/update.sh`.
+
+**Optional: update by itself, by hand.** Copy `deploy/systemd/shikumi-update.service` and `.timer` to `~factory/.config/systemd/user/` and run
 `systemctl --user enable --now shikumi-update.timer`. Every night it runs `update-native.sh --auto`, which applies only a newer **patch**
-release (same major.minor) and quietly does nothing while an agent run is in flight; a new minor or major version waits for a person. It tests
+release (same major.minor), or any newer release when `state/AUTO_UPDATE` says `all`, and quietly does nothing while an agent run is in flight. It tests
 first and rolls back like a manual update. `journalctl --user -u shikumi-update.service` shows what it did. It is off unless you enable it.
 
 ## Not covered
