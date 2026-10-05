@@ -1,5 +1,6 @@
 """Local tickets are run from the admin UI alone: turned on in Settings, created with New ticket, listed and opened on the
 Tickets page, commented on, edited, closed and reopened there."""
+from dataclasses import replace
 from urllib.parse import quote
 
 from factory import tracker
@@ -229,3 +230,23 @@ class Attachments(AdminCase):
         (a,) = self.store().attachments(REPO, n)
         self.assertEqual(self.post(self.cookie, self.csrf, "/tickets/local/attachment/delete", {"repo": REPO, "n": str(n), "id": str(a["id"])})[0], 303)
         self.assertEqual(self.store().attachments(REPO, n), [])
+
+
+class GithubIssuesOff(LocalTickets):
+    """With github.issues_enabled off, the UI lists only local tickets (the database rows stay, and come back when it is on)."""
+
+    def test_ticket_rows_hide_github_tickets_only_when_asked(self):
+        self.create()
+        self.db.execute("INSERT INTO decisions (repo, issue, updated_at, outcome, detail, decided_at) VALUES (?, 5, 'x', 'skip', 'seen', 1)", (REPO,))
+        self.db.commit()
+        local = tracker.LOCAL_BASE + 1
+        self.assertEqual({r["issue"] for r in board.ticket_rows(self.db)}, {5, local})
+        self.assertEqual({r["issue"] for r in board.ticket_rows(self.db, github=False)}, {local})
+
+    def test_needs_you_makes_no_github_call_when_off(self):
+        class H:
+            class app:
+                @staticmethod
+                def cfg():
+                    return replace(load(str(self.root / "config.toml")), github_issues_enabled=False)
+        self.assertIsNone(L.needs_you(H()))

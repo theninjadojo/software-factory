@@ -430,10 +430,11 @@ class Handler(BaseHTTPRequestHandler):
         # GitHub is slow: the page is drawn from the factory's database and the last GitHub read; when that read is too old, the
         # ticket's detail (its questions come from GitHub) loads in place, behind a loader. A fragment always reads GitHub.
         fragment = path.startswith("/fragment/")
-        needs = L.needs_you(self) if fragment else L.needs_cached()
-        cold = needs is None and not fragment and L.has_token(self)
+        gh_on = cfg.github_issues_enabled
+        needs = (L.needs_you(self) if fragment else L.needs_cached()) if gh_on else None
+        cold = gh_on and needs is None and not fragment and L.has_token(self)
         try:
-            rows = board.ticket_rows(db, needs, L.titles_cached(), now)
+            rows = board.ticket_rows(db, needs, L.titles_cached(), now, cfg.github_issues_enabled)
             c = board.counts(rows)
             keys = {k for k, _, _ in board.FILTERS}
             flt = q.get("stage") if q.get("stage") in keys else ("needs" if c["needs"] else "all")
@@ -444,7 +445,10 @@ class Handler(BaseHTTPRequestHandler):
             if explicit and not (views.REPO.match(repo) and n.isdigit() and len(n) < 10):
                 return self._send(404, "no such ticket", "text/plain")
             if explicit:
-                sel = next((r for r in rows if r["repo"] == repo and r["issue"] == int(n)), None) or board.row_for(db, repo, int(n), needs, L.titles_cached(), now)
+                sel = next((r for r in rows if r["repo"] == repo and r["issue"] == int(n)), None)
+                if sel is None and not gh_on and not is_local(int(n)):
+                    return self._send(404, "This ticket is hidden: it is a GitHub issue and Work from GitHub issues is off. Nothing was deleted.", "text/plain")
+                sel = sel or board.row_for(db, repo, int(n), needs, L.titles_cached(), now)
             else:
                 shown = board.pick(rows, flt, at, text, order)
                 sel = shown[0] if shown else None
@@ -480,7 +484,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
         self.app.refresh_update_notice()
-        cached = L.needs_cached()                              # the nav count: never a GitHub call, only what the tray already read
+        cached = L.needs_cached() if self.app.cfg().github_issues_enabled else None                            # the nav count: never a GitHub call, only what the tray already read
         badges = {"/tickets": len(cached)} if cached else None
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))
         flt = q.get("need", "") if q.get("need") in ("questions", "decisions") else ""
@@ -488,12 +492,13 @@ class Handler(BaseHTTPRequestHandler):
             # the page itself never waits for GitHub: with no recent read, the Needs-you tray loads in place (the refresh reads GitHub)
             d = self.app.overview()
             d["settings_strip"] = features.factory_strip(self.app.cfg(), d["paused"], csrf)
-            needs = L.needs_you(self) if path == "/fragment/overview" else L.needs_cached()
-            if needs is None and path == "/" and L.has_token(self):
+            gh_on = self.app.cfg().github_issues_enabled
+            needs = (L.needs_you(self) if path == "/fragment/overview" else L.needs_cached()) if gh_on else None
+            if gh_on and needs is None and path == "/" and L.has_token(self):
                 d["needs_loading"] = True
             db = self.app.ro_db()
             try:
-                d["ticket_rows"] = board.ticket_rows(db, needs, L.titles_cached()) if db is not None else []
+                d["ticket_rows"] = board.ticket_rows(db, needs, L.titles_cached(), None, self.app.cfg().github_issues_enabled) if db is not None else []
             finally:
                 if db is not None:
                     db.close()

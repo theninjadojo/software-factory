@@ -432,7 +432,7 @@ def needs_you(h) -> list | None:
     Read from GitHub (labels decide, as on the Tickets page) and cached briefly. None when there is no token or GitHub fails."""
     cfg = h.app.cfg()
     gh = _gh(h)
-    if gh is None or not cfg.repos:
+    if not cfg.github_issues_enabled or gh is None or not cfg.repos:
         return None
     with _needs_lock:
         if _needs_cache["rows"] is not None and time.time() - _needs_cache["at"] < NEEDS_TTL:
