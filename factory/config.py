@@ -125,6 +125,18 @@ class MockupsCfg:
 
 
 @dataclass(frozen=True)
+class DesignLinksCfg:
+    """Design exports (single HTML files, e.g. from Claude Design) linked in a ticket body. Off by default: the orchestrator fetches
+    only https links on the listed hosts (plain host names, no wildcards), at most max_links per ticket and max_bytes each, and re-fetches
+    after ttl_hours. The content is untrusted: agents read it as intent, the UI shows it in a sandboxed tab without scripts."""
+    enabled: bool = False
+    hosts: tuple[str, ...] = ()
+    max_links: int = 3
+    max_bytes: int = 2_000_000
+    ttl_hours: int = 24
+
+
+@dataclass(frozen=True)
 class UpdatesCfg:
     """Tell the person in the UI when a newer release exists (one cached read of GitHub's public releases API, every few hours)."""
     check: bool = True
@@ -405,6 +417,7 @@ class Config:
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
+    design_links: DesignLinksCfg = field(default_factory=DesignLinksCfg)
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
@@ -918,6 +931,13 @@ def parse(raw: dict) -> Config:
             or not mockups.request_label.strip()):
         raise ValueError("mockups.mode must be block, warn or off, and mockups.bypass_label, mockups.approve_label and "
                          "mockups.request_label must not be empty")
+    design_links = DesignLinksCfg(**_tuples(raw.get("design_links", {})))
+    from .designlinks import valid_host
+    if (not all(valid_host(h) for h in design_links.hosts) or not 1 <= design_links.max_links <= 5
+            or not 1 <= design_links.max_bytes <= 5_000_000 or not 1 <= design_links.ttl_hours <= 720
+            or (design_links.enabled and not design_links.hosts)):
+        raise ValueError("design_links.hosts must be lower-case host names (no wildcards, and at least one when enabled), max_links 1-5, "
+                         "max_bytes 1-5000000 and ttl_hours 1-720")
     updates = UpdatesCfg(**raw.get("updates", {}))
     if not isinstance(updates.repo, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", updates.repo):
         raise ValueError("updates.repo must look like owner/name")
@@ -973,6 +993,7 @@ def parse(raw: dict) -> Config:
         conflicts=conflicts,
         review=review,
         mockups=mockups,
+        design_links=design_links,
         updates=updates,
         pm=pm,
         health=health,

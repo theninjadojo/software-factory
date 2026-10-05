@@ -86,6 +86,22 @@ def design_links(files) -> str:
                        for f in files or [] if designfiles.link_ok(f))
 
 
+def import_links(imports) -> str:
+    """The design exports linked in a ticket: the preview inline and the stored page in a new tab (served sandboxed, without scripts).
+    Only integer ids from the database are linked."""
+    out = ""
+    for i, imp in enumerate(imports or [], 1):
+        try:
+            n = int(imp["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        img = (f'<a href="/design-import?id={n}" target="_blank" rel="noopener noreferrer"><img class="mockup" src="/design-import/png?id={n}" '
+               f'alt="Linked design {i}" loading="lazy"></a>') if imp.get("has_png") else ""
+        out += (f'<div class="mockups">{img}</div>' if img else "") + (
+            f'<p class="sd-fine"><a href="/design-import?id={n}" target="_blank" rel="noopener noreferrer">Open linked design {i} (new tab, no scripts)</a></p>')
+    return out
+
+
 def ref(repo: str, issue, short: bool = False) -> str:
     """How a ticket is named on screen: repo#12 for a GitHub issue, repo L-3 for a local ticket (never repo#100000003)."""
     name = str(repo).split("/")[-1] if short else str(repo)

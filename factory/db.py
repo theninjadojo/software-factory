@@ -77,6 +77,12 @@ def connect(path: str) -> sqlite3.Connection:
         """CREATE TABLE IF NOT EXISTS mockup_images (
             repo TEXT NOT NULL, path TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL, PRIMARY KEY (repo, path))"""
     )
+    db.execute(                                     # design exports linked from a ticket (untrusted; fetched by the orchestrator)
+        """CREATE TABLE IF NOT EXISTS design_imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, issue INTEGER NOT NULL, url TEXT NOT NULL, url_hash TEXT NOT NULL,
+            status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', html BLOB, png BLOB, sha256 TEXT NOT NULL DEFAULT '',
+            fetched REAL NOT NULL, UNIQUE (repo, issue, url_hash))"""
+    )
     db.execute(                                     # screenshots of what a run built (and diffs against the baselines), for the UI
         """CREATE TABLE IF NOT EXISTS run_images (
             run_id INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL,
@@ -349,6 +355,45 @@ def mockup_image(db, repo: str, path: str) -> bytes | None:
     except sqlite3.OperationalError:
         return None
     return bytes(row[0]) if row else None
+
+
+def add_design_import(db, repo: str, issue: int, url: str, url_hash: str, status: str, detail: str, html: bytes | None,
+                      png: bytes | None, sha256: str, fetched: float) -> None:
+    """Record (or replace) one fetched design link of a ticket; the content is kept only for status ok, the png only if it is a real PNG."""
+    ok = status == "ok"
+    db.execute("INSERT OR REPLACE INTO design_imports (repo, issue, url, url_hash, status, detail, html, png, sha256, fetched) "
+               "VALUES (?,?,?,?,?,?,?,?,?,?)",
+               (repo, int(issue), url, url_hash, status, detail, html if ok else None,
+                png if ok and isinstance(png, bytes) and png_ok(png) else None, sha256, fetched))
+    db.commit()
+
+
+def design_import_row(db, repo: str, issue: int, url_hash: str) -> dict | None:
+    try:
+        r = db.execute("SELECT id, status, html, png, fetched FROM design_imports WHERE repo=? AND issue=? AND url_hash=?",
+                       (repo, int(issue), url_hash)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return {"id": r[0], "status": r[1], "html": bytes(r[2]) if r[2] else None,   # a restored backup holds empty text here
+            "png": bytes(r[3]) if r[3] else None, "fetched": r[4]} if r else None
+
+
+def design_imports(db, repo: str, issue: int) -> list[dict]:
+    """The usable (fetched) design links of a ticket, without their content: {id, has_png}."""
+    try:
+        return _dicts(db.execute("SELECT id, length(png) > 0 AS has_png FROM design_imports WHERE repo=? AND issue=? AND status='ok' AND length(html) > 0 "
+                                 "ORDER BY id", (repo, int(issue))))
+    except sqlite3.OperationalError:
+        return []
+
+
+def design_import(db, import_id: int) -> dict | None:
+    """The stored html and png of one fetched design link (by id), or None."""
+    try:
+        r = db.execute("SELECT html, png FROM design_imports WHERE id=? AND status='ok'", (int(import_id),)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return {"html": bytes(r[0]), "png": bytes(r[1]) if r[1] else None} if r and r[0] else None
 
 
 def mockup_previews(db, repo: str, issue: int) -> list[dict]:
