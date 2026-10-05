@@ -15,13 +15,14 @@ LOCK = threading.Lock()                    # the server is threaded: the revisio
 FLASH = {"layout_reset": "Back to the default layout. The floor is drawn as it was before any layout was saved."}
 STALE = ("The layout was saved by someone else since you opened it. Save again to replace it with yours, or open the page again to "
          "start from theirs.")
-TOOLS = (("move", "Move"), ("belt", "Draw belt"), ("rail", "Draw track"), ("splitter", "Splitter"), ("merger", "Merger"), ("sideload", "Side-load"),
-         ("underground", "Underground"), ("erase", "Erase"))
+# the layout tools, each with the category of the build panel it is listed under
+TOOLS = (("move", "Move", "Select"), ("belt", "Draw belt", "Belts"), ("rail", "Draw track", "Belts"), ("splitter", "Splitter", "Belts"),
+         ("merger", "Merger", "Belts"), ("sideload", "Side-load", "Belts"), ("underground", "Underground", "Belts"), ("erase", "Erase", "Select"))
 # the terrain tools (terrain.py), in the groups of the design's terrain sandbox
 TERRAIN_TOOLS = (("Scenery", (("tree", "Tree"), ("pine", "Pine"), ("bush", "Bush"), ("rock", "Rock"))),
                  ("Water", (("pond", "Pond"), ("river", "River"))),
                  ("Ground", (("g-grass", "Grass"), ("g-dirt", "Dirt"), ("g-sand", "Sand"), ("g-concrete", "Concrete"), ("g-water", "Water"))),
-                 ("Build", (("wall", "Wall"), ("fence", "Fence"), ("gate", "Gate"), ("road", "Road"), ("hazard", "Hazard"))),
+                 ("Structures", (("wall", "Wall"), ("fence", "Fence"), ("gate", "Gate"), ("road", "Road"), ("hazard", "Hazard"))),
                  ("Light", (("lamp", "Lamp"), ("fog", "Fog"), ("shade", "Shade"))),
                  ("Park", (("fetch", "Fetch"), ("playground", "Playground"), ("picnic", "Picnic"), ("bench", "Bench"), ("dogwalk", "Dog walker"))))
 # the town (town_art.py, generated from the design): one group of tools per kind of piece, in the order the design shows them
@@ -34,13 +35,28 @@ def _ctx(h) -> "floorplan.Ctx":
     return board.floor_ctx(d["cfg"], d.get("workers") or [])
 
 
+def _category(name: str, items, open_: bool) -> str:
+    """One collapsible category of the build panel: a heading that toggles it, and its tools (data-tool buttons, as the toolbars had)."""
+    btns = "".join(f'<button type="button" class="fe-part fe-tool" data-tool="{t}" aria-pressed="{"true" if t == "move" else "false"}">'
+                   + (f'<i class="sw sw-{t[2:]}" aria-hidden="true"></i>' if t.startswith("g-") else "") + f'<span>{esc(n)}</span></button>'
+                   for t, n in items)
+    closed = "" if open_ else ' data-closed="1"'
+    return (f'<section class="fe-cat" data-cat="{esc(name)}"{closed}><h3><button type="button" class="fe-cat-toggle" aria-expanded="{"true" if open_ else "false"}">'
+            f'<span class="fe-cat-name">{esc(name)}</span> <span class="fe-cat-n">· {len(items)}</span></button></h3>'
+            f'<div class="fe-cat-body" role="group" aria-label="{esc(name)}"{"" if open_ else " hidden"}>{btns}</div></section>')
+
+
 def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None, kind: str = "ok", problems=()) -> None:
     _, why = floorplan.current(h.app.state_dir(), ctx)
     note = (f'<p class="flash bad">The saved layout is not used: {esc(why)}. The floor shows the default arrangement until a layout is '
             'saved again.</p>') if why else ""
-    shown = [(t, n) for t, n in TOOLS if t != "rail" or ctx.yard_on]
-    tools = "".join(f'<button type="button" class="secondary" data-tool="{t}" aria-pressed="{"true" if t == "move" else "false"}">{esc(n)}</button>'
-                    for t, n in shown)
+    shown = [(t, n, c) for t, n, c in TOOLS if t != "rail" or ctx.yard_on]
+    cats = list(dict.fromkeys(c for _, _, c in shown))            # the categories in the order they first appear, from the tool data
+    panel = "".join(_category(c, [(t, n) for t, n, g in shown if g == c], True) for c in cats)
+    panel += ('<section class="fe-cat" data-cat="Buildings"><h3><button type="button" class="fe-cat-toggle" aria-expanded="true">'
+              '<span class="fe-cat-name">Buildings</span> <span class="fe-cat-n"></span></button></h3>'
+              '<div class="fe-cat-body" role="group" aria-label="Buildings"><div class="fe-tray-list"><p class="muted">Loading parts…</p></div></div></section>')
+    panel += "".join(_category(g, ts, False) for g, ts in TERRAIN_TOOLS)
     dirs = "".join(f'<option value="{d}">{n}</option>' for d, n in (("e", "Facing east"), ("w", "Facing west"), ("s", "Facing south"), ("n", "Facing north")))
     art = "".join(f'<g data-art="{esc(nid)}">{plant.node_art(nid, m["label"], ctx.trains)}</g>'
                   for nid, m in floorplan.meta(ctx)["nodes"].items())
@@ -62,7 +78,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'changes the picture, not the workflow. New stations, agents or workers get a default spot until you place them.</p>' + note
             + '<p class="fe-phone muted">Editing the layout is for wider screens. On a phone the floor is the column of its stations.</p>'
             f'<div class="fe" data-meta="{esc(json.dumps(floorplan.meta(ctx), separators=(",", ":")))}">'
-            f'<div class="fe-tools" role="toolbar" aria-label="Layout tools">{tools}'
+            '<div class="fe-tools" role="toolbar" aria-label="Layout options">'
             '<select class="fe-hop" aria-label="The belt to draw"></select>'
             f'<select class="fe-dir" aria-label="Which way the piece faces">{dirs}</select>'
             '<button type="button" class="secondary" data-act="finish">Finish belt</button>'
@@ -75,17 +91,18 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             '<button type="button" class="secondary" data-act="zoomin" aria-label="Zoom in">+</button>'
             '<button type="button" class="secondary" data-act="fit">Fit</button>'
             '<button type="button" class="secondary" data-act="full">Full screen</button></span></div>'
-            '<div class="fe-tools fe-terrain-tools" role="toolbar" aria-label="Terrain tools">' + "".join(
-                f'<span class="fe-group"><span class="lab">{esc(g)}</span>' + "".join(
-                    f'<button type="button" class="secondary" data-tool="{t}" aria-pressed="false">'
-                    + (f'<i class="sw sw-{t[2:]}" aria-hidden="true"></i>' if t.startswith("g-") else "") + f'{esc(n)}</button>' for t, n in tools) + '</span>'
-                for g, tools in TERRAIN_TOOLS) + '</div>'
             f'<svg class="fm fe-art" aria-hidden="true" width="0" height="0" focusable="false">{terrain.defs()}{art}</svg>'
             '<div class="fe-status"><p class="fe-msg" aria-live="polite"></p><button type="button" class="secondary fe-remove" hidden>Remove</button>'
             '<ul class="fe-legend"><li><i class="lg-belt"></i>Belt</li><li><i class="lg-in"></i>Deliveries in</li>'
             + ('<li><i class="lg-rail"></i>Rail</li>' if ctx.yard_on else '') + '<li><i class="lg-radio"></i>Notifier, wireless</li></ul></div>'
-            '<div class="fe-work"><aside class="fe-tray" aria-label="Parts"><h2>Parts <span class="fe-tray-left muted"></span></h2>'
-            '<p class="muted">Drag onto the floor, or click to drop in a free spot. Erase puts a building back.</p><div class="fe-tray-list"></div></aside>'
+            '<div class="fe-work"><aside class="fe-tray" aria-label="Build"><h2>Build <span class="fe-tray-left muted"></span></h2>'
+            '<label class="fe-filter-l"><span class="fe-sr">Filter the build panel</span>'
+            '<input type="search" class="fe-filter" placeholder="Filter tools and parts" autocomplete="off"></label>'
+            '<p class="fe-sr fe-found" role="status" aria-live="polite"></p>'
+            '<p class="muted fe-hint">Click a tool to use it. Drag a part onto the floor, or click to drop it in a free spot.</p>'
+            + panel +
+            '<div class="fe-none" hidden><p class="muted">Nothing matches <q class="fe-q"></q>.</p>'
+            '<button type="button" class="secondary fe-clear">Clear filter</button></div></aside>'
             '<div class="fe-canvas"><svg class="fe-svg" role="application" aria-label="The floor layout: drag a building, or focus one and use the arrow keys"></svg></div></div>'
             '<div class="fe-check" aria-live="polite"></div><ul class="fe-problems" aria-live="polite">' + "".join(f"<li>{esc(p)}</li>" for p in problems) + '</ul></div>'
             f'<form method="post" action="/floor/layout/save" class="fe-save field">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
