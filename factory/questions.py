@@ -20,6 +20,9 @@ from .sanitize import sanitize_markdown
 SAFE, PERSON = "safe-default", "needs-person"
 BLOCK = re.compile(r"^```factory-questions[ \t]*\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 STAGE_HEAD = re.compile(r"<!-- factory:stage=([a-z]+) -->\n")
+# A ticket sent back to an earlier stage (main.redirect): the marker names every stage it superseded, in pipeline order.
+REDIRECT = "<!-- factory:redirect={stages} -->\n"
+REDIRECT_HEAD = re.compile(r"<!-- factory:redirect=([a-z]+(?:,[a-z]+){0,9}) -->\n")
 DATA_HEAD = "<!-- factory:questions "
 ANSWERS = "<!-- factory:answers -->"
 NEEDS_ANSWERS = "factory:needs-answers"        # label on the issue while questions wait for a person
@@ -229,6 +232,9 @@ def from_comments(comments: list, me: str) -> list:
             qs, _ = read_stored(body[m.end():])
             if qs is not None:
                 stages[m.group(1)] = StageQuestions(m.group(1), qs)
+        elif (m := REDIRECT_HEAD.match(body)):
+            for name in m.group(1).split(","):           # sent back: those stages run again and ask again
+                stages.pop(name, None)
         elif (got := read_answers(body)) and got[0] in stages:
             st = stages[got[0]]
             st.answers.update(valid_answers(st.questions, got[1]))

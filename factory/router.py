@@ -32,14 +32,18 @@ def behind(cfg: Config, role: str | None, done) -> bool:
     return bool(role in names and later and names.index(role) < max(later))
 
 
-def pick_stage(cfg: Config, c: Classification, done, multi_repo: bool = False) -> tuple[Classification, str | None]:
-    """What `factory:auto` should treat as the classifier's stage. Two adjustments, both only for auto (a person's explicit
-    label is always obeyed): no stage from the model (not the labels fallback) means the safe default, the analyst; and a build
+def pick_stage(cfg: Config, c: Classification, done, multi_repo: bool = False,
+               screens: bool = False) -> tuple[Classification, str | None]:
+    """What `factory:auto` should treat as the classifier's stage. Three adjustments, all only for auto (a person's explicit
+    label is always obeyed): no stage from the model (not the labels fallback) means the safe default, the analyst; a ticket a
+    person asked screens for (screens: the mockups request label) gets the designer before the architect or a build; and a build
     of a high-complexity ticket, or a medium one spanning several repositories, gets the architect's plan first.
     Returns the classification (stage possibly changed) and why it was changed, if it was."""
     have = {r.name for r in cfg.roles}
     if c.stage is None and c.source != "labels" and "analyst" in have and not done:     # only before any stage has run
         return dataclasses.replace(c, stage="analyze"), "no stage from the classifier: analyst first"
+    if screens and c.stage in ("implement", "architect") and "designer" in have and "designer" not in done:
+        return dataclasses.replace(c, stage="design"), "screens were requested: designer first"
     if (c.stage == "implement" and "architect" in have and "architect" not in done
             and (c.complexity == "high" or (c.complexity == "medium" and multi_repo))):
         return dataclasses.replace(c, stage="architect"), f"{c.complexity} complexity" + (" across repositories" if c.complexity == "medium" else "") + ": architect before build"

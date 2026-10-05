@@ -158,6 +158,8 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("mockups.require_approval", "Mockups need a person's approval", "bool",
               "When on (and mode is block), a build waits until the approval label is on the ticket or the design PR is merged."),
         Field("mockups.approve_label", "Approval label", "text"),
+        Field("mockups.request_label", "Screens requested label", "text",
+              "Put on a ticket by 'Make screens for me to review': design runs before the build, and the build waits for approval."),
     ]),
     "ci": ("CI feedback", [
         Field("ci.enabled", "Watch CI on factory PRs", "bool"),
