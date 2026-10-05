@@ -26,7 +26,7 @@ from . import mockups as mockups_mod
 from . import reviewnotes
 from .render import render as preview_render
 from .roles import (CI_FIX_PROMPT, VERIFY_FIX_PROMPT, CONFLICTS_PROMPT, SCREEN_FIX_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
-                    agent_key, common_for, design_files_rules, operator_prompt)
+                    agent_key, common_for, design_files_rules, operator_prompt, SUMMARY_RULES)
 from .github import GitHub
 
 log = logging.getLogger("factory.runner")
@@ -253,7 +253,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
         if role == "designer" and design_files:
             task += design_files_rules(design_dir)
         if role in STAGE_TO_ROLE.values():
-            task += QUESTIONS_RULES
+            task += SUMMARY_RULES + QUESTIONS_RULES
         if role == "designer" and review:
             task += reviewnotes.PROMPT
     else:
