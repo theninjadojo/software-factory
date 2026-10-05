@@ -781,6 +781,29 @@ main.full { max-width:none; }
 .cp-grid a:hover img, .cp-grid a:focus-visible img { border-color:var(--accent); }
 .cp-grid figcaption { color:var(--muted); font-size:.75rem; margin-top:.25rem; overflow-wrap:anywhere; }
 
+/* The canvas of a Playwright run's screens (/screens/canvas): one surface, a row per page, its viewports side by side. */
+.cv-zoom button[aria-pressed=true] { outline:2px solid var(--accent); outline-offset:1px; }
+.cv-zoom { display:flex; align-items:center; gap:.5rem; margin:.6rem 0; }
+.cv { overflow-x:auto; min-height:12rem; background:var(--panel); border:1px solid var(--line); padding:1rem; }
+.cv-page { margin:0 0 1.6rem; }
+.cv-page h3 { margin:0 0 .5rem; font-size:1rem; overflow-wrap:anywhere; }
+.cv-row { display:flex; align-items:flex-start; gap:1rem; width:max-content; }
+.cv-shot { margin:0; flex:none; }
+.cv-shot a { display:block; }
+.cv-shot img { display:block; width:100%; height:auto; border:1px solid var(--line2); background:#fff; }
+.cv-shot a:hover img, .cv-shot a:focus-visible img { border-color:var(--accent); }
+.cv-shot figcaption { color:var(--muted); font-size:.8rem; margin-top:.25rem; display:flex; gap:.4rem; align-items:center; }
+.cv-shot { width:30rem; } .cv-tablet { width:20rem; } .cv-phone, .cv-mobile { width:10rem; }
+.cv[data-z="1"] .cv-shot { width:16rem; } .cv[data-z="1"] .cv-tablet { width:11rem; } .cv[data-z="1"] .cv-phone, .cv[data-z="1"] .cv-mobile { width:5.5rem; }
+.cv[data-z="3"] .cv-shot { width:52rem; } .cv[data-z="3"] .cv-tablet { width:34rem; } .cv[data-z="3"] .cv-phone, .cv[data-z="3"] .cv-mobile { width:17rem; }
+.cv[data-z="1"] .cv-row { gap:.6rem; }
+@media (max-width:760px) {
+  .cv-row { width:auto; flex-wrap:wrap; gap:.6rem; }
+  .cv[data-z] .cv-shot { width:calc(50% - .3rem); }
+  .cv[data-z] .cv-tablet { width:calc(30% - .3rem); }
+  .cv[data-z] .cv-phone, .cv[data-z] .cv-mobile { width:calc(20% - .3rem); }
+}
+
 /* The floor's layout editor (/floor/edit, floor-edit.js): a plan of the buildings and belts on the layout's grid. Wide screens only. */
 .fe-phone { display:none; }
 .fe-work { display:flex; gap:.6rem; align-items:stretch; }

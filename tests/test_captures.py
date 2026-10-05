@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from factory import captures as CP, jobs
+from factory import screenboard as SB
 from factory import db as dbm
 from factory.config import ScreenCapture, ScreensCfg, WorkersCfg, load
 
@@ -202,10 +203,11 @@ class Board(UiCase):
         self.assertIn("some tests failed", html)
         self.assertIn("1 screen ·", html)
         self.assertIn(f"/workers/job?id={jid}", html)
-        src = "/workerimg?" + urlencode({"job": jid, "name": "login-chromium"})
-        self.assertIn(src.replace("&", "&amp;"), html)
-        s, h, _ = self.req("GET", src, cookie=self.cookie)
+        key = SB.key(SHOP, "login", "chromium", SHA)
+        self.assertIn(("/screens/review?" + urlencode({"img": key})).replace("&", "&amp;"), html)        # a card's thumbnail opens the review tool
+        s, h, _ = self.req("GET", SB.src(key), cookie=self.cookie)
         self.assertEqual((s, h["Content-Type"]), (200, "image/png"))
+        self.assertIn("Open all 1 on the canvas", html)
 
     def test_a_repo_with_no_suite_says_so_instead_of_failing(self):
         jid = jobs.enqueue(self.db, SHOP, 0, SHA, "", "playwright-screens", "any", 1.0, PARAMS)
@@ -222,6 +224,103 @@ class Board(UiCase):
         self.assertIn("<h2>shop</h2>", html)
         self.assertNotIn("<html", html)
         self.assertEqual(self.req("GET", "/screens/captures")[0], 303)
+
+
+def run_with_shots(db, repo, names, sha=SHA, now=100.0):
+    """A finished Playwright job that brought back `names`, imported to the board the way jobs.complete does."""
+    jid = jobs.enqueue(db, repo, 0, sha, "", "playwright-screens", "any", now, PARAMS)
+    jobs.claim(db, "w1", "linux", ["playwright-screens"], now, 120, 99999999, 2)
+    arts = [{"name": n, "png_b64": base64.b64encode(png(1280, 800)).decode()} for n in names]
+    assert jobs.complete(db, jid, "w1", {"status": "failed", "exit_code": 1, "log": "", "artifacts": arts}, now + 1) == ""
+    return jid
+
+
+class Split(unittest.TestCase):
+    def test_names_become_a_page_and_a_viewport(self):
+        cases = {"tickets-desktop": ("tickets", "desktop"), "labels-issue-repo-x-n-7-phone": ("labels-issue-repo-x-n-7", "phone"),
+                 "home-spec-shows-home-mobile-1123493802": ("home-spec-shows-home", "mobile"), "login-spec-signs-in-chromium-99999": ("login-spec-signs-in", "chromium"),
+                 "home-a-failing-one-test-failed-1-2374389124": ("home-a-failing-one-test-failed-1", "run"), "x": ("x", "run")}
+        for name, want in cases.items():
+            self.assertEqual(CP.split_name(name), want, name)
+
+    def test_a_name_that_cannot_be_a_page_still_gets_one(self):
+        self.assertEqual(CP.split_name("-desktop")[1], "run")
+        self.assertEqual(CP.split_name("a" * 200 + "-phone"), ("a" * 60, "phone"))
+
+
+class Canvas(UiCase):
+    def setUp(self):
+        super().setUp()
+        p = self.root / "config.toml"
+        p.write_text(p.read_text() + f'\n[workers]\nenabled = true\n[screens]\n[[screens.captures]]\nrepo = "{SHOP}"\n')
+        self.cookie, self.csrf = self.session()
+        run_with_shots(self.db, SHOP, ["home-desktop", "home-tablet", "home-phone", "tickets-desktop", "tickets-phone", "login-spec-x-chromium-12345"])
+
+    def get(self, path):
+        return self.req("GET", path, cookie=self.cookie)
+
+    def test_a_finished_run_lands_on_the_board_grouped_by_page_and_viewport(self):
+        got = SB.latest(self.db)
+        self.assertEqual({(p, v) for (r, p, v) in got}, {("home", "desktop"), ("home", "tablet"), ("home", "phone"), ("tickets", "desktop"),
+                                                          ("tickets", "phone"), ("login-spec-x", "chromium")})
+        self.assertTrue(all(x["sha"] == SHA for x in got.values()))
+
+    def test_the_canvas_has_every_screen_in_one_place_with_the_viewports_in_order(self):
+        s, _, html = self.get("/screens/canvas?" + urlencode({"repo": SHOP}))
+        self.assertEqual(s, 200)
+        self.assertIn("6 screens on 3 pages", html)
+        for page in ("home", "tickets", "login-spec-x"):
+            self.assertIn(f"<h3>{page}</h3>", html)
+        self.assertLess(html.index("cv-desktop"), html.index("cv-tablet"))
+        self.assertLess(html.index("cv-tablet"), html.index("cv-phone"))
+        key = SB.key(SHOP, "home", "tablet", SHA)
+        self.assertIn(("/screens/review?" + urlencode({"img": key})).replace("&", "&amp;"), html)
+        self.assertIn('data-zoom="3"', html)
+        self.assertNotIn("style=", html.split("<main")[1])
+
+    def test_only_a_repo_with_a_playwright_run_has_a_canvas_and_it_needs_a_session(self):
+        self.assertEqual(self.get("/screens/canvas?repo=your-org/other")[0], 404)
+        self.assertEqual(self.get("/screens/canvas")[0], 404)
+        self.assertEqual(self.req("GET", "/screens/canvas?" + urlencode({"repo": SHOP}))[0], 303)
+
+    def test_a_screen_opens_in_the_review_tool_with_its_viewports_as_tabs_and_a_way_back(self):
+        key = SB.key(SHOP, "home", "desktop", SHA)
+        s, _, html = self.get("/screens/review?" + urlencode({"img": key}))
+        self.assertEqual(s, 200)
+        self.assertIn("home · desktop", html)
+        self.assertIn("home · tablet", html)
+        self.assertNotIn("tickets · desktop", html)
+        self.assertIn("/screens/canvas?repo=", html)
+
+    def test_a_note_on_a_screen_counts_on_the_canvas_and_can_become_a_ticket_note(self):
+        from factory import reviewnotes as RN
+        key = SB.key(SHOP, "tickets", "phone", SHA)
+        body = urlencode({"csrf": self.csrf, "board": "1", "img": key, "text": "chips wrap", "x": "10", "y": "10", "w": "20", "h": "10"})
+        s, h, _ = self.req("POST", "/review/add", body, cookie=self.cookie)
+        self.assertEqual(s, 303)
+        self.assertEqual([x["image"] for x in RN.notes(self.db, *RN.BOARD, open_only=True)], [key])
+        html = self.get("/screens/canvas?" + urlencode({"repo": SHOP}))[2]
+        self.assertIn('class="rv-count" title="Open notes">1<', html)
+        self.assertIn("1 open notes", html)
+
+    def test_a_newer_run_replaces_the_canvas_but_a_note_keeps_its_older_screen(self):
+        from factory import reviewnotes as RN
+        old = SB.key(SHOP, "tickets", "phone", SHA)
+        RN.ensure_tables(self.db)
+        RN.add(self.db, *RN.BOARD, old, (1, 1, 10, 10), "fix")
+        self.db.commit()
+        run_with_shots(self.db, SHOP, ["home-desktop", "home-tablet"], sha="d" * 40, now=500.0)
+        html = self.get("/screens/canvas?" + urlencode({"repo": SHOP}))[2]
+        self.assertIn("2 screens on 1 pages", html)
+        self.assertNotIn("<h3>tickets</h3>", html)
+        self.assertIsNotNone(SB.image(self.db, old))                                   # kept: an open note is on it
+        self.assertIsNone(SB.image(self.db, SB.key(SHOP, "home", "tablet", SHA)))        # no note, and a newer run has its own home: replaced
+
+    def test_a_run_that_kept_nothing_leaves_the_previous_canvas(self):
+        jid = jobs.enqueue(self.db, SHOP, 0, "e" * 40, "", "playwright-screens", "any", 900.0, PARAMS)
+        jobs.claim(self.db, "w1", "linux", ["playwright-screens"], 900.0, 120, 99999999, 2)
+        jobs.complete(self.db, jid, "w1", {"status": "failed", "exit_code": 2, "log": "no suite", "artifacts": []}, 901.0)
+        self.assertIn("6 screens on 3 pages", self.get("/screens/canvas?" + urlencode({"repo": SHOP}))[2])
 
 
 class SetUp(UiCase):

@@ -293,7 +293,9 @@ def board_review_get(h, q: dict, csrf: str) -> None:
         body = head + '<p class="muted">There are no screens to review yet. Take the shots on the Screens page first.</p>'
     else:
         tabs = [i for i in known if i["screen"] == sel["screen"]]
-        head = (f'<p><a href="/screens">← Screens</a> · {esc(sel["screen"][1])}'
+        canvas = (f' · <a href="/screens/canvas?{urlencode({"repo": sel["screen"][0]})}">Canvas</a>'
+                  if sel["screen"][0] in {c.repo for c in cfg.screens.captures} and (sel["screen"] not in {(p.repo, p.name) for p in cfg.screens.pages}) else "")
+        head = (f'<p><a href="/screens">← Screens</a>{canvas} · {esc(sel["screen"][1])}'
                 + (f' <span class="muted">({esc(sel["screen"][0])})</span>' if len({i["screen"][0] for i in known}) > 1 else "") + "</p>")
         body = head + review_ui(*RN.BOARD, tabs, known, sel, notes, board_send(cfg, notes, known, sel, csrf), "Notes on the screens", csrf)
     shown = L.flash_pop(csrf)
