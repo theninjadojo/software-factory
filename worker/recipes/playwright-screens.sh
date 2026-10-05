@@ -8,15 +8,21 @@
 #   command = ["/path/to/playwright-screens.sh", "--dir", "web"]      only the project in a subfolder
 #   artifacts = ["screens-out/*.png"]
 #
+# A repo with no JavaScript Playwright config but a Python suite in tests/e2e (requirements.txt there) runs as pytest instead, in a throwaway
+# virtualenv. The suite opts in by writing PNGs to $E2E_SCREENS_DIR (this recipe sets it); a suite that does not still runs, with no images.
+# --browser /path/to/chromium: use this browser for that Python path (E2E_BROWSER) and skip downloading one.
+#
 # Finds every folder that has a Playwright config (or the --dir given), installs with the lockfile, installs Chromium, then runs the
 # suite through a wrapper config WRITTEN HERE that turns on a full-page screenshot at the end of every test, whatever the project's own
 # config says. Every PNG is copied to screens-out/ under a unique, readable name. The screenshots are returned even when tests fail, so a
 # red suite still shows what the screens looked like. Exit 0: the suite passed. Exit 1: install or tests failed. Exit 2: nothing to run.
 set -u
 ONLY=""
+BROWSER=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir) ONLY="${2:-}"; shift 2 ;;
+    --browser) BROWSER="${2:-}"; shift 2 ;;
     *) echo "[playwright-screens] unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -29,6 +35,18 @@ config_in() { for f in playwright.config.ts playwright.config.mts playwright.con
 
 if [ -n "$ONLY" ]; then DIRS="$ONLY"
 else DIRS=$(find . -maxdepth 3 -name 'playwright.config.*' -not -path '*/node_modules/*' -exec dirname {} \; | sort -u | sed 's#^\./##'); fi
+
+if [ -z "$DIRS" ] && [ -z "$ONLY" ] && [ -f tests/e2e/requirements.txt ]; then
+  echo "[playwright-screens] == Python suite in tests/e2e"
+  VENV="$ROOT/.screens-venv"
+  python3 -m venv "$VENV" && "$VENV/bin/pip" install -q -r tests/e2e/requirements.txt || { echo "[playwright-screens] FAILED: installing the Python suite" >&2; exit 1; }
+  if [ -z "$BROWSER" ]; then "$VENV/bin/playwright" install chromium || { echo "[playwright-screens] FAILED: playwright install" >&2; exit 1; }; fi
+  status=0
+  E2E_SCREENS_DIR="$OUT" E2E_BROWSER="$BROWSER" "$VENV/bin/python" -m pytest tests/e2e -q -p no:cacheprovider || { echo "[playwright-screens] some tests failed (their screenshots are kept)" >&2; status=1; }
+  count=$(find "$OUT" -name '*.png' | wc -l)
+  echo "[playwright-screens] $count screenshot(s) kept"
+  exit "$status"
+fi
 [ -n "$DIRS" ] || { echo "[playwright-screens] no Playwright config found in this repository" >&2; exit 2; }
 
 slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9][^a-z0-9]*/-/g; s/^-//; s/-$//'; }
