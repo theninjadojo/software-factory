@@ -137,6 +137,14 @@ def cancel(db, job_id: int, now: float, why: str = "cancelled by the orchestrato
     db.commit()
 
 
+def cancel_for(db, repo: str, issue: int, now: float, why: str = "the ticket was closed") -> int:
+    """Cancel every queued or claimed check of one ticket; a worker holding one is told to stop at its next heartbeat."""
+    cur = db.execute("UPDATE verify_jobs SET status='cancelled', finished=?, log=log || ? WHERE repo=? AND issue=? AND status IN ('queued','claimed')",
+                     (now, why, repo, issue))
+    db.commit()
+    return cur.rowcount
+
+
 def clean_log(text) -> str:
     """Worker output is untrusted text: capped (keeping the end, where failures are), control characters removed."""
     text = text if isinstance(text, str) else ""

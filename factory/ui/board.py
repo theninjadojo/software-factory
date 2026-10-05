@@ -372,7 +372,7 @@ def _bar(s: dict, t0: float, span: float) -> str:
 
 
 RUN_WORD = {"stage": "document posted", "pr": "pull request opened", "passed": "passed", "failed": "failed", "running": "running now",
-            "no-change": "nothing to change", "rejected": "change rejected", "rate-limited": "waiting for the rate limit", "interrupted": "interrupted"}
+            "no-change": "nothing to change", "rejected": "change rejected", "rate-limited": "waiting for the rate limit", "interrupted": "interrupted", "cancelled": "cancelled (ticket closed)"}
 
 
 def _step_label(s: dict) -> tuple[str, str]:
@@ -506,8 +506,9 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float) -
 
 
 def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_rounds: int, now: float, live: bool, images: bool = False,
-                local_html: str = "", handling: str = "") -> str:
-    """local_html: a local ticket's own card (description, comments, edit); it has no GitHub page to link to. handling: how the
+                local_html: str = "", handling: str = "", close_html: str = "") -> str:
+    """local_html: a local ticket's own card (description, comments, edit); it has no GitHub page to link to. close_html: Close for a
+    GitHub ticket (a local ticket's card has its own). handling: how the
     settings apply to this ticket (features.ticket_handling)."""
     repo, n, j = r["repo"], r["issue"], r["journey"]
     gh = f"https://github.com/{repo}/issues/{n}"
@@ -527,7 +528,7 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
             f'<div class="sd-dhead"><div class="sd-row"><span class="mono muted">{esc(views.ref(repo, n))}</span>'
             f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></div>'
             f'<h2>{esc(r["title"])}</h2><div class="sd-links">{links}</div></div>'
-            + _tiles(j, r["state"]) + needs_html + local_html + body + handling + "</article>")
+            + _tiles(j, r["state"]) + needs_html + local_html + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + body + handling + "</article>")
 
 
 def needs_card(row: dict | None, csrf: str, back: str) -> str:

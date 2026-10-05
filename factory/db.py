@@ -451,7 +451,7 @@ def prs_for_issue(db, issue_repo: str, issue_num: int) -> list[tuple[str, int]]:
 STEP_ORDER = ("analyze", "design", "architect", "implement", "review", "ci-fix")
 _STAGE_STEP = {"analyst": "analyze", "designer": "design", "architect": "architect", "reviewer": "review"}
 _DONE = {"stage", "pr"}
-_QUEUED = {"rate-limited", "interrupted"}                  # the run was requeued, nothing is running
+_QUEUED = {"rate-limited", "interrupted", "cancelled"}                  # the run was requeued, nothing is running
 
 
 def step_of(kind: str, stage: str | None) -> str | None:

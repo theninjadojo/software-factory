@@ -15,12 +15,13 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
-from . import designfiles, screens, tracker, verify
+from . import designfiles, pool, screens, tracker, verify
 from . import mockups as mockups_mod
 from . import reviewnotes
 from .render import render as preview_render
@@ -30,6 +31,7 @@ from .github import GitHub
 
 log = logging.getLogger("factory.runner")
 BRANCH_PREFIX = "factory/"
+CANCELLED = "the ticket was closed, so the work was stopped"
 RATE_LIMIT = re.compile(r"usage limit|rate.?limit|limit reached|too many requests|\b429\b|overloaded", re.I)
 FENCE = "`" * 3
 BAD_MODE = re.compile(r"\b(120000|160000)\b")
@@ -53,7 +55,7 @@ API_ERROR = re.compile(r"API Error: 5\d\d|overloaded_error|\bapi_error\b|interna
 
 @dataclass
 class RunResult:
-    status: str          # "pr" | "stage" | "no-change" | "rejected" | "failed" | "rate-limited" | "needs-person" (merge only)
+    status: str          # "pr" | "stage" | "no-change" | "rejected" | "failed" | "rate-limited" | "needs-person" (merge only) | "cancelled" (the ticket was closed)
     detail: str
     pr_url: str | None = None
     output: str = ""      # a role agent's document (status "stage")
@@ -423,6 +425,17 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
     want_design = role == "designer" and bool(role_cfg and role_cfg.design_files)
     design_dir = role_cfg.design_dir if role_cfg else designfiles.DEFAULT_DIR
     names = {r.repo: r.repo.split("/")[1] for r in project.repos}
+    cancel = pool.current_cancel()
+
+    def cancelled() -> bool:
+        """The ticket was closed: stop before anything is published. The event is set by the poll; the re-read covers the
+        gap before it has run."""
+        if cancel is not None and cancel.is_set():
+            return True
+        try:
+            return gh.get_issue(repo, num).get("state") == "closed"
+        except Exception:
+            return False
     # Unique per run, not per second: with parallel runs, two tickets with the same number (in two repos of a project, or in two
     # projects) must never share a workspace, a container name or a branch. The token keeps them apart.
     stamp = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
@@ -505,12 +518,28 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
+        if cancelled():
+            return RunResult("cancelled", CANCELLED)
+        done = threading.Event()
+
+        def watch() -> None:          # kills the container as soon as the ticket is closed; run() below then returns
+            while not done.is_set():
+                if cancel.wait(0.5):
+                    subprocess.run([rn.engine, "kill", name], check=False, capture_output=True)
+                    return
+
+        if cancel is not None:
+            threading.Thread(target=watch, daemon=True, name="cancel-watch").start()
         try:
             proc = subprocess.run(sandbox_cmd(rn, route, name, d, harness, design_dir if want_design else None), timeout=rn.timeout_seconds, check=False,
                                   capture_output=True, text=True)
         except subprocess.TimeoutExpired:
             subprocess.run([rn.engine, "kill", name], check=False, capture_output=True)
-            return RunResult("failed", f"agent timed out after {rn.timeout_seconds}s")
+            return RunResult("cancelled", CANCELLED) if cancelled() else RunResult("failed", f"agent timed out after {rn.timeout_seconds}s")
+        finally:
+            done.set()
+        if cancelled():
+            return RunResult("cancelled", CANCELLED)
         logf = d / "out" / "agent.log"
         text, usage = parse_usage(logf.read_text(errors="replace") if logf.exists() else "", harness.usage_format)
         if sink is not None:
@@ -606,6 +635,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             notes = vrep.warnings + ([vrep.text()] if not vrep.ok else [])
             if notes:
                 warned[r] = "\n".join(notes)
+        if cancelled():                                 # the last look before anything is pushed
+            return RunResult("cancelled", CANCELLED)
         if fix_branch:                                  # a fix round adds a commit to the existing PR branch(es)
             ident =["-c", "user.name=shikumi", "-c", "user.email=software-factory@users.noreply.github.com"]
             stray = [r for r in patches if r not in on_branch]

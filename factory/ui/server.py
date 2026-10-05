@@ -417,8 +417,10 @@ class Handler(BaseHTTPRequestHandler):
                         local = LT.card(cfg, issue, sel["repo"], csrf, back, L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])),
                                         (sel["repo"], sel["issue"]) in L._approved(self))
                     decided = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])) or {}
+                    close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
+                                                                          sel["state"] in ("working", "needs"))
                     detail = board.detail_html(sel, board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images,
-                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")))
+                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close)
                 if path == "/fragment/detail":
                     return self._send(200, detail)
         finally:

@@ -8,6 +8,7 @@ from urllib.parse import quote, urlencode
 from factory import db as dbm
 from factory.config import load, overrides_path
 from factory.ui import integrations as I
+from factory.ui import labels as L
 from factory.ui import settings as S
 from test_ui import PASSWORD, UiCase
 
@@ -610,13 +611,18 @@ class Labels(AdminCase):
         self.assertEqual(self.post(cookie, csrf, "/tickets/create", {"repo": self.REPO, "title": "Go", "start": "auto"})[0], 303)
         self.gh.create_ticket.assert_called_once_with(self.REPO, "Go", "", ["factory:auto"])
 
-    def test_close_comments_then_closes_and_refuses_busy_tickets(self):
+    def test_close_a_busy_ticket_clears_its_triggers_and_refuses_a_closed_one(self):
         cookie, csrf = self.session()
-        busy = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:working"}]}
-        closed = {"number": 7, "title": "T", "state": "closed", "labels": []}
-        for issue in (busy, closed):
-            self.gh.get_issue.return_value = issue
-            self.post(cookie, csrf, "/tickets/close", self.fields())
+        busy = {"number": 7, "title": "T", "state": "open", "labels": [{"name": "factory:working"}, {"name": "factory:auto"}]}
+        self.gh.get_issue.return_value = busy
+        self.assertEqual(self.post(cookie, csrf, "/tickets/close", self.fields())[0], 303)
+        self.gh.comment.assert_called_once_with(self.REPO, 7, L.CLOSE_BUSY_COMMENT)
+        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "factory:auto")      # the working label is the orchestrator's
+        self.gh.update_issue.assert_called_once_with(self.REPO, 7, state="closed")
+        for m in (self.gh.comment, self.gh.remove_label, self.gh.update_issue):
+            m.reset_mock()
+        self.gh.get_issue.return_value = {"number": 7, "title": "T", "state": "closed", "labels": []}
+        self.post(cookie, csrf, "/tickets/close", self.fields())
         self.gh.update_issue.assert_not_called()
         for f in ({"repo": "evil/repo", "n": "7"}, self.fields(n="x")):
             self.assertEqual(self.post(cookie, csrf, "/tickets/close", f)[0], 400)

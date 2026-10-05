@@ -70,10 +70,9 @@ def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | Non
     if closed:
         state = (f'<form method="post" action="/tickets/local/state" class="inline">{hidden}<input type="hidden" name="state" value="open">'
                  '<button class="secondary">Reopen</button></form>')
-    elif status in L.BUSY:
-        state = '<span class="muted">Can\'t close while work is running or waiting for an answer.</span>'
-    else:
-        state = (f'<form method="post" action="/tickets/close" class="inline">{hidden}'
+    else:                      # a busy ticket can be closed too: the factory stops its work once it sees the ticket closed
+        note = '<span class="muted">The factory stops its work on it.</span> ' if status in L.BUSY else ""
+        state = (f'<form method="post" action="/tickets/close" class="inline">{hidden}{note}'
                  '<button class="secondary">Close ticket</button></form>')
     start = L.action_forms(repo, n, acts, csrf, back) if acts and not closed else ""
     return (f'<section class="sd-card lt-card" aria-labelledby="lt-h"><div class="sd-cardhead"><h3 id="lt-h">Local ticket</h3>'

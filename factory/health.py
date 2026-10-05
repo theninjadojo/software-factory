@@ -89,7 +89,7 @@ def check_orchestrator(cfg: Config, hc) -> list[Result]:
         st = dbm.get_status(db)
         stuck = db.execute("SELECT repo, issue, started FROM runs WHERE status='running' AND started < ?",
                            (time.time() - 2 * cfg.runner.timeout_seconds,)).fetchall()
-        last = [r[0] for r in db.execute("SELECT status FROM runs WHERE finished IS NOT NULL AND status!='interrupted' "
+        last = [r[0] for r in db.execute("SELECT status FROM runs WHERE finished IS NOT NULL AND status NOT IN ('interrupted','cancelled') "
                                          "ORDER BY id DESC LIMIT ?", (hc.failed_runs_warn,))]
         db.close()
     except Exception as e:
