@@ -135,7 +135,11 @@
     }
     if (push) history.pushState({ ticket: true }, "", href);
     if (window.innerWidth <= 760) window.scrollTo(0, 0);
-    else { var spot0 = document.querySelector(".sd-detail"), top = spot0 ? spot0.getBoundingClientRect().top : 0; if (top < 0) window.scrollBy(0, top - 16); }   // list scrolled down: bring the detail's top back into view
+    else {
+      // list scrolled down: bring the detail's top back into view
+      var shown = document.querySelector(".sd-detail"), gap = shown ? shown.getBoundingClientRect().top : 0;
+      if (gap < 0) window.scrollBy(0, gap - 16);
+    }
     calm();
     get("/fragment/detail" + url.search).then(function (html) {
       var spot = document.querySelector(".sd-detail");
