@@ -915,3 +915,4 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 /* hitboxes in the editor (Show hitboxes): the buildings and the solid terrain; what moves has none */
 .fe-hitboxes { pointer-events:none; } .fe-hitbox { fill:rgba(143,211,230,.06); stroke:#8fd3e6; stroke-width:1.5; stroke-dasharray:5 4; }
 .fe-hitbox.park { fill:rgba(182,156,255,.08); stroke:#b69cff; }
+.nd-form .field > label { display:block; font-weight:600; margin:0 0 .9rem; } .nd-form .field > label > input:not([type=checkbox]):not([type=radio]), .nd-form .field > label > select, .nd-form .field > label > textarea { display:block; margin-top:.25rem; }
