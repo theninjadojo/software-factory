@@ -1,6 +1,6 @@
 # Orchestrator + egress proxy image (one image, two commands). The sandbox image the agents run in is in sandbox/.
 FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 # Only the container CLI is needed: sandboxes are started on the engine reachable through DOCKER_HOST.
 COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
