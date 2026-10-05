@@ -22,6 +22,7 @@ from .. import designfiles
 from .. import pause, screenboard, updates, version
 from .. import questions as Q
 from ..config import load
+from .. import tracker
 from ..tracker import display, is_local
 from . import admin, board, features, floor, floorplan, views
 from . import workers as WK
@@ -234,28 +235,44 @@ class Handler(BaseHTTPRequestHandler):
             with open(path, "rb") as f:
                 shutil.copyfileobj(f, self.wfile, backup.CHUNK)
 
-    def _restore_upload(self, csrf: str) -> None:
-        """POST /backup/restore: a multipart body far larger than _form() allows. It is spooled to a private file (size-capped), the
-        CSRF token is checked before anything is read from it, and the work files are always removed."""
+    def _spool(self, n: int, work: Path) -> Path | None:
+        """Save the request body (n bytes) to a private file in work; None after answering if it was cut short."""
+        body = work / "body"
+        with open(body, "wb") as f:
+            left = n
+            while left > 0:
+                chunk = self.rfile.read(min(backup.CHUNK, left))
+                if not chunk:
+                    self._send(400, "upload cut short", "text/plain")
+                    return None
+                f.write(chunk)
+                left -= len(chunk)
+        return body
+
+    def _length(self, limit: int) -> int | None:
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             n = 0
         if n <= 0:
-            return self._send(411, "length required", "text/plain")
-        if n > backup.MAX_RESTORE + MAX_BODY:
-            return self._send(413, "backup too large", "text/plain")
+            self._send(411, "length required", "text/plain")
+        elif n > limit:
+            self._send(413, "upload too large", "text/plain")
+        else:
+            return n
+        return None
+
+    def _restore_upload(self, csrf: str) -> None:
+        """POST /backup/restore: a multipart body far larger than _form() allows. It is spooled to a private file (size-capped), the
+        CSRF token is checked before anything is read from it, and the work files are always removed."""
+        n = self._length(backup.MAX_RESTORE + MAX_BODY)
+        if n is None:
+            return
         work = backup.tmpdir(self.app.state_dir(), backup.TMP_RESTORE)
         try:
-            body = work / "body"
-            with open(body, "wb") as f:
-                left = n
-                while left > 0:
-                    chunk = self.rfile.read(min(backup.CHUNK, left))
-                    if not chunk:
-                        return self._send(400, "upload cut short", "text/plain")
-                    f.write(chunk)
-                    left -= len(chunk)
+            body = self._spool(n, work)
+            if body is None:
+                return
             try:
                 fields, span = backup.read_multipart(body, self.headers.get("Content-Type", ""))
             except backup.BackupError:
@@ -263,6 +280,33 @@ class Handler(BaseHTTPRequestHandler):
             if not hmac.compare_digest(str(fields.get("csrf", "")), csrf):
                 return self._send(403, "bad or missing CSRF token", "text/plain")
             admin.backup_restore(self, fields, csrf, body, span, work)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def _ticket_upload(self, path: str, csrf: str) -> None:
+        """A multipart ticket form (/tickets/create with files, /tickets/local/attach): spooled to a private size-capped file, the
+        CSRF token checked before the handler sees anything, and the work files always removed. The handler gets the text fields
+        and the files as (name, bytes), bytes being None for a file over the size limit."""
+        max_bytes, max_files, max_total = tracker.attach_limits(self.app.cfg())
+        n = self._length(max_total + 8 * MAX_BODY + 64 * 1024 * (max_files + 1))
+        if n is None:
+            return
+        work = backup.tmpdir(self.app.state_dir(), backup.TMP_RESTORE)
+        try:
+            body = self._spool(n, work)
+            if body is None:
+                return
+            try:
+                fields, parts = backup.read_parts(body, self.headers.get("Content-Type", ""), 8 * MAX_BODY, max_files + 8, truncate=True)
+            except backup.BackupError:
+                return self._send(400, "bad upload", "text/plain")
+            if not hmac.compare_digest(str(fields.get("csrf", "")), csrf):
+                return self._send(403, "bad or missing CSRF token", "text/plain")
+            files = [(fname, backup.read_span(body, span) if span[1] - span[0] <= max_bytes else None)
+                     for name, fname, span in parts if name == "file" and (fname or span[1] > span[0])]
+            form = Form(fields)
+            form.lists = {k: [v] for k, v in fields.items()}
+            admin.POST_UPLOAD[path](self, form, csrf, files)
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
@@ -326,6 +370,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.command == "POST":
                 if path == "/backup/restore":
                     return self._restore_upload(csrf)
+                if path in admin.POST_UPLOAD and (path != "/tickets/create" or (self.headers.get("Content-Type") or "").lower().startswith("multipart/form-data")):
+                    return self._ticket_upload(path, csrf)
                 form = self._form(MAX_LAYOUT_BODY if path == "/floor/layout/save" else MAX_BODY)
                 if form is None:
                     return self._send(413, "request too large", "text/plain")

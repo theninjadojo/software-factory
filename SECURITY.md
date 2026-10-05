@@ -48,6 +48,9 @@ anything that matters.
   rootless Docker, or the native Podman install, which shares no socket.
 - **Data leaves your machine** to the model provider, and (if Jev is enabled) ticket titles, bodies and comments go to
   OpenRouter and TypeSafe for classification. Do not use free or logging tiers for private text without reading their terms.
+- **Local ticket attachments are read by agents.** Files attached to a local ticket (png, jpg, gif, pdf, txt, md, log, json, csv)
+  are copied into the agent's `/task/attachments/` and so go to the model provider. They are untrusted input in the prompt, are
+  stored in the database (and so in backups), and the UI only ever serves them as downloads with a name and type the server chose.
 - **CI runs your repos' code on factory PRs** with whatever secrets your workflows expose to pull requests. That is your
   repos' configuration, not the factory's, but protected paths stop the agent editing workflows.
 - **The admin UI is an admin surface.** Anyone who can sign in can replace credentials and change what the factory does. Keep it on
