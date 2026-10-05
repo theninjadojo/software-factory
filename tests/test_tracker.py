@@ -196,6 +196,14 @@ class GithubIssuesSwitch(Base):
         sched.assert_not_called()
         self.assertEqual([call.args[5]["number"] for call in hi.call_args_list], [local])
 
+    def test_off_still_moves_queued_imports(self):
+        c = dataclasses.replace(self.cfg, github_issues_enabled=False, local_enabled=True, dry_run=False)
+        h = tracker.Hub("t", self.path)
+        with mock.patch.object(main, "process_approvals"), mock.patch.object(main.schedules, "tick"), \
+                mock.patch.object(main, "maybe_pm_sweep"), mock.patch.object(tracker, "process_imports") as imp:
+            main.poll_once(c, h, self.db, None)
+        imp.assert_called_once()
+
 
 class Import(Base):
     def test_import_copies_the_issue_and_marks_the_original(self):

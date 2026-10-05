@@ -1086,7 +1086,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     if not cfg.github_issues_enabled and not cfg.local_enabled and not warned_no_tickets:
         warned_no_tickets.append(True)
         log.warning("github.issues_enabled and local.enabled are both off: the factory has no tickets to work on")
-    if cfg.local_enabled and cfg.github_issues_enabled and not cfg.dry_run:
+    if cfg.local_enabled and not cfg.dry_run:                  # an import reads one GitHub issue by number, so it works with GitHub issues off
         try:
             tracker.process_imports(cfg, gh, conn, frozenset(label for _, label in triggers(cfg)), emit)
         except Exception:
