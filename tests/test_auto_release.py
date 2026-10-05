@@ -62,6 +62,15 @@ class AutoUpdate(unittest.TestCase):
             self.assertIn("leaving it for a person", r.stdout)
         self.assertEqual((self.tmp / "app" / "VERSION").read_text().strip(), "0.2.1")
 
+    def test_every_release_mode_takes_a_minor_or_major_but_never_an_older_one(self):
+        (self.tmp / "state" / "AUTO_UPDATE").write_text("all\n")
+        for tag in ("v0.3.0", "v1.0.0", "v0.2.2"):
+            r = self.run_auto(tag, busy=True)                  # busy: it got past the version check and stopped at the run in flight
+            self.assertIn("will try again at the next timer", r.stdout, tag)
+        self.assertIn("leaving it for a person", self.run_auto("v0.2.0").stdout)
+        (self.tmp / "state" / "AUTO_UPDATE").write_text("patch\n")
+        self.assertIn("leaving it for a person", self.run_auto("v0.3.0").stdout)
+
     def test_an_older_or_same_patch_is_ignored(self):
         self.assertIn("leaving it for a person", self.run_auto("v0.2.0").stdout)
 

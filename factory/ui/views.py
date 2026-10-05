@@ -115,7 +115,7 @@ def update_banner() -> str:
     if not tag or not url.startswith("https://github.com/") or not re.fullmatch(r"v?\d{1,4}\.\d{1,4}\.\d{1,4}", tag):
         return ""
     return (f'<div class="flash ok" role="status">Shikumi {esc(tag)} is available (you have {esc(version.current())}). '
-            f'<a href="{esc(url)}" rel="noopener noreferrer" target="_blank">Release notes</a>. To update, run <code>./scripts/update.sh</code> on the host.</div>')
+            f'<a href="{esc(url)}" rel="noopener noreferrer" target="_blank">Release notes</a>. <a href="/updates">Update</a>.</div>')
 
 
 def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "",
