@@ -787,8 +787,15 @@ def snake(fl: dict, order=SNAKE, floor_map: str = "", add: str = "") -> str:
         legend += ('<li class="fm-key"><span class="sd-dot fm-drone-key" aria-hidden="true"></span>Drones: issues in from GitHub, pull requests out</li>')
     lst = f'<div class="sd-scroll{" fm-phone" if floor_map else ""}"><div class="sd-snake">{out}</div></div>'
     return (f'<section class="sd-card sd-floor" aria-labelledby="floor-h"><div class="sd-cardhead"><h2 id="floor-h">The floor</h2>'
-            f'<span class="muted sd-fine">Pick a station to see the tickets at it, in Tickets.</span>{add}</div>'
+            f'<span class="muted sd-fine">Pick a station to see the tickets at it, in Tickets.</span>{_time_buttons() if floor_map else ""}{add}</div>'
             + (f'<div class="sd-scroll fm-wrap">{floor_map}</div>' if floor_map else "") + f'{lst}<ul class="sd-legend">{legend}</ul></section>')
+
+
+def _time_buttons() -> str:
+    """The floor's time of day (static/app.js): Auto cycles day, dusk and night; the others hold one. Shown only with the script."""
+    return ('<span class="fm-time" role="group" aria-label="Time of day"><span class="lab">Time</span>'
+            + "".join(f'<button type="button" class="secondary" data-tod="{k}" aria-pressed="{"true" if k == "auto" else "false"}">{n}</button>'
+                      for k, n in (("auto", "Auto"), ("day", "Day"), ("dusk", "Dusk"), ("night", "Night"))) + '</span>')
 
 
 def _tile(href: str, lab: str, num, tone: str, sub: str, hot: bool = False) -> str:

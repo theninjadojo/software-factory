@@ -93,6 +93,7 @@ def snapshot(pg) -> str:
     css += (ROOT / "factory/ui/static/town.css").read_text()
     html = re.sub(r'<link rel="stylesheet" href="/static/(?:style|town)\.css[^"]*">', lambda m: "", html)
     html = html.replace("</head>", "<style>" + css + "</style></head>", 1)
+    html = re.sub(r' data-tod="\w+"', "", html)                                    # the screens show the floor by day, not wherever Auto has got to
     html = re.sub(r'(name="csrf" value=")[^"]*', r"\1x", html)
     hold = (f"<script>addEventListener('load', () => document.querySelectorAll('svg').forEach(s => {{ try {{ s.pauseAnimations(); "
             f"s.setCurrentTime({HOLD}); }} catch (e) {{}} }}))</script>")
