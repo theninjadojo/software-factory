@@ -863,7 +863,58 @@
       }
     });
     var head = root.querySelector(".fe-tray-left");
-    if (head) head.textContent = left ? left + " to place" : "All placed";
+    if (head) head.textContent = left ? left + (left === 1 ? " part left" : " parts left") : "All placed";
+    var cnt = root.querySelector('[data-cat="Buildings"] .fe-cat-n');
+    if (cnt) cnt.textContent = "· " + root.querySelectorAll(".fe-tray-list [data-part]").length;
+    applyFilter();
+  }
+  // ---- the build panel's categories (collapsible, remembered) and its filter
+  var panel = root.querySelector(".fe-tray"), filter = root.querySelector(".fe-filter"), COLL = {};
+  try { COLL = JSON.parse(localStorage.getItem("fe-cats-collapsed") || "{}") || {}; } catch (x) { COLL = {}; }
+  function applyFilter() {
+    if (!panel) return;
+    var q = filter ? filter.value.trim().toLowerCase() : "", total = 0;
+    var secs = panel.querySelectorAll(".fe-cat");
+    for (var i = 0; i < secs.length; i++) {
+      var tg = secs[i].querySelector(".fe-cat-toggle"), body = secs[i].querySelector(".fe-cat-body"), hits = 0, head = null, headHits = 0;
+      var kids = body.querySelectorAll("[data-tool], [data-part], h3, .later");
+      for (var j = 0; j <= kids.length; j++) {
+        var k = kids[j];
+        if (!k || k.tagName === "H3") {                                // a heading inside the parts list shows only if one of its parts does
+          if (head) head.hidden = !!q && !headHits;
+          head = k; headHits = 0;
+          if (!k) break;
+          continue;
+        }
+        var ok = !q || k.textContent.toLowerCase().indexOf(q) >= 0 && !k.classList.contains("later");
+        k.hidden = !ok;
+        if (ok) { hits++; headHits++; }
+      }
+      total += q ? hits : 0;
+      var coll = secs[i].getAttribute("data-cat") in COLL ? COLL[secs[i].getAttribute("data-cat")] : secs[i].getAttribute("data-closed") === "1";
+      tg.setAttribute("aria-expanded", coll ? "false" : "true");
+      body.hidden = !q && coll;                                      // a filter opens every category that has a match
+      secs[i].hidden = !!q && !hits;
+    }
+    var none = panel.querySelector(".fe-none"), found = panel.querySelector(".fe-found");
+    if (none) { none.hidden = !(q && !total); var qq = none.querySelector(".fe-q"); if (qq) qq.textContent = "“" + filter.value.trim() + "”"; }
+    if (found) found.textContent = q ? total + (total === 1 ? " match" : " matches") : "";
+  }
+  if (panel) {
+    panel.addEventListener("click", function (e) {
+      var t = e.target.closest && e.target.closest(".fe-cat-toggle");
+      if (t) {
+        var sec = t.closest(".fe-cat"), name = sec.getAttribute("data-cat");
+        COLL[name] = t.getAttribute("aria-expanded") === "true";
+        try { localStorage.setItem("fe-cats-collapsed", JSON.stringify(COLL)); } catch (x) { /* private mode: not remembered */ }
+        return applyFilter();
+      }
+      if (e.target.closest && e.target.closest(".fe-clear")) { filter.value = ""; applyFilter(); filter.focus(); }
+    });
+    if (filter) {
+      filter.addEventListener("input", applyFilter);
+      filter.addEventListener("keydown", function (e) { if (e.key === "Escape" && filter.value) { e.stopPropagation(); filter.value = ""; applyFilter(); } });
+    }
   }
   function spot(id, p) {
     // where a building dropped at grid point p stands: centred on it, inside the floor
@@ -1270,7 +1321,7 @@
     draw();
   });
   document.addEventListener("keydown", function (e) {
-    if (e.target === area) return;
+    if (e.target === area || e.target === filter) return;
     var k = (e.key || "").toLowerCase();
     if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); return e.shiftKey ? redo() : undo(); }
     if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); return redo(); }

@@ -367,6 +367,10 @@ class Editing(AdminCase):
         self.assertIn('data-act="zoomin"', page)
         self.assertIn('data-act="scratch"', page)                       # start from an empty floor, with the parts tray to fill it
         self.assertIn('class="fe-tray-list"', page)
+        self.assertIn('aria-label="Build"', page)                     # one build panel: tools by category, the parts, then the terrain groups
+        self.assertIn('data-cat="Belts"', page)
+        self.assertIn('data-cat="Structures"', page)
+        self.assertNotIn('aria-label="Terrain tools"', page)
         meta = json.loads(html.unescape(re.search(r'data-meta="([^"]*)"', page).group(1)))
         self.assertEqual(meta["nodes"]["harbor"]["group"], "Arrivals")
         self.assertEqual(meta["nodes"]["notify:telegram"]["group"], "Notifiers")

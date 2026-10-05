@@ -1,4 +1,4 @@
-"""The floor editor's terrain in a real browser: every Scenery, Water, Ground, Build and Light tool places what it should (clicks,
+"""The floor editor's terrain in a real browser: every Scenery, Water, Ground, Structures and Light tool places what it should (clicks,
 drags that paint, lines that lock straight, rectangles), Erase takes it away again and undo brings it back; the editor's terrain.js
 draws exactly what the server's terrain.py draws; the terrain's rules are shown as they are broken and a save that breaks one is
 refused; a saved terrain is drawn on the Factory floor."""
@@ -68,7 +68,10 @@ def at(pg, px, py):
 
 
 def tool(pg, name):
-    pg.click(f'[data-tool="{name}"]')
+    b = pg.locator(f'[data-tool="{name}"]')
+    if not b.is_visible():                                       # the terrain categories start collapsed in the build panel
+        pg.locator(f'.fe-cat:has([data-tool="{name}"]) .fe-cat-toggle').click()
+    b.click()
 
 
 def into_view(pg, px, py):
