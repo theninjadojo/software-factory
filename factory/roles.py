@@ -95,7 +95,18 @@ QUESTIONS_RULES = (
 )
 
 
-def design_files_rules(design_dir: str) -> str:
+SCREENS_REQUESTED = (
+    "\n\nSCREENS REQUESTED. A person asked to see screen designs for this ticket before it is built, and will review them. You MUST "
+    "create the static mockups described below for the screens this ticket adds or changes, even if no repository contains a "
+    "`*.dc.html` canvas yet: then write them into the repository whose screens change, and use a clean, neutral style (a system or "
+    "single Google font, a light background, one accent colour, consistent spacing) that follows what you can see of the existing "
+    "app's look in its code. Only answer `Design files: none` if the ticket truly has no user-facing screens, and say why in your "
+    "document."
+)
+
+
+def design_files_rules(design_dir: str, requested: bool = False) -> str:
+    """requested: a person asked for screens (the mockups request label), so they are made even without existing canvases."""
     return (
         "\n\nDESIGN FILES (required when it applies). If the ticket changes what users see or do AND a repository contains Claude Design "
         "canvas files (`*.dc.html`, usually in a `design/` folder), you MUST also create one to three static mockups of the screens you "
@@ -116,7 +127,7 @@ def design_files_rules(design_dir: str) -> str:
         "(name it `...-mobile`) laid out in a frame 390 px wide, beside the 1440 px wide desktop one. Do not modify, rename or delete any existing file. Your final answer is still "
         "only the document; end it with one line `Design files: <the paths you created>` (or `Design files: none` if the ticket has no "
         "user-facing screens)."
-    )
+    ) + (SCREENS_REQUESTED if requested else "")
 
 
 def common_for(role: str, design_files: bool) -> str:

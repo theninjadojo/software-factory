@@ -23,10 +23,20 @@ UNAPPROVED_HELP = ("The mockups for this ticket are not approved yet, so the bui
                    "re-trigger the build. Or add `{label}` to build without approval.")
 
 
+REQUESTED_HELP = ("Screens were requested for this ticket (`{requested}`), and a person must approve them before the build, so it was "
+                  "not started. {state} Then add the `{approve}` label or merge the design PR, and re-trigger the build. Or add `{label}` "
+                  "to build without them.")
+
+
 def gate(cfg: MockupsCfg, labels: list[str], previews: list[dict], designer_says_no_screens: bool,
          pr_merged: bool = False) -> tuple[str, str]:
     """('ok'|'warn'|'block', message). Mockups are expected when the design stage ran and its own document did not say the ticket
-    has no screens (or that mockups are off). Nothing is expected for a ticket that skipped design."""
+    has no screens (or that mockups are off). Nothing is expected for a ticket that skipped design. A ticket a person asked screens
+    for (request_label) always needs them approved, whatever the settings: that label can only make the gate stricter."""
+    if cfg.request_label in labels and cfg.bypass_label not in labels and cfg.approve_label not in labels and not pr_merged:
+        state = ("Look at the mockups (linked in the design comment, and on the ticket's page in the factory UI)." if previews else
+                 "No rendered mockup is attached yet: run the design stage (`factory:design`) to produce them.")
+        return "block", REQUESTED_HELP.format(requested=cfg.request_label, state=state, approve=cfg.approve_label, label=cfg.bypass_label)
     if cfg.mode == "off" or DESIGNED not in labels or designer_says_no_screens:
         return "ok", ""
     if previews:
