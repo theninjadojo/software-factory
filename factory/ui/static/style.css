@@ -288,6 +288,7 @@ meter.sd-meter.bad::-webkit-meter-optimum-value { background:var(--bad); } meter
 .sd-chip.on { border-color:var(--accent); background:var(--panel2); } .sd-chip b { font-weight:500; }
 .sd-form { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0; }
 .sd-lab { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+.sd-scope { margin:6px 0; font-size:13px; }
 .sd-form select, .sd-form input { min-height:44px; padding:0 12px; background:var(--bg); border:1px solid var(--line2); color:var(--text); }
 .sd-search input { width:200px; } .js .sd-apply { display:none; }
 .sd-split { display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start; }
@@ -326,6 +327,7 @@ meter.sd-meter.bad::-webkit-meter-optimum-value { background:var(--bad); } meter
   header { padding:0 16px; } main { padding:16px; } h1 { font-size:26px; }
   .sd-chips { flex-wrap:nowrap; overflow-x:auto; max-width:100%; } .sd-chip { flex:none; }
   .sd-filters, .sd-form { width:100%; } .sd-lab { display:none; } .sd-search, .sd-search input { width:100%; }
+  .sd-lab.sd-project { display:flex; width:100%; }
   .sd-list { max-width:none; flex-basis:100%; }
   .sd-page:not(.has-sel) .sd-detail { display:none; }
   .sd-page.has-sel .sd-pagehead, .sd-page.has-sel .sd-filters, .sd-page.has-sel .sd-list { display:none; } .sd-page.has-sel .sd-back { display:block; }

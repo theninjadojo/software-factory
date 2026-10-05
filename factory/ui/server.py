@@ -433,7 +433,11 @@ class Handler(BaseHTTPRequestHandler):
         needs = L.needs_you(self) if fragment else L.needs_cached()
         cold = needs is None and not fragment and L.has_token(self)
         try:
-            rows = board.ticket_rows(db, needs, L.titles_cached(), now)
+            all_rows = board.ticket_rows(db, needs, L.titles_cached(), now)
+            projects = board.project_options(cfg)
+            asked = q.get("project") or ""
+            project = asked if asked in {v for v, _ in projects} else ""      # only a configured name (or Standalone) is ever used
+            rows = board.in_project(all_rows, cfg, project)
             c = board.counts(rows)
             keys = {k for k, _, _ in board.FILTERS}
             flt = q.get("stage") if q.get("stage") in keys else ("needs" if c["needs"] else "all")
@@ -444,7 +448,7 @@ class Handler(BaseHTTPRequestHandler):
             if explicit and not (views.REPO.match(repo) and n.isdigit() and len(n) < 10):
                 return self._send(404, "no such ticket", "text/plain")
             if explicit:
-                sel = next((r for r in rows if r["repo"] == repo and r["issue"] == int(n)), None) or board.row_for(db, repo, int(n), needs, L.titles_cached(), now)
+                sel = next((r for r in all_rows if r["repo"] == repo and r["issue"] == int(n)), None) or board.row_for(db, repo, int(n), needs, L.titles_cached(), now)
             else:
                 shown = board.pick(rows, flt, at, text, order)
                 sel = shown[0] if shown else None
@@ -454,9 +458,9 @@ class Handler(BaseHTTPRequestHandler):
                 sel["verify"] = board.ticket_verify(db, sel["repo"], sel["issue"])
                 if path == "/fragment/ticket":
                     return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now))
-                back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}"
+                back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}" + (f"&project={quote(project, safe='')}" if project else "")
                 if cold:
-                    detail = board.slot("/fragment/detail?" + board._qs(repo=sel["repo"], n=sel["issue"]), "Loading the ticket from GitHub", "sd-detail sd-loading")
+                    detail = board.slot("/fragment/detail?" + board._qs(repo=sel["repo"], n=sel["issue"], project=project), "Loading the ticket from GitHub", "sd-detail sd-loading")
                 else:
                     local = ""
                     if is_local(sel["issue"]) and (issue := LT.ticket(db, sel["repo"], sel["issue"])) is not None:
@@ -475,7 +479,7 @@ class Handler(BaseHTTPRequestHandler):
         shown = L.flash_pop(csrf)
         title = f"{display(int(sel['issue']))} · Tickets" if explicit and sel else "Tickets"
         strip = features.tickets_strip(cfg, csrf, q.get("ask") == "local")
-        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip), path, csrf, wide=True,
+        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip, project, projects, bool(asked and projects and not project)), path, csrf, wide=True,
                                           badges=badges, bare=True, flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
 
     def _get(self, path: str, q: dict, csrf: str) -> None:

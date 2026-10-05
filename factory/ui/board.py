@@ -304,17 +304,40 @@ def _qs(**kw) -> str:
     return urlencode({k: v for k, v in kw.items() if v})
 
 
-def ticket_url(r: dict, flt: str = "", q: str = "", at: str = "") -> str:
-    return "/ticket?" + _qs(repo=r["repo"], n=r["issue"], stage=flt, q=q, at=at)
+def ticket_url(r: dict, flt: str = "", q: str = "", at: str = "", project: str = "") -> str:
+    return "/ticket?" + _qs(repo=r["repo"], n=r["issue"], stage=flt, q=q, at=at, project=project)
 
 
-def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf: str = "") -> str:
+STANDALONE = "_standalone"          # not a valid project name (names are letters, digits, spaces, dot, dash), so it never collides
+
+
+def project_options(cfg) -> list[tuple[str, str]]:
+    """The switcher's choices after "All projects": each configured project, then Standalone when a repo is in none."""
+    if not cfg.projects:
+        return []
+    grouped = {r.repo for p in cfg.projects for r in p.repos}
+    opts = [(p.name, p.name) for p in cfg.projects]
+    return opts + ([(STANDALONE, "Standalone")] if any(r not in grouped for r in cfg.repos) else [])
+
+
+def in_project(rows: list[dict], cfg, key: str) -> list[dict]:
+    """The rows of one project (or of no project at all); an empty key keeps every row."""
+    if not key:
+        return rows
+    grouped = {r.repo for p in cfg.projects for r in p.repos}
+    if key == STANDALONE:
+        return [r for r in rows if r["repo"] not in grouped]
+    mine = {r.repo for p in cfg.projects if p.name == key for r in p.repos}
+    return [r for r in rows if r["repo"] in mine]
+
+
+def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf: str = "", project: str = "") -> str:
     if not rows:
         return '<p class="muted sd-empty">No tickets match. Pick another filter or clear the search.</p>'
     items = ""
     for r in rows[:60]:
         on = sel is not None and (r["repo"], r["issue"]) == sel
-        items += (f'<a class="sd-pick{" on" if on else ""}" href="{esc(ticket_url(r, flt, q, at))}"{" aria-current=page" if on else ""}>'
+        items += (f'<a class="sd-pick{" on" if on else ""}" href="{esc(ticket_url(r, flt, q, at, project))}"{" aria-current=page" if on else ""}>'
                   f'<span class="sd-row"><span class="mono muted">{esc(views.ref(r["repo"], r["issue"], short=True))}</span>'
                   f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></span>'
                   f'<span class="sd-title">{esc(r["title"])}</span><span class="sd-why muted">{esc(r["why"])}</span>{progress(r["stations"])}'
@@ -327,19 +350,21 @@ def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf
     return items + more
 
 
-def filters_html(c: dict, flt: str, q: str, at: str, order: str, repos=()) -> str:
+def filters_html(c: dict, flt: str, q: str, at: str, order: str, repos=(), project: str = "", projects=()) -> str:
     chips = ""
     for key, word, tone in FILTERS:
         on = (flt or "all") == key
         dot = f'<span class="sd-dot {tone}" aria-hidden="true"></span>' if tone else ""
-        chips += (f'<a class="sd-chip{" on" if on else ""}" href="/tickets?{esc(_qs(stage=key, q=q, at=at, sort=order if order != "latest" else ""))}"'
+        chips += (f'<a class="sd-chip{" on" if on else ""}" href="/tickets?{esc(_qs(stage=key, q=q, at=at, sort=order if order != "latest" else "", project=project))}"'
                   f'{" aria-current=page" if on else ""}>{dot}{esc(word)} <b class="mono">{int(c.get(key, 0))}</b></a>')
     opt = lambda v, w, cur: f'<option value="{esc(v)}"{" selected" if v == cur else ""}>{esc(w)}</option>'
     station_opts = opt("", "Any", at) + "".join(opt(sid, w, at) for sid, w in STATIONS)
     sort_opts = opt("latest", "Latest activity", order) + opt("oldest", "Oldest waiting", order)
+    pick_project = (f'<label class="sd-lab sd-project">Project <select name="project" aria-label="Filter tickets by project">'
+                    f'{opt("", "All projects", project)}{"".join(opt(v, w, project) for v, w in projects)}</select></label>') if projects else ""
     return (f'<div class="sd-filters" role="search"><nav class="sd-chips" aria-label="Filter by state">{chips}</nav><span class="sd-grow"></span>'
             f'<form method="get" action="/tickets" class="sd-form" data-autosubmit>'
-            f'<input type="hidden" name="stage" value="{esc(flt)}">'
+            f'<input type="hidden" name="stage" value="{esc(flt)}">{pick_project}'
             f'<label class="sd-lab">Station <select name="at">{station_opts}</select></label>'
             f'<label class="sd-lab">Sort <select name="sort">{sort_opts}</select></label>'
             f'<label class="sd-search"><span class="sr">Search tickets</span><input type="search" name="q" value="{esc(q)}" placeholder="Search number or title"></label>'
@@ -586,17 +611,26 @@ def phone_needs(rows: list[dict], csrf: str) -> str:
 
 
 def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: str, q: str, at: str, order: str, detail: str, new_ticket: str, now: float,
-                 csrf: str = "", settings: str = "") -> str:
-    """settings: the strip of settings that shape this page (features.tickets_strip)."""
+                 csrf: str = "", settings: str = "", project: str = "", projects=(), unknown: bool = False) -> str:
+    """settings: the strip of settings that shape this page (features.tickets_strip). rows are already narrowed to project
+    (a configured name or STANDALONE; "" is all); projects are the switcher's choices; unknown: the asked-for project is gone."""
     shown = pick(rows, flt, at, q, order)
     sel = (sel_row["repo"], sel_row["issue"]) if sel_row else None
     crumb = (f'<p class="sd-crumb muted">Tickets <span aria-hidden="true">/</span> <span class="mono">{esc(views.ref(sel_row["repo"], sel_row["issue"], short=True))}</span></p>'
              if sel_row and explicit else "")
-    back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at))}">← All tickets</a></p>'     # shown on a phone while a ticket is open
+    back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at, project=project))}">← All tickets</a></p>'     # shown on a phone while a ticket is open
+    note = ""
+    if project in dict(projects):
+        n = len(rows)
+        what = "standalone repositories" if project == STANDALONE else project
+        note = (f'<p class="muted sd-scope" role="status">Showing {esc(what)} · {n} ticket{"" if n == 1 else "s"} '
+                f'<a href="/tickets?{esc(_qs(stage=flt, q=q, at=at))}">Show all projects</a></p>')
+    elif unknown:
+        note = '<p class="muted sd-scope" role="status">That project no longer exists. Showing all projects.</p>'
     return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead">{crumb}<div class="sd-h1row"><h1>Tickets</h1>{new_ticket}</div>'
             '<p class="muted sd-lede">Everything about a ticket in one place: what it needs from you, where it is on the floor, every run, and its pull requests and checks.</p></div>'
-            + settings + phone_needs(rows, csrf) + filters_html(counts(rows), flt, q, at, order)
-            + f'<div class="sd-split"><section class="sd-list" aria-label="Ticket list">{list_html(shown, sel, flt, q, at, now, csrf)}</section>'
+            + settings + phone_needs(rows, csrf) + filters_html(counts(rows), flt, q, at, order, project=project, projects=projects) + note
+            + f'<div class="sd-split"><section class="sd-list" aria-label="Ticket list">{list_html(shown, sel, flt, q, at, now, csrf, project)}</section>'
             + (detail or '<div class="sd-detail sd-none"><p class="muted">Pick a ticket to see its journey.</p></div>') + "</div>"
             + f'<template id="ld-detail"><div class="sd-detail sd-loading">{loader("Loading the ticket from GitHub")}</div></template></div>')
 

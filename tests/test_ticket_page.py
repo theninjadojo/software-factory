@@ -133,6 +133,25 @@ class TicketList(unittest.TestCase):
         many = [dict(self.ROWS[0], issue=n) for n in (9, 19, 109, 90)]
         self.assertEqual([r["issue"] for r in board.pick(many, "all", q="#9")], [9])     # a number is exact
 
+    def test_project_scope_filters_rows_and_is_escaped(self):
+        from types import SimpleNamespace as NS
+        pr = lambda n, *repos: NS(name=n, repos=tuple(NS(repo=r) for r in repos))
+        cfg = NS(projects=(pr("Web", "o/r"), pr("API", "o/api")), repos=["o/r", "o/api", "o/solo"])
+        rows = [dict(r) for r in self.ROWS] + [dict(self.ROWS[0], repo="o/api", issue=7), dict(self.ROWS[0], repo="o/solo", issue=8)]
+        self.assertEqual([v for v, _ in board.project_options(cfg)], ["Web", "API", board.STANDALONE])
+        self.assertEqual(board.project_options(NS(projects=(), repos=["o/r"])), [])
+        self.assertEqual([r["issue"] for r in board.in_project(rows, cfg, "API")], [7])
+        self.assertEqual([r["issue"] for r in board.in_project(rows, cfg, board.STANDALONE)], [8])
+        self.assertEqual(len(board.in_project(rows, cfg, "")), 5)
+        opts = board.project_options(cfg)
+        html = board.tickets_page(board.in_project(rows, cfg, "Web"), None, False, "all", "", "", "latest", "", "", time.time(), "tok", "", "Web", opts)
+        self.assertIn('<option value="Web" selected>', html)
+        self.assertIn("Showing Web · 3 tickets", html)
+        self.assertIn("project=Web", html)
+        plain = board.tickets_page(rows, None, False, "all", "", "", "latest", "", "", time.time(), "tok", "", "", opts, True)
+        self.assertIn("That project no longer exists", plain)
+        self.assertNotIn("project=", plain.split('class="sd-split"')[0].split("sd-chips")[1].split("</nav>")[0])
+
     def test_the_page_is_escaped_and_free_of_inline_styles(self):
         st = board.stations(journey([]))
         rows = [dict(r, stations=st) for r in self.ROWS]
