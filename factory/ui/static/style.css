@@ -31,6 +31,7 @@ body.login main { max-width:22rem; margin-top:12vh; } body.login label { display
 .field { margin:0 0 1.1rem; } .field > label:first-child { display:block; font-weight:600; margin-bottom:.25rem; } .field input:not([type=checkbox]):not([type=radio]), .field select, .field textarea { width:100%; max-width:34rem; } .field textarea { font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; }
 .check { display:inline-flex; align-items:center; gap:.4rem; margin:.15rem 1rem .15rem 0; font-weight:400; } .check.danger { display:flex; color:var(--bad); margin-top:.4rem; } .check.evt { display:flex; } .events { margin:.4rem 0 0 1rem; }
 fieldset { border:1px solid var(--line); border-radius:10px; background:var(--panel); margin:0 0 1rem; padding:.8rem 1rem; } legend { padding:0 .4rem; font-weight:600; } input.wide { max-width:none !important; width:100%; } .cred .field { margin-bottom:.6rem; }
+.cards.cred-grid { grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
 .cards.one { grid-template-columns: 1fr; } .harness textarea { width:100%; max-width:46rem; } .inline-form { margin:.4rem 0 1.4rem; }
 .chip-row { list-style:none; padding:0; margin:0 0 1rem; display:flex; flex-wrap:wrap; gap:.4rem; } .chip-row form { display:inline; }
 .labels button { min-height:44px; }
