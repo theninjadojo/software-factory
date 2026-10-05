@@ -698,6 +698,86 @@ FLIGHT_SECONDS = 17.0
 
 
 # ---------------------------------------------------------------- the whole floor
+_WX_SEED = 20261006
+
+
+def _weather(width: float, height: float) -> str:
+    """Rain with the odd flash of lightning, snow and fog over the whole floor, one of them shown when the page's Weather buttons
+    (static/app.js, data-wx on the page) pick it; none is drawn by default or without the script. Rain and snow are two layers of a
+    tiled pattern each, so a few elements cover any floor: the tile's rectangle slides down one tile height and starts again."""
+    import random
+    rnd = random.Random(_WX_SEED)
+    w, h = _f(width), _f(height)
+
+    def tile(name, size, n, draw):
+        body = "".join(draw(rnd.uniform(4, size - 4), rnd.uniform(0, size - 18)) for _ in range(n))
+        return f'<pattern id="wx-{name}" width="{size}" height="{size}" patternUnits="userSpaceOnUse">{body}</pattern>'
+
+    streak = lambda x, y: f'<path d="M {_f(x)} {_f(y)} l -3 14"/>'
+    flake = lambda r: (lambda x, y: f'<circle cx="{_f(x)}" cy="{_f(y)}" r="{r}"/>')
+    defs = (tile("rain-a", 240, 10, streak) + tile("rain-b", 160, 7, streak)
+            + tile("snow-a", 200, 9, flake(2.2)) + tile("snow-b", 140, 7, flake(1.4)))
+    layer = lambda cls, pat, size: (f'<rect class="{cls}" y="{-size}" width="{w}" height="{_f(height + size)}" fill="url(#wx-{pat})"/>')
+    fog = "".join(f'<ellipse class="fm-bank" cx="{_f(x)}" cy="{_f(y)}" rx="300" ry="110"/>'
+                  for x in range(250, int(width), 700) for y in range(200 + (x // 700 % 2) * 300, int(height), 600))
+    bx, by = _f(width * 0.62), _f(height * 0.18)
+    bolt = f'<path class="fm-bolt" d="M {bx} {by} l -26 70 l 22 -8 l -30 90 l 54 -100 l -24 8 l 22 -60 z"/>'
+    return (f'<g class="fm-wx" aria-hidden="true"><defs>{defs}</defs>'
+            f'<g class="fm-rain"><rect class="fm-wx-tint rain" width="{w}" height="{h}"/>{layer("fm-fall-a", "rain-a", 240)}'
+            f'{layer("fm-fall-b", "rain-b", 160)}{bolt}<rect class="fm-flash" width="{w}" height="{h}"/></g>'
+            f'<g class="fm-snow"><rect class="fm-wx-tint snow" width="{w}" height="{h}"/>{layer("fm-fall-a", "snow-a", 200)}'
+            f'{layer("fm-fall-c", "snow-b", 140)}</g>'
+            f'<g class="fm-mist">{fog}</g></g>')
+
+
+EM_T = 18.0                                         # one call-out, seconds: the trucks arrive, the fire burns and is hosed, they leave
+# (vehicle, the building it leaves from): a machine that fails has a red light on it, and these come from the nearest of each that stands
+EM_CREW = (("t-firetruck", "t-firestation"), ("t-ambulance", "t-hospital"), ("t-policecar", "t-policestation"))
+EM_MAX = 3                                          # machines on call at once
+
+
+def _emergency(fl: dict, bx: dict, tn: dict, now: float) -> str:
+    """A machine that fails gets a red light (blinking while it is failed) and, in a loop of EM_T seconds, a small fire with smoke, the
+    fire truck, ambulance and police car driving out from the nearest fire station, hospital and police station placed on the floor
+    (a vehicle with no such building to leave from does not come), and the fire truck's jet on the roof. All of the timing is SMIL
+    started `now % EM_T` seconds ago, so the floor's live refresh (which redraws it) does not restart the call-out."""
+    from .town_art import ART
+    sick = [bx[k] for sid, o in fl.items() if o.get("state") == "fail" and o.get("refs") and (k := f"station:{sid}") in bx][:EM_MAX]
+    if not sick:
+        return ""
+    ph = _f(-(now % EM_T))
+    places = [(kind, x, y + ART[kind]["h"] / 2) for kind, x, y, s, v in tn.get("items") or [] if kind in ART]
+    cyc = lambda vals, keys: (f'<animate attributeName="opacity" values="{vals}" keyTimes="{keys}" dur="{_f(EM_T)}s" begin="{ph}s" repeatCount="indefinite"/>')
+    out = ('<defs><radialGradient id="em-halo"><stop offset="0" stop-color="#ff5a4d" stop-opacity=".55"/>'
+           '<stop offset="1" stop-color="#ff5a4d" stop-opacity="0"/></radialGradient></defs>')
+    for x, y, w, h in sick:
+        lx, ly, rx, ry = x + w * 0.85, y - 6, x + w * 0.62, y + 2
+        out += (f'<g class="em" aria-hidden="true"><circle class="em-halo tw-blink" cx="{_f(lx)}" cy="{_f(ly)}" r="16"/>'
+                f'<circle class="em-lamp tw-blink" cx="{_f(lx)}" cy="{_f(ly)}" r="3.4"/>'
+                f'<g class="em-fire" opacity="0">{cyc("0;0;1;1;0;0", "0;.1;.14;.74;.8;1")}'
+                f'<g transform="translate({_f(rx)} {_f(ry)})"><path class="tw-flame" d="M 0 0 Q -6 -16 4 -26 Q 4 -14 12 -18 Q 14 -8 20 0 Z"/>'
+                f'<path class="tw-flame b" d="M 6 0 Q 4 -10 10 -16 Q 12 -8 16 0 Z"/>'
+                + "".join(f'<circle class="tw-smoke dark" cx="{_f(dx)}" cy="-30" r="6"/>'
+                          for dx in (4, 8, 30, 34)) + '</g></g>')
+        for i, (veh, home) in enumerate(EM_CREW):
+            src = min((p for p in places if p[0] == home), key=lambda p: (p[1] - x) ** 2 + (p[2] - y) ** 2, default=None)
+            if not src:
+                continue
+            sx, sy = src[1], src[2] - 4
+            tx, ty = x + w / 2 + (i - 1) * 66, y + h + 18
+            t0 = 0.02 + 0.02 * i
+            face = f"scale({_f(-0.85)} 0.85)" if tx < sx else "scale(0.85)"
+            out += (f'<g><animateMotion path="M {_f(sx)} {_f(sy)} L {_f(tx)} {_f(ty)}" keyPoints="0;0;1;1" keyTimes="0;{_f(t0)};{_f(t0 + 0.32)};1" '
+                    f'calcMode="linear" dur="{_f(EM_T)}s" begin="{ph}s" repeatCount="indefinite"/>'
+                    f'<g opacity="0">{cyc("0;0;1;1;0;0", f"0;{_f(t0)};{_f(t0 + 0.02)};0.72;0.76;1")}'
+                    f'<g transform="{face} translate(-60 -52)">{ART[veh]["svg"]}</g></g></g>')
+            if veh == "t-firetruck":
+                out += (f'<g class="em-jet" opacity="0">{cyc("0;0;1;1;0;0", "0;.42;.45;.68;.72;1")}'
+                        f'<path d="M {_f(tx)} {_f(ty - 36)} Q {_f((tx + x + w / 2) / 2)} {_f(y - 50)} {_f(x + w / 2)} {_f(y + 4)}"/></g>')
+        out += "</g>"
+    return out
+
+
 def _night(tn: dict, width: float, height: float) -> str:
     """The time of day over the floor: a tint (dusk and night; clear by day) and a warm glow round each lamp that comes on as it gets
     dark. Both are clear until the page's Time buttons (static/app.js, data-tod on the page) say otherwise, so the picture is the
@@ -1396,5 +1476,5 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
              + f'<g aria-hidden="true">{drones(now, poll.get("every"), poll.get("last"), pad("sources", PAD, SRC), pad("receiving", RECV_PAD, (12, 200)))}</g>'
              + f'<g aria-hidden="true">{land("top")}</g>')
     return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor">'
-            f'{terrain.defs()}<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>{plant}{_night(tn, width, height)}'
+            f'{terrain.defs()}<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>{plant}{_night(tn, width, height)}{_weather(width, height)}{_emergency(fl, bx, tn, now)}'
             f'<g aria-hidden="true">{flights}</g></svg>')

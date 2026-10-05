@@ -245,21 +245,28 @@
     });
   })();
 
-  // --- The floor's time of day: Auto runs a 40 s day, Day, Dusk and Night hold it. The page keeps the choice (data-tod, the Time buttons
+  // --- The floor's time of day and weather: Auto runs a 40 s day, Day, Dusk and Night hold it. The page keeps the choice (data-tod, the Time buttons
   // inside the live part are redrawn every few seconds) and Auto's phase follows the clock, so a refresh does not restart the day.
   var TOD = "auto";
   try { TOD = localStorage.getItem("floor-time") || "auto"; } catch (e) {}
+  var WX = "clear";
+  try { WX = localStorage.getItem("floor-weather") || "clear"; } catch (e) {}
   function tod() {
     document.documentElement.setAttribute("data-tod", TOD);
     var phase = -((Date.now() % 40000) / 1000) + "s", sky = document.querySelectorAll(".fm-tod, .fm-nglow"), b = document.querySelectorAll(".fm-time [data-tod]"), i;
     for (i = 0; i < sky.length; i++) sky[i].style.animationDelay = phase;
     for (i = 0; i < b.length; i++) b[i].setAttribute("aria-pressed", b[i].getAttribute("data-tod") === TOD ? "true" : "false");
+    document.documentElement.setAttribute("data-wx", WX);
+    var flash = -((Date.now() % 6000) / 1000) + "s", fx = document.querySelectorAll(".fm-bolt, .fm-flash");     // the lightning keeps its own 6 s beat
+    for (i = 0; i < fx.length; i++) fx[i].style.animationDelay = flash;
+    var w = document.querySelectorAll(".fm-time [data-wx]");
+    for (i = 0; i < w.length; i++) w[i].setAttribute("aria-pressed", w[i].getAttribute("data-wx") === WX ? "true" : "false");
   }
   document.addEventListener("click", function (e) {
-    var b = e.target.closest && e.target.closest(".fm-time [data-tod]");
+    var b = e.target.closest && e.target.closest(".fm-time [data-tod], .fm-time [data-wx]");
     if (!b) return;
-    TOD = b.getAttribute("data-tod");
-    try { localStorage.setItem("floor-time", TOD); } catch (er) {}
+    if (b.hasAttribute("data-tod")) { TOD = b.getAttribute("data-tod"); try { localStorage.setItem("floor-time", TOD); } catch (er) {} }
+    else { WX = b.getAttribute("data-wx"); try { localStorage.setItem("floor-weather", WX); } catch (er) {} }
     tod();
   });
   tod();

@@ -166,6 +166,14 @@ def build(boxes: dict, belts: dict, tracks: dict, districts: dict, cells) -> dic
         hazards.append([hz[0], hz[1], 6, 3])
         g.block((hz[0] - 1, hz[1] - 1, 8, 5))
 
+    # the emergency services (plant._emergency sends their vehicles when a machine fails): each in the free spot nearest the middle of the
+    # plant that has room for its 120 by 96 px picture
+    for kind, near, seed in (("t-firestation", (86, 34), 2), ("t-hospital", (70, 32), 4), ("t-policestation", (100, 34), 6)):
+        spot = g.find(6, 5, near, step=1, m=0)
+        if spot:
+            thing(kind, (spot[0] + 3) * G, (spot[1] + 2.5) * G, 120, seed)
+            g.block((spot[0] - 1, spot[1] - 1, 8, 7))
+
     # forests: clumps of trees, pines, bushes and rocks, each started on open ground and grown outwards, so the gaps between the
     # islands fill up without ever touching a belt, a track or a building
     kinds = (("tree", 8), ("pine", 5), ("bush", 4), ("rock", 1))
