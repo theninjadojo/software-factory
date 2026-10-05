@@ -20,7 +20,7 @@ def journey(steps, status="done"):
 
 
 def row(issue, state, st, title="T", why="w", at=None, need=None, prs=(), steps=()):
-    return {"repo": REPO, "issue": issue, "title": title, "state": state, "stations": st, "at": at, "when": time.time() - 60, "why": why,
+    return {"repo": REPO, "issue": issue, "title": title, "state": state, "stations": {**{s: "none" for s, _ in board.STATIONS}, **st}, "at": at, "when": time.time() - 60, "why": why,
             "journey": journey(list(steps)), "prs": list(prs), "need": need}
 
 
