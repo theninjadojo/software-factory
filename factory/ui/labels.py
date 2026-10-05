@@ -23,6 +23,7 @@ FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it 
          "answered": "Answer recorded on the ticket. Other questions still need an answer.",
          "continued": "Answers recorded on the ticket. The factory starts the next stage at its next poll."}
 MAX_TITLE, MAX_BODY = 200, 5000
+ATTACH_ACCEPT = ",".join("." + e for e in tracker.ATTACH_TYPES)
 DUP_SECONDS = 10
 CLOSE_COMMENT = "Closed from the factory admin UI. It can be reopened if this was a mistake."
 CLOSE_BUSY_COMMENT = "Closed from the factory admin UI. The factory stops its work on this ticket. It can be reopened if this was a mistake."
@@ -363,10 +364,12 @@ def new_ticket_form(cfg, repo: str, csrf: str) -> str:
     if not csrf or not cfg.repos:
         return ""
     opts = "".join(f'<option value="{esc(r)}"{" selected" if r == repo else ""}>{esc(r)}</option>' for r in cfg.repos)
-    form = (f'<form method="post" action="/tickets/create" class="field">{csrf_field(csrf)}'
+    form = (f'<form method="post" action="/tickets/create" enctype="multipart/form-data" class="field">{csrf_field(csrf)}'
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="5" maxlength="{MAX_BODY}"></textarea></label>'
+            + (f'<label>Attachments (optional)<input type="file" name="file" multiple accept="{ATTACH_ACCEPT}"></label>'
+               '<p class="muted ft-note">Kept only with local tickets, and read by the agents that work on the ticket.</p>' if cfg.local_enabled else "")
             + ('<label>Keep it in<select name="where"><option value="local">The factory (local ticket)</option>'
                '<option value="github">GitHub issues</option></select></label>' if cfg.local_enabled else
                '<p class="muted ft-note">It becomes a GitHub issue. Local tickets, kept in the factory, are off. '
@@ -841,10 +844,13 @@ def create(h, form, csrf: str) -> None:
         where = form.get("where") or ("local" if cfg.local_enabled else "github")
         if where not in ("local", "github") or (where == "local" and not cfg.local_enabled):
             raise Refused("Local tickets are turned off. Turn them on under Settings → General.")
+        files = getattr(form, "files", [])
+        if files and where != "local":
+            raise Refused("Attachments are kept only with local tickets. Choose the factory, or create the ticket without a file.")
     except Refused as e:
         return _done(h, form, csrf, str(e), "bad")
     if where == "local":
-        return _create_local(h, form, csrf, cfg, repo, title, body, labels, chosen[1])
+        return _create_local(h, form, csrf, cfg, repo, title, body, labels, chosen[1], files)
     gh = _gh(h)
     if gh is None:
         return _done(h, form, csrf, NO_TOKEN, "bad")
@@ -871,14 +877,19 @@ def create(h, form, csrf: str) -> None:
           else f"Created {repo}#{int(n)}. Nothing started.")
 
 
-def _create_local(h, form, csrf: str, cfg, repo: str, title: str, body: str, labels: list[str], verb: str) -> None:
+def _create_local(h, form, csrf: str, cfg, repo: str, title: str, body: str, labels: list[str], verb: str, files: list | None = None) -> None:
     from . import localtickets as LT
     now = time.time()
     with _recent_lock:
         if now - _recent.get((repo, title), 0) < DUP_SECONDS:
             return _done(h, form, csrf, "That ticket was just created.", "bad")
         _recent[(repo, title)] = now
-    n = LT.create(cfg, repo, title, body, labels)
+    try:
+        n = LT.create(cfg, repo, title, body, labels, files or ())
+    except tracker.AttachmentError as e:               # nothing was written: the whole form is refused
+        with _recent_lock:
+            _recent.pop((repo, title), None)
+        return _done(h, form, csrf, f"{e} Nothing was created.", "bad")
     log.info("tickets: created local %s %s from the UI%s", repo, tracker.display(n), f" with {labels[0]}" if labels else "")
     with _flights_lock:
         _flights.append((time.time(), tracker.display(n)))

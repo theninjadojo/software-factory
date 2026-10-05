@@ -102,6 +102,9 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("local.enabled", "Keep tickets in the factory", "bool",
               "On: tickets can live in the factory's own database (L-1, L-2 ...) instead of GitHub issues. New ticket offers both, and Import "
               "moves GitHub issues across. Pull requests still go to GitHub."),
+        Field("local.attach_max_mb", "Largest attachment (MB)", "int", "Files attached to a local ticket. Larger files are refused.", lo=1, hi=25),
+        Field("local.attach_max_files", "Attachments per ticket", "int", lo=1, hi=20),
+        Field("local.attach_max_total_mb", "Attachments per ticket, in all (MB)", "int", lo=1, hi=100),
         Field("github.poll_seconds", "Read GitHub every (seconds)", "int",
               "Local tickets are handled at every poll; GitHub issues can be read less often to spare API calls. "
               "The same as the poll interval reads GitHub at every poll.", lo=5, hi=86400),
@@ -286,7 +289,7 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     return {"auto.label": "factory:auto", "routing.low.fallback_models": [], "routing.medium.fallback_models": [], "routing.high.fallback_models": [],
             "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
-            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
+            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "local.attach_max_mb": 5, "local.attach_max_files": 5, "local.attach_max_total_mb": 20, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
 def canon(key: str, v):

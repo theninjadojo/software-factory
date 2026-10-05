@@ -22,6 +22,9 @@ trusted_permissions = ["admin", "maintain", "write"]   # who may apply a trigger
 # copies a GitHub issue here and marks the original "factory:moved". Off by default.
 # [local]
 # enabled = true
+# attach_max_mb = 5                                # attachments of a local ticket: largest file, most files, most MB in all
+# attach_max_files = 5
+# attach_max_total_mb = 20
 
 # Classification tier -> agent settings. A fixed table: the classifier can only select a row, never write one.
 [routing.low]

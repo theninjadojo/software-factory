@@ -29,7 +29,8 @@ class AdminCase(UiCase):
         cfg = load(str(self.root / "config.toml"))
         f = {"section": "general", "general.poll_seconds": str(cfg.poll_seconds), "general.confidence_threshold": str(cfg.confidence_threshold),
              "github.trigger_label": cfg.trigger_label, "github.repos": "\n".join(["your-org/standalone-service"]),
-             "github.poll_seconds": str(cfg.github_poll_seconds)}
+             "github.poll_seconds": str(cfg.github_poll_seconds), "local.attach_max_mb": str(cfg.attach_max_mb),
+             "local.attach_max_files": str(cfg.attach_max_files), "local.attach_max_total_mb": str(cfg.attach_max_total_mb)}
         f.update(over)
         pairs = list(f.items()) + [("github.trusted_permissions", p) for p in ("admin", "maintain", "write")]
         if f.pop("dry_run_on", True) is not False:

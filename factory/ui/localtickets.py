@@ -6,6 +6,7 @@ Titles, bodies and comments are untrusted text (an import copies them from GitHu
 md_render, which never renders raw HTML."""
 import logging
 import sqlite3
+from urllib.parse import quote
 
 from .. import db as dbm
 from .. import tracker
@@ -43,6 +44,10 @@ def ticket(db, repo: str, number: int) -> dict | None:
         t.db, t.actor = db, tracker.UI_ACTOR
         issue = t.issue(repo, number)
         issue["comment_list"] = t.comments(repo, number)
+        try:
+            issue["attachment_list"] = t.attachments(repo, number)
+        except sqlite3.OperationalError:                 # a database from before attachments, not yet opened by the orchestrator
+            issue["attachment_list"] = []
         issue["created"] = db.execute("SELECT created FROM local_tickets WHERE repo=? AND number=?", (repo, number)).fetchone()[0]
     except (LookupError, sqlite3.OperationalError):
         return None
@@ -53,6 +58,30 @@ def ticket(db, repo: str, number: int) -> dict | None:
 def _hidden(repo: str, n: int, csrf: str, back: str) -> str:
     return (f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
             f'<input type="hidden" name="back" value="{esc(back)}">')
+
+
+def _size(n: int) -> str:
+    return f"{n / 1024 / 1024:.1f} MB" if n >= 1024 * 1024 else f"{max(1, round(n / 1024))} KB"
+
+
+def _attachments(cfg, issue: dict, repo: str, n: int, hidden: str) -> str:
+    """The files of the ticket (names are escaped; a download is always an attachment) and the form that adds more."""
+    files = issue.get("attachment_list") or []
+    rows = "".join(
+        f'<li><a href="/tickets/local/attachment?repo={quote(repo)}&amp;n={n}&amp;id={int(a["id"])}">{esc(a["name"])}</a> '
+        f'<span class="muted">{esc(_size(a["size"]))}</span> '
+        f'<details class="disclose"><summary aria-label="Remove {esc(a["name"])}">Remove</summary>'
+        f'<form method="post" action="/tickets/local/attachment/delete" class="inline">{hidden}<input type="hidden" name="id" value="{int(a["id"])}">'
+        f'<p>Remove {esc(a["name"])} from this ticket? It cannot be undone.</p><button class="secondary">Remove file</button></form></details></li>'
+        for a in files)
+    if len(files) < cfg.attach_max_files:
+        add = (f'<form method="post" action="/tickets/local/attach" enctype="multipart/form-data" class="field">{hidden}'
+               f'<label>Attach files<input type="file" name="file" multiple required accept="{L.ATTACH_ACCEPT}"></label>'
+               f'<p class="muted">Up to {cfg.attach_max_files} files and {cfg.attach_max_total_mb} MB in all, {cfg.attach_max_mb} MB each. '
+               'The agents working on this ticket can read them.</p><button>Attach</button></form>')
+    else:
+        add = f'<p class="muted">The limit of {cfg.attach_max_files} files is reached. Remove one to attach another.</p>'
+    return f'<h4>Attachments</h4>{f"<ul class=lt-files>{rows}</ul>" if rows else "<p class=muted>No attachments.</p>"}{add}'
 
 
 def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | None, approved: bool) -> str:
@@ -85,6 +114,7 @@ def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | Non
             f'<label>Title<input name="title" required maxlength="{L.MAX_TITLE}" value="{esc(issue["title"])}"></label>'
             f'<label>Description<textarea name="body" rows="6" maxlength="{L.MAX_BODY}">{esc(issue["body"])}</textarea></label>'
             '<button>Save</button></form></details>'
+            f'{_attachments(cfg, issue, repo, n, hidden)}'
             f'<h4>Comments</h4>{f"<ol class=lt-comments>{comments}</ol>" if comments else "<p class=muted>No comments yet.</p>"}'
             f'<form method="post" action="/tickets/local/comment" class="field">{hidden}'
             f'<label>Add a comment<textarea name="body" rows="3" required maxlength="{L.MAX_BODY}"></textarea></label>'
@@ -152,8 +182,56 @@ def set_state(h, form, csrf: str) -> None:
     L._done(h, form, csrf, f"Reopened {tracker.display(n)}.")
 
 
-def create(cfg, repo: str, title: str, body: str, labels: list[str]) -> int:
-    """A new local ticket from the New ticket form; a start label is applied as the admin UI, so the factory trusts it."""
+def create(cfg, repo: str, title: str, body: str, labels: list[str], files=()) -> int:
+    """A new local ticket from the New ticket form; a start label is applied as the admin UI, so the factory trusts it.
+    files are (name, bytes) pairs; if one is refused (tracker.AttachmentError) nothing is created."""
     t = tracker.LocalTracker(dbm.local(cfg.db_path), tracker.UI_ACTOR)
-    return t.create(repo, title, body, author=tracker.UI_ACTOR, labels=tuple(labels))
+    return t.create(repo, title, body, author=tracker.UI_ACTOR, labels=tuple(labels), files=tuple(files), limits=tracker.attach_limits(cfg))
+
+
+def attach(h, form, csrf: str) -> None:
+    """POST /tickets/local/attach (multipart, CSRF already checked): add the uploaded files to a local ticket, all or none."""
+    files = getattr(form, "files", [])
+    try:
+        repo, n = _target(h, form)
+        if not files:
+            raise L.Refused("Choose a file to attach.")
+        _store(h).add_attachments(repo, n, tuple(files), tracker.UI_ACTOR, tracker.attach_limits(h.app.cfg()))
+    except (L.Refused, tracker.AttachmentError) as e:
+        return L._done(h, form, csrf, str(e), "bad")
+    log.info("tickets: %d attachment(s) on local %s %s", len(files), repo, tracker.display(n))
+    L._done(h, form, csrf, "Attached." if len(files) == 1 else f"Attached {len(files)} files.")
+
+
+def remove_attachment(h, form, csrf: str) -> None:
+    try:
+        repo, n = _target(h, form)
+    except L.Refused as e:
+        return L._done(h, form, csrf, str(e), "bad")
+    att = int(form["id"]) if str(form.get("id", "")).isdigit() else 0
+    if not _store(h).delete_attachment(repo, n, att):
+        return L._done(h, form, csrf, "There is no such attachment.", "bad")
+    log.info("tickets: removed an attachment from local %s %s", repo, tracker.display(n))
+    L._done(h, form, csrf, "Removed.")
+
+
+def download(h, q: dict, csrf: str) -> None:
+    """GET /tickets/local/attachment: always a download (never shown inline), with the type from our allowlist and a file name
+    we sanitised, so an uploaded HTML or SVG file cannot run on the admin origin."""
+    db = h.app.ro_db()
+    try:
+        repo, n = L._repo(h.app.cfg(), q.get("repo", "")), L._number(q.get("n", ""))
+        if db is None or not tracker.is_local(n):
+            raise LookupError("no such attachment")
+        t = tracker.LocalTracker.__new__(tracker.LocalTracker)       # read-only connection: never ensure_tables on it
+        t.db, t.actor = db, tracker.UI_ACTOR
+        meta, data = t.attachment(repo, n, int(q["id"]) if q.get("id", "").isdigit() else 0)
+        if meta["mime"] not in tracker.ATTACH_TYPES.values():
+            raise LookupError("no such attachment")
+    except (L.Refused, LookupError, sqlite3.OperationalError):
+        return h._send(404, "no such attachment", "text/plain")
+    finally:
+        if db is not None:
+            db.close()
+    h._send(200, data, meta["mime"], {"Content-Disposition": f'attachment; filename="{tracker.safe_name(meta["name"])}"'})
 

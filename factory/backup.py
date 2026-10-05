@@ -5,6 +5,7 @@ A backup is a zip: manifest.json, a sanitised copy of the database, and the two 
 upload is never put in place, its rows are copied into a fresh database built by `db.connect`, and the swap happens at the
 orchestrator's next start, before it opens the database."""
 import email.parser
+import email.utils
 import hashlib
 import json
 import mmap
@@ -215,14 +216,15 @@ def rebuild_db(untrusted: Path, out: Path) -> dict:
 
 
 # ---------------------------------------------------------------- multipart upload
-def read_multipart(path: Path, content_type: str, max_field: int = 256) -> tuple[dict, tuple[int, int] | None]:
-    """The text fields and the byte span of the file part of a multipart/form-data body saved at path (read through mmap,
-    so a large upload is never held in memory)."""
+def read_parts(path: Path, content_type: str, max_field: int = 256, max_files: int = 1) -> tuple[dict, list[tuple[str, tuple[int, int]]]]:
+    """The text fields and the (file name, byte span) of the file parts named `file` of a multipart/form-data body saved at path
+    (read through mmap, so a large upload is never held in memory). More than max_files file parts is an error; a part with an
+    empty file name (a file input left empty) is skipped."""
     m = re.search(r'boundary="?([^";\s]{1,200})"?', content_type or "")
     if not m or not (content_type or "").lower().startswith("multipart/form-data"):
         raise BackupError("Expected a multipart upload.")
     delim = b"--" + m.group(1).encode()
-    fields, span = {}, None
+    fields, files = {}, []
     if path.stat().st_size == 0:
         raise BackupError("Empty upload.")
     with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as buf:
@@ -237,13 +239,23 @@ def read_multipart(path: Path, content_type: str, max_field: int = 256) -> tuple
                 raise BackupError("The upload is malformed.")
             msg = email.parser.BytesParser().parsebytes(buf[start + 2:head_end] + b"\r\n\r\n", headersonly=True)
             name = msg.get_param("name", header="content-disposition")
-            if msg.get_param("filename", header="content-disposition") is not None:
-                if name == "file" and span is None:
-                    span = (head_end + 4, nxt)
+            fname = msg.get_param("filename", header="content-disposition")
+            if fname is not None:
+                fname = email.utils.collapse_rfc2231_value(fname)
+                if name == "file" and fname != "":
+                    if len(files) >= max_files:
+                        raise BackupError("Too many files in the upload.")
+                    files.append((fname, (head_end + 4, nxt)))
             elif name and nxt - (head_end + 4) <= max_field:
                 fields[name] = buf[head_end + 4:nxt].decode("utf-8", "replace")
             pos = nxt + 2
-    return fields, span
+    return fields, files
+
+
+def read_multipart(path: Path, content_type: str, max_field: int = 256) -> tuple[dict, tuple[int, int] | None]:
+    """The text fields and the byte span of the (first) file part of a multipart/form-data body saved at path."""
+    fields, files = read_parts(path, content_type, max_field, max_files=1 << 30)
+    return fields, files[0][1] if files else None
 
 
 def copy_span(src: Path, span: tuple[int, int], dst: Path) -> None:

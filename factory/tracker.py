@@ -7,6 +7,7 @@ the local store for such a number and to GitHub for any other; it returns GitHub
 Trust: a local trigger label counts only if the last 'labeled' event for it was written by the admin UI or the factory itself
 (`TRUSTED_ACTORS`). Imported labels and comments carry the actor 'imported', which never counts. Stage documents and answers are
 trusted only when written by the factory (author FACTORY_AUTHOR, read back as the factory's GitHub login)."""
+import hashlib
 import logging
 import sqlite3
 import time
@@ -24,6 +25,59 @@ TRUSTED_ACTORS = frozenset({UI_ACTOR, FACTORY_ACTOR})
 MAX_BULK = 25
 MOVED_COMMENT = "Moved to the factory's local tracker as {ref}.{link} This issue is no longer watched by the factory."
 RUNNING = ("running", "queued", "starting")
+
+
+# Attachments of a local ticket. The type comes from the extension (an allowlist) and the content must match it; the browser's
+# file name and content type are never used beyond a sanitised display name.
+TEXT_MIME = "text/plain; charset=utf-8"
+ATTACH_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "pdf": "application/pdf",
+                "txt": TEXT_MIME, "md": TEXT_MIME, "log": TEXT_MIME, "json": TEXT_MIME, "csv": TEXT_MIME}
+_MAGIC = {"png": (b"\x89PNG\r\n\x1a\n",), "jpg": (b"\xff\xd8\xff",), "jpeg": (b"\xff\xd8\xff",), "gif": (b"GIF87a", b"GIF89a"), "pdf": (b"%PDF-",)}
+MAX_NAME = 80
+MB = 1024 * 1024
+
+
+class AttachmentError(ValueError):
+    """A refused attachment; the message is fixed text, safe to show."""
+
+
+def attach_limits(cfg) -> tuple[int, int, int]:
+    """(largest file, most files, most bytes in all) per ticket, from the configuration."""
+    return cfg.attach_max_mb * MB, cfg.attach_max_files, cfg.attach_max_total_mb * MB
+
+
+def safe_name(name: str) -> str:
+    """A display name of [A-Za-z0-9._-] only, at most MAX_NAME long, keeping the extension; never a path."""
+    base = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    base = "".join(c if (c.isascii() and (c.isalnum() or c in "._-")) else "_" for c in base).lstrip(".")
+    stem, dot, ext = base.rpartition(".")
+    if not dot:
+        stem, ext = base, ""
+    stem = stem[:MAX_NAME - len(ext) - 1] if ext else stem[:MAX_NAME]
+    return (f"{stem}.{ext}" if ext else stem) or "file"
+
+
+def check_attachment(name: str, data: bytes, max_bytes: int) -> tuple[str, str]:
+    """(safe name, content type) of an acceptable file, or AttachmentError."""
+    name = safe_name(name)
+    ext = name.rpartition(".")[2].lower() if "." in name else ""
+    if ext not in ATTACH_TYPES:
+        raise AttachmentError("That file type is not accepted. Use png, jpg, gif, pdf, txt, md, log, json or csv.")
+    if not data:
+        raise AttachmentError("The file is empty.")
+    if len(data) > max_bytes:
+        raise AttachmentError(f"A file is too large ({max_bytes // MB} MB at most).")
+    if ext in _MAGIC:
+        if not data.startswith(_MAGIC[ext]):
+            raise AttachmentError("The file's content does not match its type.")
+    else:
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise AttachmentError("A text file must be UTF-8.")
+        if b"\0" in data:
+            raise AttachmentError("A text file must not contain binary data.")
+    return name, ATTACH_TYPES[ext]
 
 
 def is_local(number: int) -> bool:
@@ -51,6 +105,10 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS local_comments (
             id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, number INTEGER NOT NULL, author TEXT NOT NULL,
             body TEXT NOT NULL, created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS local_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, number INTEGER NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL,
+            size INTEGER NOT NULL, sha256 TEXT NOT NULL, data BLOB NOT NULL, author TEXT NOT NULL, created REAL NOT NULL);
+        CREATE INDEX IF NOT EXISTS local_attachments_ticket ON local_attachments(repo, number, id);
         CREATE TABLE IF NOT EXISTS local_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, number INTEGER NOT NULL, actor TEXT NOT NULL,
             action TEXT NOT NULL, label TEXT NOT NULL, at REAL NOT NULL);
@@ -103,14 +161,70 @@ class LocalTracker:
         self.db.execute("UPDATE local_tickets SET updated=MAX(?, updated + 0.000001) WHERE repo=? AND number=?",
                         (time.time(), repo, number))
 
-    def create(self, repo: str, title: str, body: str = "", author: str = UI_ACTOR, labels: tuple = (), label_actor: str | None = None) -> int:
+    def create(self, repo: str, title: str, body: str = "", author: str = UI_ACTOR, labels: tuple = (), label_actor: str | None = None,
+               files: tuple = (), limits: tuple = (5 * MB, 5, 20 * MB)) -> int:
+        """files: (name, bytes) pairs, validated against limits before anything is written; the ticket and its files are one transaction."""
+        ready = self._prepare(files, limits, 0, 0)
         number = (self.db.execute("SELECT MAX(number) FROM local_tickets WHERE repo=?", (repo,)).fetchone()[0] or LOCAL_BASE) + 1   # tickets are never deleted, so a number is never reused
         now = time.time()
-        self.db.execute("INSERT INTO local_tickets VALUES (?,?,?,?,'open',?,?,?)", (repo, number, title, body, author, now, now))
-        for label in labels:
-            self._label(repo, number, label, label_actor or self.actor)
-        self.db.commit()
+        try:
+            self.db.execute("INSERT INTO local_tickets VALUES (?,?,?,?,'open',?,?,?)", (repo, number, title, body, author, now, now))
+            for label in labels:
+                self._label(repo, number, label, label_actor or self.actor)
+            for item in ready:
+                self._attach(repo, number, *item, author)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return number
+
+    @staticmethod
+    def _prepare(files, limits: tuple, have_files: int, have_bytes: int) -> list[tuple[str, str, bytes]]:
+        max_bytes, max_files, max_total = limits
+        if have_files + len(files) > max_files:
+            raise AttachmentError(f"At most {max_files} files can be attached to a ticket.")
+        if have_bytes + sum(len(d) for _, d in files) > max_total:
+            raise AttachmentError(f"The attachments of a ticket may total {max_total // MB} MB at most.")
+        return [(*check_attachment(n, d, max_bytes), d) for n, d in files]
+
+    def _attach(self, repo: str, number: int, name: str, mime: str, data: bytes, author: str) -> int:
+        cur = self.db.execute("INSERT INTO local_attachments (repo, number, name, mime, size, sha256, data, author, created) VALUES (?,?,?,?,?,?,?,?,?)",
+                              (repo, number, name, mime, len(data), hashlib.sha256(data).hexdigest(), data, author, time.time()))
+        return cur.lastrowid
+
+    def add_attachments(self, repo: str, number: int, files: tuple, author: str = UI_ACTOR, limits: tuple = (5 * MB, 5, 20 * MB)) -> list[int]:
+        """Attach (name, bytes) files to an existing ticket, all or none; the limits count what it already has."""
+        have_files, have_bytes = self.db.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM local_attachments WHERE repo=? AND number=?",
+                                                 (repo, number)).fetchone()
+        ready = self._prepare(files, limits, have_files, have_bytes)
+        try:
+            ids = [self._attach(repo, number, *item, author) for item in ready]
+            self._touch(repo, number)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return ids
+
+    def attachments(self, repo: str, number: int) -> list[dict]:
+        """The files of a ticket without their content."""
+        return [{"id": i, "name": n, "mime": m, "size": s, "created": c, "author": a} for i, n, m, s, c, a in self.db.execute(
+            "SELECT id, name, mime, size, created, author FROM local_attachments WHERE repo=? AND number=? ORDER BY id", (repo, number))]
+
+    def attachment(self, repo: str, number: int, att_id: int) -> tuple[dict, bytes]:
+        r = self.db.execute("SELECT id, name, mime, size, data FROM local_attachments WHERE repo=? AND number=? AND id=?",
+                            (repo, number, att_id)).fetchone()
+        if r is None:
+            raise LookupError("no such attachment")
+        return {"id": r[0], "name": r[1], "mime": r[2], "size": r[3]}, bytes(r[4])
+
+    def delete_attachment(self, repo: str, number: int, att_id: int) -> bool:
+        cur = self.db.execute("DELETE FROM local_attachments WHERE repo=? AND number=? AND id=?", (repo, number, att_id))
+        if cur.rowcount:
+            self._touch(repo, number)
+        self.db.commit()
+        return bool(cur.rowcount)
 
     def _label(self, repo: str, number: int, label: str, actor: str) -> None:
         self.db.execute("INSERT OR IGNORE INTO local_labels VALUES (?,?,?)", (repo, number, label))
@@ -231,6 +345,13 @@ class Hub(GitHub):
         except Exception:
             login = None                    # no token or no network: factory comments keep the '@factory' author
         return self._local().comments(repo, issue, login)
+
+    def attachments(self, repo: str, issue: int) -> list[tuple[int, str, bytes]]:
+        """(id, name, content) of a local ticket's files; GitHub issues have none here."""
+        if not self._is_local(issue):
+            return []
+        t = self._local()
+        return [(a["id"], a["name"], t.attachment(repo, issue, a["id"])[1]) for a in t.attachments(repo, issue)]
 
     def comment(self, repo: str, issue: int, body: str) -> str:
         if not self._is_local(issue):
