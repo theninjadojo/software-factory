@@ -11,3 +11,7 @@ The main checkout often holds someone's uncommitted work. Do not edit, stash, co
 5. Once the PR is merged, clean up: `git worktree remove ../sf-<topic>`, `git branch -D <branch>`, then `git worktree prune`. Leave the worktree in place until then.
 
 Stage only the files that belong to the change (never `git add -A` over someone else's work).
+
+## Look at UI changes in a browser
+
+For any change to what the UI shows (HTML, CSS, labels, layout), always run the app and look at the affected screen in a browser before opening the pull request. Passing tests do not show a layout. Screenshot it, check it at phone width too, and say in the pull request what you looked at.
