@@ -325,7 +325,7 @@
   }
   function morph(live, html) {
     var t = document.createElement("template");
-    if (!t.content || !document.importNode) { live.innerHTML = html; return; }
+    if (!t.content || !document.importNode) { live.innerHTML = String(html); return; }
     t.innerHTML = html;
     patchKids(live, t.content);
   }
