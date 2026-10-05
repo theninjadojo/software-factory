@@ -124,7 +124,7 @@ meter.nd-meter::-moz-meter-bar { background:var(--bad); border-radius:3px; }
 .nd-bulk { margin:0 0 .9rem; } .nd-bulk summary { cursor:pointer; list-style:none; } .nd-bulk summary::-webkit-details-marker { display:none; } .nd-bulk .card { padding:1rem; margin-top:.6rem; } .nd-bulk ul { margin:.4rem 0 .8rem 1.1rem; padding:0; } .nd-bulk ul ul { margin:.1rem 0 .3rem 1rem; color:var(--muted); font-size:.9rem; }
 .nd-empty { padding:1.8rem; display:flex; flex-direction:column; align-items:center; text-align:center; gap:.6rem; } .nd-empty h3 { margin:0; font-size:1.1rem; text-transform:none; letter-spacing:0; color:var(--text); }
 .nd-dialog { background:var(--panel); color:var(--text); border:1px solid var(--line2); border-radius:16px; padding:0; width:min(720px,94vw); max-height:90vh; overflow:auto; box-shadow:0 24px 80px rgba(0,0,0,.6); }
-.nd-dialog::backdrop { background:rgba(6,8,10,.72); } .nd-dhead { display:flex; justify-content:space-between; gap:1rem; padding:1rem 1.2rem; border-bottom:1px solid var(--line); } .nd-dhead p { margin:.3rem 0 0; font-size:.85rem; }
+.nd-dialog::backdrop { background:rgba(6,8,10,.72); } .nd-dhead { display:flex; justify-content:space-between; gap:1rem; padding:1rem 1.2rem; border-bottom:1px solid var(--line); } .nd-dhead p { margin:.3rem 0 0; font-size:.85rem; } .nd-dhead > div { min-width:0; } .nd-dhead > button { flex:none; white-space:nowrap; align-self:flex-start; }
 .nd-dialog .nd-form { padding:1rem 1.2rem 1.2rem; } .nd-dialog .nd-qs { grid-template-columns:minmax(0,1fr); }
 @media (max-width:1100px) { .nd-grid { grid-template-columns:minmax(0,1fr) 220px; } .nd-acts, .nd-acts2 { grid-column:1/-1; align-items:stretch; justify-content:flex-start; } .nd-rec { text-align:left; } }
 @media (max-width:760px) {
@@ -387,9 +387,9 @@ meter.sd-meter.bad::-webkit-meter-optimum-value { background:var(--bad); } meter
   .sd-snake .sd-belt.dim { background:repeating-linear-gradient(180deg,#2a3238 0 12px,#232a30 12px 24px); }
   .sd-snake .sd-crate { left:2px; top:40%; } .sd-snake .sd-belt.run .sd-crate { animation-name:sd-crateD; }
   .sd-snake .sd-belt.wait .sd-crate { left:2px; top:calc(100% - 14px); } .sd-snake .sd-belt.wait .sd-crate.two { left:2px; top:calc(100% - 30px); }
-  .sd-mach { display:grid; grid-template-columns:24px minmax(0,1fr) auto; grid-template-areas:"ico name count" "ico state refs"; column-gap:12px; align-items:center; padding:10px 14px; }
+  .sd-mach { display:grid; grid-template-columns:24px minmax(max-content,1fr) minmax(0,1.4fr); grid-template-areas:"ico name count" "ico state refs"; column-gap:12px; align-items:center; padding:10px 14px; }
   .sd-mtop { display:contents; } .sd-mtop .sd-ico { grid-area:ico; } .sd-mtop b { grid-area:count; text-align:right; font-size:18px; }
-  .sd-mach strong { grid-area:name; margin:0; } .sd-mstate { grid-area:state; margin:0; } .sd-refs { grid-area:refs; margin:0; min-height:0; text-align:right; }
+  .sd-mach strong { grid-area:name; margin:0; } .sd-mstate { grid-area:state; margin:0; } .sd-refs { grid-area:refs; margin:0; min-height:0; text-align:right; min-width:0; overflow-wrap:anywhere; }
   .sd-legend { gap:6px 16px; }
 }
 
