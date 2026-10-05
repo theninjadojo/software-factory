@@ -217,6 +217,26 @@ class GitHub:
     def create_pr(self, repo: str, head: str, base: str, title: str, body: str, draft: bool = False) -> str:
         return self._req("POST", f"/repos/{repo}/pulls", {"head": head, "base": base, "title": title, "body": body, "draft": draft})["html_url"]
 
+    def merge_pr(self, repo: str, number: int, sha: str, method: str = "merge") -> str:
+        """Merge a pull request, only if its head is still `sha` (a push since the person looked makes GitHub refuse). Returns the merge commit."""
+        if method not in ("merge", "squash", "rebase"):
+            raise ValueError("unknown merge method")
+        return (self._req("PUT", f"/repos/{repo}/pulls/{number}/merge", {"sha": sha, "merge_method": method}) or {}).get("sha", "")
+
+    def open_pulls(self, repo: str, prefix: str = "") -> list[dict]:
+        """Open pull requests (newest first), optionally only those whose branch starts with `prefix`."""
+        out = self._get(f"/repos/{repo}/pulls?state=open&per_page=50")
+        return [p for p in out if p["head"]["ref"].startswith(prefix)]
+
+    def bump_file(self, repo: str, path: str, content: str, branch: str, base: str, title: str, body: str) -> str:
+        """Change one file on a new branch off `base` and open a pull request for it (never touches `base` itself). Returns the PR url."""
+        self._req("POST", f"/repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": self.branch_sha(repo, base)})
+        cur = self._get(f"/repos/{repo}/contents/{urllib.parse.quote(path)}?ref={urllib.parse.quote(base)}")
+        import base64
+        self._req("PUT", f"/repos/{repo}/contents/{urllib.parse.quote(path)}",
+                  {"message": title, "content": base64.b64encode(content.encode()).decode(), "sha": cur["sha"], "branch": branch})
+        return self.create_pr(repo, branch, base, title, body)
+
     def mark_ready(self, repo: str, number: int) -> bool:
         """Take a draft PR out of draft. Only for a PR on a factory/ branch; a PR that is not a draft is left alone."""
         pr = self.get_pr(repo, number)
