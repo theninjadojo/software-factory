@@ -385,6 +385,41 @@ class Recipe(unittest.TestCase):
         self.assertEqual(self.run_recipe("--dir", "web")[0], 0)
         self.assertTrue(all(n.startswith("web-") for n in self.kept()), self.kept())
 
+    def python_suite(self):
+        """tests/e2e/requirements.txt, and a stub python3 whose `-m venv` makes a venv of stubs; its pytest drops a PNG into E2E_SCREENS_DIR."""
+        (self.repo / "tests" / "e2e").mkdir(parents=True)
+        (self.repo / "tests" / "e2e" / "requirements.txt").write_text("pytest\nplaywright\n")
+        shot = "\\211PNG\\r\\n\\032\\n"
+        py = ('#!/bin/sh\nif [ "$1 $2" = "-m venv" ]; then mkdir -p "$3/bin"; for t in pip playwright python; do\n'
+              '  printf \'#!/bin/sh\\necho "venv-%s $*; browser=[$E2E_BROWSER] dir=[$E2E_SCREENS_DIR]" >> "$CALLS"\\n\' "$t" > "$3/bin/$t"; chmod +x "$3/bin/$t"; done\n'
+              f'  printf \'printf "{shot}" > "$E2E_SCREENS_DIR/factory-desktop.png"\\n[ -n "$TESTS_FAIL" ] && exit 1\\nexit 0\\n\' >> "$3/bin/python"; fi\nexit 0\n')
+        f = self.bin / "python3"
+        f.write_text(py)
+        f.chmod(f.stat().st_mode | stat.S_IEXEC)
+
+    def test_a_python_suite_runs_as_pytest_and_hands_its_screens_over(self):
+        self.python_suite()
+        code, out, calls = self.run_recipe()
+        self.assertEqual(code, 0, out)
+        self.assertIn("venv-pip install -q -r tests/e2e/requirements.txt", calls)
+        self.assertIn("venv-playwright install chromium", calls)
+        self.assertIn(f"venv-python -m pytest tests/e2e -q -p no:cacheprovider; browser=[] dir=[{self.repo}/screens-out]", calls)
+        self.assertEqual(self.kept(), ["factory-desktop.png"])
+
+    def test_a_given_browser_replaces_the_download_and_failing_tests_still_return_screens(self):
+        self.python_suite()
+        code, out, calls = self.run_recipe("--browser", "/usr/bin/chromium", tests_fail=True)
+        self.assertEqual((code, self.kept()), (1, ["factory-desktop.png"]), out)
+        self.assertNotIn("playwright install", calls)
+        self.assertIn("browser=[/usr/bin/chromium]", calls)
+
+    def test_a_javascript_suite_wins_over_a_python_one_and_dir_skips_the_python_path(self):
+        self.python_suite()
+        self.project("web")
+        self.run_recipe()
+        self.assertNotIn("venv-", self.log.read_text())
+        self.assertEqual(self.run_recipe("--dir", "nothing-here")[0], 2)
+
     def test_nothing_to_run_is_a_recipe_problem_not_a_test_failure(self):
         (self.repo / "package.json").write_text("{}")
         self.assertEqual(self.run_recipe()[0], 2)

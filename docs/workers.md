@@ -119,6 +119,10 @@ the real app, grouped by project. Nothing is gated: no patch, no ticket, and a f
   that turns on a full-page screenshot at the end of every test, whatever the project's own config says. Every PNG is returned under a
   unique name from its test folder. Exit codes follow the web recipe: 0 passed, 1 install or tests failed (screenshots still kept),
   2 nothing to run.
+- **Python suites**: a repo with no JavaScript Playwright config but a pytest suite in `tests/e2e/` (with a `requirements.txt`) runs as
+  `pytest tests/e2e` in a throwaway virtualenv. A Python suite opts in by saving PNGs into the folder named by `E2E_SCREENS_DIR`, which the
+  recipe sets (this repo's `tests/e2e/test_screens.py` does it for every page at three widths, at CSS pixels and at most 5900 px tall). Add
+  `"--browser", "/usr/bin/chromium"` to the recipe's `command` to use a browser you already have instead of downloading one.
 - **Limits**: up to 300 screenshots and 40 MB per run (larger than the 8 of an ordinary check; the API accepts a 64 MB result), each
   checked like any worker PNG (at most 1600 x 6000, 3 MB). The newest 3 finished runs of a repo are kept; older ones and their images
   are deleted. A run is lower priority than a verification job: the queue serves checks first.
