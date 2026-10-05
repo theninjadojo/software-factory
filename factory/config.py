@@ -331,6 +331,15 @@ class ScreenPage:
 
 
 @dataclass(frozen=True)
+class ScreenCapture:
+    """A repo whose Playwright run the Screens board can start with its Build screens button. The run happens on a verification worker
+    (factory/captures.py); `recipe` names a recipe defined on the worker itself, never a command."""
+    repo: str
+    recipe: str = "playwright-screens"
+    platform: str = "any"                # a worker claims the job only if it declares this platform
+
+
+@dataclass(frozen=True)
 class ScreensCfg:
     """Screen verification during a build (factory/screens.py). Screens are listed here, in trusted config, never in the repo,
     so an agent cannot drop one. Fails closed: with pages configured for a repo, a missing image or baseline fails the build."""
@@ -341,6 +350,7 @@ class ScreensCfg:
     max_diff_ratio: float = 0.001        # fraction of pixels allowed to differ (0.001 = 0.1 %)
     viewports: tuple[Viewport, ...] = (Viewport("desktop", 1440, 900), Viewport("mobile", 390, 844))
     pages: tuple[ScreenPage, ...] = ()
+    captures: tuple[ScreenCapture, ...] = ()   # repos whose Playwright run the board's Build screens button starts on a worker
     label: str = "factory:screens-changed"   # put on the draft PR when a patch changes baseline images
     board_every: str = ""                # the Screens board: shoot every page on the default branch this often ("6h", "1d"); "" = only on request
 
@@ -662,12 +672,13 @@ _SCREEN_PATH = re.compile(r"[A-Za-z0-9_./-]{1,200}")
 
 def _screens(raw: dict, repos: list[str]) -> ScreensCfg:
     raw = dict(raw)
-    pages_raw, vps_raw = raw.pop("pages", []), raw.pop("viewports", None)
+    pages_raw, vps_raw, caps_raw = raw.pop("pages", []), raw.pop("viewports", None), raw.pop("captures", [])
     if isinstance(vps_raw, list):         # the UI writes a list, so its overrides replace config.toml's viewports instead of merging into them
         vps_raw = {v["name"]: {"width": v["width"], "height": v["height"]} for v in vps_raw}
     vps = ScreensCfg().viewports if vps_raw is None else tuple(Viewport(str(k), v["width"], v["height"]) for k, v in vps_raw.items())
     pages = tuple(ScreenPage(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in p.items()}) for p in pages_raw)
-    c = ScreensCfg(**{**raw, "viewports": vps, "pages": pages})
+    caps = tuple(ScreenCapture(**c) for c in caps_raw)
+    c = ScreensCfg(**{**raw, "viewports": vps, "pages": pages, "captures": caps})
     from .designfiles import valid_dir
     from .render import MAX_H, MAX_W
     if not valid_dir(c.baseline_dir):
@@ -694,6 +705,13 @@ def _screens(raw: dict, repos: list[str]) -> ScreensCfg:
         for dim, top in ((v.width, MAX_W), (v.height, MAX_H)):
             if not isinstance(dim, int) or isinstance(dim, bool) or not 16 <= dim <= top:
                 raise ValueError(f"screens.viewports.{v.name}: width and height must be whole numbers from 16 to {top}")
+    taken = set()
+    for k in c.captures:
+        if k.repo not in repos or k.repo in taken:
+            raise ValueError(f"screens.captures: {k.repo} must be a configured repo, listed once")
+        taken.add(k.repo)
+        if not isinstance(k.recipe, str) or not _SCREEN_NAME.fullmatch(k.recipe) or not isinstance(k.platform, str) or not _SCREEN_NAME.fullmatch(k.platform):
+            raise ValueError(f"screens.captures.{k.repo}: recipe and platform must match [a-z0-9-]")
     seen = set()
     for p in c.pages:
         if p.repo not in repos:

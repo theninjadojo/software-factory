@@ -17,6 +17,8 @@ REPORTED = ("passed", "failed", "error")          # what a worker may report
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 MAX_LOG = 200_000
 MAX_ARTIFACTS = 8
+SCREENS_PURPOSE = "screens"                 # params {"purpose": "screens"}: a Playwright run for the Screens board (factory/captures.py)
+MAX_SCREEN_ARTIFACTS = 300                  # such a run returns every screenshot its suite took, not a handful
 MAX_FINDINGS, MAX_SNIPPET = 1000, 300
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -151,7 +153,15 @@ def clean_log(text) -> str:
     return _CONTROL.sub("", text[-MAX_LOG:])
 
 
-def validate_result(body) -> tuple[dict | None, str]:
+def is_screens(job: dict) -> bool:
+    """True for a Playwright run started from the Screens board (its params say so; params are written by the orchestrator only)."""
+    try:
+        return bool(job.get("params")) and json.loads(job["params"]).get("purpose") == SCREENS_PURPOSE
+    except (ValueError, AttributeError):
+        return False
+
+
+def validate_result(body, max_artifacts: int = MAX_ARTIFACTS) -> tuple[dict | None, str]:
     """(clean result, '') or (None, why). Strict: a fixed status set, a whole-number exit code, a capped log, validated PNGs."""
     if not isinstance(body, dict):
         return None, "the result must be a JSON object"
@@ -162,8 +172,8 @@ def validate_result(body) -> tuple[dict | None, str]:
     if code is not None and (not isinstance(code, int) or isinstance(code, bool) or not -1000 <= code <= 1000):
         return None, "exit_code must be a whole number or null"
     arts = body.get("artifacts", [])
-    if not isinstance(arts, list) or len(arts) > MAX_ARTIFACTS:
-        return None, f"at most {MAX_ARTIFACTS} artifacts"
+    if not isinstance(arts, list) or len(arts) > max_artifacts:
+        return None, f"at most {max_artifacts} artifacts"
     out: dict[str, bytes] = {}
     for a in arts:
         if not isinstance(a, dict) or not isinstance(a.get("name"), str) or not NAME.fullmatch(a["name"]) or a["name"] in out:
@@ -205,7 +215,7 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
     job = get(db, job_id)
     if not job or job["worker"] != worker or job["status"] != "claimed":
         return "not your job, or it is no longer running"
-    res, why = validate_result(body)
+    res, why = validate_result(body, MAX_SCREEN_ARTIFACTS if is_screens(job) else MAX_ARTIFACTS)
     if res is None:
         db.execute("UPDATE verify_jobs SET status='error', finished=?, log=? WHERE id=?",
                    (now, f"The worker sent an invalid result: {why}", job_id))

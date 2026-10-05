@@ -8,13 +8,15 @@ import re
 import sqlite3
 from urllib.parse import urlencode
 
+from .. import captures as CP
+from .. import jobs
 from .. import reviewnotes as RN
 from .. import screenboard as SB
 from ..config import deep_merge
 from . import labels as L
 from . import settings as S
 from . import views
-from .views import csrf_field, esc
+from .views import ago, badge, csrf_field, dur, esc
 
 log = logging.getLogger("factory.ui")
 SCREEN_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
@@ -43,6 +45,106 @@ def figure(label: str, shot: dict | None, alt: str, empty: str) -> str:
         return f'<figure class="sb-shot sb-none"><figcaption>{esc(label)}</figcaption><p class="muted">{esc(empty)}</p></figure>'
     return (f'<figure class="sb-shot"><figcaption>{esc(label)}</figcaption><a href="{esc(open_url(shot["key"]))}">'
             f'<img src="{esc(SB.src(shot["key"]))}" alt="{esc(alt)}" loading="lazy"></a></figure>')
+
+
+# ---------------------------------------------------------------- Playwright runs (factory/captures.py)
+
+def shot_src(job_id: int, name: str) -> str:
+    return "/workerimg?" + urlencode({"job": int(job_id), "name": name})
+
+
+def _run_line(run: dict | None, live: dict | None) -> str:
+    """One line on what the repo's Playwright run is doing or did. The worker's words are escaped; nothing else is shown from them."""
+    if live and live["status"] == "queued":
+        return f'{badge("waiting", "warn")} Waiting for a worker to pick it up. <a href="/workers">Workers</a>'
+    if live:
+        return f'{badge("running", "warn")} Running on {esc(live["worker"] or "a worker")} since {esc(ago(live["claimed"] or live["created"]))}.'
+    if not run:
+        return '<span class="muted">Not built yet.</span>'
+    kind = {"passed": "good", "failed": "bad", "error": "bad"}.get(run["status"], "")
+    word = {"passed": "tests passed", "failed": "some tests failed", "error": "could not run"}.get(run["status"], run["status"])
+    n = len(run["shots"])
+    return (f'{badge(word, kind)} {n} screen{"" if n == 1 else "s"} · <code>{esc(run["base_sha"][:7])}</code> · {esc(ago(run["finished"] or run["created"]))}'
+            f' · took {esc(dur(run["claimed"], run["finished"]) if run["claimed"] else "—")} on {esc(run["worker"] or "—")} · '
+            f'<a href="/workers/job?id={int(run["id"])}">log</a>')
+
+
+def captures_body(cfg, db, csrf: str) -> str:
+    """Every repo with a Playwright run, grouped by project, each with its Build screens button and the screens its newest run took."""
+    caps = {c.repo: c for c in cfg.screens.captures}
+    if not caps:
+        return ""
+    groups, seen = [], set()
+    for pr in cfg.projects:
+        repos = [r.repo for r in pr.repos if r.repo in caps]
+        if repos:
+            groups.append((pr.name, pr.name, repos))
+            seen.update(repos)
+    rest = [r for r in caps if r not in seen]
+    if rest:
+        groups.append(("Other repositories", "", rest))
+    pending = CP.requested(db)
+    out = ""
+    for title, key, repos in groups:
+        busy = any(r in pending or CP.active(db, r) for r in repos)
+        button = (f'<form method="post" action="/screens/capture">{csrf_field(csrf)}<input type="hidden" name="project" value="{esc(key)}">'
+                  f'<button{" disabled" if busy else ""}>{"Building…" if busy else "Build screens"}</button></form>')
+        cards = ""
+        for repo in repos:
+            run, live = CP.latest(db, repo), CP.active(db, repo)
+            line = _run_line(run, live) if repo not in pending or live else f'{badge("requested", "warn")} Starts at the factory\'s next poll.'
+            grid = ""
+            if run and run["shots"]:
+                grid = '<ul class="cp-grid">' + "".join(
+                    f'<li><figure><a href="{esc(shot_src(run["id"], n))}" target="_blank"><img src="{esc(shot_src(run["id"], n))}" alt="{esc(n)}" loading="lazy"></a>'
+                    f'<figcaption>{esc(n)}</figcaption></figure></li>' for n in run["shots"]) + "</ul>"
+            cards += f'<section class="cp-repo"><h3>{esc(repo)}</h3><p>{line}</p>{grid}</section>'
+        out += f'<section class="cp-project"><div class="cp-head"><h2>{esc(title)}</h2>{button}</div>{cards}</section>'
+    every = (f'<form method="post" action="/screens/capture" class="sb-refresh">{csrf_field(csrf)}<input type="hidden" name="project" value="*">'
+             f'<button>Build all</button></form>') if len(groups) > 1 else ""
+    return (f'<div class="sb-head"><p class="muted">Playwright runs: each project\'s test suite runs on a worker against the default branch and the '
+            f'screenshots it takes appear here.</p>{every}</div>{out}')
+
+
+def captures_fragment(h, q: dict, csrf: str) -> None:
+    cfg, db = h.app.cfg(), h.app.ro_db()
+    body = ""
+    if db is not None:
+        try:
+            body = captures_body(cfg, db, csrf)
+        finally:
+            db.close()
+    h._send(200, body)
+
+
+def capture(h, form, csrf: str) -> None:
+    """Ask for Playwright runs: of one project (its name), of all (`*`) or of one repo (`repo`). The orchestrator queues them at its next poll."""
+    cfg = h.app.cfg()
+    caps = [c.repo for c in cfg.screens.captures]
+    pick, repo = str(form.get("project", "")), str(form.get("repo", ""))
+    if repo:
+        repos = [r for r in caps if r == repo]
+    elif pick == "*":
+        repos = caps
+    elif pick:
+        mine = {r.repo for p in cfg.projects if p.name == pick for r in p.repos}
+        repos = [r for r in caps if r in mine]
+    else:
+        repos = [r for r in caps if r not in {x.repo for p in cfg.projects for x in p.repos}]
+    if not repos:
+        L.flash_set(csrf, "Nothing to build: no Playwright run is set up for that.", "bad")
+        return h._redirect("/screens")
+    if not cfg.workers.enabled:
+        L.flash_set(csrf, "Turn on verification workers first (Settings → Workers): the tests run on a worker.", "bad")
+        return h._redirect("/screens")
+    db = sqlite3.connect(cfg.db_path, timeout=10)
+    try:
+        CP.request(db, repos)
+    finally:
+        db.close()
+    log.info("screens: Playwright run requested for %s", ", ".join(repos))
+    L.flash_set(csrf, "Building screens. A worker runs the tests next, which takes a few minutes; this page updates itself.")
+    h._redirect("/screens")
 
 
 def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey: str, view: str, csrf: str,
@@ -105,9 +207,10 @@ def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey
 def board_get(h, q: dict, csrf: str) -> None:
     cfg = h.app.cfg()
     db = h.app.ro_db()
-    shots, st, pending, noted = {}, {}, False, {}
+    shots, st, pending, noted, runs = {}, {}, False, {}, ""
     if db is not None:
         try:
+            runs = captures_body(cfg, db, csrf)
             shots, st, pending = SB.latest(db), SB.status(db), SB.requested(db)
             for x in RN.notes(db, *RN.BOARD, open_only=True):
                 if (m := SB.KEY.fullmatch(x["image"])):
@@ -115,6 +218,11 @@ def board_get(h, q: dict, csrf: str) -> None:
         finally:
             db.close()
     body = board_body(cfg, shots, st, pending, SB.running(), q.get("journey", ""), q.get("view", ""), csrf, noted)
+    if cfg.screens.captures:
+        if not cfg.screens.pages:
+            body = ('<p class="muted">Pages shot straight from a repository (no test suite needed) can be added too: '
+                    '<a href="/screens/edit">Add a screen</a>.</p>')
+        body = f'<div id="live" data-src="/screens/captures">{runs}</div>' + body
     shown = L.flash_pop(csrf)
     h._send(200, views.page("Screens", body, "/screens", csrf, wide=True,
                             flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))

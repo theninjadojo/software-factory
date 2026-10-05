@@ -1,0 +1,317 @@
+"""Playwright runs for the Screens board: the Build screens button, the worker job it becomes, and the screens it brings back."""
+import base64
+import json
+import stat
+import subprocess
+import sys
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from urllib.parse import urlencode
+
+from factory import captures as CP, jobs
+from factory import db as dbm
+from factory.config import ScreenCapture, ScreensCfg, WorkersCfg, load
+
+from test_review_notes import png
+from test_ui import UiCase
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "worker"))
+import worker as W                                                       # noqa: E402
+
+SHOP, SOLO = "your-org/shop-web", "your-org/standalone-service"
+SHA = "b" * 40
+PARAMS = json.dumps({"purpose": "screens"})
+
+
+class FakeGh:
+    token = "t"
+
+    def default_branch(self, repo):
+        return "main"
+
+    def branch_sha(self, repo, branch):
+        return SHA
+
+
+def make_cfg(workers=True):
+    cfg = load("config.example.toml")
+    return replace(cfg, workers=WorkersCfg(enabled=workers),
+                   screens=ScreensCfg(captures=(ScreenCapture(SHOP), ScreenCapture(SOLO, "playwright-screens", "linux"))))
+
+
+def finish(db, jid, n, status="passed"):
+    """Run a screens job to the end the way the worker API would, with n screenshots."""
+    jobs.claim(db, "w1", "linux", ["playwright-screens"], 100.0, 120, 900, 2)
+    body = {"status": status, "exit_code": 0 if status == "passed" else 1, "log": "ok",
+            "artifacts": [{"name": f"shot-{i}", "png_b64": base64.b64encode(png(1280, 800)).decode()} for i in range(n)]}
+    return jobs.complete(db, jid, "w1", body, 200.0)
+
+
+class Queue(unittest.TestCase):
+    def setUp(self):
+        self.db = dbm.connect(":memory:")
+        self.cfg = make_cfg()
+
+    def test_a_request_becomes_one_job_for_the_workers_recipe_at_the_default_branch(self):
+        CP.request(self.db, [SHOP, SOLO], 10.0)
+        self.assertEqual(CP.tick(self.cfg, FakeGh(), self.db, 11.0), 2)
+        rows = {j["repo"]: j for j in jobs.recent(self.db)}
+        self.assertEqual((rows[SHOP]["recipe"], rows[SHOP]["platform"], rows[SHOP]["base_sha"]), ("playwright-screens", "any", SHA))
+        self.assertEqual(rows[SOLO]["platform"], "linux")
+        self.assertEqual(json.loads(jobs.get(self.db, rows[SHOP]["id"])["params"]), {"purpose": "screens"})
+        self.assertEqual(jobs.get(self.db, rows[SHOP]["id"])["patch"], "")
+        self.assertEqual(CP.requested(self.db), set())
+
+    def test_pressing_twice_while_one_is_waiting_adds_nothing(self):
+        CP.request(self.db, [SHOP], 10.0)
+        CP.tick(self.cfg, FakeGh(), self.db, 11.0)
+        CP.request(self.db, [SHOP], 12.0)
+        self.assertEqual(CP.tick(self.cfg, FakeGh(), self.db, 13.0), 0)
+        self.assertEqual(len(jobs.recent(self.db)), 1)
+
+    def test_only_configured_repos_run_and_only_with_workers_on(self):
+        CP.request(self.db, ["your-org/other"], 10.0)
+        self.assertEqual(CP.tick(self.cfg, FakeGh(), self.db, 11.0), 0)
+        CP.request(self.db, [SHOP], 10.0)
+        self.assertEqual(CP.tick(make_cfg(workers=False), FakeGh(), self.db, 11.0), 0)
+        self.assertEqual(jobs.recent(self.db), [])
+
+    def test_a_github_failure_queues_nothing_and_does_not_raise(self):
+        class Down(FakeGh):
+            def branch_sha(self, repo, branch):
+                raise OSError("down")
+        CP.request(self.db, [SHOP], 10.0)
+        self.assertEqual(CP.tick(self.cfg, Down(), self.db, 11.0), 0)
+
+    def test_the_newest_finished_run_and_its_shots(self):
+        CP.request(self.db, [SHOP], 10.0)
+        CP.tick(self.cfg, FakeGh(), self.db, 11.0)
+        self.assertEqual(CP.active(self.db, SHOP)["status"], "queued")
+        self.assertIsNone(CP.latest(self.db, SHOP))
+        self.assertEqual(finish(self.db, CP.active(self.db, SHOP)["id"], 12), "")        # more than the 8 an ordinary check may return
+        run = CP.latest(self.db, SHOP)
+        self.assertEqual((run["status"], len(run["shots"]), CP.active(self.db, SHOP)), ("passed", 12, None))
+
+    def test_old_runs_are_dropped_with_their_images(self):
+        ids = []
+        for i in range(CP.KEEP_RUNS + 2):
+            ids.append(jobs.enqueue(self.db, SHOP, 0, SHA, "", "playwright-screens", "any", float(i), PARAMS))
+            finish(self.db, ids[-1], 1)
+        CP.tick(self.cfg, FakeGh(), self.db, 500.0)
+        left = [j["id"] for j in jobs.recent(self.db)]
+        self.assertEqual(sorted(left), sorted(ids[-CP.KEEP_RUNS:]))
+        self.assertEqual(jobs.artifacts(self.db, ids[0]), {})
+
+    def test_an_ordinary_check_still_gets_only_eight_screenshots(self):
+        jid = jobs.enqueue(self.db, SHOP, 5, SHA, "diff", "web-test", "any", 1.0)
+        jobs.claim(self.db, "w1", "linux", ["web-test"], 100.0, 120, 900, 2)
+        arts = [{"name": f"s-{i}", "png_b64": base64.b64encode(png(400, 400)).decode()} for i in range(9)]
+        self.assertIn("at most 8", jobs.complete(self.db, jid, "w1", {"status": "passed", "exit_code": 0, "log": "", "artifacts": arts}, 2.0))
+
+    def test_a_screens_job_is_told_apart_by_its_params(self):
+        self.assertTrue(jobs.is_screens({"params": PARAMS}))
+        self.assertFalse(jobs.is_screens({"params": ""}))
+        self.assertFalse(jobs.is_screens({"params": "not json"}))
+        self.assertFalse(jobs.is_screens({"params": json.dumps({"smells": []})}))
+
+
+class Config(unittest.TestCase):
+    def parse(self, extra):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "c.toml"
+            p.write_text(Path("config.example.toml").read_text() + extra)
+            return load(str(p))
+
+    def test_captures_are_read(self):
+        c = self.parse(f'\n[screens]\n[[screens.captures]]\nrepo = "{SHOP}"\n[[screens.captures]]\nrepo = "{SOLO}"\nrecipe = "pw"\nplatform = "macos"\n')
+        self.assertEqual(c.screens.captures, (ScreenCapture(SHOP), ScreenCapture(SOLO, "pw", "macos")))
+
+    def test_bad_captures_are_refused(self):
+        for bad in ('repo = "your-org/unknown"', f'repo = "{SHOP}"\nrecipe = "rm -rf"', f'repo = "{SHOP}"\nplatform = "A B"'):
+            with self.assertRaises(ValueError, msg=bad):
+                self.parse(f"\n[screens]\n[[screens.captures]]\n{bad}\n")
+        with self.assertRaises(ValueError):
+            self.parse(f'\n[screens]\n[[screens.captures]]\nrepo = "{SHOP}"\n[[screens.captures]]\nrepo = "{SHOP}"\n')
+
+
+class Board(UiCase):
+    def setUp(self):
+        super().setUp()
+        p = self.root / "config.toml"
+        p.write_text(p.read_text() + f'\n[workers]\nenabled = true\n[screens]\n[[screens.captures]]\nrepo = "{SHOP}"\n[[screens.captures]]\nrepo = "{SOLO}"\n')
+        self.cookie, self.csrf = self.session()
+        self.cfg = load(str(p))
+
+    def post(self, **fields):
+        return self.req("POST", "/screens/capture", urlencode({"csrf": self.csrf, **fields}), cookie=self.cookie)
+
+    def board(self):
+        return self.req("GET", "/screens", cookie=self.cookie)[2]
+
+    def test_groups_by_project_with_a_button_each_and_build_all(self):
+        html = self.board()
+        self.assertIn("<h2>shop</h2>", html)
+        self.assertIn("<h2>Other repositories</h2>", html)
+        self.assertIn(">Build screens</button>", html)
+        self.assertIn(">Build all</button>", html)
+        self.assertIn('data-src="/screens/captures"', html)
+        self.assertIn("Not built yet.", html)
+        self.assertNotIn("style=", html.split("<main")[1])
+
+    def test_the_button_asks_and_the_card_says_so(self):
+        s, h, _ = self.post(project="shop")
+        self.assertEqual((s, h["Location"]), (303, "/screens"))
+        self.assertEqual(CP.requested(self.db), {SHOP})
+        html = self.board()
+        self.assertIn("Building screens.", html)
+        self.assertIn("Starts at the factory", html)
+        self.assertIn("Building…", html)
+
+    def test_build_all_and_other_repositories(self):
+        self.post(project="*")
+        self.assertEqual(CP.requested(self.db), {SHOP, SOLO})
+        self.db.execute("DELETE FROM capture_requests")
+        self.db.commit()
+        self.post(project="")
+        self.assertEqual(CP.requested(self.db), {SOLO})
+
+    def test_unknown_projects_and_workers_off_write_nothing(self):
+        self.post(project="nope")
+        self.assertEqual(CP.requested(self.db), set())
+        p = self.root / "config.toml"
+        p.write_text(p.read_text().replace("[workers]\nenabled = true", "[workers]\nenabled = false"))
+        self.post(project="shop")
+        self.assertEqual(CP.requested(self.db), set())
+        self.assertIn("Turn on verification workers", self.board())
+
+    def test_needs_a_session_and_a_csrf_token(self):
+        self.assertEqual(self.req("POST", "/screens/capture", "project=*")[0], 303)
+        self.assertEqual(self.req("POST", "/screens/capture", "project=*", cookie=self.cookie)[0], 403)
+        self.assertEqual(CP.requested(self.db), set())
+
+    def test_waiting_running_and_finished_runs(self):
+        jid = jobs.enqueue(self.db, SHOP, 0, SHA, "", "playwright-screens", "any", 1.0, PARAMS)
+        self.assertIn("Waiting for a worker", self.board())
+        jobs.claim(self.db, "arch", "linux", ["playwright-screens"], 2.0, 120, 99999999, 2)
+        self.assertIn("Running on arch", self.board())
+        jobs.complete(self.db, jid, "arch", {"status": "failed", "exit_code": 1, "log": "<b>x</b>", "artifacts": [
+            {"name": "login-chromium", "png_b64": base64.b64encode(png(1280, 800)).decode()}]}, 3.0)
+        html = self.board()
+        self.assertIn("some tests failed", html)
+        self.assertIn("1 screen ·", html)
+        self.assertIn(f"/workers/job?id={jid}", html)
+        src = "/workerimg?" + urlencode({"job": jid, "name": "login-chromium"})
+        self.assertIn(src.replace("&", "&amp;"), html)
+        s, h, _ = self.req("GET", src, cookie=self.cookie)
+        self.assertEqual((s, h["Content-Type"]), (200, "image/png"))
+
+    def test_the_fragment_is_what_the_page_refreshes_with(self):
+        s, _, html = self.req("GET", "/screens/captures", cookie=self.cookie)
+        self.assertEqual(s, 200)
+        self.assertIn("<h2>shop</h2>", html)
+        self.assertNotIn("<html", html)
+        self.assertEqual(self.req("GET", "/screens/captures")[0], 303)
+
+
+class Collect(unittest.TestCase):
+    def test_a_screens_run_may_return_many_but_within_a_total_budget(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "screens-out").mkdir()
+            for i in range(12):
+                (root / "screens-out" / f"s-{i}.png").write_bytes(png(800, 600))
+            r = W.Recipe("playwright-screens", {"command": ["x"], "artifacts": ["screens-out/*.png"]})
+            self.assertEqual(len(W.collect_artifacts(r, root)), 8)
+            self.assertEqual(len(W.collect_artifacts(r, root, W.MAX_SCREEN_ARTIFACTS)), 12)
+            one = len(png(800, 600))
+            self.assertEqual(len(W.collect_artifacts(r, root, 300, one * 5 + 1)), 5)
+
+    def test_only_the_orchestrators_params_make_a_screens_job(self):
+        self.assertTrue(W.is_screens({"params": {"purpose": "screens"}}))
+        self.assertFalse(W.is_screens({"params": {"smells": []}}))
+        self.assertFalse(W.is_screens({}))
+
+
+RECIPE = Path(__file__).resolve().parent.parent / "worker" / "recipes" / "playwright-screens.sh"
+
+
+class Recipe(unittest.TestCase):
+    """The real script with stub npm/npx: `npx playwright test` drops screenshots where Playwright would."""
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.tmp)]))
+        self.bin, self.repo, self.log = self.tmp / "bin", self.tmp / "repo", self.tmp / "calls.log"
+        self.bin.mkdir()
+        self.repo.mkdir()
+        shot = "\\211PNG\\r\\n\\032\\n"
+        npx = ('#!/bin/sh\necho "npx $*" >> "$CALLS"\n'
+               'if [ "$3" = test ]; then mkdir -p test-results-screens/login-spec-user-signs-in-chromium test-results-screens/home-spec-shows-home-mobile\n'
+               f'printf "{shot}" > test-results-screens/login-spec-user-signs-in-chromium/test-finished-1.png\n'
+               f'printf "{shot}" > test-results-screens/home-spec-shows-home-mobile/test-failed-1.png\n'
+               'cat playwright.screens.config.* >> "$CALLS"\n[ -n "$TESTS_FAIL" ] && exit 1\nfi\nexit 0\n')
+        npm = '#!/bin/sh\necho "npm $*" >> "$CALLS"\nexit 0\n'
+        for name, body in (("npx", npx), ("npm", npm)):
+            f = self.bin / name
+            f.write_text(body)
+            f.chmod(f.stat().st_mode | stat.S_IEXEC)
+
+    def project(self, sub="", config="playwright.config.ts", lock="package-lock.json", module=False):
+        d = self.repo / sub if sub else self.repo
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "package.json").write_text(json.dumps({"type": "module"} if module else {}))
+        (d / lock).write_text("")
+        (d / config).write_text("export default {}")
+
+    def run_recipe(self, *args, tests_fail=False):
+        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "CALLS": str(self.log), "HOME": str(self.tmp), "TESTS_FAIL": "1" if tests_fail else ""}
+        r = subprocess.run([str(RECIPE), *args], cwd=self.repo, env=env, capture_output=True, text=True, timeout=60)
+        return r.returncode, r.stdout + r.stderr, self.log.read_text() if self.log.exists() else ""
+
+    def kept(self):
+        return sorted(p.name for p in (self.repo / "screens-out").glob("*.png"))
+
+    def test_installs_runs_with_screenshots_forced_on_and_keeps_every_one_under_a_unique_name(self):
+        self.project()
+        code, out, calls = self.run_recipe()
+        self.assertEqual(code, 0, out)
+        self.assertIn("npm ci --no-audit --no-fund", calls)
+        self.assertIn("npx --no-install playwright install chromium", calls)
+        self.assertIn("playwright test --config playwright.screens.config.ts", calls)
+        self.assertIn("mode: 'on', fullPage: true", calls)                       # forced on, whatever the project's config says
+        names = self.kept()
+        self.assertEqual(len(names), 2)
+        self.assertTrue(names[0].startswith("home-spec-shows-home-mobile-test-failed-1-"), names)
+        self.assertTrue(names[1].startswith("login-spec-user-signs-in-chromium-"), names)
+        self.assertTrue(all(len(n[:-4]) <= 60 for n in names), names)
+
+    def test_failing_tests_still_return_the_screenshots(self):
+        self.project()
+        code, out, _ = self.run_recipe(tests_fail=True)
+        self.assertEqual((code, len(self.kept())), (1, 2), out)
+
+    def test_a_monorepo_is_found_and_prefixed(self):
+        self.project("web")
+        self.project("apps/demo", config="playwright.config.js")
+        code, out, calls = self.run_recipe()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(any(n.startswith("web-") for n in self.kept()), self.kept())
+        self.assertTrue(any(n.startswith("apps-demo-") for n in self.kept()), self.kept())
+        self.assertIn("playwright.screens.config.cjs" if "module.exports" in calls else "playwright.screens.config", calls)
+
+    def test_dir_limits_it_to_one_folder(self):
+        self.project("web")
+        self.project("apps/demo")
+        self.assertEqual(self.run_recipe("--dir", "web")[0], 0)
+        self.assertTrue(all(n.startswith("web-") for n in self.kept()), self.kept())
+
+    def test_nothing_to_run_is_a_recipe_problem_not_a_test_failure(self):
+        (self.repo / "package.json").write_text("{}")
+        self.assertEqual(self.run_recipe()[0], 2)
+        self.assertEqual(self.run_recipe("--dir", "../x")[0], 2)
+        self.assertEqual(self.run_recipe("--nope")[0], 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

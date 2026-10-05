@@ -226,6 +226,13 @@ bypass_label = "factory:skip-mockup"
 # when asked there, and on a timer with:
 # board_every = "6h"                    # under [screens]
 
+# Playwright runs on the Screens tab: its Build screens button runs a repo's Playwright suite on a worker (needs [workers] below and a worker with
+# the playwright-screens recipe: WORKER_RECIPES=screens scripts/setup-worker.sh) and shows the screenshots grouped by project. docs/workers.md
+# [[screens.captures]]
+# repo = "your-org/shop-web"
+# recipe = "playwright-screens"         # a recipe name on the worker (default)
+# platform = "any"                      # the platform a worker must declare (default)
+
 # Verification workers: a machine you own (a Mac, a networked Linux box) that checks an agent's patch BEFORE anything is pushed, using
 # what the sandbox lacks (Xcode, an emulator, the network for `npm ci`). Pull-based; recipes are defined on the worker, never here.
 # Setup: enable this (or Settings -> Workers in the UI, which then starts the worker API itself), add a worker, run worker/worker.py there. docs/workers.md

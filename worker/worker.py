@@ -36,6 +36,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_PNG, MAX_ARTIFACTS, MAX_LOG = 3_000_000, 8, 150_000
+MAX_SCREEN_ARTIFACTS, MAX_SCREEN_BYTES = 300, 40_000_000      # a Playwright run for the Screens board (params purpose "screens")
 MIN_SIDE, MAX_W, MAX_H = 16, 1600, 6000          # the orchestrator rejects the WHOLE result for one PNG outside these (factory/render.py)
 MAX_PATCH = 4_000_000
 
@@ -126,19 +127,27 @@ def png_fits(data: bytes) -> bool:
     return MIN_SIDE <= w <= MAX_W and MIN_SIDE <= h <= MAX_H
 
 
-def collect_artifacts(recipe: Recipe, root: Path) -> list[dict]:
-    """PNGs matching the recipe's globs, inside the checkout, not symlinks, size-limited. The orchestrator validates them again."""
-    out, seen = [], set()
+def is_screens(job: dict) -> bool:
+    return isinstance(job.get("params"), dict) and job["params"].get("purpose") == "screens"
+
+
+def collect_artifacts(recipe: Recipe, root: Path, limit: int = MAX_ARTIFACTS, budget: int | None = None) -> list[dict]:
+    """PNGs matching the recipe's globs, inside the checkout, not symlinks, size-limited. The orchestrator validates them again.
+    `budget` caps the total bytes, so one huge suite cannot make a result the API refuses."""
+    out, seen, used = [], set(), 0
     for pattern in recipe.artifacts:
         for f in sorted(glob.glob(pattern, root_dir=root, recursive=True)):
             p = root / f
             name = re.sub(r"[^a-z0-9-]+", "-", p.stem.lower()).strip("-")[:60]
-            if (len(out) >= MAX_ARTIFACTS or p.is_symlink() or not p.is_file() or not NAME.fullmatch(name or "-") or name in seen
+            if (len(out) >= limit or p.is_symlink() or not p.is_file() or not NAME.fullmatch(name or "-") or name in seen
                     or p.stat().st_size > MAX_PNG):
                 continue
             data = p.read_bytes()
             if not data.startswith(PNG_MAGIC) or not str(p.resolve()).startswith(str(root.resolve()) + os.sep) or not png_fits(data):
                 continue
+            if budget is not None and used + len(data) > budget:
+                continue
+            used += len(data)
             seen.add(name)
             out.append({"name": name, "png_b64": base64.b64encode(data).decode()})
     return out
@@ -243,7 +252,8 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
             return None
         text = read_tail(logfile) + (f"\n[worker] {note}" if note else "")
         result = {"status": "passed" if code == 0 else "failed", "exit_code": code, "log": text,
-                  "artifacts": collect_artifacts(recipe, checkout)}
+                  "artifacts": (collect_artifacts(recipe, checkout, MAX_SCREEN_ARTIFACTS, MAX_SCREEN_BYTES) if is_screens(job)
+                                                         else collect_artifacts(recipe, checkout))}
         if findings_file and code == 0:
             result["findings"] = read_findings(findings_file)
         return result
