@@ -150,8 +150,11 @@ def _get(url: str, headers: dict, timeout: int, method: str = "GET", body: dict 
                                  data=json.dumps(body).encode() if body is not None else None)
     if body is not None:
         req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        raw = r.read(8_000_000)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read(8_000_000)
+    except urllib.error.HTTPError as e:           # name the URL (no query string, no secrets) so a 404 says which path was wrong
+        raise RuntimeError(f"HTTP {e.code} {e.reason} from {url.split('?')[0]}") from e
     return json.loads(raw)
 
 
