@@ -192,7 +192,8 @@ class Page(UiCase):
         with mock.patch.object(SU, "running", return_value=True):
             frag = self.get("/updates/status")[2]
             page = self.get()[2]
-        self.assertIn("Updating…", frag)
+        self.assertIn("Updating to v9.9.9", frag)
+        self.assertIn("Step 1 of 7", frag)          # no marker yet
         self.assertIn("&lt;script&gt;", frag)
         self.assertNotIn("<script>x", frag)
         self.assertIn('data-src="/updates/status"', page)
@@ -200,6 +201,25 @@ class Page(UiCase):
             self.assertIn("did not finish", self.get("/updates/status")[2])
             (self.state_dir / SU.LOG).write_text("Now on v9.9.9.\n")
             self.assertIn("finished", self.get("/updates/status")[2])
+
+    def test_stage_markers_drive_the_step_list_and_hostile_lines_do_not(self):
+        from factory.ui import updatespage as UP
+        log = ("Updating: v0.20.0 -> v9.9.9\n##STAGE 1/7 pause\n##STAGE 2/7 download\n##STAGE 3/7 tests\n"
+               "##STAGE 9/7 x\n  ##STAGE 7/7 health\n##STAGE 6/7 <b>x</b>\n")
+        self.assertEqual(UP.parse_log(log)[:2], (3, "v9.9.9"))
+        (self.state_dir / SU.LOG).write_text(log)
+        with mock.patch.object(SU, "running", return_value=True):
+            frag = self.get("/updates/status")[2]
+        self.assertIn("Step 3 of 7: <strong>Run its tests</strong>", frag)
+        self.assertIn('aria-valuenow="3"', frag)
+        self.assertNotIn("<b>x</b>", frag)
+        with mock.patch.object(SU, "running", return_value=False):
+            (self.state_dir / SU.LOG).write_text("##STAGE 3/7 tests\nTESTS FAILED on v9.9.9: nothing was changed\n")
+            frag = self.get("/updates/status")[2]
+            self.assertIn("did not finish", frag)
+            self.assertIn("✕", frag)
+            (self.state_dir / SU.LOG).write_text("##STAGE 7/7 health\nThe new version did not come up healthy: rolling back to v0.20.0\n")
+            self.assertIn("rolled back", self.get("/updates/status")[2])
 
     def test_everything_needs_a_session_and_a_csrf_token(self):
         for path in ("/updates", "/updates/status"):

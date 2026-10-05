@@ -1010,3 +1010,7 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 @keyframes em-flow { to { stroke-dashoffset:-18; } }
 .em { pointer-events:none; }
 @media (prefers-reduced-motion:reduce) { .fm-fall-a, .fm-fall-b, .fm-fall-c, .fm-bolt, .fm-flash, .fm-bank, .em * { animation:none !important; } }
+.stage-list { list-style:none; margin:.8rem 0; padding:0; } .stage-list li { min-height:32px; display:flex; align-items:center; gap:.4rem; color:var(--muted); }
+.stage-list li.done { color:var(--good); } .stage-list li.now { color:var(--warn); } .stage-list small { color:var(--muted); }
+.bar { height:6px; background:var(--line); margin:.5rem 0; } .bar div { height:100%; background:var(--accent); }
+@media (max-width:640px) { .stage-list li { min-height:44px; } }

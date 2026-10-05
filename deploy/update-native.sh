@@ -18,6 +18,7 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 cd "$ROOT"      # the caller's directory may be unreadable to the factory user (python then fails to start)
 run() { if [ -n "${DRY_RUN:-}" ]; then echo "+ $*"; else "$@"; fi; }
 die() { echo "$*" >&2; exit 1; }
+stage() { echo "##STAGE $1/7 $2"; }   # progress markers the Updates page reads (factory/ui/updatespage.py); keep the count in step with it
 command -v curl >/dev/null && command -v python3 >/dev/null || die "curl and python3 are required"
 
 TOKEN=""
@@ -53,6 +54,7 @@ echo "Updating: v$HAVE -> $TAG"
 # Never restart over a run in flight (a restart kills it). Pause the factory FIRST, so no run can start between this check and the
 # restart (downloading and testing take minutes); the pause is lifted on every way out unless a person had paused it already.
 PAUSED_BY_US=""
+stage 1 pause
 resume() { if [ -n "$PAUSED_BY_US" ]; then rm -f "$ROOT/state/PAUSED"; PAUSED_BY_US=""; fi; }
 trap resume EXIT
 if [ -z "${DRY_RUN:-}" ]; then
@@ -74,6 +76,7 @@ PY
   fi
 fi
 
+stage 2 download
 TMP="$(mktemp -d "$ROOT/state/update.XXXXXX")"; trap 'rm -rf "$TMP"; resume' EXIT
 if [ -n "${SHIKUMI_TARBALL:-}" ]; then cp "$SHIKUMI_TARBALL" "$TMP/src.tgz"
 else api -o "$TMP/src.tgz" "https://api.github.com/repos/$REPO/tarball/$TAG" || die "could not download $TAG"; fi
@@ -81,9 +84,11 @@ mkdir "$TMP/src" && tar -C "$TMP/src" --strip-components=1 -xzf "$TMP/src.tgz"
 [ "v$(cat "$TMP/src/VERSION" 2>/dev/null)" = "$TAG" ] || die "the downloaded source is not $TAG (its VERSION file says '$(cat "$TMP/src/VERSION" 2>/dev/null)')"
 
 # test the new code before touching the running install
+stage 3 tests
 ( cd "$TMP/src" && python3 -m unittest discover -s tests > "$TMP/tests.log" 2>&1 ) || { tail -25 "$TMP/tests.log"; die "TESTS FAILED on $TAG: nothing was changed"; }
 tail -3 "$TMP/tests.log"
 
+stage 4 install
 PARTS=(factory tests sandbox deploy worker config.example.toml VERSION)
 rm -rf "$APP.prev"; mkdir "$APP.prev"
 for p in "${PARTS[@]}"; do [ -e "$APP/$p" ] && cp -a "$APP/$p" "$APP.prev/"; done
@@ -101,12 +106,15 @@ rollback() {
 }
 
 cd "$APP"
+stage 5 images
 run podman build -q -t factory-agent -f sandbox/Dockerfile sandbox || rollback
 run podman build -q -t factory-render -f sandbox/render/Dockerfile sandbox/render || rollback
 [ -f sandbox/screens/Dockerfile ] && { run podman build -q -t factory-screens -f sandbox/screens/Dockerfile sandbox/screens || rollback; }
+stage 6 restart
 run systemctl --user restart factory.service
 systemctl --user is-enabled factory-workers.service >/dev/null 2>&1 && run systemctl --user disable --now factory-workers.service   # the UI runs the worker API now
 systemctl --user is-enabled factory-ui.service >/dev/null 2>&1 && run systemctl --user restart factory-ui.service
+stage 7 health
 if [ -z "${DRY_RUN:-}" ]; then
   sleep 10
   for u in factory-proxy factory factory-ui; do systemctl --user is-enabled $u.service >/dev/null 2>&1 || continue

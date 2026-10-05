@@ -1,6 +1,7 @@
 """The Updates page: the running version, a newer release if there is one, Check now, Update now and the nightly auto-update.
 Everything on it comes from the cached release check and from `factory/selfupdate.py`; the log of a running update is untrusted text
 only in the sense that it is escaped."""
+import re
 import time
 
 from .. import selfupdate as SU
@@ -19,18 +20,60 @@ def checked_line(state_dir) -> str:
     return f"Last checked {views.ago(when)}." if when else "Not checked yet."
 
 
+STAGES = ("Pause and check no agent run is in flight", "Download the release", "Run its tests", "Back up and install",
+          "Rebuild sandbox images", "Restart services", "Health check")
+_MARK = re.compile(r"^##STAGE ([1-7])/7 [a-z]+$", re.M)   # only these exact lines count; deploy/update-native.sh prints them
+_TARGET = re.compile(r"^Updating: \S+ -> (v\d+\.\d+\.\d+)$", re.M)
+
+
+def parse_log(tail: str):
+    """(last step 1-7 or 0, the target tag or "", the log without the marker lines)."""
+    marks, tags = _MARK.findall(tail), _TARGET.findall(tail)
+    return (int(marks[-1]) if marks else 0), (tags[-1] if tags else ""), _MARK.sub("", tail).strip("\n")
+
+
+def _rows(step: int) -> str:
+    out = []
+    for i, name in enumerate(STAGES, 1):
+        if i < step:
+            out.append(f'<li class="done"><span aria-hidden="true">✓</span> {esc(name)}</li>')
+        elif i == step:
+            out.append(f'<li class="now"><span aria-hidden="true">●</span> {esc(name)} <small>now</small></li>')
+        else:
+            out.append(f'<li><span aria-hidden="true">○</span> {esc(name)}</li>')
+    return f'<ol class="stage-list">{"".join(out)}</ol>'
+
+
 def live_body(state_dir, csrf: str, run=None) -> str:
-    """The part that refreshes itself: an update in progress, or how the last one ended."""
+    """The part that refreshes itself: an update in progress (as a step list), or how the last one ended."""
     import subprocess
     run = run or subprocess.run
     tail = SU.log_tail(state_dir)
+    step, tag, log = parse_log(tail)
     if SU.running(run):
-        return (f'<div class="card"><h3>Updating…</h3><p>The update is running: it tests the new code, rebuilds, and restarts the factory, so this page '
-                f'will be unreachable for a moment. It refuses (and says so below) if an agent run is in flight.</p><pre>{esc(tail)}</pre></div>')
+        n, total = step or 1, len(STAGES)
+        note = ('<p>The factory is restarting. This page will reconnect by itself.</p>' if n >= 6 else
+                '<p class="muted">It refuses (and says so) if an agent run is in flight.</p>')
+        return (f'<div class="card" aria-live="polite"><h3>Updating{" to " + esc(tag) if tag else ""}</h3>'
+                f'<p>Step {n} of {total}: <strong>{esc(STAGES[n - 1])}</strong></p>'
+                f'<div class="bar" role="progressbar" aria-label="Update steps" aria-valuemin="0" aria-valuemax="{total}" aria-valuenow="{n}">'
+                f'<div style="width:{round(100 * n / total)}%"></div></div>{_rows(n)}{note}'
+                f'<details><summary>Show log</summary><pre>{esc(log)}</pre></details></div>')
     if not tail:
         return ""
-    ok = "Now on v" in tail or "Now on " in tail or "Already on" in tail
-    return (f'<details class="card"{"" if ok else " open"}><summary>Last update: {"finished" if ok else "did not finish"}</summary><pre>{esc(tail)}</pre></details>')
+    failed_step = f'<p class="bad-text"><span aria-hidden="true">✕</span> {esc(STAGES[step - 1])}</p>' if step else ""
+    if "Now on " in tail or "Already on" in tail:
+        state, text, msg, failed_step = "good", "finished", (f"Now on {tag}." if tag and "Now on " in tail else "Already up to date."), ""
+    elif "TESTS FAILED" in tail:
+        state, text, msg = "bad", "did not finish", f"The tests failed on {tag or 'the new version'}. Nothing was changed."
+    elif "rolling back" in tail:
+        state, text, msg = "warn", "rolled back", "The new version did not come up healthy, so the previous version is running again."
+    elif "agent run is in flight" in tail:
+        state, text, msg, failed_step = "warn", "waiting", "An agent run is in flight. Try again when it finishes.", ""
+    else:
+        state, text, msg = "bad", "did not finish", "The update did not finish."
+    return (f'<details class="card"{"" if state == "good" else " open"}><summary>Last update <span class="badge {state}">{text}</span></summary>'
+            f'<p>{esc(msg)}</p>{failed_step}<pre>{esc(log)}</pre></details>')
 
 
 def page_body(cfg, state_dir, csrf: str, run=None) -> str:
