@@ -737,7 +737,7 @@ def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
     svg = plant.floor_map(order, fl, workers, bool(d["cfg"].get("workers")), now, _floor_word,
                           lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras, floorplan.compile_plan(plan, ctx) if plan else None)
     edit = '<a class="btn secondary fm-edit" href="/floor/edit">Edit layout</a>' if csrf else ""
-    return snake(fl, [sid for sid, _, _ in order], svg, add_ticket(d["cfg"].get("repos") or [], csrf, roles) + edit)
+    return snake(fl, [sid for sid, _, _ in order], svg, add_ticket(d["cfg"].get("repos") or [], csrf, roles, d["cfg"].get("attach_help") or "") + edit)
 
 
 def floor_ctx(cfg: dict, workers: list) -> "floorplan.Ctx":
@@ -747,17 +747,20 @@ def floor_ctx(cfg: dict, workers: list) -> "floorplan.Ctx":
                          bool(cfg.get("workers")) or bool(workers), len(shown), workers=[w["name"] for w in shown])
 
 
-def add_ticket(repos: list[str], csrf: str, roles: list[str]) -> str:
+def add_ticket(repos: list[str], csrf: str, roles: list[str], attach_help: str = "") -> str:
     """The floor's Add a ticket: the same form as Tickets' New ticket, back to the floor, where the ticket arrives by air."""
     from . import labels as L
     if not csrf or not repos:
         return ""
     opts = "".join(f'<option value="{esc(r)}">{esc(r)}</option>' for r in repos)
-    form = (f'<form method="post" action="/tickets/create" class="field">{views.csrf_field(csrf)}<input type="hidden" name="back" value="/">'
+    multipart = ' enctype="multipart/form-data"' if attach_help else ""      # given only when local tickets are on; the floor form has no "where", so it files locally
+    files = (f'<label>Attachments (optional)<input type="file" name="file" multiple accept=".png,.jpg,.jpeg,.gif,.pdf,.txt,.md,.log,.json,.csv"></label>'
+             f'<p class="muted">{esc(attach_help)}</p>') if attach_help else ""
+    form = (f'<form method="post" action="/tickets/create"{multipart} class="field">{views.csrf_field(csrf)}<input type="hidden" name="back" value="/">'
             f'<label>Repository<select name="repo">{opts}</select></label>'
             f'<label>Title<input name="title" required maxlength="{L.MAX_TITLE}"></label>'
             f'<label>Description (optional)<textarea name="body" rows="4" maxlength="{L.MAX_BODY}"></textarea></label>'
-            f'{L.start_field(roles)}'
+            f'{files}{L.start_field(roles)}'
             '<p class="muted">It is flown in from the mainland and lands at Receiving. It starts work only if you choose a Start action.</p>'
             '<button>Send by air</button></form>')
     return '<span class="fn-addt">' + L.ticket_dialog("fn-add-d", "Add a ticket", "Flown in from the mainland to Receiving.", form) + '</span>'
