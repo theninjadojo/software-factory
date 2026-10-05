@@ -5,6 +5,7 @@ validated here before it is stored; the orchestrator reads only the stored, vali
 import base64
 import binascii
 import json
+import logging
 import re
 import sqlite3
 import time
@@ -227,6 +228,12 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
     for n, png in res["artifacts"].items():
         db.execute("INSERT OR REPLACE INTO verify_artifacts VALUES (?,?,?)", (job_id, n, png))
     db.commit()
+    if is_screens(job) and res["artifacts"]:                  # a Playwright run for the Screens board: its screens become board images
+        try:
+            from . import captures
+            captures.import_run(db, job, res["artifacts"])
+        except Exception:                                      # the result is stored; a board problem must not fail the worker's report
+            logging.getLogger("factory.jobs").exception("could not keep the screens of job %s on the board", job_id)
     return ""
 
 

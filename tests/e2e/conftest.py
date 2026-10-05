@@ -100,8 +100,10 @@ def seed_captures(db) -> None:
     from factory import jobs
     jid = jobs.enqueue(db, REPO, 0, "c" * 40, "", "playwright-screens", "any", time.time() - 600, '{"purpose": "screens"}')
     jobs.claim(db, "arch-laptop", "linux", ["playwright-screens"], time.time() - 590, 120, 99999, 2)
-    names = ["login-spec-user-signs-in-chromium", "home-spec-shows-the-dashboard-mobile", "tickets-spec-filters-by-station-chromium-" + "x" * 10, "settings-spec-saves-general"]
-    arts = [{"name": n, "png_b64": base64.b64encode(solid_png(1280, 800 + 40 * i, (40 + 30 * i, 60, 120))).decode()} for i, n in enumerate(names)]
+    names = [f"{page}-{view}" for page in ("home", "tickets", "settings") for view in ("desktop", "tablet", "phone")] + ["login-spec-user-signs-in-chromium"]
+    sizes = {"desktop": (1280, 900), "tablet": (820, 1100), "phone": (390, 800)}
+    arts = [{"name": n, "png_b64": base64.b64encode(solid_png(*sizes.get(n.rpartition("-")[2], (1280, 800)), (40 + 20 * i, 60, 120 + 8 * i))).decode()}
+            for i, n in enumerate(names)]
     jobs.complete(db, jid, "arch-laptop", {"status": "failed", "exit_code": 1, "log": "1 failed", "artifacts": arts}, time.time() - 300)
 
 

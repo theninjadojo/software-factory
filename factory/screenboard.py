@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlencode
 
-from . import designfiles, screens
+from . import designfiles, jobs, screens
 from .config import Config, ScreenPage
 from .render import png_ok
 from .render import render as render_canvas
@@ -74,6 +74,40 @@ def latest(db) -> dict[tuple[str, str, str], dict]:
     except sqlite3.OperationalError:
         return {}
     return {(r, p, v): {"key": key(r, p, v, s), "sha": s, "created": c} for r, p, v, s, c in rows}
+
+
+CAPTURE_VIEWS = ("desktop", "tablet", "phone", "mobile")      # shown first, in this order, when a Playwright run's screens are grouped by page
+RUN_VIEW = "run"                                              # the view of a screenshot whose name does not end in a known viewport
+
+
+def view_order(view: str) -> tuple[int, str]:
+    return (CAPTURE_VIEWS.index(view) if view in CAPTURE_VIEWS else len(CAPTURE_VIEWS), view)
+
+
+def capture_sha(db, repo: str) -> str:
+    """The commit of the newest Playwright run of `repo` that has screens on the board ('' if none)."""
+    try:
+        for sha, params in db.execute("SELECT base_sha, params FROM verify_jobs WHERE repo=? AND params != '' AND status IN ('passed','failed') "
+                                      "ORDER BY id DESC LIMIT 50", (repo,)).fetchall():
+            if jobs.is_screens({"params": params}) and db.execute("SELECT 1 FROM screen_shots WHERE repo=? AND sha=? LIMIT 1", (repo, sha)).fetchone():
+                return sha
+    except sqlite3.OperationalError:
+        pass
+    return ""
+
+
+def capture_shots(db, sc) -> dict[tuple[str, str], dict[str, dict]]:
+    """(repo, page) -> {view: {key, sha, created}} for the screens of each Playwright repo's newest run (pages that are not configured
+    as board pages; those keep their own cards)."""
+    have = latest(db)
+    configured = {(p.repo, p.name) for p in sc.pages}
+    out: dict[tuple[str, str], dict[str, dict]] = {}
+    for c in sc.captures:
+        sha = capture_sha(db, c.repo)
+        for (r, p, v), x in have.items():
+            if r == c.repo and x["sha"] == sha and (r, p) not in configured:
+                out.setdefault((r, p), {})[v] = x
+    return out
 
 
 def prune(db, keep: set[str]) -> int:
@@ -257,6 +291,12 @@ def board_images(db, sc, noted: list[str] = ()) -> list[dict]:
             older.setdefault((m.group(1), m.group(2)), []).append(k)
     names = [v.name for v in sc.viewports]
     out = []
+    for (repo, page), views_ in sorted(capture_shots(db, sc).items()):
+        for v in sorted(views_, key=view_order):
+            out.append({"key": views_[v]["key"], "label": f"{page} · {v}", "src": src(views_[v]["key"]), "screen": (repo, page)})
+        for k in older.get((repo, page), []):
+            v, sha = KEY.fullmatch(k).group(3, 4)
+            out.append({"key": k, "label": f"{page} · {v} · {sha[:7]}", "src": src(k), "screen": (repo, page)})
     for _, pages in journeys(sc.pages):
         for p in pages:
             for v in [DESIGN] + list(p.viewports or names):

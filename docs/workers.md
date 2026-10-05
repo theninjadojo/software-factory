@@ -123,6 +123,10 @@ the real app, grouped by project. Nothing is gated: no patch, no ticket, and a f
   `pytest tests/e2e` in a throwaway virtualenv. A Python suite opts in by saving PNGs into the folder named by `E2E_SCREENS_DIR`, which the
   recipe sets (this repo's `tests/e2e/test_screens.py` does it for every page at three widths, at CSS pixels and at most 5900 px tall). Add
   `"--browser", "/usr/bin/chromium"` to the recipe's `command` to use a browser you already have instead of downloading one.
+- **On the board**: when a run's result is accepted the screenshots are also stored as Screens-board images under the run's commit
+  (`jobs.complete` -> `captures.import_run`). A name like `tickets-phone-1234567890` becomes the page `tickets` at the view `phone` (a
+  trailing checksum is dropped; a trailing desktop, tablet, phone, mobile or browser name is the view, anything else a page of its own).
+  The canvas and the review tool read them from there, so notes and tickets work as for any board screen.
 - **Limits**: up to 300 screenshots and 40 MB per run (larger than the 8 of an ordinary check; the API accepts a 64 MB result), each
   checked like any worker PNG (at most 1600 x 6000, 3 MB). The newest 3 finished runs of a repo are kept; older ones and their images
   are deleted. A run is lower priority than a verification job: the queue serves checks first.

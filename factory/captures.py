@@ -12,10 +12,38 @@ import sqlite3
 import time
 
 from . import jobs
+from . import screenboard as SB
 
 log = logging.getLogger("factory.captures")
 KEEP_RUNS = 3                                       # finished runs kept per repo: the newest is shown, the others let you compare
 REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+
+
+SUM = re.compile(r"-\d{5,10}$")                  # the recipe ends every screenshot name with a checksum that keeps it unique
+PAGE = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
+
+
+def split_name(name: str) -> tuple[str, str]:
+    """(page, view) of a screenshot name from the recipe: a trailing checksum is dropped; a trailing desktop/tablet/phone/mobile or
+    browser word is the view, the rest the page ('home-desktop' -> ('home', 'desktop')). Anything else is a page of its own."""
+    base = SUM.sub("", name)
+    head, _, tail = base.rpartition("-")
+    if head and tail in SB.CAPTURE_VIEWS + ("chromium", "firefox", "webkit"):
+        page, view = head, tail
+    else:
+        page, view = base, SB.RUN_VIEW
+    page = page[:60].strip("-")
+    return (page if PAGE.fullmatch(page) else "screen", view)
+
+
+def import_run(db, job: dict, shots: dict[str, bytes]) -> int:
+    """Keep a finished Playwright run's screenshots as Screens-board images (screenboard.store), under the run's commit, so a person can
+    open them in the review tool and leave notes. Older shots go unless an open note is on them. Returns how many were kept."""
+    SB.ensure_tables(db)
+    n = sum(1 for name, png in shots.items() if SB.store(db, job["repo"], *split_name(name), job["base_sha"], png))
+    SB.prune(db, SB.kept_keys(db))
+    db.commit()
+    return n
 
 
 def ensure_tables(db: sqlite3.Connection) -> None:

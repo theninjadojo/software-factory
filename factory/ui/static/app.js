@@ -25,6 +25,15 @@
   document.addEventListener("change", function (e) { var f = e.target.closest("form.nd-form"); if (f) count(f); });
   document.addEventListener("input", function (e) { var f = e.target.closest("form.nd-form"); if (f) count(f); });
 
+  // --- The canvas of a Playwright run's screens: the zoom buttons set how big the screens are (CSS does the rest).
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-zoom]"), cv = document.querySelector(".cv");
+    if (!b || !cv) return;
+    cv.setAttribute("data-z", b.getAttribute("data-zoom"));
+    var all = document.querySelectorAll("[data-zoom]");
+    for (var i = 0; i < all.length; i++) all[i].setAttribute("aria-pressed", all[i] === b ? "true" : "false");
+  });
+
   // --- Popups for tickets with many questions.
   document.addEventListener("click", function (e) {
     var open = e.target.closest("[data-dialog]");

@@ -51,6 +51,13 @@ def figure(label: str, shot: dict | None, alt: str, empty: str) -> str:
 
 # ---------------------------------------------------------------- Playwright runs (factory/captures.py)
 
+CARD_SHOTS = 12                                          # thumbnails on a repo's card; the canvas has them all
+
+
+def canvas_url(repo: str) -> str:
+    return "/screens/canvas?" + urlencode({"repo": repo})
+
+
 def shot_src(job_id: int, name: str) -> str:
     return "/workerimg?" + urlencode({"job": int(job_id), "name": name})
 
@@ -99,11 +106,17 @@ def captures_body(cfg, db, csrf: str) -> str:
         for repo in repos:
             run, live = CP.latest(db, repo), CP.active(db, repo)
             line = _run_line(run, live) if repo not in pending or live else f'{badge("requested", "warn")} Starts at the factory\'s next poll.'
-            grid = ""
-            if run and run["shots"]:
+            grid, k = "", 0
+            sha = SB.capture_sha(db, repo)
+            if sha:
+                mine = sorted(((p, v, x) for (r, p, v), x in SB.latest(db).items() if r == repo and x["sha"] == sha), key=lambda t: (t[0], SB.view_order(t[1])))
+                k = len(mine)
                 grid = '<ul class="cp-grid">' + "".join(
-                    f'<li><figure><a href="{esc(shot_src(run["id"], n))}" target="_blank"><img src="{esc(shot_src(run["id"], n))}" alt="{esc(n)}" loading="lazy"></a>'
-                    f'<figcaption>{esc(n)}</figcaption></figure></li>' for n in run["shots"]) + "</ul>"
+                    f'<li><figure><a href="{esc(open_url(x["key"]))}"><img src="{esc(SB.src(x["key"]))}" alt="{esc(p)} {esc(v)}" loading="lazy"></a>'
+                    f'<figcaption>{esc(p)} · {esc(v)}</figcaption></figure></li>' for p, v, x in mine[:CARD_SHOTS])
+                grid += "</ul>"
+            more = (f'<p><a href="{esc(canvas_url(repo))}">Open all {k} on the canvas</a> to look at them together and leave notes.</p>' if k else "")
+            grid = more + grid
             cards += f'<section class="cp-repo"><h3>{esc(repo)}</h3><p>{line}</p>{grid}</section>'
         out += f'<section class="cp-project"><div class="cp-head"><h2>{esc(title)}</h2>{button}</div>{cards}</section>'
     every = (f'<form method="post" action="/screens/capture" class="sb-refresh">{csrf_field(csrf)}<input type="hidden" name="project" value="*">'
@@ -181,6 +194,52 @@ def captures_save(h, form, csrf: str) -> None:
     log.info("screens: Playwright runs set for %s", ", ".join(c["repo"] for c in out) or "no repository")
     L.flash_set(csrf, "Saved. The factory applies it at its next idle moment." if out else "Playwright runs switched off.")
     h._redirect("/screens")
+
+
+def canvas_body(cfg, db, repo: str, csrf: str) -> str:
+    """Every screen of a repo's newest Playwright run on one canvas: a row per page with its viewports side by side. Click one to open it
+    in the review tool (drag over an area, write what should change); the notes become a ticket from there."""
+    pages: dict[str, dict] = {}
+    for (r, p), views_ in SB.capture_shots(db, cfg.screens).items():
+        if r == repo:
+            pages[p] = views_
+    noted = {}
+    for x in RN.notes(db, *RN.BOARD, open_only=True):
+        noted[x["image"]] = noted.get(x["image"], 0) + 1
+    head = (f'<p><a href="/screens">← Screens</a> · <strong>{esc(repo)}</strong> '
+            f'<span class="muted">{esc(ago(max((x["created"] for v in pages.values() for x in v.values()), default=0)))} · '
+            f'{sum(len(v) for v in pages.values())} screens on {len(pages)} pages · {sum(noted.get(x["key"], 0) for v in pages.values() for x in v.values())} open notes</span></p>')
+    if not pages:
+        return head + '<p class="muted">No screens yet. Press <em>Build screens</em> on the Screens page.</p>'
+    zoom = ('<div class="cv-zoom" role="group" aria-label="Zoom"><span class="muted">Zoom</span>'
+            + "".join(f'<button type="button" data-zoom="{z}" aria-pressed="{"true" if z == "2" else "false"}">{t}</button>' for z, t in (("1", "Small"), ("2", "Medium"), ("3", "Large"))) + "</div>")
+    rows = ""
+    for page in sorted(pages):
+        cells = ""
+        for v in sorted(pages[page], key=SB.view_order):
+            x = pages[page][v]
+            c = noted.get(x["key"], 0)
+            badge = f'<span class="rv-count" title="Open notes">{c}</span>' if c else ""
+            cells += (f'<figure class="cv-shot cv-{esc(v)}"><a href="{esc(open_url(x["key"]))}"><img src="{esc(SB.src(x["key"]))}" '
+                      f'alt="{esc(page)} {esc(v)}" loading="lazy"></a><figcaption>{esc(v)} {badge}</figcaption></figure>')
+        rows += f'<section class="cv-page"><h3>{esc(page)}</h3><div class="cv-row">{cells}</div></section>'
+    return head + zoom + f'<div class="cv" data-z="2" tabindex="0" aria-label="Screens of {esc(repo)}">{rows}</div>'
+
+
+def canvas_get(h, q: dict, csrf: str) -> None:
+    cfg, repo = h.app.cfg(), q.get("repo", "")
+    if repo not in {c.repo for c in cfg.screens.captures}:
+        return h._send(404, "no such canvas", "text/plain")
+    db = h.app.ro_db()
+    body = ""
+    if db is not None:
+        try:
+            body = canvas_body(cfg, db, repo, csrf)
+        finally:
+            db.close()
+    shown = L.flash_pop(csrf)
+    h._send(200, views.page(f"Canvas · {repo}", body or '<p class="muted">No data yet.</p>', "/screens", csrf, wide=True,
+                            flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
 
 
 def captures_fragment(h, q: dict, csrf: str) -> None:
