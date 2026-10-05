@@ -151,6 +151,8 @@ class Install(InstallBase):
         self.assertEqual((cfg.server, cfg.platform, sorted(cfg.recipes)), (self.url, "macos" if sys.platform == "darwin" else "linux", ["web-test"]))
         self.assertEqual(cfg.recipes["web-test"].command, [str(self.inst / "worker/recipes/web-test.sh")])
         self.assertEqual(stat.S_IMODE((self.inst / "worker.toml").stat().st_mode), 0o600)
+        self.assertEqual(cfg.git_url, "https://github.com/{repo}.git")          # not "{repo.git}": a } inside ${VAR:-...} ends the default
+        self.assertEqual(cfg.git_url.format(repo="a/b"), "https://github.com/a/b.git")
 
     def test_service_file_is_filled_in_and_holds_no_secret(self):
         self.install(self.rel.make("v0.2.0"))

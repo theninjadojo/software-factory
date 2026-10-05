@@ -53,9 +53,10 @@ if [ -s secrets/token ] && [ -z "${WORKER_TOKEN:-}" ]; then echo "secrets/token 
 fi
 
 say "Config"
+DEFAULT_GIT_URL='https://github.com/{repo}.git'      # in a variable: inside ${VAR:-...} the first } would end the default early
 if [ -f worker.toml ]; then echo "worker.toml exists: keeping it"; else
   IOS_SCHEME="${WORKER_IOS_SCHEME:-}" IOS_PROJECT="${WORKER_IOS_PROJECT:-}" IOS_WORKSPACE="${WORKER_IOS_WORKSPACE:-}" IOS_DEST="${WORKER_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 15}" \
-  DIR="$DIR" URL="$URL" PLATFORM="$PLATFORM" RECIPES="$RECIPES" GIT_URL="${WORKER_GIT_URL:-https://github.com/{repo}.git}" python3 - <<'PY'
+  DIR="$DIR" URL="$URL" PLATFORM="$PLATFORM" RECIPES="$RECIPES" GIT_URL="${WORKER_GIT_URL:-$DEFAULT_GIT_URL}" python3 - <<'PY'
 import os
 d, r = os.environ["DIR"], os.environ["RECIPES"].split()
 q = lambda s: '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
