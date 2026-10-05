@@ -376,6 +376,9 @@
                  "g-grass": "tile", "g-dirt": "tile", "g-sand": "tile", "g-concrete": "tile", "g-water": "tile",
                  wall: "line", fence: "line", road: "line", gate: "gate", hazard: "rect",
                  fetch: "item", playground: "item", picnic: "item", bench: "item", dogwalk: "item"};
+  Object.keys(FT.PARK).forEach(function (k) { TERRAIN[k] = "item"; });
+  var TOWN_SAYS = {};
+  Object.keys(window.TOWN_ART || {}).forEach(function (k) { TOWN_SAYS[k] = window.TOWN_ART[k].name + ": click to place one; it stands on the floor like a building and has a hitbox."; });
   var showHit = false;
   var GROUND_AREAS = {mainland: 1, sea: 1, airfield: 1, outside: 1};      // floorplan.GROUND_AREAS: the park may stand in these
   var paint = null;
@@ -616,7 +619,7 @@
     splitter: "Splitter: click a belt to place one.", merger: "Merger: click a belt to place one.", sideload: "Side-load: click a belt to place one."};
   function drawStatus() {
     if (!msg) return;
-    var text = note || ((TOOL_SAYS[tool] || "") + (TERRAIN[tool] || tool === "erase" ? " " + terrainCounts() + "." : "")), rm = "";
+    var text = note || ((TOOL_SAYS[tool] || TOWN_SAYS[tool] || "") + (TERRAIN[tool] || tool === "erase" ? " " + terrainCounts() + "." : "")), rm = "";
     if (!note && selBelt && doc.belts[selBelt]) {
       var ab = selBelt.split(">");
       text = "Belt " + label(ab[0]) + " → " + label(ab[1]) + ". Drag it sideways to slide it; it stays joined to both buildings.";

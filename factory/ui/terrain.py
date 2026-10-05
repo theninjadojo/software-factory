@@ -20,10 +20,14 @@ seeded generator, a fixed table of directions and the same rounding, so they pro
 Birds and ducks follow the terrain: ducks on each body of water (at most two), birds land beside trees and bushes.
 Everything is markup with classes; no style attributes, so the page policy holds."""
 
+from .town_art import ART as TOWN
+
 TILE = 40                                   # a ground tile: two grid cells
 # the park: each piece's box, width by height; its size is its width
 PARK = {"fetch": (200, 120), "playground": (180, 130), "picnic": (110, 90), "bench": (70, 40), "dogwalk": (180, 90)}
 PARK_NAMES = {"fetch": "fetch with a dog", "playground": "playground", "picnic": "picnic", "bench": "bench", "dogwalk": "dog walker"}
+PARK.update({k: (a["w"], a["h"]) for k, a in TOWN.items()})    # the town's buildings, vehicles and scenery stand like park pieces
+PARK_NAMES.update({k: a["name"].lower() for k, a in TOWN.items()})
 KINDS = ("tree", "pine", "bush", "rock", "pond", "lamp", "fog", "shade") + tuple(PARK)
 SIZES = {"tree": (30, 74), "pine": (28, 68), "bush": (16, 28), "rock": (24, 50), "pond": (68, 108), "lamp": (110, 150),
          "fog": (90, 170), "shade": (60, 120), **{k: (w, w) for k, (w, _) in PARK.items()}}
@@ -250,6 +254,8 @@ def park(it, t: dict) -> str:
     mirrored = v % 2 == 1
     tf = f"translate({f(x + w / 2)} {f(y - h / 2)}) scale(-1 1)" if mirrored else f"translate({f(x - w / 2)} {f(y - h / 2)})"
     body = {"fetch": PK_FETCH, "playground": PK_PLAYGROUND, "picnic": PK_PICNIC, "dogwalk": PK_DOGWALK}.get(kind)
+    if kind in TOWN:
+        body = f'<g class="tw-art">{TOWN[kind]["svg"]}</g>'
     if kind == "bench":
         body = PK_BENCH + old_man(it, t, mirrored)
     return f'<g class="pk-{kind}" transform="{tf}">{body}</g>'
