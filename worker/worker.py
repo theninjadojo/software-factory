@@ -36,6 +36,8 @@ SHA = re.compile(r"[0-9a-f]{40}")
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_PNG, MAX_ARTIFACTS, MAX_LOG = 3_000_000, 8, 150_000
+MIN_PROGRESS_GAP = 5                      # seconds between progress updates (the orchestrator drops faster ones)
+PROGRESS_MARK = "##progress "             # a recipe prints this at the start of a line to name what it is doing
 MAX_SCREEN_ARTIFACTS, MAX_SCREEN_BYTES = 300, 40_000_000      # a Playwright run for the Screens board (params purpose "screens")
 MIN_SIDE, MAX_W, MAX_H = 16, 1600, 6000          # the orchestrator rejects the WHOLE result for one PNG outside these (factory/render.py)
 MAX_PATCH = 4_000_000
@@ -237,6 +239,25 @@ def read_findings(path: Path) -> list:
     return data
 
 
+def recipe_progress(logfile) -> str:
+    """The text of the last `##progress ` line in the recipe output (empty if none)."""
+    last = ""
+    for line in read_tail(logfile).splitlines():
+        if line.startswith(PROGRESS_MARK):
+            last = " ".join(line[len(PROGRESS_MARK):].split())[:200]
+    return last
+
+
+def current_progress(step: dict) -> str:
+    """The worker's own step, with the recipe's latest ##progress line while the recipe runs."""
+    text = step["text"]
+    if text.startswith("running recipe") and step["log"]:
+        note = recipe_progress(step["log"])
+        if note:
+            return f"{text.removeprefix('running ')}: {note}"
+    return text
+
+
 def execute(cfg: Config, api: Api, job: dict) -> dict | None:
     """Do one job and return the result body (None when the orchestrator cancelled it)."""
     recipe = cfg.recipes.get(job.get("recipe"))
@@ -244,27 +265,40 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
         return {"status": "error", "exit_code": None, "log": f"this worker has no recipe named {job.get('recipe')!r}"}
     cfg.work_dir.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix="factory-job-", dir=cfg.work_dir))
-    cancelled, done = threading.Event(), threading.Event()
+    cancelled, done, changed = threading.Event(), threading.Event(), threading.Event()
+    step = {"text": "preparing checkout", "log": None}
+
+    def say(text: str) -> None:
+        step["text"] = text
+        changed.set()
 
     def beat():
         every = max(5, int(job.get("lease_seconds", 120)) // 3)
-        while not done.wait(every):
+        while not done.is_set():
+            changed.wait(every)                             # a new step is sent soon, else on the heartbeat timer
+            changed.clear()
+            if done.is_set():
+                break
             try:
-                status, reply = api.call(f"/v1/jobs/{job['id']}/heartbeat", {}, 30)
+                status, reply = api.call(f"/v1/jobs/{job['id']}/heartbeat", {"progress": current_progress(step)}, 30)
                 if status == 404 or (reply or {}).get("cancel"):
                     cancelled.set()
             except OSError:
                 log.warning("heartbeat failed; will retry")
+            done.wait(MIN_PROGRESS_GAP)                     # at most one update per gap
     threading.Thread(target=beat, daemon=True).start()
     try:
         checkout, logfile = tmp / "src", tmp / "recipe.log"
+        step["log"] = logfile
         problem = prepare(cfg, job, checkout)
         if problem:
             return {"status": "error", "exit_code": None, "log": problem}
         extra, findings_file = scan_files(job, tmp)
+        say(f"running recipe {job['recipe']}")
         code, note = run_recipe(recipe, checkout, logfile, cancelled, extra)
         if cancelled.is_set():
             return None
+        say("collecting results")
         text = read_tail(logfile) + (f"\n[worker] {note}" if note else "")
         result = {"status": "passed" if code == 0 else "failed", "exit_code": code, "log": text,
                   "artifacts": (collect_artifacts(recipe, checkout, MAX_SCREEN_ARTIFACTS, MAX_SCREEN_BYTES) if is_screens(job)
@@ -277,6 +311,7 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
         return {"status": "error", "exit_code": None, "log": f"worker error: {type(e).__name__}: {e}"}
     finally:
         done.set()
+        changed.set()
         shutil.rmtree(tmp, ignore_errors=True)
 
 

@@ -128,7 +128,7 @@ class Api:
             return 404, {"error": "not found"}
         jid, what = int(m.group(1)), m.group(2)
         if what == "heartbeat":
-            state = jobs.heartbeat(db, jid, worker, now)
+            state = jobs.heartbeat(db, jid, worker, now, data.get("progress") if isinstance(data, dict) else None)
             return (200, {"cancel": state == "cancel"}) if state != "gone" else (404, {"error": "not your job"})
         why = jobs.complete(db, jid, worker, data, now)
         if why:

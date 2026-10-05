@@ -79,6 +79,31 @@ class Queue(unittest.TestCase):
         jobs.cancel(d, jid, 120)
         self.assertEqual(jobs.heartbeat(d, jid, "mac", 130), "cancel")
 
+    def test_progress_is_stored_cleaned_and_only_from_the_owner(self):
+        d = db()
+        jid = jobs.enqueue(d, "o/r", 1, "a" * 40, "x", "ios-test", "macos", 100)
+        claim(d)
+        self.assertEqual(jobs.heartbeat(d, jid, "intruder", 110, "hijack"), "gone")
+        self.assertEqual(jobs.get(d, jid)["progress"], "")
+        self.assertEqual(jobs.heartbeat(d, jid, "mac", 110, "  building\n\x00 app\t" + "x" * 500), "ok")
+        got = jobs.get(d, jid)
+        self.assertTrue(got["progress"].startswith("building app xxx"))
+        self.assertEqual((len(got["progress"]), got["progress_at"]), (jobs.MAX_PROGRESS, 110))
+        self.assertEqual(jobs.heartbeat(d, jid, "mac", 112, "testing"), "ok")          # under 5s later: dropped, lease still extended
+        self.assertEqual((jobs.get(d, jid)["progress"][:8], jobs.get(d, jid)["heartbeat"]), ("building", 112))
+        jobs.heartbeat(d, jid, "mac", 116, "testing")
+        self.assertEqual(jobs.get(d, jid)["progress"], "testing")
+        self.assertEqual(jobs.heartbeat(d, jid, "mac", 130, ["not text"]), "ok")        # unusable progress never fails the heartbeat
+        self.assertEqual(jobs.get(d, jid)["progress"], "testing")
+
+    def test_cancelled_job_stores_no_progress(self):
+        d = db()
+        jid = jobs.enqueue(d, "o/r", 1, "a" * 40, "x", "ios-test", "macos", 100)
+        claim(d)
+        jobs.cancel(d, jid, 120)
+        self.assertEqual(jobs.heartbeat(d, jid, "mac", 130, "late"), "cancel")
+        self.assertEqual(jobs.get(d, jid)["progress"], "")
+
     def test_workers_are_recorded(self):
         d = db()
         claim(d)
