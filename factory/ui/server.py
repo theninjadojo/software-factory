@@ -461,7 +461,7 @@ class Handler(BaseHTTPRequestHandler):
                 files, docs, events, images = board.ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
                 sel["verify"] = board.ticket_verify(db, sel["repo"], sel["issue"])
                 if path == "/fragment/ticket":
-                    return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now))
+                    return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now, csrf))
                 back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}" + (f"&project={quote(project, safe='')}" if project else "")
                 if cold:
                     detail = board.slot("/fragment/detail?" + board._qs(repo=sel["repo"], n=sel["issue"], project=project), "Loading the ticket from GitHub", "sd-detail sd-loading")
@@ -474,7 +474,7 @@ class Handler(BaseHTTPRequestHandler):
                     close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
                                                                           sel["state"] in ("working", "needs"))
                     detail = board.detail_html(sel, board.needs_card(sel["need"], csrf, back), files, docs, events, cfg.ci.fix_rounds, now, explicit, images,
-                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close)
+                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close, csrf)
                 if path == "/fragment/detail":
                     return self._send(200, detail)
         finally:

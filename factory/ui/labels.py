@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import urllib.error
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import db as dbm
@@ -900,6 +901,47 @@ def _create_local(h, form, csrf: str, cfg, repo: str, title: str, body: str, lab
     ref = views.ref(repo, n)
     _done(h, form, csrf, f"Created {ref} and started {verb}. The factory picks it up on its next poll." if labels
           else f"Created {ref}. Nothing started.")
+
+
+def merge_pr(h, form, csrf: str) -> None:
+    """Merge a pull request the factory is watching, from the Tickets > PRs view. Only a tracked PR whose checks passed is merged; it is
+    re-read first (open, not a draft, head unchanged) and GitHub still applies the repository's own rules (reviews, required checks)."""
+    repo, n = form.get("repo", ""), form.get("n", "")
+    back = "/tickets"
+    if not (views.REPO.fullmatch(repo) and NUM.match(n or "")):
+        return _page(h, 400, "Tickets", "", csrf, "That is not a pull request.", "bad")
+    db = h.app.ro_db()
+    try:
+        row = next((p for p in dbm.watched_prs(db, 300) if p["repo"] == repo and p["number"] == int(n)), None) if db is not None else None
+    finally:
+        if db is not None:
+            db.close()
+    if row is not None:                    # back to the ticket the pull request belongs to
+        back = f"/ticket?repo={quote(row['issue_repo'], safe='')}&n={int(row['issue_num'])}"
+    if row is None or row["status"] != "passed":
+        return _done_to(h, csrf, back, "Only a pull request whose checks passed can be merged here.", "bad")
+    gh = _gh(h)
+    if gh is None:
+        return _done_to(h, csrf, back, NO_TOKEN, "bad")
+    try:
+        pr = gh.get_pr(repo, int(n))
+        if pr.get("merged") or pr.get("state") != "open":
+            return _done_to(h, csrf, back, f"{repo}#{n} is already closed or merged.", "bad")
+        if pr.get("draft"):
+            return _done_to(h, csrf, back, f"{repo}#{n} is still a draft.", "bad")
+        gh.merge_pr(repo, int(n), pr["head"]["sha"])
+    except urllib.error.HTTPError as e:
+        if e.code in (405, 409, 422):
+            return _done_to(h, csrf, back, f"GitHub would not merge {repo}#{n} ({e.code}): it has conflicts, a missing review or required check, or changed just now.", "bad")
+        return _done_to(h, csrf, back, _github_error(e), "bad")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return _done_to(h, csrf, back, _github_error(e), "bad")
+    _done_to(h, csrf, back, f"Merged {repo}#{n}.")
+
+
+def _done_to(h, csrf: str, where: str, msg: str, kind: str = "ok") -> None:
+    flash_set(csrf, msg, kind)
+    h._redirect(where)
 
 
 def close(h, form, csrf: str) -> None:
