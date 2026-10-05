@@ -207,6 +207,15 @@ class Board(UiCase):
         s, h, _ = self.req("GET", src, cookie=self.cookie)
         self.assertEqual((s, h["Content-Type"]), (200, "image/png"))
 
+    def test_a_repo_with_no_suite_says_so_instead_of_failing(self):
+        jid = jobs.enqueue(self.db, SHOP, 0, SHA, "", "playwright-screens", "any", 1.0, PARAMS)
+        jobs.claim(self.db, "arch", "linux", ["playwright-screens"], 2.0, 120, 99999999, 2)
+        jobs.complete(self.db, jid, "arch", {"status": "failed", "exit_code": 2, "log": "[playwright-screens] no Playwright config found <b>x</b>", "artifacts": []}, 3.0)
+        html = self.board()
+        self.assertIn("nothing to run", html)
+        self.assertIn("no Playwright config found &lt;b&gt;x&lt;/b&gt;", html)
+        self.assertNotIn("some tests failed", html)
+
     def test_the_fragment_is_what_the_page_refreshes_with(self):
         s, _, html = self.req("GET", "/screens/captures", cookie=self.cookie)
         self.assertEqual(s, 200)

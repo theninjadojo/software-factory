@@ -65,6 +65,10 @@ def _run_line(run: dict | None, live: dict | None) -> str:
         return '<span class="muted">Not built yet.</span>'
     kind = {"passed": "good", "failed": "bad", "error": "bad"}.get(run["status"], "")
     word = {"passed": "tests passed", "failed": "some tests failed", "error": "could not run"}.get(run["status"], run["status"])
+    if run["status"] == "failed" and run["exit_code"] == 2 and not run["shots"]:      # the recipe's "nothing to run" (it found no Playwright suite)
+        why = (run["log"] or "").strip().splitlines()[-1:] or [""]
+        return (f'{badge("nothing to run", "warn")} {esc(why[0][:200])} <a href="/workers/job?id={int(run["id"])}">log</a> · '
+                f'{esc(ago(run["finished"] or run["created"]))}')
     n = len(run["shots"])
     return (f'{badge(word, kind)} {n} screen{"" if n == 1 else "s"} · <code>{esc(run["base_sha"][:7])}</code> · {esc(ago(run["finished"] or run["created"]))}'
             f' · took {esc(dur(run["claimed"], run["finished"]) if run["claimed"] else "—")} on {esc(run["worker"] or "—")} · '
