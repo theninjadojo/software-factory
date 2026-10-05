@@ -156,8 +156,9 @@ def progress(st: dict) -> str:
 
 
 # ---------------------------------------------------------------- tickets: rows from the database (and GitHub's titles)
-def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | None = None) -> list[dict]:
-    """Every ticket the factory has looked at, newest activity first within each state, with its stations and a one-line why."""
+def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | None = None, github: bool = True) -> list[dict]:
+    """Every ticket the factory has looked at, newest activity first within each state, with its stations and a one-line why.
+    github=False (Work from GitHub issues is off): local tickets only, plus GitHub ones whose job is still running (it finishes)."""
     now = time.time() if now is None else now
     titles, need = titles or {}, {(r["repo"], r["issue"]): r for r in needs_rows or []}
     try:
@@ -182,6 +183,8 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
             continue
         seen.add(key)
         out.append(_one(db, t, by_ticket.get(key, []), need.get(key), titles.get(key), now, needs_rows is not None))
+    if not github:
+        out = [r for r in out if is_local(r["issue"]) or r["state"] == "working"]
     out.sort(key=lambda r: (ORDER[r["state"]], -r["when"]))
     return out
 
