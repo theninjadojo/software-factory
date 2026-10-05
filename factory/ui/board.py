@@ -448,16 +448,20 @@ def steps_html(j: dict, repo: str, issue: int, docs=()) -> str:
             f'<tbody>{rows}</tbody></table></div></section>')
 
 
-def prs_html(prs: list[dict], fix_rounds: int) -> str:
+def prs_html(prs: list[dict], fix_rounds: int, csrf: str = "") -> str:
     rows = ""
     for p in prs:
         status = p.get("status") or "watching"
         tone = "done" if status in ("passed", "closed") else "fail" if status == "failed" else "run"
         url = f'https://github.com/{p["repo"]}/pull/{int(p["number"])}'
         link = f'<a class="mono" href="{esc(url)}" rel="noopener noreferrer" target="_blank">#{int(p["number"])} ↗</a>' if views.REPO.match(p["repo"]) else f'#{int(p["number"])}'
+        merge = (f'<form method="post" action="/prs/merge" class="inline">{views.csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(p["repo"])}">'
+                 f'<input type="hidden" name="n" value="{int(p["number"])}"><button aria-label="Merge pull request #{int(p["number"])}" '
+                 'title="Merges this pull request on GitHub with a merge commit">Merge</button></form>'
+                 if csrf and status == "passed" and views.REPO.match(p["repo"]) else "")
         rows += (f'<li class="sd-prrow">{link}<span class="sd-prt">{esc(p.get("title") or p["repo"])}</span>'
                  f'<span class="sd-word {tone}">{esc({"passed": "Checks passed", "failed": "Checks failing", "closed": "Closed"}.get(status, "Checks running"))}</span>'
-                 f'<span class="muted">{esc(views.pr_round_line(p, fix_rounds))}</span></li>')
+                 f'<span class="muted">{esc(views.pr_round_line(p, fix_rounds))}</span>{merge}</li>')
     body = f'<ul class="sd-prs">{rows}</ul>' if rows else ""
     return (f'<section class="sd-card" aria-labelledby="pr-h"><h3 id="pr-h">Pull requests and checks</h3>{body}'
             '<p class="muted sd-fine">' + ("Each check result and fix round shows here as the factory sees it." if rows else
@@ -524,17 +528,17 @@ def journey_card(st: dict, verify: dict | None = None, now: float | None = None)
             f'<span class="muted sd-fine">The same stations as the Factory floor</span></div>{strip(st, verify, now)}</section>')
 
 
-def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float) -> str:
+def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, csrf: str = "") -> str:
     """Everything below the questions, which changes while the ticket runs (refreshed in place on the ticket's own page)."""
     repo, n, j = r["repo"], r["issue"], r["journey"]
     design_prs = sorted({f.get("pr") for f in files if f.get("pr")})
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
     return (journey_card(r["stations"], r.get("verify"), now) + design_html(files, repo, n, docs, design_link) + steps_html(j, repo, n, docs) + phone_journey(r, files, docs)
-            + prs_html(r["prs"], fix_rounds) + activity_html(events, now))
+            + prs_html(r["prs"], fix_rounds, csrf) + activity_html(events, now))
 
 
 def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_rounds: int, now: float, live: bool, images: bool = False,
-                local_html: str = "", handling: str = "", close_html: str = "") -> str:
+                local_html: str = "", handling: str = "", close_html: str = "", csrf: str = "") -> str:
     """local_html: a local ticket's own card (description, comments, edit); it has no GitHub page to link to. close_html: Close for a
     GitHub ticket (a local ticket's card has its own). handling: how the
     settings apply to this ticket (features.ticket_handling)."""
@@ -549,7 +553,7 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
              + "".join(f'<a href="{views.doc_url(repo, n, s)}">Read {esc(views.DOC_NOUN[s])}</a>' for s in docs)
              + (f'<a href="/ticket/images?{esc(_qs(repo=repo, n=n))}">View images</a>'
                 f'<a href="/ticket/review?{esc(_qs(repo=repo, n=n))}">Review the screens</a>' if images else ""))
-    body = live_part(r, files, docs, events, fix_rounds, now)
+    body = live_part(r, files, docs, events, fix_rounds, now, csrf)
     if live and j["status"] in ("running", "waiting", "queued"):
         body = f'<div id="live" data-src="/fragment/ticket">{body}</div>'
     return (f'<article class="sd-detail" aria-label="Ticket {esc(display(int(n)))}">'

@@ -12,6 +12,8 @@ from factory.ui import board, floorplan as F
 
 @pytest.fixture
 def wide(browser, server):
+    server.db.execute("DELETE FROM workers")    # the shared seed's Screens worker (arch-laptop) is not part of these floors
+    server.db.commit()
     ctx = browser.new_context(viewport=DESKTOP)
     pg = ctx.new_page()
     pg.errors = []
@@ -82,10 +84,10 @@ def test_arrange_save_and_reset_the_floor(wide, server):
 
     # a district: dragged by its name, its stations go with it
     before = plan(pg)
-    drag(pg, '[data-district="PRODUCTION"] > rect', 0, 2 * cell(pg), at=(0.1, 0.05))
+    drag(pg, '[data-district="PRODUCTION"] > rect', 0, -2 * cell(pg), at=(0.1, 0.05))   # up: below Build runs the Train station's belt to CI
     moved = plan(pg)
-    assert moved["districts"]["PRODUCTION"]["y"] == before["districts"]["PRODUCTION"]["y"] + 2
-    assert moved["nodes"]["station:build"]["y"] == before["nodes"]["station:build"]["y"] + 2
+    assert moved["districts"]["PRODUCTION"]["y"] == before["districts"]["PRODUCTION"]["y"] - 2
+    assert moved["nodes"]["station:build"]["y"] == before["nodes"]["station:build"]["y"] - 2
     assert "Every station is reachable" in problems(pg), problems(pg)
 
     # and resized by its corner
@@ -241,7 +243,7 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
     # the default has everything; saved, the floor draws the harbor and the notifiers where they stand
     pg.click('[data-act="default"]')
     assert "Every station is reachable" in problems(pg), problems(pg)
-    assert pg.locator(".fe-part.placed").count() == pg.locator(".fe-part[data-part]").count()
+    assert pg.locator(".fe-part[data-part]:not(.placed)").count() == pg.locator(".fe-part[data-part]:not(.placed) .opt").count()    # all but the optional junctions and area
     pg.click(".fe-save button")
     pg.wait_for_url(server.url + "/?ok=layout_saved")
     assert pg.locator("svg.fm .hb-box").count() == 1
