@@ -95,6 +95,12 @@ QUESTIONS_RULES = (
 )
 
 
+SUMMARY_RULES = (
+    "\n\nSUMMARY LINE (required). The very first line of your document is `Summary: ` followed by at most two plain sentences "
+    "for a busy person who will not read the rest: what you found or decided, and what you recommend happens next. No Markdown."
+)
+
+
 SCREENS_REQUESTED = (
     "\n\nSCREENS REQUESTED. A person asked to see screen designs for this ticket before it is built, and will review them. You MUST "
     "create the static mockups described below for the screens this ticket adds or changes, even if no repository contains a "
@@ -108,13 +114,16 @@ SCREENS_REQUESTED = (
 def design_files_rules(design_dir: str, requested: bool = False) -> str:
     """requested: a person asked for screens (the mockups request label), so they are made even without existing canvases."""
     return (
-        "\n\nDESIGN FILES (required when it applies). If the ticket changes what users see or do AND a repository contains Claude Design "
-        "canvas files (`*.dc.html`, usually in a `design/` folder), you MUST also create one to three static mockups of the screens you "
-        f"designed, in that repository. Write them to `{design_dir}/` (create the folder if it does not exist; do NOT write into `design/`, "
+        "\n\nDESIGN FILES (required when it applies). If the ticket changes what users see or do (a new or changed screen, form, "
+        "page or message), you MUST also create one to three static mockups of the screens you designed, in the repository whose "
+        "screens change. This applies even when no repository has any `*.dc.html` canvas yet: then use a clean, neutral style that "
+        "follows what you can see of the existing app's look in its code (its CSS, colours, fonts and spacing). Answer "
+        "`Design files: none` only when the ticket has no user-facing screens, and say why in your document. "
+        f"Write them to `{design_dir}/` (create the folder if it does not exist; do NOT write into `design/`, "
         "which is often git-ignored). Do this BEFORE you write your final answer, using your file-writing tools: create the files "
         f"first, then reply with the document. Name each one `{design_dir}/factory-<ticket number>-<short-slug>.dc.html` (lower-case "
-        "letters, digits and dashes in the slug; the ticket number is given in the ticket header). Open two or three of the existing "
-        "`*.dc.html` files first and copy their structure and visual style (the <head>, fonts, colours, spacing, corner radii, the way "
+        "letters, digits and dashes in the slug; the ticket number is given in the ticket header). When existing "
+        "`*.dc.html` files exist, open two or three of them first and copy their structure and visual style (the <head>, fonts, colours, spacing, corner radii, the way "
         "cards and buttons look), so yours sit naturally beside them. A mockup is a COMPLETE static page: `<!doctype html>`, `<html>`, "
         "a `<head>` containing `<meta charset=\"utf-8\">` and `<script src=\"./support.js\"></script>`, then `<body><x-dc>` with an "
         "optional `<helmet>` holding the Google Fonts `<link rel=\"stylesheet\" ...>` and a `<style>` block, then your markup with "
@@ -193,5 +202,5 @@ def builtin_prompt(agent: str) -> str:
     """What the factory itself tells an agent, shown read-only next to the operator's field (without the per-ticket
     context, and without the designer's design-file rules)."""
     if agent in ROLE_PROMPTS:
-        return ROLE_PROMPTS[agent] + "\n" + ROLE_COMMON + (QUESTIONS_RULES if agent in STAGE_TO_ROLE.values() else "")
+        return ROLE_PROMPTS[agent] + "\n" + ROLE_COMMON + (SUMMARY_RULES + QUESTIONS_RULES if agent in STAGE_TO_ROLE.values() else "")
     return IMPLEMENTER_PROMPT + {"ci_fix": CI_FIX_PROMPT, "conflicts": CONFLICTS_PROMPT}.get(agent, "")

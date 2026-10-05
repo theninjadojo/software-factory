@@ -563,6 +563,43 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
             + _tiles(j, r["state"]) + needs_html + local_html + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + body + handling + "</article>")
 
 
+SUMMARY_LINE = re.compile(r"^\s*(?:\*\*)?Summary:?(?:\*\*)?:?\s*(.+)$", re.I | re.M)
+
+
+def doc_gist(text: str) -> str:
+    """One or two plain sentences from a stage document: its own `Summary:` line, or (older documents) the first prose line."""
+    head = "\n".join(text.splitlines()[:12])
+    m = SUMMARY_LINE.search(head)
+    if m:
+        return plain(m.group(1))[:400]
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith(("#", "```", "-", "|", ">", "*")):
+            return plain(line)[:300]
+    return ""
+
+
+def summary_card(db, repo: str, issue: int, docs, files: list[dict]) -> str:
+    """What the stages that already ran concluded, one line each, so a person can decide Build or Skip without reading the documents."""
+    rows = ""
+    for stage in docs:
+        d = dbm.stage_doc(db, repo, issue, stage)
+        gist = doc_gist(d["output"]) if d else ""
+        if not gist:
+            continue
+        extra = ""
+        if stage == "designer":
+            n = sum(1 for f in files if f.get("preview"))
+            extra = (f' <span class="muted">{n} mockup image{"s" if n != 1 else ""} below.</span>' if n else
+                     ' <span class="muted">No mockup image was made.</span>')
+        rows += (f'<li><b>{esc(LABEL.get(stage, stage.title()))}</b> {esc(gist)}{extra} '
+                 f'<a href="{views.doc_url(repo, issue, stage)}">Read {esc(views.DOC_NOUN[stage])}</a></li>')
+    if not rows:
+        return ""
+    return (f'<section class="sd-card sd-summary" aria-labelledby="sum-h"><div class="sd-cardhead"><h3 id="sum-h">What the stages found</h3></div>'
+            f'<ul class="sd-sumlist">{rows}</ul></section>')
+
+
 def needs_card(row: dict | None, csrf: str, back: str) -> str:
     """What the ticket needs from a person. Questions: each one a person must answer, its options with the recommendation marked
     (and chosen to start with), Accept recommendations, and the ones answered with safe defaults folded away. It posts the same

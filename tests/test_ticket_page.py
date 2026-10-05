@@ -282,3 +282,22 @@ class Loading(unittest.TestCase):
         html = board.tickets_page(rows, rows[0], False, "all", "", "", "latest", "", "", time.time(), "tok")
         self.assertIn('<template id="ld-detail">', html)
         self.assertIn('class="sd-back"', html)
+
+
+class StageSummary(unittest.TestCase):
+    def test_the_gist_is_the_summary_line_or_the_first_prose_line(self):
+        self.assertEqual(board.doc_gist("Summary: Shorten the placeholder. Build it.\n# Design\nlong"), "Shorten the placeholder. Build it.")
+        self.assertEqual(board.doc_gist("# Design\n\nInspected the forms page.\n- a"), "Inspected the forms page.")
+        self.assertEqual(board.doc_gist("# only a heading"), "")
+
+    def test_the_card_gives_one_escaped_line_per_stage_and_says_when_no_mockup_was_made(self):
+        import sqlite3
+        from factory import db as dbm
+        db = dbm.connect(":memory:")
+        rid = dbm.start_run(db, "stage", REPO, 4, "T", "claude-code", "sonnet", "medium", stage="designer")
+        dbm.finish_run(db, rid, "stage", output="Summary: Move it <b>left</b>.\n# Design")
+        html = board.summary_card(db, REPO, 4, ["designer"], [])
+        self.assertIn("Move it &lt;b&gt;left&lt;/b&gt;.", html)
+        self.assertIn("No mockup image was made.", html)
+        self.assertIn("Read design", html)
+        self.assertEqual(board.summary_card(db, REPO, 4, [], []), "")
