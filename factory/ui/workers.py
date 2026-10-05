@@ -42,7 +42,7 @@ def install_command(listen: str, token: str, recipes: str = "web") -> str:
 def add_form(csrf: str) -> str:
     return ('<h2>Add a worker</h2><form method="post" action="/workers/add" class="row">' + csrf_field(csrf) +
             '<label>Name <input name="name" value="my-worker" pattern="[a-z0-9][a-z0-9-]{0,40}" required></label> '
-            '<label>Recipes <input name="recipes" value="web" pattern="[a-z ]{1,60}" title="web, android, ios"></label> '
+            '<label>Recipes <input name="recipes" value="web" pattern="[a-z ]{1,60}" title="web, screens, android, ios"></label> '
             '<button>Create token and show install command</button></form>')
 
 

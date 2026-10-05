@@ -3,7 +3,7 @@
 #   ./scripts/setup-worker.sh                       # asks for what it needs
 #   FACTORY_URL=https://factory.example:8788 WORKER_TOKEN=... ./scripts/setup-worker.sh     # non-interactive (no prompts)
 # Get the token on the factory host:  python3 -m factory.ctl workers add <name>   (or FACTORY_WORKERS=1 ./scripts/setup.sh)
-# Optional environment: WORKER_RECIPES ("web", "android", "ios" or a list; default web), WORKER_PLATFORM (default: macos or linux),
+# Optional environment: WORKER_RECIPES ("web", "screens", "android", "ios" or a list; default web), WORKER_PLATFORM (default: macos or linux),
 #   for ios (a Mac with Tart): WORKER_IOS_SCHEME and WORKER_IOS_PROJECT (or WORKER_IOS_WORKSPACE), WORKER_IOS_DESTINATION,
 #   WORKER_IOS_PULL=1 to download the Xcode image (about 30 GB) as VM "shikumi-ios",
 #   WORKER_GIT_URL (default https://github.com/{repo}.git; use git@github.com:{repo}.git for SSH keys), SHIKUMI_REPO (image owner),
@@ -23,7 +23,7 @@ OS="$(uname -s)"
 PLATFORM="${WORKER_PLATFORM:-$([ "$OS" = Darwin ] && echo macos || echo linux)}"
 [[ "$PLATFORM" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || die "WORKER_PLATFORM must be lowercase letters, digits and dashes"
 RECIPES="${WORKER_RECIPES:-web}"
-for r in $RECIPES; do [[ "$r" == web || "$r" == android || "$r" == ios ]] || die "unknown recipe '$r' (this release ships: web, android, ios)"; done
+for r in $RECIPES; do [[ "$r" == web || "$r" == screens || "$r" == android || "$r" == ios ]] || die "unknown recipe '$r' (this release ships: web, screens, android, ios)"; done
 ENGINE="$(command -v docker >/dev/null 2>&1 && echo docker || { command -v podman >/dev/null 2>&1 && echo podman; } || true)"
 case " $RECIPES " in *" android "*) [ -n "$ENGINE" ] || die "the android recipe needs Docker (or Podman): it builds inside a container";; esac
 
@@ -73,6 +73,13 @@ if "web" in r:
 command = [{q(d + '/worker/recipes/web-test.sh')}]
 timeout_seconds = 1800
 artifacts = ["test-results/**/*.png"]
+"""
+if "screens" in r:
+    out += f"""
+[recipes.playwright-screens]
+command = [{q(d + '/worker/recipes/playwright-screens.sh')}]
+timeout_seconds = 3600
+artifacts = ["screens-out/*.png"]
 """
 if "android" in r:
     out += f"""

@@ -85,8 +85,29 @@ class FakeGitHub:
         return {}
 
 
+def solid_png(w: int, h: int, rgb: tuple) -> bytes:
+    """A real, decodable PNG of one colour with a lighter band, so thumbnails on the Screens board are visibly images."""
+    import struct
+    import zlib
+    rows = b"".join(b"\x00" + bytes((255, 255, 255) if y < h // 8 else rgb) * w for y in range(h))
+    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
+
+def seed_captures(db) -> None:
+    """A finished Playwright run for the Screens board (some tests failed) and one waiting for a worker."""
+    import base64
+    from factory import jobs
+    jid = jobs.enqueue(db, REPO, 0, "c" * 40, "", "playwright-screens", "any", time.time() - 600, '{"purpose": "screens"}')
+    jobs.claim(db, "arch-laptop", "linux", ["playwright-screens"], time.time() - 590, 120, 99999, 2)
+    names = ["login-spec-user-signs-in-chromium", "home-spec-shows-the-dashboard-mobile", "tickets-spec-filters-by-station-chromium-" + "x" * 10, "settings-spec-saves-general"]
+    arts = [{"name": n, "png_b64": base64.b64encode(solid_png(1280, 800 + 40 * i, (40 + 30 * i, 60, 120))).decode()} for i, n in enumerate(names)]
+    jobs.complete(db, jid, "arch-laptop", {"status": "failed", "exit_code": 1, "log": "1 failed", "artifacts": arts}, time.time() - 300)
+
+
 def seed(db) -> None:
     now = time.time()
+    seed_captures(db)
     dbm.set_status(db, "last_poll_ok", str(now - 4))
     done = dbm.start_run(db, "stage", REPO, 9, "Per-repo budget limits", "claude-code", "opus", "high", stage="analyst")
     dbm.finish_run(db, done, "stage", "analysed", output="# Analysis\n\nLooks feasible. **Two** open questions.", log_tail="step 1\nstep 2")
@@ -123,6 +144,7 @@ class Server:
         self.root = tmp
         (tmp / "state").mkdir()
         cfg = (ROOT / "config.example.toml").read_text().replace("/srv/factory", str(tmp))
+        cfg += f'\n[workers]\nenabled = true\n[screens]\n[[screens.captures]]\nrepo = "{REPO}"\n[[screens.captures]]\nrepo = "your-org/shop-web"\n'
         (tmp / "config.toml").write_text(cfg)
         self.db_path = str(tmp / "state" / "factory.db")
         self.db = dbm.connect(self.db_path)

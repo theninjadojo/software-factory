@@ -6,15 +6,19 @@ import copy
 import logging
 import re
 import sqlite3
+import time
 from urllib.parse import urlencode
 
+from .. import captures as CP
+from .. import jobs
 from .. import reviewnotes as RN
 from .. import screenboard as SB
 from ..config import deep_merge
 from . import labels as L
 from . import settings as S
 from . import views
-from .views import csrf_field, esc
+from ..verify import ONLINE_SECONDS
+from .views import ago, badge, csrf_field, dur, esc
 
 log = logging.getLogger("factory.ui")
 SCREEN_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
@@ -43,6 +47,177 @@ def figure(label: str, shot: dict | None, alt: str, empty: str) -> str:
         return f'<figure class="sb-shot sb-none"><figcaption>{esc(label)}</figcaption><p class="muted">{esc(empty)}</p></figure>'
     return (f'<figure class="sb-shot"><figcaption>{esc(label)}</figcaption><a href="{esc(open_url(shot["key"]))}">'
             f'<img src="{esc(SB.src(shot["key"]))}" alt="{esc(alt)}" loading="lazy"></a></figure>')
+
+
+# ---------------------------------------------------------------- Playwright runs (factory/captures.py)
+
+def shot_src(job_id: int, name: str) -> str:
+    return "/workerimg?" + urlencode({"job": int(job_id), "name": name})
+
+
+def _run_line(run: dict | None, live: dict | None) -> str:
+    """One line on what the repo's Playwright run is doing or did. The worker's words are escaped; nothing else is shown from them."""
+    if live and live["status"] == "queued":
+        return f'{badge("waiting", "warn")} Waiting for a worker to pick it up. <a href="/workers">Workers</a>'
+    if live:
+        return f'{badge("running", "warn")} Running on {esc(live["worker"] or "a worker")} since {esc(ago(live["claimed"] or live["created"]))}.'
+    if not run:
+        return '<span class="muted">Not built yet.</span>'
+    kind = {"passed": "good", "failed": "bad", "error": "bad"}.get(run["status"], "")
+    word = {"passed": "tests passed", "failed": "some tests failed", "error": "could not run"}.get(run["status"], run["status"])
+    n = len(run["shots"])
+    return (f'{badge(word, kind)} {n} screen{"" if n == 1 else "s"} · <code>{esc(run["base_sha"][:7])}</code> · {esc(ago(run["finished"] or run["created"]))}'
+            f' · took {esc(dur(run["claimed"], run["finished"]) if run["claimed"] else "—")} on {esc(run["worker"] or "—")} · '
+            f'<a href="/workers/job?id={int(run["id"])}">log</a>')
+
+
+def captures_body(cfg, db, csrf: str) -> str:
+    """Every repo with a Playwright run, grouped by project, each with its Build screens button and the screens its newest run took."""
+    caps = {c.repo: c for c in cfg.screens.captures}
+    if not caps:
+        return ""
+    groups, seen = [], set()
+    for pr in cfg.projects:
+        repos = [r.repo for r in pr.repos if r.repo in caps]
+        if repos:
+            groups.append((pr.name, pr.name, repos))
+            seen.update(repos)
+    rest = [r for r in caps if r not in seen]
+    if rest:
+        groups.append(("Other repositories", "", rest))
+    pending = CP.requested(db)
+    out = ""
+    for title, key, repos in groups:
+        busy = any(r in pending or CP.active(db, r) for r in repos)
+        button = (f'<form method="post" action="/screens/capture">{csrf_field(csrf)}<input type="hidden" name="project" value="{esc(key)}">'
+                  f'<button{" disabled" if busy else ""}>{"Building…" if busy else "Build screens"}</button></form>')
+        cards = ""
+        for repo in repos:
+            run, live = CP.latest(db, repo), CP.active(db, repo)
+            line = _run_line(run, live) if repo not in pending or live else f'{badge("requested", "warn")} Starts at the factory\'s next poll.'
+            grid = ""
+            if run and run["shots"]:
+                grid = '<ul class="cp-grid">' + "".join(
+                    f'<li><figure><a href="{esc(shot_src(run["id"], n))}" target="_blank"><img src="{esc(shot_src(run["id"], n))}" alt="{esc(n)}" loading="lazy"></a>'
+                    f'<figcaption>{esc(n)}</figcaption></figure></li>' for n in run["shots"]) + "</ul>"
+            cards += f'<section class="cp-repo"><h3>{esc(repo)}</h3><p>{line}</p>{grid}</section>'
+        out += f'<section class="cp-project"><div class="cp-head"><h2>{esc(title)}</h2>{button}</div>{cards}</section>'
+    every = (f'<form method="post" action="/screens/capture" class="sb-refresh">{csrf_field(csrf)}<input type="hidden" name="project" value="*">'
+             f'<button>Build all</button></form>') if len(groups) > 1 else ""
+    return (f'<div class="sb-head"><p class="muted">Playwright runs: each project\'s test suite runs on a worker against the default branch and the '
+            f'screenshots it takes appear here.</p>{every}</div>{out}')
+
+
+def setup_body(cfg, db, csrf: str) -> str:
+    """Everything needed to run Playwright from the board, set up on the page itself: workers on, a worker with the recipe, and which repos."""
+    on = {c.repo: c for c in cfg.screens.captures}
+    recipes = sorted({c.recipe for c in cfg.screens.captures} or {"playwright-screens"})
+    online = []
+    if db is not None:
+        try:
+            now = time.time()
+            online = [w for w in jobs.online_workers(db, now, ONLINE_SECONDS)]
+        except sqlite3.OperationalError:
+            online = []
+    able = [w["name"] for w in online if set(recipes) & set(w["recipes"].split(","))]
+    steps = [
+        (cfg.workers.enabled, 'Verification workers are on.' if cfg.workers.enabled else
+         'Turn verification workers on: <a href="/settings?section=workers">Settings → Workers</a>.'),
+        (bool(able), f'A worker with the Playwright recipe is online ({esc(", ".join(able))}).' if able else
+         'No online worker has the Playwright recipe yet. <a href="/workers">Workers</a> → <em>Add a worker</em> with the recipe <code>screens</code> '
+         'gives you the install command for the machine that will run the tests.'),
+        (bool(on), f'{len(on)} repositor{"y" if len(on) == 1 else "ies"} chosen.' if on else "Choose the repositories below."),
+    ]
+    ticks = "".join(f'<li>{badge("done", "good") if ok else badge("to do", "warn")} {text}</li>' for ok, text in steps)
+    repos = list(dict.fromkeys(list(cfg.repos) + [r.repo for p in cfg.projects for r in p.repos]))
+    rows = "".join(
+        f'<tr><td data-l="Repository"><label class="check"><input type="checkbox" name="repo" value="{esc(r)}"{" checked" if r in on else ""}> {esc(r)}</label></td>'
+        f'<td data-l="Worker recipe"><input name="recipe_{i}" value="{esc(on[r].recipe if r in on else "playwright-screens")}" maxlength=60 pattern="[a-z0-9][a-z0-9-]*" autocomplete="off"></td>'
+        f'<td data-l="Platform"><input name="platform_{i}" value="{esc(on[r].platform if r in on else "any")}" maxlength=60 pattern="[a-z0-9][a-z0-9-]*" autocomplete="off"></td></tr>'
+        for i, r in enumerate(repos))
+    form = (f'<form method="post" action="/screens/captures/save" class="settings">{csrf_field(csrf)}'
+            '<table class="stack"><thead><tr><th>Run Playwright in</th><th>Worker recipe</th><th>Worker platform</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table>'
+            '<p class="muted">The recipe is a name defined on the worker (the <code>screens</code> option installs <code>playwright-screens</code>). '
+            'The platform is the one the worker declares; <code>any</code> matches every worker.</p><button>Save</button></form>')
+    return (f'<details class="cp-setup"{"" if on and cfg.workers.enabled and able else " open"}><summary>Set up Playwright runs</summary>'
+            f'<ul class="cp-steps">{ticks}</ul>{form}</details>')
+
+
+def captures_save(h, form, csrf: str) -> None:
+    """Choose the repos whose Playwright suite the Build screens button runs. Written to the overrides file like every other UI setting."""
+    cfg, path = h.app.cfg(), h.app.config_path
+    repos = list(dict.fromkeys(list(cfg.repos) + [r.repo for p in cfg.projects for r in p.repos]))
+    chosen = set(form.getall("repo"))
+    out = []
+    for i, r in enumerate(repos):
+        if r in chosen:
+            entry = {"repo": r}
+            for k, d in (("recipe", "playwright-screens"), ("platform", "any")):
+                v = str(form.get(f"{k}_{i}", "")).strip() or d
+                if v != d:
+                    entry[k] = v
+            out.append(entry)
+    if chosen - set(repos):
+        L.flash_set(csrf, "Choose repositories the factory handles.", "bad")
+        return h._redirect("/screens")
+    base, ov = S.base_raw(path), copy.deepcopy(S.overrides_raw(path))
+    sc = ov.setdefault("screens", {})
+    if out == base.get("screens", {}).get("captures", []):
+        sc.pop("captures", None)
+    else:
+        sc["captures"] = out
+    if not sc:
+        ov.pop("screens")
+    try:
+        S._commit(path, h.app.state_dir(), ov)
+    except S.SettingsError as e:
+        L.flash_set(csrf, " · ".join(e.messages), "bad")
+        return h._redirect("/screens")
+    log.info("screens: Playwright runs set for %s", ", ".join(c["repo"] for c in out) or "no repository")
+    L.flash_set(csrf, "Saved. The factory applies it at its next idle moment." if out else "Playwright runs switched off.")
+    h._redirect("/screens")
+
+
+def captures_fragment(h, q: dict, csrf: str) -> None:
+    cfg, db = h.app.cfg(), h.app.ro_db()
+    body = ""
+    if db is not None:
+        try:
+            body = captures_body(cfg, db, csrf)
+        finally:
+            db.close()
+    h._send(200, body)
+
+
+def capture(h, form, csrf: str) -> None:
+    """Ask for Playwright runs: of one project (its name), of all (`*`) or of one repo (`repo`). The orchestrator queues them at its next poll."""
+    cfg = h.app.cfg()
+    caps = [c.repo for c in cfg.screens.captures]
+    pick, repo = str(form.get("project", "")), str(form.get("repo", ""))
+    if repo:
+        repos = [r for r in caps if r == repo]
+    elif pick == "*":
+        repos = caps
+    elif pick:
+        mine = {r.repo for p in cfg.projects if p.name == pick for r in p.repos}
+        repos = [r for r in caps if r in mine]
+    else:
+        repos = [r for r in caps if r not in {x.repo for p in cfg.projects for x in p.repos}]
+    if not repos:
+        L.flash_set(csrf, "Nothing to build: no Playwright run is set up for that.", "bad")
+        return h._redirect("/screens")
+    if not cfg.workers.enabled:
+        L.flash_set(csrf, "Turn on verification workers first (Settings → Workers): the tests run on a worker.", "bad")
+        return h._redirect("/screens")
+    db = sqlite3.connect(cfg.db_path, timeout=10)
+    try:
+        CP.request(db, repos)
+    finally:
+        db.close()
+    log.info("screens: Playwright run requested for %s", ", ".join(repos))
+    L.flash_set(csrf, "Building screens. A worker runs the tests next, which takes a few minutes; this page updates itself.")
+    h._redirect("/screens")
 
 
 def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey: str, view: str, csrf: str,
@@ -105,9 +280,10 @@ def board_body(cfg, shots: dict, st: dict, pending: bool, running: bool, journey
 def board_get(h, q: dict, csrf: str) -> None:
     cfg = h.app.cfg()
     db = h.app.ro_db()
-    shots, st, pending, noted = {}, {}, False, {}
+    shots, st, pending, noted, runs, setup = {}, {}, False, {}, "", setup_body(cfg, None, csrf)
     if db is not None:
         try:
+            runs, setup = captures_body(cfg, db, csrf), setup_body(cfg, db, csrf)
             shots, st, pending = SB.latest(db), SB.status(db), SB.requested(db)
             for x in RN.notes(db, *RN.BOARD, open_only=True):
                 if (m := SB.KEY.fullmatch(x["image"])):
@@ -115,6 +291,11 @@ def board_get(h, q: dict, csrf: str) -> None:
         finally:
             db.close()
     body = board_body(cfg, shots, st, pending, SB.running(), q.get("journey", ""), q.get("view", ""), csrf, noted)
+    if cfg.screens.captures and not cfg.screens.pages:
+        body = ('<p class="muted">Pages shot straight from a repository (no test suite needed) can be added too: '
+                '<a href="/screens/edit">Add a screen</a>.</p>')
+    live = f'<div id="live" data-src="/screens/captures">{runs}</div>' if cfg.screens.captures else ""
+    body = (setup + live + body) if not cfg.screens.captures else (live + setup + body)
     shown = L.flash_pop(csrf)
     h._send(200, views.page("Screens", body, "/screens", csrf, wide=True,
                             flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))

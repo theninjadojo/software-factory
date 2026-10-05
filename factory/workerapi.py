@@ -22,7 +22,7 @@ from .config import WORKER_NAME, Config, load
 
 log = logging.getLogger("factory.workerapi")
 MAX_BODY = 64 * 1024
-MAX_RESULT = 16 * 1024 * 1024
+MAX_RESULT = 64 * 1024 * 1024        # a Playwright run for the Screens board returns every screenshot it took
 PROTOCOL = 1
 JOB_PATH = re.compile(r"/v1/jobs/(\d{1,9})/(heartbeat|result)")
 PLATFORM = re.compile(r"[a-z0-9][a-z0-9-]{0,40}")

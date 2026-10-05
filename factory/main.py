@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import backup, ci, conflicts, designfiles, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, usage, verify
+from . import backup, captures, ci, conflicts, designfiles, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -1136,6 +1136,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         screenboard.tick(cfg, conn, time.time(), gh.token, lambda: dbm.connect(cfg.db_path), emit)
     except Exception:
         log.exception("screens board failed")                   # never stops the poll
+    try:
+        captures.tick(cfg, gh, conn, time.time())
+    except Exception:
+        log.exception("screens: Playwright runs failed")        # never stops the poll
     try:
         verify.watch(cfg, conn, lambda text, event="worker_offline": alert(text, event=event))
     except Exception:
