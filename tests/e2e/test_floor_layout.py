@@ -12,6 +12,8 @@ from factory.ui import board, floorplan as F
 
 @pytest.fixture
 def wide(browser, server):
+    server.db.execute("DELETE FROM workers")    # the shared seed's Screens worker (arch-laptop) is not part of these floors
+    server.db.commit()
     ctx = browser.new_context(viewport=DESKTOP)
     pg = ctx.new_page()
     pg.errors = []
