@@ -21,7 +21,7 @@ the Train station to the yard or a junction). Every worker needs its loop: track
 and from the Train station back to the yard (through junctions as needed); each rail building has a turnaround loop, so a train only
 ever drives forwards round the circuit, and a junction's signals let one train onto the shared track at a time.
 
-Without a saved layout the Factory page draws the default layout (default_plan), as the editor opens it, so the two always agree;
+Without a saved layout the Factory page draws the default layout (default_plan: islands of stations with scenery between them, scenery.py), as the editor opens it, so the two always agree;
 a saved layout that cannot be read falls back to that. One that is stale (the config gained or lost a station, an agent or the workers) is merged: what is gone is dropped, and what is new
 gets a default spot and an auto-routed belt."""
 import hashlib
@@ -31,6 +31,8 @@ import logging
 import math
 import os
 from pathlib import Path
+
+from . import scenery
 
 log = logging.getLogger("factory.ui")
 
@@ -270,17 +272,21 @@ def cells(pts):
 
 # ---------------------------------------------------------------- the default layout: today's arrangement on the grid
 def _default_pos(ctx: Ctx) -> dict:
+    """Islands with open ground between them (the scenery fills it, scenery.py): the arrivals at the sea, intake, planning across a
+    pond, production below it, quality and shipping back along the airfield, the power station on the east edge, the yard and the
+    workers at the south."""
     roles = ctx.roles
     P = {"mainland": (0, 0), "sea": (12, 0), "sources": (28, 2), "receiving": (28, 10), "harbor": (19, 13), "queue": (50, 12), "airfield": (28, 33)}
     for s, x in zip(INTAKE, (37, 45, 53)):
         P[f"station:{s}"] = (x, 2)
+    x0 = 76
     for i, r in enumerate(roles):
-        P[f"station:{r}"] = (63 + 8 * i, 2)
-    P["station:build"] = (70, 17)
+        P[f"station:{r}"] = (x0 + 8 * i, 2)
+    P["station:build"] = (x0 + 12, 18)
     for j, s in enumerate(x for x in ("review", "ci") if x in ctx.ids):
-        P[f"station:{s}"] = (57 - 9 * j, 25)
-    P["station:pr"] = (37, 25)
-    px = max(63 + 8 * len(roles) + 2, 82)
+        P[f"station:{s}"] = (70 - 12 * j, 25)
+    P["station:pr"] = (38, 25)
+    px = max(x0 + 8 * len(roles) + 4, 96)
     for k, h in enumerate(ctx.harnesses):
         P[f"power:{h}"] = (px, 1 + 6 * k)
     for k, n in enumerate(ctx.notifiers):
@@ -485,6 +491,7 @@ def default_plan(ctx: Ctx) -> dict:
     if tracks:
         doc["tracks"] = tracks
     doc["districts"] = district_boxes(doc, ctx, boxes(nodes, ctx))
+    doc["terrain"] = scenery.build(boxes(nodes, ctx), doc["belts"], doc.get("tracks") or {}, doc["districts"], cells)
     if len(_DEFAULTS) > 32:
         _DEFAULTS.clear()
     _DEFAULTS[ctx.key] = doc

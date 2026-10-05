@@ -78,14 +78,21 @@ def human_comments(gh: GitHub, repo: str, num: int) -> list[str]:
 
 def stage_outputs(gh: GitHub, repo: str, num: int) -> dict[str, str]:
     """Earlier stage documents on the ticket. Only comments authored by OUR account count: a forged comment
-    carrying the marker must not be able to steer a later stage or the implementer."""
+    carrying the marker must not be able to steer a later stage or the implementer. A document written before the ticket was
+    sent back to its stage (or an earlier one) is kept, as `<stage>-before-redirect`, until the stage writes a new one."""
     try:
         me = gh.login()
         out: dict[str, str] = {}
         for c in gh.issue_comments(repo, num):          # oldest first, so a re-run replaces the earlier document
-            m = STAGE_HEAD.match(c["body"])
-            if m and c["user"]["login"] == me:
+            if c["user"]["login"] != me:
+                continue
+            if (m := STAGE_HEAD.match(c["body"])):
+                out.pop(f"{m.group(1)}-before-redirect", None)
                 out[m.group(1)] = Q.read_stored(c["body"][m.end():])[1]       # without the questions data line
+            elif (m := Q.REDIRECT_HEAD.match(c["body"])):
+                for name in m.group(1).split(","):
+                    if name in out:
+                        out[f"{name}-before-redirect"] = SUPERSEDED_NOTE.format(stage=m.group(1).split(",")[0]) + out.pop(name)
         return out
     except Exception:
         return {}
@@ -102,6 +109,41 @@ def question_state(gh: GitHub, repo: str, num: int) -> list:
 
 def stages_done(cfg: Config, labels: list[str]) -> list[str]:
     return [r.name for r in cfg.roles if r.done_label in labels]
+
+
+SUPERSEDED_NOTE = "(Written before the ticket was sent back to the {stage} stage, so it may be outdated.)\n\n"
+REDIRECT_COMMENT = ("Sent back to the {stage} stage from the factory admin UI. The steps from there on run again. The earlier documents "
+                    "and answers are kept, and the next agents see them as possibly outdated.")
+SUPERSEDED_PR = ("This pull request is superseded: its ticket was sent back to the {stage} stage, and a new pull request will follow. "
+                 "The factory no longer watches it. A person can close it, or keep it if it is still useful.")
+
+
+def redirect(cfg: Config, gh: GitHub, conn, repo: str, num: int, role) -> None:
+    """Send a ticket back to a stage (a person's choice in the admin UI). The done labels of that stage and every later one come off,
+    with the build's, so the stages run again and the auto chain can go forward from there (router.behind no longer stops it).
+    Nothing is deleted: documents, answers, runs and design files stay, and a marker comment makes stage_outputs pass the earlier
+    documents on as possibly outdated. The ticket's open factory PRs for the steps being redone stay open for a person to close;
+    the factory stops watching them. Trigger labels are cleared by the caller (process_approvals)."""
+    names = [r.name for r in cfg.roles]
+    redo = names[names.index(role.name):]
+    held = {lb["name"] for lb in gh.get_issue(repo, num).get("labels", [])}
+    drop = [r.done_label for r in cfg.roles if r.name in redo] + [DONE, FAILED, Q.NEEDS_ANSWERS, cfg.review.done_label]
+    if "designer" in redo:                              # new screens need a new approval
+        drop.append(cfg.mockups.approve_label)
+    removed = [lb for lb in dict.fromkeys(drop) if lb in held]
+    for lb in removed:
+        gh.remove_label(repo, num, lb)
+    keep = set() if "designer" in redo else dbm.design_prs(conn, repo, num)
+    superseded = dbm.supersede_prs(conn, repo, num, keep)
+    dbm.set_questions(conn, repo, num, role.name, 0)
+    for r, n in superseded:
+        try:
+            gh.comment(r, n, SUPERSEDED_PR.format(stage=role.name))
+        except Exception:
+            log.warning("could not comment on the superseded PR %s#%s", r, n)
+    gh.comment(repo, num, Q.REDIRECT.format(stages=",".join(redo)) + REDIRECT_COMMENT.format(stage=role.name))
+    emit("decision", f"sent back to the {role.name} from the admin UI; removed {', '.join(removed) or 'no labels'}; "
+                     f"{len(superseded)} PR(s) superseded", repo, num)
 
 
 def picked(route, c) -> str:
@@ -318,9 +360,10 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     num, trigger_label = issue["number"], trigger_label or cfg.trigger_label
     prior = stage_outputs(gh, repo, num)
     shown = ticket_mockups(repo, num)
-    verdict, why = mockups.gate(cfg.mockups, [lb["name"] for lb in issue.get("labels", [])], shown,
+    names = [lb["name"] for lb in issue.get("labels", [])]
+    verdict, why = mockups.gate(cfg.mockups, names, shown,
                                 NO_MOCKUPS in prior.get("designer", "") or MOCKUPS_OFF in prior.get("designer", ""),
-                                cfg.mockups.require_approval and design_pr_merged(gh, shown))
+                                (cfg.mockups.require_approval or cfg.mockups.request_label in names) and design_pr_merged(gh, shown))
     if verdict == "block":
         gh.remove_label(repo, num, trigger_label)       # no retry loop: a person fixes it and triggers again
         gh.add_labels(repo, num, [FAILED])
@@ -465,7 +508,8 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             nxt = classifier.classify(issue["title"], issue.get("body") or "", labels,
                                       comments + ["(just completed) " + (settled + doc)[:3000]],
                                       project_info(project_for(cfg, repo), repo), stages_done(cfg, labels))
-            nxt, _ = pick_stage(cfg, nxt, stages_done(cfg, labels), len(project_for(cfg, repo).repos) > 1)
+            nxt, _ = pick_stage(cfg, nxt, stages_done(cfg, labels), len(project_for(cfg, repo).repos) > 1,
+                                cfg.mockups.request_label in labels)
             hint = next_hint(cfg, nxt)
             # Keep going only when nothing needs a person and the classifier named a real next step. A needs-a-person question
             # always stops the chain; with only safe defaults the classifier still has to agree (a second opinion that can only
@@ -752,14 +796,17 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
             if action == "accept" or action.startswith("q:"):
                 answer_from_chat(cfg, gh, conn, repo, num, action)
                 continue
-            role = next((r for r in cfg.roles if action == f"stage:{r.name}"), None)
+            back = action.startswith("redirect:")
+            role = next((r for r in cfg.roles if action == f"{'redirect' if back else 'stage'}:{r.name}"), None)
             if action != "run" and role is None:
                 continue                            # an unknown action is ignored, never guessed at
             for _, label in triggers(cfg):         # the approval covers the whole ticket: clear EVERY trigger label (factory:auto
                 gh.remove_label(repo, num, label)  # included), or finishing the run re-triages it and asks a person again
-            def approved(db, repo=repo, num=num, issue=issue, role=role):
-                if role:
-                    res = dispatch_stage(cfg, gh, classifier, repo, issue, role, conn=db)
+            if back:
+                redirect(cfg, gh, conn, repo, num, role)
+            def approved(db, repo=repo, num=num, issue=issue, role=role, back=back):
+                if role:                            # sent back: the stages after it follow through the normal auto chain
+                    res = dispatch_stage(cfg, gh, classifier, repo, issue, role, chain=back, conn=db)
                 else:
                     res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=db)
                 dbm.record(db, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved from chat; {res.detail}; {res.pr_url or ''}")
@@ -852,7 +899,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
 
     if kind == "auto":
         before = c.stage
-        c, adjusted = pick_stage(cfg, c, done, len(project_for(cfg, repo).repos) > 1)
+        c, adjusted = pick_stage(cfg, c, done, len(project_for(cfg, repo).repos) > 1, cfg.mockups.request_label in labels)
         if adjusted:
             summary = f"{summary}; stage {before} -> {c.stage} ({adjusted})"
             emit("decision", f"auto: {c.stage} instead of {before} ({adjusted})", repo, num)

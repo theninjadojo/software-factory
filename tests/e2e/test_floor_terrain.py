@@ -29,8 +29,15 @@ def wide(browser, server):
 
 
 def editor(pg, server):
+    """The editor on a bare floor: the default layout comes with scenery of its own, so these tests save it without first."""
     pg.goto(server.url + "/floor/edit")
     pg.wait_for_selector(".fe-svg [data-node]")
+    doc = json.loads(pg.input_value("textarea[name=plan]"))
+    if doc.get("terrain"):
+        doc.pop("terrain")
+        (server.root / "state" / F.FILE).write_text(json.dumps(doc))
+        pg.goto(server.url + "/floor/edit")
+        pg.wait_for_selector(".fe-svg [data-node]")
 
 
 def plan(pg) -> dict:

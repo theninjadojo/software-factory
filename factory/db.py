@@ -203,7 +203,7 @@ def update_pr(db, repo: str, number: int, **fields) -> None:
     db.commit()
 
 
-# state: unknown | clean | conflicting | needs-person | closed. notified_sha: the head last reported as conflicting.
+# state: unknown | clean | conflicting | needs-person | closed | superseded (main.redirect). notified_sha: the head last reported as conflicting.
 def track_pr(db, repo: str, number: int, issue_repo: str, issue_num: int) -> None:
     db.execute("INSERT OR IGNORE INTO pr_conflicts (repo, number, issue_repo, issue_num, updated) VALUES (?,?,?,?,?)",
                (repo, number, issue_repo, issue_num, time.time()))
@@ -212,12 +212,39 @@ def track_pr(db, repo: str, number: int, issue_repo: str, issue_num: int) -> Non
 
 def tracked_prs(db) -> list[dict]:
     return _dicts(db.execute("SELECT repo, number, issue_repo, issue_num, state, notified_sha, attempts FROM pr_conflicts "
-                             "WHERE state != 'closed' ORDER BY updated"))
+                             "WHERE state NOT IN ('closed', 'superseded') ORDER BY updated"))
 
 
 def conflicts_for_issue(db, issue_repo: str, issue_num: int) -> list[dict]:
     return _dicts(db.execute("SELECT repo, number, state, notified_sha, attempts FROM pr_conflicts "
-                             "WHERE issue_repo=? AND issue_num=? AND state != 'closed' ORDER BY repo, number", (issue_repo, issue_num)))
+                             "WHERE issue_repo=? AND issue_num=? AND state NOT IN ('closed', 'superseded') ORDER BY repo, number",
+                             (issue_repo, issue_num)))
+
+
+_PR_URL = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)$")
+
+
+def design_prs(db, repo: str, issue: int) -> set[tuple[str, int]]:
+    """The draft PRs the designer published a ticket's design files on."""
+    rows = db.execute("SELECT DISTINCT f.pr FROM design_files f JOIN runs r ON r.id=f.run_id WHERE r.repo=? AND r.issue=?", (repo, issue))
+    return {(m.group(1), int(m.group(2))) for (pr,) in rows if (m := _PR_URL.match(pr or ""))}
+
+
+def supersede_prs(db, issue_repo: str, issue_num: int, keep=frozenset()) -> list[tuple[str, int]]:
+    """A ticket was sent back to an earlier stage, so its open factory PRs (except those in keep) are no longer watched for CI
+    or merge conflicts: a new PR will follow. The rows stay ('superseded'); the PRs themselves are left for a person to close."""
+    args = (issue_repo, issue_num)
+    found = {(r, n) for r, n in db.execute("SELECT repo, number FROM prs WHERE issue_repo=? AND issue_num=? "
+                                           "AND status NOT IN ('closed', 'superseded')", args)}
+    found |= {(r, n) for r, n in db.execute("SELECT repo, number FROM pr_conflicts WHERE issue_repo=? AND issue_num=? "
+                                            "AND state NOT IN ('closed', 'superseded')", args)}
+    out = sorted(found - set(keep))
+    now = time.time()
+    for r, n in out:
+        db.execute("UPDATE prs SET status='superseded', updated=? WHERE repo=? AND number=?", (now, r, n))
+        db.execute("UPDATE pr_conflicts SET state='superseded', updated=? WHERE repo=? AND number=?", (now, r, n))
+    db.commit()
+    return out
 
 
 def update_conflict(db, repo: str, number: int, **fields) -> None:
@@ -444,7 +471,8 @@ def tickets(db, limit: int = 100) -> list[dict]:
 def prs_for_issue(db, issue_repo: str, issue_num: int) -> list[tuple[str, int]]:
     """Open factory PRs raised for a ticket (the ones a review should cover)."""
     return [(r, n) for r, n in db.execute(
-        "SELECT repo, number FROM prs WHERE issue_repo=? AND issue_num=? AND status != 'closed' ORDER BY number", (issue_repo, issue_num))]
+        "SELECT repo, number FROM prs WHERE issue_repo=? AND issue_num=? AND status NOT IN ('closed', 'superseded') ORDER BY number",
+        (issue_repo, issue_num))]
 
 
 # ---- pipeline steps: one per (ticket, step), derived from runs; optionally mirrored as GitHub sub-issues ----
