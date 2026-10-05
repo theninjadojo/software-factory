@@ -3,9 +3,10 @@ opened read-only). Everything a worker sent is untrusted text: it is escaped her
 import socket
 import sqlite3
 import time
+from pathlib import Path
 from urllib.parse import urlencode
 
-from .. import jobs
+from .. import jobs, version, workerupdate
 from ..verify import ONLINE_SECONDS
 from .views import badge, csrf_field, dur, esc, ago, ticket_link, ts
 
@@ -81,19 +82,42 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
     online = ""
     if w.enabled:
         if known:
+            have = version.current()
+            try:
+                req = {r[0] for r in db.execute("SELECT worker FROM worker_updates")}
+            except sqlite3.OperationalError:
+                req = set()                                  # an older database the orchestrator has not migrated yet
+
+            def version_cell(k: dict) -> str:
+                v = k.get("app_version") or ""
+                if not v:
+                    return "—"
+                if not workerupdate.behind(v, have):
+                    return esc(v)
+                if k["name"] in req:
+                    return f'{esc(v)} {badge("updating", "warn")}'
+                return (f'{esc(v)} <form method="post" action="/workers/update" class="inline">{csrf_field(csrf)}'
+                        f'<input type="hidden" name="worker" value="{esc(k["name"])}"><button>Update to {esc(have)}</button></form>')
             rows = "".join(
                 f'<tr><td data-l="Worker">{esc(k["name"])}</td><td data-l="Platform">{esc(k["platform"])}</td>'
+                f'<td data-l="Version">{version_cell(k)}</td>'
                 f'<td data-l="Recipes">{esc(k["recipes"].replace(",", ", ") or "—")}</td><td data-l="Last seen">{esc(ago(k["last_seen"], now))}</td>'
                 f'<td data-l="State">{badge("online", "good") if now - k["last_seen"] <= ONLINE_SECONDS else badge("offline", "bad")}</td></tr>' for k in known)
-            online = ("<h2>Workers</h2><table class=stack><thead><tr><th>Worker</th><th>Platform</th><th>Recipes</th><th>Last seen</th><th>State</th></tr></thead>"
-                      f"<tbody>{rows}</tbody></table>")
+            auto = workerupdate.auto(Path(cfg.db_path).parent)
+            online = ("<h2>Workers</h2><table class=stack><thead><tr><th>Worker</th><th>Platform</th><th>Version</th><th>Recipes</th><th>Last seen</th><th>State</th></tr></thead>"
+                      f"<tbody>{rows}</tbody></table>"
+                      f'<form method="post" action="/workers/auto-update" class="card">{csrf_field(csrf)}'
+                      f'<label class="check"><input type="checkbox" name="on" value="1"{" checked" if auto else ""}> Update workers by themselves when they are behind the factory</label>'
+                      '<div class="muted">A worker follows the release the factory runs. When it is idle it asks, downloads the files through the factory (it needs no GitHub '
+                      'access), installs them with its own update script, checks them (rolling back if they fail) and restarts through its service. '
+                      'A worker installed before this feature needs one manual update first.</div><button>Save</button></form>')
         else:
             online = '<h2>Workers</h2><p class="muted">No worker has connected yet. Add one below.</p>'
         online += add_form(csrf) + ("" if api_up(w.listen) else f'<p class="muted">{badge("not running", "bad")} the worker API is not answering on <code>{esc(w.listen)}</code>. {NOT_RUNNING}</p>')
     jobs_html = ""
     if recent:
         rows = "".join(
-            f'<tr><td data-l="Job"><a href="/workers/job?id={int(j["id"])}">#{int(j["id"])}</a></td><td data-l="Ticket">{ticket_link(j["repo"], j["issue"])}</td>'
+            f'<tr><td data-l="Job"><a href="/workers/job?id={int(j["id"])}">#{int(j["id"])}</a></td><td data-l="Ticket">{ticket_link(j["repo"], j["issue"]) if j["issue"] else esc(j["repo"])}</td>'
             f'<td data-l="Recipe"><code>{esc(j["recipe"])}</code></td><td data-l="Status">{badge(j["status"], JOB_BADGE.get(j["status"], ""))}</td>'
             f'<td data-l="Worker">{esc(j["worker"] or "—")}</td><td data-l="Queued">{esc(ago(j["created"], now))}</td>'
             f'<td data-l="Took">{esc(dur(j["claimed"], j["finished"]) if j["claimed"] else "—")}</td></tr>' for j in recent)
@@ -113,7 +137,7 @@ def job_page(db, job_id: int) -> str | None:
         return None
     if not j:
         return None
-    meta = [("Status", badge(j["status"], JOB_BADGE.get(j["status"], ""))), ("Ticket", ticket_link(j["repo"], j["issue"])),
+    meta = [("Status", badge(j["status"], JOB_BADGE.get(j["status"], ""))), ("Ticket", ticket_link(j["repo"], j["issue"]) if j["issue"] else esc(j["repo"])),
             ("Recipe", f'<code>{esc(j["recipe"])}</code> on <code>{esc(j["platform"])}</code>'), ("Base commit", f'<code>{esc(j["base_sha"][:12])}</code>'),
             ("Worker", esc(j["worker"] or "—")), ("Attempts", esc(j["attempts"])), ("Queued", esc(ts(j["created"]))),
             ("Took", esc(dur(j["claimed"], j["finished"]) if j["claimed"] else "—")), ("Exit code", esc("—" if j["exit_code"] is None else j["exit_code"]))]

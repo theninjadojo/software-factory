@@ -13,6 +13,15 @@ REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 CACHE_SECONDS = 6 * 3600
 
 
+def token_for(cfg) -> str:
+    """The token used to read a private repository's releases: [updates] token_file, else the [github] token ('' if neither is readable)."""
+    tf = cfg.updates.token_file or cfg.token_file
+    try:
+        return Path(tf).read_text().strip() if tf and Path(tf).is_file() else ""
+    except OSError:
+        return ""
+
+
 def parse(v: str) -> tuple[int, int, int] | None:
     m = TAG.match((v or "").strip())
     return tuple(int(x) for x in m.groups()) if m else None

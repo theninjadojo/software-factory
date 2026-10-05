@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from .. import backup as B
-from .. import selfupdate as SU, updates, version
+from .. import selfupdate as SU, updates, version, workerupdate
 from .. import db as dbm
 from ..config import deep_merge
 from ..router import decide
@@ -329,10 +329,33 @@ def workers_get(h, q: dict, csrf: str) -> None:
             if body is None:
                 return _send_page(h, 404, "Workers", '<p class="muted">No such job.</p>', "/workers", csrf, section="workers")
             return _send_page(h, 200, f"Job #{int(q['id'])}", body, "/workers", csrf, section="workers")
-        _send_page(h, 200, "Workers", WK.workers_page(h.app.cfg(), db, csrf=csrf), "/workers", csrf, section="workers")
+        shown = L.flash_pop(csrf)
+        _send_page(h, 200, "Workers", WK.workers_page(h.app.cfg(), db, csrf=csrf), "/workers", csrf,
+                   shown[0] if shown else None, shown[1] if shown else "ok", section="workers")
     finally:
         if db is not None:
             db.close()
+
+
+def workers_update(h, form, csrf: str) -> None:
+    """The Update worker button: the worker updates to the factory's release the next time it is idle and asks."""
+    db = sqlite3.connect(h.app.cfg().db_path, timeout=10)
+    try:
+        ok = workerupdate.request(db, form.get("worker", ""), time.time())
+    finally:
+        db.close()
+    log.info("workers: update %s for %s", "requested" if ok else "refused", form.get("worker", "")[:41])
+    L.flash_set(csrf, "The worker updates the next time it is idle (within a minute or two). It restarts through its service." if ok
+                else "That is not a known worker.", "ok" if ok else "bad")
+    h._redirect("/workers")
+
+
+def workers_auto_update(h, form, csrf: str) -> None:
+    on = form.get("on") == "1"
+    workerupdate.set_auto(h.app.state_dir(), on)
+    log.info("workers: automatic updates %s", "on" if on else "off")
+    L.flash_set(csrf, "Workers will update by themselves when they are behind." if on else "Workers update only when you press Update worker.")
+    h._redirect("/workers")
 
 
 def workers_add(h, form, csrf: str) -> None:
@@ -557,7 +580,7 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
 
 GET = {"/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get}
-POST = {"/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
+POST = {"/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
