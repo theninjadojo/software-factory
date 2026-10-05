@@ -265,10 +265,74 @@
   tod();
 
   // --- Live refresh of the Floor, the Needs-you page and a running ticket (whichever #live is on the page now).
+  // The fragment is patched into the page in place, so running animations and open popups survive a refresh.
+  // A popup or form that must survive keeps a stable id or position inside #live. The user owns `open` on
+  // <details>/<dialog>, typed values and checked state; SMIL `begin` is ignored (the server sets it from the clock).
+  var ANIM = "animate,animateMotion,animateTransform,set";
+  function animSig(svg) {
+    var out = [], a = svg.querySelectorAll(ANIM);
+    for (var i = 0; i < a.length; i++) {
+      var s = a[i].nodeName;
+      for (var j = 0; j < a[i].attributes.length; j++) if (a[i].attributes[j].name !== "begin") s += " " + a[i].attributes[j].name + "=" + a[i].attributes[j].value;
+      out.push(s);
+    }
+    return out.join("|");
+  }
+  function same(a, b) {
+    if (a.nodeType !== b.nodeType) return false;
+    return a.nodeType !== 1 || (a.nodeName === b.nodeName && a.id === b.id && a.getAttribute("data-row") === b.getAttribute("data-row"));
+  }
+  function skipAttr(tag, name, form) {
+    if (name === "open") return tag === "details" || tag === "dialog";
+    if (name === "begin") return /^(animate|animatemotion|animatetransform|set)$/i.test(tag);
+    return form && /^(value|checked|selected)$/.test(name);
+  }
+  function patchAttrs(c, n) {
+    var tag = c.nodeName.toLowerCase(), form = /^(input|textarea|select|option)$/.test(tag) && c.getAttribute("type") !== "hidden";
+    var i, name;
+    for (i = c.attributes.length - 1; i >= 0; i--) {
+      name = c.attributes[i].name;
+      if (n.hasAttribute(name) || skipAttr(tag, name, form)) continue;
+      c.removeAttribute(name);
+    }
+    for (i = 0; i < n.attributes.length; i++) {
+      name = n.attributes[i].name;
+      if (skipAttr(tag, name, form) || c.getAttribute(name) === n.attributes[i].value) continue;
+      c.setAttribute(name, n.attributes[i].value);
+    }
+    if (tag === "input" && !form) c.value = n.getAttribute("value") || "";
+  }
+  function patchNode(c, n) {
+    if (c.nodeType !== 1) { if (c.nodeValue !== n.nodeValue) c.nodeValue = n.nodeValue; return c; }
+    if (c.nodeName.toLowerCase() === "svg" && !c.ownerSVGElement && animSig(c) !== animSig(n)) {
+      var r = document.importNode(n, true);
+      c.parentNode.replaceChild(r, c);
+      return r;
+    }
+    patchAttrs(c, n);
+    if (c.nodeName !== "TEXTAREA") patchKids(c, n);
+    return c;
+  }
+  function patchKids(cur, nxt) {
+    var c = cur.firstChild, n = nxt.firstChild, nn;
+    while (n) {
+      nn = n.nextSibling;
+      if (c && same(c, n)) c = patchNode(c, n).nextSibling;
+      else cur.insertBefore(document.importNode(n, true), c);
+      n = nn;
+    }
+    while (c) { nn = c.nextSibling; cur.removeChild(c); c = nn; }
+  }
+  function morph(live, html) {
+    var t = document.createElement("template");
+    if (!t.content || !document.importNode) { live.innerHTML = html; return; }
+    t.innerHTML = html;
+    patchKids(live, t.content);
+  }
+  var lastLive = null, lastHtml = null;
   function busy(live) {
     var a = document.activeElement;
     if (a && live.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
-    if (live.querySelector("dialog[open]")) return true;
     var f = live.querySelectorAll("input[type=text], input:not([type]), textarea");
     for (var i = 0; i < f.length; i++) if (f[i].value) return true;
     return live.querySelector("input[type=radio]:checked") !== null;
@@ -277,7 +341,11 @@
     var live = document.getElementById("live");
     if (!live || document.hidden || busy(live)) return;
     get((live.getAttribute("data-src") || "/fragment/overview") + location.search)
-      .then(function (html) { if (html !== null && document.getElementById("live") === live) { live.innerHTML = html; countAll(); calm(); tod(); } })
+      .then(function (html) { if (html !== null && document.getElementById("live") === live) {
+        if (live === lastLive && html === lastHtml) return;
+        lastLive = live; lastHtml = html;
+        morph(live, html); countAll(); calm(); tod();
+      } })
       .catch(function () {});
   }
   setInterval(tick, 5000);

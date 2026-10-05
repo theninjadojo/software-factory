@@ -101,6 +101,15 @@ class Phone(unittest.TestCase):
         js = (Path(floor.__file__).parent / "static" / "app.js").read_text()
         self.assertNotIn("f.action", js)
 
+    def test_app_js_patches_the_live_region_in_place(self):
+        # innerHTML swaps restart every animation and close <details>; the refresh must morph and leave popups alone
+        from pathlib import Path
+        js = (Path(floor.__file__).parent / "static" / "app.js").read_text()
+        self.assertNotIn("live.innerHTML = html;", js)
+        self.assertNotIn("dialog[open]", js)
+        for needle in ("morph(live, html)", '"open"', '"begin"', "hidden"):
+            self.assertIn(needle, js)
+
     def test_tables_carry_column_names_for_stacked_cards_and_stay_escaped(self):
         evil = "<script>x</script>"
         html = views.runs_table([run(1, "stage", "architect", 18, evil)]) + views.events_table(
