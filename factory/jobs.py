@@ -22,6 +22,8 @@ SCREENS_PURPOSE = "screens"                 # params {"purpose": "screens"}: a P
 MAX_SCREEN_ARTIFACTS = 300                  # such a run returns every screenshot its suite took, not a handful
 MAX_FINDINGS, MAX_SNIPPET = 1000, 300
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+MAX_PROGRESS = 200                          # one short line a worker says it is doing
+PROGRESS_GAP = 5                            # seconds: a change sooner than this after the last one is dropped (the heartbeat still counts)
 
 
 def ensure_tables(db: sqlite3.Connection) -> None:
@@ -36,6 +38,9 @@ def ensure_tables(db: sqlite3.Connection) -> None:
     for col in ("params", "findings"):                    # added for code-smell scans; older databases get them here
         if col not in have:
             db.execute(f"ALTER TABLE verify_jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+    for col, decl in (("progress", "TEXT NOT NULL DEFAULT ''"), ("progress_at", "REAL")):       # the worker's latest step
+        if col not in have:
+            db.execute(f"ALTER TABLE verify_jobs ADD COLUMN {col} {decl}")
     db.execute(
         """CREATE TABLE IF NOT EXISTS verify_artifacts (
             job_id INTEGER NOT NULL, name TEXT NOT NULL, png BLOB NOT NULL, PRIMARY KEY (job_id, name))"""
@@ -97,7 +102,7 @@ def expire_stale(db, now: float, lease: int, claim_wait: int, max_attempts: int)
             db.execute("UPDATE verify_jobs SET status='error', finished=?, log=log || ? WHERE id=?",
                        (now, "\nThe worker stopped reporting and the job ran out of attempts.", jid))
         else:
-            db.execute("UPDATE verify_jobs SET status='queued', worker=NULL, claimed=NULL, heartbeat=NULL WHERE id=?", (jid,))
+            db.execute("UPDATE verify_jobs SET status='queued', worker=NULL, claimed=NULL, heartbeat=NULL, progress='', progress_at=NULL WHERE id=?", (jid,))
         n += 1
     cur = db.execute("UPDATE verify_jobs SET status='error', finished=?, log=? WHERE status='queued' AND created < ?",
                      (now, f"No worker claimed this job within {claim_wait}s (is a worker running with this recipe and platform?).",
@@ -122,7 +127,7 @@ def claim(db, worker: str, platform: str, recipes: list[str], now: float, lease:
         row = cur.fetchone()
         job = _row(cur, row) if row else None
         if job:
-            db.execute("UPDATE verify_jobs SET status='claimed', worker=?, attempts=attempts+1, claimed=?, heartbeat=? WHERE id=?",
+            db.execute("UPDATE verify_jobs SET status='claimed', worker=?, attempts=attempts+1, claimed=?, heartbeat=?, progress='', progress_at=NULL WHERE id=?",
                        (worker, now, now, job["id"]))
         db.commit()
         return job
@@ -131,8 +136,16 @@ def claim(db, worker: str, platform: str, recipes: list[str], now: float, lease:
         raise
 
 
-def heartbeat(db, job_id: int, worker: str, now: float) -> str:
-    """'ok', 'cancel' (stop working) or 'gone' (not this worker's job). Only the claiming worker may touch a job."""
+def clean_progress(value) -> str | None:
+    """A worker's progress text as one short plain line, or None if it sent nothing usable. Untrusted: the UI escapes it too."""
+    if not isinstance(value, str):
+        return None
+    return " ".join(_CONTROL.sub("", value).split())[:MAX_PROGRESS] or None
+
+
+def heartbeat(db, job_id: int, worker: str, now: float, progress=None) -> str:
+    """'ok', 'cancel' (stop working) or 'gone' (not this worker's job). Only the claiming worker may touch a job.
+    A heartbeat with progress also stores it, unless it is unchanged or the last one was under PROGRESS_GAP seconds ago."""
     job = get(db, job_id)
     if not job or job["worker"] != worker:
         return "gone"
@@ -140,7 +153,11 @@ def heartbeat(db, job_id: int, worker: str, now: float) -> str:
         return "cancel"
     if job["status"] != "claimed":
         return "gone"
-    db.execute("UPDATE verify_jobs SET heartbeat=? WHERE id=?", (now, job_id))
+    text = clean_progress(progress)
+    if text and text != job.get("progress") and now - (job.get("progress_at") or 0) >= PROGRESS_GAP:
+        db.execute("UPDATE verify_jobs SET heartbeat=?, progress=?, progress_at=? WHERE id=?", (now, text, now, job_id))
+    else:
+        db.execute("UPDATE verify_jobs SET heartbeat=? WHERE id=?", (now, job_id))
     db.commit()
     return "ok"
 
@@ -249,6 +266,6 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
 
 
 def recent(db, limit: int = 30) -> list[dict]:
-    cur = db.execute("SELECT id, repo, issue, base_sha, recipe, platform, status, worker, attempts, created, claimed, finished, exit_code "
+    cur = db.execute("SELECT id, repo, issue, base_sha, recipe, platform, status, worker, attempts, created, claimed, finished, exit_code, progress, progress_at "
                      "FROM verify_jobs ORDER BY id DESC LIMIT ?", (limit,))
     return [_row(cur, r) for r in cur.fetchall()]

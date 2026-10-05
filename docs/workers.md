@@ -47,12 +47,12 @@ orchestrator (run_task)                 worker API (factory.workerapi)          
 ## Protocol (version 1)
 
 All requests are JSON over HTTP(S) with `Authorization: Bearer <worker token>`. A token identifies one worker; it can only
-touch jobs it claimed. Bodies are capped (results 16 MB, everything else 64 KB).
+touch jobs it claimed. Bodies are capped (results 64 MB, everything else 64 KB).
 
 | Call | Body | Reply |
 |---|---|---|
 | `POST /v1/claim` | `{"recipes": ["ios-test"], "platform": "macos", "version": 1}` | `200` job, or `204` when nothing matches |
-| `POST /v1/jobs/<id>/heartbeat` | `{}` | `200 {"cancel": false}`; `cancel: true` means stop and report nothing |
+| `POST /v1/jobs/<id>/heartbeat` | `{}` or `{"progress": "<text>"}` | `200 {"cancel": false}`; `cancel: true` means stop and report nothing |
 | `POST /v1/jobs/<id>/result` | `{"status": "passed"\|"failed"\|"error", "exit_code": 0, "log": "...", "artifacts": [{"name": "home-ios", "png_b64": "..."}]}` | `200` |
 
 A job: `{"id", "repo", "base_sha", "patch", "recipe", "lease_seconds"}`. `patch` is the unified diff the orchestrator already
@@ -61,6 +61,11 @@ validated (protected paths, size, no symlinks). The worker clones the repo with 
 
 Leases: a claimed job needs a heartbeat at least every `lease_seconds` (default 120). A job with no heartbeat is put back in the
 queue (at most `max_attempts`, default 2) and then fails. A job nobody claims within `claim_wait_seconds` fails.
+
+Progress: a heartbeat may carry `progress`, one short line (control characters removed, cut to 200 characters) shown on the Workers page
+while the job runs and kept as its "Last step". It also extends the lease. The orchestrator ignores a changed line that arrives less than
+5 seconds after the previous one, and an old worker that sends `{}` still works. A recipe can name its phase by printing a line that
+starts with `##progress `; the worker sends the latest one as `recipe <name>: <text>`.
 
 ## Installing
 

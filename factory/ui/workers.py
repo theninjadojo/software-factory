@@ -62,6 +62,13 @@ def created_page(cfg, name: str, token: str, recipes: str) -> str:
             '<p><a href="/workers">← back to workers</a></p>')
 
 
+def progress_note(j: dict, now) -> str:
+    """What a running job's worker last said it was doing, and how long ago (the text is untrusted)."""
+    if j["status"] != "claimed" or not j.get("progress"):
+        return ""
+    return f'<div class="muted">{esc(j["progress"])} · {esc(ago(j["progress_at"], now))}</div>'
+
+
 def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
     now = time.time() if now is None else now
     w = cfg.workers
@@ -118,7 +125,7 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
     if recent:
         rows = "".join(
             f'<tr><td data-l="Job"><a href="/workers/job?id={int(j["id"])}">#{int(j["id"])}</a></td><td data-l="Ticket">{ticket_link(j["repo"], j["issue"]) if j["issue"] else esc(j["repo"])}</td>'
-            f'<td data-l="Recipe"><code>{esc(j["recipe"])}</code></td><td data-l="Status">{badge(j["status"], JOB_BADGE.get(j["status"], ""))}</td>'
+            f'<td data-l="Recipe"><code>{esc(j["recipe"])}</code></td><td data-l="Status">{badge(j["status"], JOB_BADGE.get(j["status"], ""))}{progress_note(j, now)}</td>'
             f'<td data-l="Worker">{esc(j["worker"] or "—")}</td><td data-l="Queued">{esc(ago(j["created"], now))}</td>'
             f'<td data-l="Took">{esc(dur(j["claimed"], j["finished"]) if j["claimed"] else "—")}</td></tr>' for j in recent)
         jobs_html = ("<h2>Recent jobs</h2><table class=stack><thead><tr><th>Job</th><th>Ticket</th><th>Recipe</th><th>Status</th><th>Worker</th><th>Queued</th><th>Took</th></tr></thead>"
@@ -141,6 +148,8 @@ def job_page(db, job_id: int) -> str | None:
             ("Recipe", f'<code>{esc(j["recipe"])}</code> on <code>{esc(j["platform"])}</code>'), ("Base commit", f'<code>{esc(j["base_sha"][:12])}</code>'),
             ("Worker", esc(j["worker"] or "—")), ("Attempts", esc(j["attempts"])), ("Queued", esc(ts(j["created"]))),
             ("Took", esc(dur(j["claimed"], j["finished"]) if j["claimed"] else "—")), ("Exit code", esc("—" if j["exit_code"] is None else j["exit_code"]))]
+    if j.get("progress"):
+        meta.insert(1, ("Progress" if j["status"] == "claimed" else "Last step", esc(j["progress"])))
     out = '<table class="meta">' + "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in meta) + "</table>"
     names = sorted(jobs.artifacts(db, job_id))
     if names:
