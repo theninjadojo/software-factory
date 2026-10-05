@@ -61,6 +61,6 @@ def page_body(cfg, state_dir, csrf: str, run=None) -> str:
                      f'<div class="muted">{esc(d)}</div></div>' for m, (t, d) in MODE_TEXT.items())
     auto = ((f'<form method="post" action="/updates/auto" class="card">{csrf_field(csrf)}<h3>Update by itself</h3>{radios}'
              '<p class="muted">It runs every night around 03:30, tests first like a manual update, and waits (trying again the next night) while an '
-             'agent run is in flight.</p><button>Save</button></form>')
+             'agent run is in flight. Verification workers follow the factory: see <a href="/workers">Workers</a>.</p><button>Save</button></form>')
             if native else "")
     return head + f'<p>{check} {apply}</p>' + explain + f'<div id="live" data-src="/updates/status">{live_body(state_dir, csrf, run)}</div>' + auto

@@ -75,12 +75,7 @@ class App:
 
     @staticmethod
     def update_token(c) -> str:
-        """The token the release check uses for a private repository: [updates] token_file, else the GitHub token ('' if neither is readable)."""
-        tf = c.updates.token_file or c.token_file
-        try:
-            return Path(tf).read_text().strip() if tf and Path(tf).is_file() else ""
-        except OSError:
-            return ""
+        return updates.token_for(c)
 
     def state_dir(self) -> Path:
         return Path(self.cfg().db_path).parent

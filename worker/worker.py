@@ -41,6 +41,21 @@ MIN_SIDE, MAX_W, MAX_H = 16, 1600, 6000          # the orchestrator rejects the 
 MAX_PATCH = 4_000_000
 
 
+ROOT = Path(__file__).resolve().parent.parent          # the install folder: worker/, scripts/, VERSION, worker.toml
+UPDATE_EVERY = 60                                       # seconds between "should I update?" questions while idle
+UPDATE_RETRY = 3600                                     # after a failed update of a release, wait this long before trying it again
+APP_VERSION = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
+
+
+def app_version() -> str:
+    """The release this install runs (its VERSION file), or '' for a development checkout."""
+    try:
+        v = (ROOT / "VERSION").read_text().strip()
+    except OSError:
+        return ""
+    return v if APP_VERSION.fullmatch(v) else ""
+
+
 class Recipe:
     def __init__(self, name: str, raw: dict):
         cmd = raw.get("command")
@@ -267,7 +282,7 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
 
 def poll_once(cfg: Config, api: Api) -> bool:
     """Claim and run at most one job. True if one ran."""
-    status, job = api.call("/v1/claim", {"platform": cfg.platform, "recipes": sorted(cfg.recipes), "version": PROTOCOL}, 30)
+    status, job = api.call("/v1/claim", {"platform": cfg.platform, "recipes": sorted(cfg.recipes), "version": PROTOCOL, "app_version": app_version()}, 30)
     if status != 200 or not job:
         if status not in (200, 204):
             log.warning("claim refused (%s): %s", status, job)
@@ -278,6 +293,68 @@ def poll_once(cfg: Config, api: Api) -> bool:
         status, reply = api.call(f"/v1/jobs/{job['id']}/result", result, 300)
         log.info("job %s reported %s (HTTP %s)", job["id"], result["status"], status)
     return True
+
+
+def managed() -> bool:
+    """True when a service manager (systemd or launchd) will start this worker again after it exits."""
+    return bool(os.environ.get("INVOCATION_ID")) or os.environ.get("XPC_SERVICE_NAME", "0") not in ("", "0")
+
+
+def self_update(cfg: Config, api: Api, tag: str, files: list, root: Path = ROOT) -> str:
+    """Install release `tag` with the install's own scripts/update-worker.sh, fed the release files by the factory (the worker holds no
+    credentials for a private repository). Returns '' on success, else why not. The script refuses while a job is running, checks the new
+    code and rolls back by itself; its restart step is skipped here because the worker exits afterwards and its service starts it again."""
+    script = root / "scripts" / "update-worker.sh"
+    if not script.is_file() or not re.fullmatch(r"v\d{1,4}\.\d{1,4}\.\d{1,4}", tag):
+        return "this install has no scripts/update-worker.sh (update it by hand once)"
+    tmp = Path(tempfile.mkdtemp(prefix="factory-update-", dir=cfg.work_dir if cfg.work_dir.is_dir() else None))
+    try:
+        for name in files:
+            if name not in ("VERSION", "shikumi-worker.tar.gz", "setup-worker.sh", "update-worker.sh"):
+                return f"the factory offered an unexpected file {name!r}"
+            status, reply = api.call("/v1/release", {"tag": tag, "name": name}, 300)
+            if status != 200 or not isinstance(reply, dict) or not isinstance(reply.get("b64"), str):
+                return f"could not get {name} from the factory (HTTP {status})"
+            (tmp / name).write_bytes(base64.b64decode(reply["b64"], validate=True))
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp"), "SHIKUMI_ASSET_BASE": tmp.as_uri(),
+               "SKIP_SERVICE": "1", "SETTLE_SECONDS": "1"}
+        r = subprocess.run(["bash", str(script), tag], cwd=root, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=1800)
+        if r.returncode:
+            return (r.stderr or r.stdout or "the update script failed")[-300:].strip()
+        return ""
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        return f"{type(e).__name__}: {e}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def maybe_update(cfg: Config, api: Api, state: dict, now: float, root: Path = ROOT) -> bool:
+    """Ask the factory whether to update (at most once a minute, only when idle) and do it. True when the worker should exit so its
+    service starts the new version. `state` remembers when it last asked and which release failed."""
+    if now - state.get("asked", 0) < UPDATE_EVERY:
+        return False
+    state["asked"] = now
+    have = app_version()
+    if not have:
+        return False
+    status, reply = api.call("/v1/update", {"app_version": have}, 30)
+    if status != 200 or not isinstance(reply, dict) or not reply.get("update"):
+        return False
+    tag, files = str(reply.get("tag", "")), reply.get("files") or []
+    if state.get("failed_tag") == tag and now - state.get("failed_at", 0) < UPDATE_RETRY:
+        return False
+    log.info("updating from v%s to %s as the factory asked", have, tag)
+    why = self_update(cfg, api, tag, files, root)
+    if why:
+        state.update(failed_tag=tag, failed_at=now)
+        log.warning("the update to %s did not install: %s", tag, why)
+        return False
+    if managed():
+        log.info("updated to %s: exiting so the service starts the new version", tag)
+        return True
+    log.info("updated to %s: restart this worker (it is not run by a service) to use it", tag)
+    state.update(failed_tag=tag, failed_at=now)           # do not ask again until the retry window: the files are already new
+    return False
 
 
 def check(cfg: Config, api: Api) -> list[tuple[str, str]]:
@@ -315,10 +392,13 @@ def main() -> None:
         for level, msg in results:
             print(f"[{level}] {msg}")
         sys.exit(1 if any(lvl == "FAIL" for lvl, _ in results) else 0)
-    log.info("worker up: platform=%s recipes=%s server=%s", cfg.platform, sorted(cfg.recipes), cfg.server)
+    log.info("worker up: platform=%s recipes=%s server=%s version=%s", cfg.platform, sorted(cfg.recipes), cfg.server, app_version() or "dev")
+    upd: dict = {}
     while True:
         try:
             ran = poll_once(cfg, api)
+            if not ran and not args.once and maybe_update(cfg, api, upd, time.time()):
+                os._exit(0)                                   # the service manager starts the new version
         except (OSError, ValueError) as e:
             log.warning("server unreachable: %s", e)
             ran = False
