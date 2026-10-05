@@ -13,7 +13,7 @@ COPY scripts ./scripts
 COPY deploy ./deploy
 COPY sandbox/android ./sandbox/android
 COPY .github/workflows ./.github/workflows
-COPY config.example.toml VERSION ./
+COPY config.example.toml .env.example VERSION ./
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
 USER 1000:1000
 CMD ["python3", "-m", "factory.main", "--config", "/etc/factory/config.toml"]
