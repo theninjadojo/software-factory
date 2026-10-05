@@ -28,6 +28,33 @@ TERRAIN_TOOLS = (("Scenery", (("tree", "Tree"), ("pine", "Pine"), ("bush", "Bush
 # the town (town_art.py, generated from the design): one group of tools per kind of piece, in the order the design shows them
 TERRAIN_TOOLS += tuple((g, tuple((k, a["name"]) for k, a in TOWN.items() if a["group"] == g))
                        for g in dict.fromkeys(a["group"] for a in TOWN.values()))
+# a small outline picture (24x24 stroke paths, as floorplan.ICONS) for every tool and group heading, so a child can find one without reading
+GENERIC_ICON = "M4 4h16v16H4z"
+TOOL_ICONS = {
+    "move": "M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4", "erase": "M4 15l8-8 7 7-5 5H8zM9 10l7 7M10 20h10",
+    "belt": "M4 12h15M14 7l5 5-5 5", "rail": "M7 3l-3 18M17 3l3 18M5.5 9h13M4.5 15h15", "splitter": "M3 12h6l4-5h8M9 12l4 5h8",
+    "merger": "M3 7h8l4 5h6M3 17h8l4-5", "sideload": "M3 12h18M12 21v-6M9 18l3-3 3 3", "underground": "M3 8h5M16 8h5M8 8v8h8V8M12 11v4",
+    "tree": "M12 3l6 9h-3l4 6H5l4-6H6zM12 18v3", "pine": "M12 3l5 6h-3l4 6H6l4-6H7zM12 15v6", "bush": "M5 19a4 4 0 010-8 5 5 0 019-2 4 4 0 015 4 3 3 0 010 6z",
+    "rock": "M4 19l3-9 5-4 6 5 2 8z", "pond": "M3 10c3-3 6 3 9 0s6 3 9 0M3 16c3-3 6 3 9 0s6 3 9 0",
+    "river": "M3 8c3-3 6 3 9 0s6 3 9 0M3 13c3-3 6 3 9 0s6 3 9 0M3 18c3-3 6 3 9 0s6 3 9 0",
+    "wall": "M3 6h18v12H3zM3 12h18M9 6v6M15 12v6", "fence": "M5 20V8l2-3 2 3v12M15 20V8l2-3 2 3v12M3 12h18M3 16h18",
+    "gate": "M4 20V5M20 20V5M4 6h16M4 12l16 6M4 18l16-6", "road": "M8 3L5 21M16 3l3 18M12 4v3M12 11v3M12 18v3",
+    "hazard": "M12 3l10 18H2zM12 10v5M12 18v.5", "lamp": "M9 15a6 6 0 116 0v2H9zM10 20h4M12 3V2",
+    "fog": "M5 9h10M3 13h14M7 17h12M17 9h3", "shade": "M12 3v2M5 6l1.5 1.5M19 6l-1.5 1.5M7 14a5 5 0 0110 0zM4 18h16",
+    "fetch": "M12 21a5 5 0 01-5-5c0-3 2-4 5-4s5 1 5 4a5 5 0 01-5 5zM6 8v1M18 8v1M10 5v1M14 5v1",
+    "playground": "M5 21V5h8M5 9h8M13 5l6 16M9 21l4-8", "picnic": "M3 10h18M6 10l-2 10M18 10l2 10M12 10v10M3 10l3-5h12l3 5",
+    "bench": "M4 10h16v4H4zM6 14v6M18 14v6M5 6h14", "dogwalk": "M12 4v.5M12 8v7l-3 6M12 15l3 6M8 11l4-2 4 2",
+}
+GROUP_ICONS = {
+    "Select": "M5 3l14 8-6 2-2 6z", "Belts": TOOL_ICONS["belt"], "Buildings": "M4 21V9l8-6 8 6v12zM9 21v-6h6v6",
+    "Scenery": TOOL_ICONS["tree"], "Water": TOOL_ICONS["pond"], "Ground": "M3 8l9-5 9 5-9 5zM3 13l9 5 9-5M3 17l9 5 9-5",
+    "Structures": TOOL_ICONS["wall"], "Light": TOOL_ICONS["lamp"], "Park": TOOL_ICONS["bench"],
+}
+
+
+def _ico(path: str, cls: str = "") -> str:
+    """An outline icon, decorative: the word beside it is the accessible name."""
+    return f'<svg class="fe-part-ico{cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="{esc(path)}"/></svg>'
 
 
 def _ctx(h) -> "floorplan.Ctx":
@@ -38,11 +65,12 @@ def _ctx(h) -> "floorplan.Ctx":
 def _category(name: str, items, open_: bool) -> str:
     """One collapsible category of the build panel: a heading that toggles it, and its tools (data-tool buttons, as the toolbars had)."""
     btns = "".join(f'<button type="button" class="fe-part fe-tool" data-tool="{t}" aria-pressed="{"true" if t == "move" else "false"}">'
-                   + (f'<i class="sw sw-{t[2:]}" aria-hidden="true"></i>' if t.startswith("g-") else "") + f'<span>{esc(n)}</span></button>'
+                   + (f'<i class="sw sw-{t[2:]}" aria-hidden="true"></i>' if t.startswith("g-")
+                                       else _ico(TOOL_ICONS.get(t) or GROUP_ICONS.get(name, GENERIC_ICON))) + f'<span>{esc(n)}</span></button>'
                    for t, n in items)
     closed = "" if open_ else ' data-closed="1"'
     return (f'<section class="fe-cat" data-cat="{esc(name)}"{closed}><h3><button type="button" class="fe-cat-toggle" aria-expanded="{"true" if open_ else "false"}">'
-            f'<span class="fe-cat-name">{esc(name)}</span> <span class="fe-cat-n">· {len(items)}</span></button></h3>'
+            f'{_ico(GROUP_ICONS.get(name, GENERIC_ICON), " fe-cat-ico")}<span class="fe-cat-name">{esc(name)}</span> <span class="fe-cat-n">· {len(items)}</span></button></h3>'
             f'<div class="fe-cat-body" role="group" aria-label="{esc(name)}"{"" if open_ else " hidden"}>{btns}</div></section>')
 
 
@@ -54,7 +82,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
     cats = list(dict.fromkeys(c for _, _, c in shown))            # the categories in the order they first appear, from the tool data
     panel = "".join(_category(c, [(t, n) for t, n, g in shown if g == c], True) for c in cats)
     panel += ('<section class="fe-cat" data-cat="Buildings"><h3><button type="button" class="fe-cat-toggle" aria-expanded="true">'
-              '<span class="fe-cat-name">Buildings</span> <span class="fe-cat-n"></span></button></h3>'
+              + _ico(GROUP_ICONS["Buildings"], " fe-cat-ico") + '<span class="fe-cat-name">Buildings</span> <span class="fe-cat-n"></span></button></h3>'
               '<div class="fe-cat-body" role="group" aria-label="Buildings"><div class="fe-tray-list"><p class="muted">Loading parts…</p></div></div></section>')
     panel += "".join(_category(g, ts, False) for g, ts in TERRAIN_TOOLS)
     dirs = "".join(f'<option value="{d}">{n}</option>' for d, n in (("e", "Facing east"), ("w", "Facing west"), ("s", "Facing south"), ("n", "Facing north")))

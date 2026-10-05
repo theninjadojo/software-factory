@@ -986,6 +986,8 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 .fe-cat h3 { margin:.8rem 0 .35rem; }
 .fe-cat-toggle { display:block; width:100%; min-height:0; padding:0; border:0; background:none; color:var(--muted); font:500 11px var(--mono); letter-spacing:.1em; text-transform:uppercase; text-align:left; }
 .fe-cat-toggle::before { content:"▾ "; } .fe-cat-toggle[aria-expanded="false"]::before { content:"▸ "; }
+.fe-cat-ico { width:16px; height:16px; margin-right:.35rem; vertical-align:-3px; }
+.fe-tool[aria-pressed="true"] .fe-part-ico { stroke:var(--accent); }
 .fe-tool { cursor:pointer; touch-action:manipulation; } .fe-tool:hover { border-color:var(--accent); }
 .fe-tool[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
 .fe-tool .sw { flex:none; margin-right:0; } .fe-tool span { flex:1; }
