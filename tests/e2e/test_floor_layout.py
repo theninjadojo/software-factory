@@ -89,9 +89,9 @@ def test_arrange_save_and_reset_the_floor(wide, server):
     assert "Every station is reachable" in problems(pg), problems(pg)
 
     # and resized by its corner
-    w0 = moved["districts"]["QUALITY"]["w"]
-    drag(pg, '[data-resize="QUALITY"]', 3 * cell(pg), 0)
-    assert plan(pg)["districts"]["QUALITY"]["w"] == w0 + 3
+    w0 = moved["districts"]["SHIPPING"]["w"]
+    drag(pg, '[data-resize="SHIPPING"]', 3 * cell(pg), 0)
+    assert plan(pg)["districts"]["SHIPPING"]["w"] == w0 + 3
 
     # save: the floor is drawn from the layout
     want = plan(pg)

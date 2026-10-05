@@ -302,6 +302,7 @@ class Drawn(unittest.TestCase):
 
     def test_a_stretched_building_keeps_its_proportions_and_a_resized_sea_fills_with_water(self):
         d = F.default_plan(CTX)
+        d.pop("terrain")                                                 # its own pictures scale (mirrored park pieces); this is about the buildings
         d["nodes"]["power:claude-code"].update(w=20, h=5)                # twice as wide: drawn at its own size, centred
         d["nodes"]["sea"].update(w=15, h=33)                             # half as tall: half the size, water either side
         self.assertEqual(F.validate(d, CTX), [])
@@ -481,6 +482,7 @@ class Railway(unittest.TestCase):
         for k in [k for k in old["nodes"] if k.split(":")[0] in ("depot", "worker", "junction", "outside")]:
             del old["nodes"][k]
         old.pop("tracks")
+        old.pop("terrain")                                               # the default's ponds stand where its own track ran; this layout has none
         old["belts"].pop("depot>station:ci")
         m = F.merge(old, RAIL)
         self.assertIsNotNone(m)
@@ -770,3 +772,35 @@ class Park(unittest.TestCase):
             self.assertIn(f"var {name} = {json.dumps(getattr(terrain, name))};", js, name)
         for kind, (w, h) in terrain.PARK.items():
             self.assertIn(f"{kind}: [{w}, {h}]", js)
+
+
+class DefaultScenery(unittest.TestCase):
+    """The default floor is spread out: islands of stations with parks, ponds, forest, roads and a fence between them."""
+
+    def test_it_lays_every_kind_of_scenery_between_the_buildings(self):
+        for c in (CTX, RAIL, ctx(SMALL, 0)):
+            t = F.default_plan(c)["terrain"]
+            kinds = {it[0] for it in t["items"]}
+            self.assertTrue({"tree", "pine", "bush", "pond", "lamp", "playground", "picnic", "bench", "dogwalk"} <= kinds, kinds)
+            self.assertTrue(t["roads"] and t["fences"] and t["gates"] and t["hazards"] and t["tiles"]["grass"])
+
+    def test_it_is_always_the_same_and_the_floor_does_not_grow(self):
+        a, b = json.dumps(F.default_plan(RAIL)["terrain"]), json.dumps(F.default_plan(F.Ctx(RAIL.ids, RAIL.harnesses, True, 3, workers=WORKERS))["terrain"])
+        self.assertEqual(a, b)
+        d = F.default_plan(RAIL)
+        B = F.boxes(d["nodes"], RAIL)
+        right, bottom = max(x + w for x, _, w, _ in B.values()) * F.G, max(y + h for _, y, _, h in B.values()) * F.G
+        for it in d["terrain"]["items"]:
+            self.assertTrue(it[1] <= right and it[2] <= bottom, it)
+        for pts in d["terrain"]["roads"] + d["terrain"]["fences"]:
+            self.assertTrue(all(p[0] * F.G <= right and p[1] * F.G <= bottom for p in pts), pts)
+
+    def test_the_stations_stand_apart_with_ground_between_the_districts(self):
+        B = F.compile_plan(F.default_plan(CTX), CTX)["box"]
+        ds = F.default_plan(CTX)["districts"]
+        names = list(ds)
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                x, y = ds[a], ds[b]
+                self.assertFalse(x["x"] < y["x"] + y["w"] and y["x"] < x["x"] + x["w"] and x["y"] < y["y"] + y["h"] and y["y"] < x["y"] + x["h"], (a, b))
+        self.assertGreater(B["station:build"][1], 15)
