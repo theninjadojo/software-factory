@@ -698,6 +698,15 @@ FLIGHT_SECONDS = 17.0
 
 
 # ---------------------------------------------------------------- the whole floor
+def _night(tn: dict, width: float, height: float) -> str:
+    """The time of day over the floor: a tint (dusk and night; clear by day) and a warm glow round each lamp that comes on as it gets
+    dark. Both are clear until the page's Time buttons (static/app.js, data-tod on the page) say otherwise, so the picture is the
+    daytime one without a script."""
+    lamps = "".join(f'<circle cx="{_f(x)}" cy="{_f(y)}" r="{_f(s)}"/>' for kind, x, y, s, _ in tn.get("items") or [] if kind == "lamp")
+    return (f'<rect class="fm-tod" width="{_f(width)}" height="{_f(height)}" aria-hidden="true"/>'
+            f'<g class="fm-nglow" aria-hidden="true">{lamps}</g>')
+
+
 def floor_map(order: list[tuple[str, str, str]], fl: dict, workers: list[dict], workers_on: bool, now: float,
               word=None, href=None, extras: dict | None = None, plan: dict | None = None) -> str:
     """order: (station id, label, icon path) in route order. fl: {station: {"state", "refs", "count"}}. workers: [{"name", "online",
@@ -1387,4 +1396,5 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
              + f'<g aria-hidden="true">{drones(now, poll.get("every"), poll.get("last"), pad("sources", PAD, SRC), pad("receiving", RECV_PAD, (12, 200)))}</g>'
              + f'<g aria-hidden="true">{land("top")}</g>')
     return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor">'
-            f'{terrain.defs()}<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>{plant}<g aria-hidden="true">{flights}</g></svg>')
+            f'{terrain.defs()}<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>{plant}{_night(tn, width, height)}'
+            f'<g aria-hidden="true">{flights}</g></svg>')

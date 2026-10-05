@@ -121,7 +121,7 @@
   function fill(slot) {
     get(slot.getAttribute("data-load")).then(function (html) {
       if (html === null) { slot.querySelector(".ld p").textContent = "Could not load this. Reload the page to try again."; return; }
-      slot.outerHTML = html; countAll(); calm();
+      slot.outerHTML = html; countAll(); calm(); tod();
     }).catch(function () { var p = slot.querySelector(".ld p"); if (p) p.textContent = "Could not reach the factory. Reload the page to try again."; });
   }
   var slots = document.querySelectorAll("[data-load]");
@@ -153,7 +153,7 @@
     get("/fragment/detail" + url.search).then(function (html) {
       var spot = document.querySelector(".sd-detail");
       if (html === null || !spot) { location.href = href; return; }
-      spot.outerHTML = html; countAll(); calm();
+      spot.outerHTML = html; countAll(); calm(); tod();
     }).catch(function () { location.href = href; });
   }
   document.addEventListener("click", function (e) {
@@ -245,6 +245,25 @@
     });
   })();
 
+  // --- The floor's time of day: Auto runs a 40 s day, Day, Dusk and Night hold it. The page keeps the choice (data-tod, the Time buttons
+  // inside the live part are redrawn every few seconds) and Auto's phase follows the clock, so a refresh does not restart the day.
+  var TOD = "auto";
+  try { TOD = localStorage.getItem("floor-time") || "auto"; } catch (e) {}
+  function tod() {
+    document.documentElement.setAttribute("data-tod", TOD);
+    var phase = -((Date.now() % 40000) / 1000) + "s", sky = document.querySelectorAll(".fm-tod, .fm-nglow"), b = document.querySelectorAll(".fm-time [data-tod]"), i;
+    for (i = 0; i < sky.length; i++) sky[i].style.animationDelay = phase;
+    for (i = 0; i < b.length; i++) b[i].setAttribute("aria-pressed", b[i].getAttribute("data-tod") === TOD ? "true" : "false");
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest(".fm-time [data-tod]");
+    if (!b) return;
+    TOD = b.getAttribute("data-tod");
+    try { localStorage.setItem("floor-time", TOD); } catch (er) {}
+    tod();
+  });
+  tod();
+
   // --- Live refresh of the Floor, the Needs-you page and a running ticket (whichever #live is on the page now).
   function busy(live) {
     var a = document.activeElement;
@@ -258,7 +277,7 @@
     var live = document.getElementById("live");
     if (!live || document.hidden || busy(live)) return;
     get((live.getAttribute("data-src") || "/fragment/overview") + location.search)
-      .then(function (html) { if (html !== null && document.getElementById("live") === live) { live.innerHTML = html; countAll(); calm(); } })
+      .then(function (html) { if (html !== null && document.getElementById("live") === live) { live.innerHTML = html; countAll(); calm(); tod(); } })
       .catch(function () {});
   }
   setInterval(tick, 5000);

@@ -42,3 +42,13 @@ class TownTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NightTest(unittest.TestCase):
+    def test_the_floor_has_a_tint_and_a_glow_for_each_lamp(self):
+        from factory.ui import plant
+        html = plant._night({"items": [["lamp", 100, 200, 120, 1], ["tree", 5, 5, 40, 1], ["lamp", 300, 400, 110, 2]]}, 800, 600)
+        self.assertIn('class="fm-tod"', html)
+        self.assertEqual(html.count("<circle"), 2)
+        self.assertNotIn("style=", html)
+        self.assertEqual(plant._night({}, 800, 600).count("<circle"), 0)

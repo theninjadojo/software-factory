@@ -380,3 +380,23 @@ def test_the_town_is_placed_like_the_park_and_the_saved_floor_draws_it(wide, ser
     pg.goto(server.url + "/")
     assert pg.locator("svg .tw-art").count() == 3
     assert pg.errors == []
+
+
+def test_the_floor_has_a_time_of_day_that_is_kept(wide, server):
+    pg = wide
+    pg.goto(server.url + "/")
+    pg.wait_for_load_state("networkidle")
+    sky = lambda: pg.evaluate("() => [getComputedStyle(document.querySelector('.fm-tod')).fill, getComputedStyle(document.querySelector('.fm-nglow')).opacity]")
+    pg.click('.fm-time [data-tod="day"]')
+    pg.wait_for_timeout(800)
+    assert sky() == ["rgba(6, 10, 34, 0)", "0"]
+    pg.click('.fm-time [data-tod="night"]')
+    pg.wait_for_timeout(800)
+    assert sky() == ["rgba(6, 10, 34, 0.46)", "1"]
+    assert pg.get_attribute('.fm-time [data-tod="night"]', "aria-pressed") == "true"
+    pg.reload()
+    pg.wait_for_load_state("networkidle")
+    assert pg.get_attribute("html", "data-tod") == "night" and pg.get_attribute('.fm-time [data-tod="night"]', "aria-pressed") == "true"
+    pg.wait_for_timeout(5600)                                           # the live refresh redraws the floor; the choice stays
+    assert pg.get_attribute('.fm-time [data-tod="night"]', "aria-pressed") == "true" and sky()[1] == "1"
+    assert pg.errors == []

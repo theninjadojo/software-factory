@@ -964,3 +964,16 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 .fe-hitboxes { pointer-events:none; } .fe-hitbox { fill:rgba(143,211,230,.06); stroke:#8fd3e6; stroke-width:1.5; stroke-dasharray:5 4; }
 .fe-hitbox.park { fill:rgba(182,156,255,.08); stroke:#b69cff; }
 .nd-form .field > label { display:block; font-weight:600; margin:0 0 .9rem; } .nd-form .field > label > input:not([type=checkbox]):not([type=radio]), .nd-form .field > label > select, .nd-form .field > label > textarea { display:block; margin-top:.25rem; }
+
+/* the time of day on the floor (plant._night; static/app.js sets data-tod on the page and the phase of Auto) */
+.fm-tod { fill:rgba(6, 10, 34, 0); pointer-events:none; transition:fill .6s ease; }
+.fm-nglow { opacity:0; pointer-events:none; transition:opacity .6s ease; } .fm-nglow circle { fill:url(#lg-lamp); }
+[data-tod=dusk] .fm-tod { fill:rgba(58, 31, 74, .3); } [data-tod=night] .fm-tod { fill:rgba(6, 10, 34, .46); }
+[data-tod=dusk] .fm-nglow { opacity:.55; } [data-tod=night] .fm-nglow { opacity:1; }
+[data-tod=auto] .fm-tod { animation:tod-sky 40s linear infinite; } [data-tod=auto] .fm-nglow { animation:tod-lamp 40s linear infinite; }
+@keyframes tod-sky { 0%, 30% { fill:rgba(58, 31, 74, 0); } 40% { fill:rgba(58, 31, 74, .3); } 52%, 86% { fill:rgba(6, 10, 34, .46); } 94% { fill:rgba(58, 31, 74, .26); } 100% { fill:rgba(58, 31, 74, 0); } }
+@keyframes tod-lamp { 0%, 36% { opacity:0; } 46%, 88% { opacity:1; } 96%, 100% { opacity:0; } }
+.fm-time { display:none; align-items:center; gap:4px; } .js .fm-time { display:inline-flex; }
+.fm-time .lab { margin-right:2px; } .fm-time button { padding:6px 10px; } .fm-time button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
+@media (max-width:760px) { .js .fm-time { display:none; } }
+@media (prefers-reduced-motion:reduce) { [data-tod=auto] .fm-tod, [data-tod=auto] .fm-nglow { animation:none; } }
