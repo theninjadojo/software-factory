@@ -157,7 +157,11 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 40
 
 class Attachments(AdminCase):
     def setUp(self):
-        LocalTickets.setUp(self)
+        super().setUp()
+        p = self.root / "config.toml"
+        p.write_text(p.read_text() + "\n[local]\nenabled = true\n")
+        self.cookie, self.csrf = self.session()
+        L._recent.clear()
 
     cfg = LocalTickets.cfg
     create = LocalTickets.create
