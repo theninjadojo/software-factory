@@ -7,6 +7,8 @@ It is built around one assumption: **the agent will be prompt-injected by someth
 Agents run with no network, no credentials and no way to reach the host. All they can produce is data (a patch or a
 document), and the orchestrator validates that data before it touches GitHub.
 
+> **Documentation:** start at the [docs index](docs/README.md).
+>
 > **Status:** a working prototype, run for real on one multi-repo project. Read [Limits](#limits-and-honest-caveats) and
 > [SECURITY.md](SECURITY.md) before pointing it at anything you care about.
 
@@ -114,8 +116,8 @@ At the end it prints the URL. Nothing is written to GitHub until you press **Go 
 It is non-interactive when you pass `GITHUB_TOKEN`, `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`),
 `FACTORY_REPOS="org/a org/b"` and `FACTORY_UI_PASSWORD`.
 
-This needs the repository's release files and the four container packages to be readable by you: public, or you are signed in to
-GitHub and `ghcr.io`. If the project is private, use option 2.
+This needs the repository's release files and the container packages (`ghcr.io/theninjadojo/shikumi*`, listed in [docs/releasing.md](docs/releasing.md)) to be
+readable by you. If you run a private fork, sign in to GitHub and `ghcr.io` first, or use option 2.
 
 ### Option 2: from source (Docker)
 

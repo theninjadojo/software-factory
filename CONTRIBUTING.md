@@ -9,3 +9,12 @@
 - A change to a trust boundary (sandbox flags, patch validation, which GitHub actions the orchestrator can take, what the
   agent sees) needs a test that fails without it. See SECURITY.md for what each boundary protects.
 - Keep example configs and docs free of real org names, hosts, tokens and chat ids.
+
+## Issues and pull requests
+
+- Issues and pull requests from anyone are welcome. Please follow the [code of conduct](CODE_OF_CONDUCT.md).
+- Factory labels on an issue only start work when a user with write access applies them; for everyone else they are ignored.
+  Maintainers may let the factory's agents work on an issue. Its pull requests get the same review as yours.
+- Open a pull request against `main`, and fill in the checklist in [docs/pull_request_template.md](docs/pull_request_template.md).
+- Report security problems privately, as described in [SECURITY.md](SECURITY.md).
+- The docs index is [docs/README.md](docs/README.md); `tests/test_docs.py` checks that links resolve.

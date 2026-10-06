@@ -1,5 +1,7 @@
 # Plan: the dashboard and settings UI
 
+> **Historical.** This is the original planning document, kept for context. It may not match the UI as built; see [ui.md](ui.md) for the current behaviour.
+
 ## Goals (from the maintainer)
 
 1. See **what is happening now and what has happened**: running tasks, history, decisions, PRs and CI, alerts.
