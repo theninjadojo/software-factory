@@ -4,16 +4,55 @@
 #   ./scripts/update.sh v0.2.0       # a specific release (also how you go back)
 #   ./scripts/update.sh --images-only   # used by setup.sh: fetch the images of the installed version, change nothing else
 # Run it in the install folder, on the host. It refuses to run while an agent run is in flight (a restart would kill it).
-# Not for a git checkout: there, `git pull` and `docker compose --profile build build`.
+# In a git checkout it offers to run `git pull` (with the factory's GitHub token) and `docker compose --profile build build` for you, after asking,
+# and then asks whether to restart the services (`docker compose up -d`).
+# (A missing .env must not end the script: under pipefail a failing `sed .env | tail` would, silently.)
 # Testing: DRY_RUN=1 prints the container commands instead of running them; SHIKUMI_ASSET_BASE=file:///dir serves the release files locally.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-REPO="${SHIKUMI_REPO:-$(sed -n 's/^SHIKUMI_REPO=//p' .env 2>/dev/null | tail -1)}"; REPO="${REPO:-theninjadojo/software-factory}"
+REPO="${SHIKUMI_REPO:-$(sed -n 's/^SHIKUMI_REPO=//p' .env 2>/dev/null | tail -1 || true)}"; REPO="${REPO:-theninjadojo/software-factory}"
 OWNER="$(echo "${REPO%%/*}" | tr 'A-Z' 'a-z')"
 REGISTRY="ghcr.io/$OWNER"
 run() { if [ -n "${DRY_RUN:-}" ]; then echo "+ $*"; else "$@"; fi; }
 die() { echo "$*" >&2; exit 1; }
-[ -d .git ] && [ -f Dockerfile ] && die "This is a source checkout: use git pull and docker compose --profile build build. update.sh is for release installs."
+
+source_update() {  # a source checkout: ask, then fast-forward with the GitHub token and rebuild the images
+  echo "This is a source checkout, not a release install (update.sh is meant for release installs)."
+  echo "To update it I would run, in $PWD:"
+  echo "  git pull --ff-only        (using the factory's GitHub token)"
+  echo "  docker compose --profile build build"
+  echo "and then I will ask whether to restart the services."
+  local ans=""
+  read -r -p "Continue? [y/N] " ans || true
+  case "$ans" in [yY]|[yY][eE][sS]) ;; *) die "Not updating. To do it yourself: git pull && docker compose --profile build build" ;; esac
+  command -v git >/dev/null || die "git is required"
+  command -v docker >/dev/null || die "docker is required"
+  local branch; branch="$(git symbolic-ref --short -q HEAD)" || die "HEAD is detached: check out a branch first"
+  local token="${GITHUB_TOKEN:-}" home
+  home="$(sed -n 's/^FACTORY_HOME=//p' .env 2>/dev/null | tail -1 || true)"; home="${home:-/srv/factory}"
+  if [ -z "$token" ] && [ -r "$home/secrets/github_token" ]; then token="$(tr -d '[:space:]' < "$home/secrets/github_token")"; fi
+  if [ -n "$token" ]; then
+    # Passed in the environment, never on a command line (ps shows those) or in .git/config, and only sent to github.com.
+    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+    GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')"; export GIT_CONFIG_VALUE_0
+    run git pull --ff-only "https://github.com/$REPO.git" "+refs/heads/$branch:refs/remotes/origin/$branch"
+    unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+  else
+    echo "No GitHub token found (GITHUB_TOKEN, or $home/secrets/github_token): using git's own credentials."
+    run git pull --ff-only
+  fi
+  run docker compose --profile build build
+  local busy="" restart=""
+  busy="$(docker ps -q --filter 'name=^factory-' 2>/dev/null | wc -l | tr -d ' ')" || busy=""
+  echo "Built."
+  [ "${busy:-0}" = 0 ] || echo "Warning: $busy agent run(s) are in flight; restarting now would kill them."
+  read -r -p "Restart the services on the new images now (docker compose up -d)? [y/N] " restart || true
+  case "$restart" in
+    [yY]|[yY][eE][sS]) run docker compose up -d; echo "Restarted." ;;
+    *) echo "Not restarting. When no agent run is in flight: docker compose up -d" ;;
+  esac
+}
+if [ -e .git ] && [ -f Dockerfile ]; then source_update; exit 0; fi   # (.git is a file in a worktree)
 command -v docker >/dev/null || die "docker is required"
 command -v curl >/dev/null || die "curl is required"
 command -v python3 >/dev/null || die "python3 is required"
