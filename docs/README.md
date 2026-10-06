@@ -21,4 +21,5 @@ Shikumi is an issue-driven software factory: label a GitHub issue and sandboxed 
 - [Architecture](architecture.md): how the pieces fit together.
 - [Security model](../SECURITY.md): what is protected, residual risks and how to report a vulnerability.
 - [Contributing](../CONTRIBUTING.md) and the [code of conduct](../CODE_OF_CONDUCT.md).
+- [Pull request template](pull_request_template.md): the checklist shown on new pull requests.
 - [UI plan](ui-plan.md): the original plan for the UI (historical).

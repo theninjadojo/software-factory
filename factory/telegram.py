@@ -29,6 +29,7 @@ def parse_callback(data: str) -> tuple[str, str, int] | None:
     try:
         action, repo, num = data.split("|")
         if (action in ("run", "skip", "accept") or re.fullmatch(r"stage:[a-z]{1,20}", action)
+                or re.fullmatch(r"triage(-no)?:[0-9]{1,9}", action)
                 or re.fullmatch(r"q:[a-z0-9][a-z0-9-]{0,15}:[a-z0-9][a-z0-9-]{0,7}", action)) and repo.count("/") == 1:
             return action, repo, int(num)
     except ValueError:

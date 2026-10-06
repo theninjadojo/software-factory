@@ -24,7 +24,7 @@ def _transient(e: Exception) -> bool:
 
 class GitHub:
     """Small GitHub client. Writes are limited to: comments, labels, pull requests, and the step sub-issues the
-    factory creates itself (fixed title prefix, no labels or assignees)."""
+    factory creates itself (fixed title prefix, no labels or assignees), and confirmed follow-up tickets (no labels or assignees)."""
 
     def __init__(self, token: str | None):
         self.token = token
@@ -130,6 +130,11 @@ class GitHub:
 
     def issue_comments(self, repo: str, issue: int) -> list[dict]:
         return self._get(f"/repos/{repo}/issues/{issue}/comments?per_page=30")
+
+    def comments_since(self, repo: str, since: str) -> list[dict]:
+        """Comments on every issue and pull request of the repository changed since an ISO time, oldest change first (one page)."""
+        q = urllib.parse.urlencode({"since": since, "sort": "updated", "direction": "asc", "per_page": 100})
+        return self._get(f"/repos/{repo}/issues/comments?{q}")
 
     def get_pr(self, repo: str, number: int) -> dict:
         return self._get(f"/repos/{repo}/pulls/{number}")
@@ -261,6 +266,11 @@ class GitHub:
         if labels:
             data["labels"] = list(labels)
         return self._req("POST", f"/repos/{repo}/issues", data)
+
+    def create_followup(self, repo: str, title: str, body: str) -> dict:
+        """A follow-up ticket a person confirmed after a comment triage (see triage.py). No labels and no assignees, so nothing
+        starts by itself; the caller passes a title and body that were sanitized and a body that names the ticket it came from."""
+        return self._req("POST", f"/repos/{repo}/issues", {"title": title, "body": body})
 
     def create_scheduled_issue(self, repo: str, title: str, body: str, labels: list[str]) -> dict:
         """A ticket opened by an admin-configured schedule (see schedules.py). Unlike create_ticket it carries the labels the

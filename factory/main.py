@@ -1,4 +1,5 @@
 import argparse
+import calendar
 import json
 import logging
 import os
@@ -9,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import backup, captures, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, usage, verify
+from . import backup, captures, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, triage, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -112,14 +113,14 @@ def stages_done(cfg: Config, labels: list[str]) -> list[str]:
 
 
 SUPERSEDED_NOTE = "(Written before the ticket was sent back to the {stage} stage, so it may be outdated.)\n\n"
-REDIRECT_COMMENT = ("Sent back to the {stage} stage from the factory admin UI. The steps from there on run again. The earlier documents "
+REDIRECT_COMMENT = ("Sent back to the {stage} stage {source}. The steps from there on run again. The earlier documents "
                     "and answers are kept, and the next agents see them as possibly outdated.")
 SUPERSEDED_PR = ("This pull request is superseded: its ticket was sent back to the {stage} stage, and a new pull request will follow. "
                  "The factory no longer watches it. A person can close it, or keep it if it is still useful.")
 
 
-def redirect(cfg: Config, gh: GitHub, conn, repo: str, num: int, role) -> None:
-    """Send a ticket back to a stage (a person's choice in the admin UI). The done labels of that stage and every later one come off,
+def redirect(cfg: Config, gh: GitHub, conn, repo: str, num: int, role, source: str = "from the factory admin UI") -> None:
+    """Send a ticket back to a stage (a person's choice in the admin UI, or a comment triage a person confirmed). The done labels of that stage and every later one come off,
     with the build's, so the stages run again and the auto chain can go forward from there (router.behind no longer stops it).
     Nothing is deleted: documents, answers, runs and design files stay, and a marker comment makes stage_outputs pass the earlier
     documents on as possibly outdated. The ticket's open factory PRs for the steps being redone stay open for a person to close;
@@ -141,8 +142,8 @@ def redirect(cfg: Config, gh: GitHub, conn, repo: str, num: int, role) -> None:
             gh.comment(r, n, SUPERSEDED_PR.format(stage=role.name))
         except Exception:
             log.warning("could not comment on the superseded PR %s#%s", r, n)
-    gh.comment(repo, num, Q.REDIRECT.format(stages=",".join(redo)) + REDIRECT_COMMENT.format(stage=role.name))
-    emit("decision", f"sent back to the {role.name} from the admin UI; removed {', '.join(removed) or 'no labels'}; "
+    gh.comment(repo, num, Q.REDIRECT.format(stages=",".join(redo)) + REDIRECT_COMMENT.format(stage=role.name, source=source))
+    emit("decision", f"sent back to the {role.name} {source}; removed {', '.join(removed) or 'no labels'}; "
                      f"{len(superseded)} PR(s) superseded", repo, num)
 
 
@@ -810,6 +811,9 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
             issue = gh.get_issue(repo, num)
             if issue["state"] != "open" or "pull_request" in issue:
                 continue
+            if action.startswith("triage"):
+                confirm_triage(cfg, gh, conn, classifier, repo, issue, action)
+                continue
             if action == "accept" or action.startswith("q:"):
                 answer_from_chat(cfg, gh, conn, repo, num, action)
                 continue
@@ -830,6 +834,198 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
             start(cfg, conn, repo, num, role.name if role else "build", approved, gh)
         except Exception:
             log.exception("approval failed for %s#%s", repo, num)
+
+
+def _epoch(iso: str) -> float:
+    try:
+        return float(calendar.timegm(time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")))
+    except (TypeError, ValueError):
+        return time.time()
+
+
+ISSUE_NUMBER = re.compile(r"/issues/(\d+)$")
+
+
+def triage_scan(cfg: Config, gh: GitHub, conn, repo: str, github_due: bool) -> None:
+    """Record each new comment of a repository once, for triage_process. A comment counts when the admin UI wrote it (local tickets) or
+    a GitHub user with a trusted permission did (the same check as trusted()); other people's comments are recorded as ignored, and
+    our own comments, imported ones and pull request comments are never triaged. The first scan after the feature is turned on
+    only sets the cursors, so older comments are never triaged, and an edited comment is not looked at again."""
+    status = dbm.get_status(conn)
+    gh_key, local_key = f"triage:cursor:{repo}", f"triage:local:{repo}"
+    if local_key not in status or gh_key not in status:
+        top = conn.execute("SELECT COALESCE(MAX(id), 0) FROM local_comments WHERE repo=?", (repo,)).fetchone()[0]
+        dbm.set_status(conn, local_key, str(top))
+        dbm.set_status(conn, gh_key, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        return
+    if cfg.local_enabled:
+        rows = conn.execute("SELECT id, number, body, created FROM local_comments WHERE repo=? AND id>? AND author=? ORDER BY id LIMIT 200",
+                            (repo, int(status[local_key]["value"]), tracker.UI_ACTOR)).fetchall()
+        for cid, number, body, created in rows:
+            triage.add(conn, repo, number, f"local:{cid}", tracker.UI_ACTOR, created, body)
+        if rows:
+            dbm.set_status(conn, local_key, str(rows[-1][0]))
+    if not (github_due and cfg.github_issues_enabled and gh.token):
+        return
+    since, me, perms, newest = status[gh_key]["value"], gh.login(), {}, status[gh_key]["value"]
+    for c in gh.comments_since(repo, since):
+        newest = max(newest, c.get("updated_at") or "")
+        found = ISSUE_NUMBER.search(c.get("issue_url") or "")
+        author = (c.get("user") or {}).get("login") or ""
+        if not found or not author or author == me or (c.get("created_at") or "") < since:
+            continue
+        if author not in perms:
+            perms[author] = gh.permission(repo, author)
+        ok = perms[author] in cfg.trusted_permissions
+        triage.add(conn, repo, int(found.group(1)), f"gh:{c['id']}", author, _epoch(c.get("created_at")), c.get("body") or "",
+                   "pending" if ok else "ignored", "" if ok else f"{author} has permission '{perms[author]}'")
+    dbm.set_status(conn, gh_key, newest)
+
+
+def triage_process(cfg: Config, gh: GitHub, conn, repo: str, github_due: bool = True) -> None:
+    """Start a triage run for each ticket with recorded comments that can take one now. A comment waits (and is not lost) while
+    the ticket has a job, the factory is paused or something waits for a slot, and once the ticket's daily cap of runs is used. It is
+    dropped with its reason when the ticket is closed or never worked on, or marked seen when the next run reads it anyway."""
+    if pause.paused(Path(cfg.db_path).parent) or any(not q.get("reason") for q in queued):
+        return
+    for row in triage.with_status(conn, repo, "running"):
+        if not pool.busy(jobkey(repo, row["issue"])):                 # the process restarted or the job crashed: it is tried again
+            triage.mark(conn, [row["id"]], "pending")
+    tickets: dict[int, list] = {}
+    for row in triage.with_status(conn, repo, "pending"):
+        tickets.setdefault(row["issue"], []).append(row)
+    done_labels = {r.done_label for r in cfg.roles} | {DONE, FAILED, Q.NEEDS_ANSWERS, cfg.review.done_label}
+    for num, rows in tickets.items():
+        if not pool.can_take(jobkey(repo, num)) or (not tracker.is_local(num) and not github_due):
+            continue
+        try:
+            issue = gh.get_issue(repo, num)
+        except Exception:
+            log.warning("could not read %s#%s for its comment triage", repo, num)
+            continue
+        labels = {lb["name"] for lb in issue.get("labels", [])}
+        ids = [r["id"] for r in rows]
+        if issue.get("state") != "open" or "pull_request" in issue:
+            triage.mark(conn, ids, "ignored", reason="the ticket is closed or is not a ticket")
+            continue
+        started = triage.last_work_started(conn, repo, num)
+        if tracker.MOVED_LABEL in labels:
+            triage.mark(conn, ids, "ignored", reason="the ticket moved to the local tracker")
+            continue
+        if any(lb.startswith("factory:working") for lb in labels):
+            continue                                               # a job holds the ticket; the comment waits for it to end
+        if labels & {label for _, label in triggers(cfg)}:
+            triage.mark(conn, ids, "seen-by-run", reason="a run is queued: it reads the comment")
+            continue
+        read = [r["id"] for r in rows if r["comment_at"] < started]
+        rows = [r for r in rows if r["id"] not in read]
+        triage.mark(conn, read, "seen-by-run", reason="a run started after the comment and read it")
+        if not rows:
+            continue
+        if not (labels & done_labels or started):
+            triage.mark(conn, [r["id"] for r in rows], "ignored", reason="the factory has not worked on this ticket")
+            continue
+        if triage.runs_today(conn, repo, num, time.time()) >= cfg.comments.max_per_day:
+            continue                                               # waits for the next day's runs
+        triage.mark(conn, [r["id"] for r in rows], "running")
+        start(cfg, conn, repo, num, "triage", lambda db, issue=issue, rows=rows: triage_job(cfg, gh, db, repo, issue, rows), gh)
+
+
+def triage_job(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, rows: list) -> None:
+    """The agent's run over the newest comments of one ticket (read-only in the sandbox), then triage_apply with what triage.parse
+    validated. A run that did not finish, or whose block is invalid, ends as needs-person."""
+    num, ids = issue["number"], [r["id"] for r in rows]
+    route = Route(cfg.comments.harness, cfg.comments.model, cfg.comments.effort)
+    run_id, sink = begin_run("triage", repo, issue, route), {}
+    try:
+        res = runner.run_task(cfg, gh, repo, issue, route, role="triage", sink=sink, prior=stage_outputs(gh, repo, num),
+                              comments=[f"{r['author']}: {r['comment']}" for r in reversed(rows)],
+                              answers=Q.summary(question_state(gh, repo, num)))
+        end_run(run_id, res, sink)
+        if res.status == "rate-limited":
+            triage.mark(conn, ids, "pending")
+            if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+                alert(f"Rate limited during the comment triage of {repo}#{num}; pausing.", event="rate_limit")
+            return
+        if res.status == "cancelled":
+            triage.mark(conn, ids, "ignored", reason="the ticket was closed")
+            return
+        found = triage.parse(res.output, [r.name for r in cfg.roles]) if res.status == "stage" else None
+        why = "the triage reply had no valid factory-triage block" if res.status == "stage" else f"the triage run did not finish ({res.status})"
+        triage_apply(cfg, gh, conn, repo, issue, rows, found or triage.Decision("needs-person", reason=why), run_id)
+    except Exception:
+        log.exception("comment triage of %s#%s failed", repo, num)
+        triage.mark(conn, ids, "failed", reason="the triage crashed")
+
+
+def triage_apply(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, rows: list, d, run_id) -> None:
+    """none and needs-person are a comment. redirect and followup are stored as a proposal and put to a person; they happen in
+    confirm_triage, never here."""
+    num, ids, primary = issue["number"], [r["id"] for r in rows], rows[-1]
+    who = ", ".join(sorted({r["author"] for r in rows}))
+    ref = f"{repo} {tracker.display(num)}" if tracker.is_local(num) else f"{repo}#{num}"
+    if d.decision in ("none", "needs-person"):
+        what = "nothing needs to change." if d.decision == "none" else "a person should take a look."
+        gh.comment(repo, num, triage.NOTE.format(who=who, what=what, reason=d.reason))
+        triage.mark(conn, ids, "done", decision=d.decision, reason=d.reason, run_id=run_id)
+        emit("decision", f"comment triage: {d.decision}. {d.reason}", repo, num, run_id)
+        if d.decision == "needs-person":
+            alert(f"Comment triage: {ref} needs a person.\n{d.reason}", event="needs_human")
+        return
+    what = (f"send it back to the {d.stage} stage (the steps from there on run again, and its open factory pull requests are superseded)"
+            if d.decision == "redirect" else f"open a follow-up ticket titled \"{d.title}\"")
+    triage.mark(conn, [i for i in ids if i != primary["id"]], "done", decision=d.decision, reason=d.reason, run_id=run_id,
+                result=f"covered by triage {primary['id']}")
+    triage.mark(conn, [primary["id"]], "proposed", decision=d.decision, stage=d.stage, title=d.title, body=d.body, reason=d.reason, run_id=run_id)
+    gh.comment(repo, num, triage.PROPOSAL.format(who=who, what=what, reason=d.reason))
+    emit("decision", f"comment triage proposes: {d.decision} {d.stage or d.title}. {d.reason}", repo, num, run_id)
+    buttons = [("Confirm", f"triage:{primary['id']}|{repo}|{num}"), ("Dismiss", f"triage-no:{primary['id']}|{repo}|{num}")]
+    alert(f"Comment triage: {ref}\nSuggests to {what}.\n{d.reason}", [b for b in buttons if len(b[1].encode()) <= 64], event="needs_human")
+
+
+def confirm_triage(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: dict, action: str) -> None:
+    """A person's Confirm or Dismiss of a proposal. The row must be a proposal of this very ticket; the decision and its stage, title
+    and body are read back from the row (validated when stored), never from the action."""
+    num = issue["number"]
+    found = re.fullmatch(r"(triage|triage-no):(\d{1,9})", action)
+    row = triage.get(conn, int(found.group(2))) if found else None
+    if row is None or row["repo"] != repo or row["issue"] != num or row["status"] != "proposed":
+        return
+    if found.group(1) == "triage-no":
+        triage.mark(conn, [row["id"]], "dismissed")
+        emit("decision", "comment triage: the suggestion was dismissed", repo, num, row["run_id"])
+        return
+    try:
+        if row["decision"] == "redirect":
+            role = next((r for r in cfg.roles if r.name == row["stage"]), None)
+            if role is None:
+                raise ValueError("not a configured stage")
+            for _, label in triggers(cfg):               # as for any approval: the whole ticket, so finishing does not ask again
+                gh.remove_label(repo, num, label)
+            redirect(cfg, gh, conn, repo, num, role, "after a comment, as a person confirmed")
+            triage.mark(conn, [row["id"]], "confirmed", result=f"sent back to {role.name}")
+
+            def approved(db, role=role):
+                res = dispatch_stage(cfg, gh, classifier, repo, issue, role, chain=True, conn=db)
+                dbm.record(db, repo, num, issue["updated_at"] + "+triage", f"run:{res.status}", f"comment triage confirmed; {res.detail}")
+            start(cfg, conn, repo, num, role.name, approved, gh)
+        elif row["decision"] == "followup":
+            body = triage.FOLLOWUP_HEAD.format(ref=tracker.ref(repo, num)) + row["body"]
+            if tracker.is_local(num):
+                shown = tracker.display(tracker.LocalTracker(conn).create(repo, row["title"], body, author=tracker.FACTORY_ACTOR))
+            else:
+                made = gh.create_followup(repo, row["title"], body)
+                shown = f"#{made['number']}"
+                try:
+                    gh.add_sub_issue(repo, num, made["id"])
+                except Exception:
+                    log.warning("could not link the follow-up %s to %s#%s", shown, repo, num)
+            triage.mark(conn, [row["id"]], "confirmed", result=shown)
+            gh.comment(repo, num, triage.FOLLOWUP_DONE.format(shown=shown))
+            emit("decision", f"comment triage: opened the follow-up ticket {shown}", repo, num, row["run_id"])
+    except Exception:
+        log.exception("could not apply the comment triage %s of %s#%s", row["id"], repo, num)
+        triage.mark(conn, [row["id"]], "failed")
 
 
 def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: dict, kind: str, label: str) -> str | None:
@@ -1135,6 +1331,13 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
             if handle_issue(cfg, gh, conn, classifier, repo, issue, kind, label) == "paused":
                 return
         report_blocked(cfg, repo, now_held)
+    if cfg.comments.enabled and not cfg.dry_run:
+        for repo in cfg.repos:                              # after every repository's tickets had their chance at a slot
+            try:
+                triage_scan(cfg, gh, conn, repo, github_due)
+                triage_process(cfg, gh, conn, repo, github_due)
+            except Exception:
+                log.exception("comment triage of %s failed", repo)           # never stops the poll
     for repo in cfg.repos:                                  # after every repository's tickets had their chance at a slot
         try:
             maybe_pm_sweep(cfg, gh, conn, repo)
