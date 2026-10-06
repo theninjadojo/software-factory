@@ -365,10 +365,46 @@ def readiness(cfg: Config, state: dict, now: float | None = None) -> tuple[list[
     return state["ready"], state["unready"]
 
 
+def host_stats(work_dir: Path) -> dict:
+    """The few numbers the factory shows for this machine: free and total bytes of the disk the work dir is on, memory available and
+    total, the load average and the CPU count. Anything it cannot read is left out (the factory shows what it has)."""
+    out: dict = {}
+    p = work_dir
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    try:
+        u = shutil.disk_usage(p)
+        out["disk_free"], out["disk_total"] = u.free, u.total
+    except OSError:
+        pass
+    try:
+        out["load"] = round(os.getloadavg()[0], 2)
+    except OSError:
+        pass
+    out["cpus"] = os.cpu_count() or 1
+    try:
+        out["mem_total"] = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        pass
+    try:                                                    # Linux
+        info = {l.split(":")[0]: int(l.split()[1]) for l in Path("/proc/meminfo").read_text().splitlines()}
+        out["mem_avail"] = info["MemAvailable"] * 1024
+    except (OSError, ValueError, IndexError, KeyError):
+        try:                                                # macOS: free, inactive and speculative pages count as available
+            vm = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=3).stdout
+            size = int(re.search(r"page size of (\d+) bytes", vm).group(1))
+            pages = sum(int(m.group(1)) for k in ("free", "inactive", "speculative") if (m := re.search(rf"Pages {k}:\s+(\d+)", vm)))
+            out["mem_avail"] = pages * size
+        except (OSError, subprocess.SubprocessError, AttributeError, ValueError):
+            pass
+    return out
+
+
 def poll_once(cfg: Config, api: Api, ready: dict | None = None) -> bool:
     """Claim and run at most one job. True if one ran."""
     names, unready = readiness(cfg, ready if ready is not None else {})
-    status, job = api.call("/v1/claim", {"platform": cfg.platform, "recipes": names, "unready": unready, "version": PROTOCOL, "app_version": app_version()}, 30)
+    status, job = api.call("/v1/claim", {"platform": cfg.platform, "recipes": names, "unready": unready, "version": PROTOCOL, "app_version": app_version(),
+                                  "stats": host_stats(cfg.work_dir)}, 30)
     if status != 200 or not job:
         if status not in (200, 204):
             log.warning("claim refused (%s): %s", status, job)

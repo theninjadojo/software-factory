@@ -16,12 +16,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .. import backup
+from .. import backup, machines
 from .. import db as dbm
 from .. import designfiles
 from .. import pause, screenboard, updates, version
 from .. import questions as Q
-from ..config import load
+from ..config import HealthCfg, load
 from .. import tracker
 from ..tracker import display, is_local
 from . import admin, board, features, floor, floorplan, views
@@ -169,7 +169,11 @@ class App:
                 except sqlite3.Error:
                     pass                                                       # no schedule tables yet
                 try:
-                    d["workers"] = workers_seen(db, time.time())
+                    d["server"] = server_floor(cfg)
+                except OSError:
+                    pass                                                       # no disk to read: the building shows no numbers
+                try:
+                    d["workers"] = workers_seen(db, time.time(), cfg.health)
                 except sqlite3.Error:
                     pass                                                       # no worker tables yet
                 try:
@@ -227,13 +231,30 @@ def schedule_trips(cfg, db, now: float) -> list[dict]:
     return out
 
 
-def workers_seen(db, now: float) -> list[dict]:
+def workers_seen(db, now: float, hc=None) -> list[dict]:
     """Every verification worker the factory has seen, whether it is online, and the job it holds now (for the floor's trains)."""
     from .. import jobs
     from ..verify import ONLINE_SECONDS
     held = {w: {"issue": int(i), "recipe": r} for w, i, r in db.execute("SELECT worker, issue, recipe FROM verify_jobs WHERE status = 'claimed' ORDER BY claimed")}
-    return [{"name": w["name"], "online": w["last_seen"] >= now - ONLINE_SECONDS, "job": held.get(w["name"])}
+    return [{"name": w["name"], "online": w["last_seen"] >= now - ONLINE_SECONDS, "job": held.get(w["name"]), **worker_report(w, hc)}
             for w in jobs.online_workers(db, 0, float("inf"))]
+
+
+def worker_report(row: dict, hc) -> dict:
+    """What a worker last said about its machine (its work disk, memory, load) and how that rates, for the floor and its page."""
+    hc = hc or HealthCfg()
+    try:
+        stats = machines.clean_stats(json.loads(row.get("stats") or "{}"))
+    except ValueError:
+        stats = None
+    return {"stats": stats, "level": machines.worker_level(stats, hc)}
+
+
+def server_floor(cfg) -> dict:
+    """What the floor shows on the server building: its rating and its fullest disk."""
+    s = machines.server_stats(cfg)
+    fullest = min(s["disks"], key=lambda d: d["free"] / max(d["total"], 1), default=None)
+    return {"level": s["level"], "free": fullest["free"] if fullest else 0, "total": fullest["total"] if fullest else 0}
 
 
 class Handler(BaseHTTPRequestHandler):

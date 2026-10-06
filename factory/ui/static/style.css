@@ -728,6 +728,17 @@ main.full { max-width:none; }
 .nt-wave.w1 { animation-delay:.3s; } .nt-wave.w2 { animation-delay:.6s; }
 @keyframes nt-wave { 0%, 100% { opacity:.25; } 30% { opacity:1; } }
 .nt-n { fill:#c9d1d7; font:600 13px var(--sans); } .nt-s { fill:var(--muted); font:9px var(--mono); } .nt.on .nt-s { fill:#b69cff; }
+/* the server: a rack and a disk tank; amber when a check warns, red when one is critical. Workers carry a disk bar. */
+.sv-box { fill:#1f262b; stroke:var(--line2); stroke-width:2; } .sv.warn .sv-box { stroke:var(--accent); } .sv.crit .sv-box { stroke:var(--bad); }
+.sv:hover .sv-box { fill:#29313a; } .sv:focus-visible { outline:none; } .sv:focus-visible .sv-box { stroke:var(--accent); stroke-width:4; }
+.sv-n { fill:var(--text); font:600 15px var(--sans); } .sv-s { fill:var(--good); font:700 11px var(--sans); letter-spacing:.05em; text-transform:uppercase; }
+.sv.warn .sv-s { fill:var(--accent); } .sv.crit .sv-s { fill:var(--bad); }
+.sv-slot { fill:#2c333a; stroke:#1a1f24; } .sv-led { fill:var(--good); } .sv-led.hot { fill:var(--accent); } .sv.crit .sv-led.hot { fill:var(--bad); }
+.sv-bar { fill:none; stroke:#9aa7b0; stroke-width:2; stroke-linecap:round; }
+.sv-tank { fill:#1a2025; stroke:var(--line2); stroke-width:2; } .sv-fill { fill:var(--good); } .sv.warn .sv-fill { fill:var(--accent); } .sv.crit .sv-fill { fill:var(--bad); }
+.sv-r { fill:var(--muted); font:11px var(--mono); }
+.fm-dk { fill:var(--line); } .fm-dku { fill:var(--good); } .fm-w.warn .fm-dku { fill:var(--accent); } .fm-w.crit .fm-dku { fill:var(--bad); }
+.fm-w.warn .fm-box { stroke:var(--accent); } .fm-w.crit .fm-box { stroke:var(--bad); } .fm-w.off .fm-dku { fill:var(--line2); }
 @media (prefers-reduced-motion:reduce) { .sh-wave, .sh-rock, .pw *, .sw-led, .ap-bea, .nt-wave, .sh-foam { animation:none !important; } }
 .sh-add text { fill:var(--link); font:10px var(--mono); text-decoration:underline; } .sh-add:focus-visible { outline:2px solid var(--accent); }
 
@@ -1180,3 +1191,7 @@ button.s-reset { color:var(--link); text-decoration:underline; min-height:24px; 
 }
 .s-adv > summary, .mx-more > summary { list-style:none; } .s-adv > summary::-webkit-details-marker, .mx-more > summary::-webkit-details-marker { display:none; }
 .s-adv > summary::before, .mx-more > summary::before { content:"▸"; width:1em; color:var(--muted); } .s-adv[open] > summary::before, .mx-more[open] > summary::before { content:"▾"; }
+/* Server and Worker pages: tiles and meters (the words beside them say the same as the colours) */
+.mt-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:.7rem; margin:.8rem 0 1.2rem; }
+.mt-tile.warn { border-color:var(--accent); } .mt-tile.crit { border-color:var(--bad); } .mt-v { font:600 1.7rem var(--sans); margin:.1rem 0; }
+.mt { display:block; width:100%; height:8px; min-width:90px; } .mt-bg { fill:var(--line); } .mt-fg { fill:var(--good); } .mt.warn .mt-fg { fill:var(--accent); } .mt.crit .mt-fg { fill:var(--bad); }

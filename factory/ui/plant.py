@@ -23,6 +23,7 @@ Every station has an inserter that takes its ticket's crate off the belt and one
 station it is for. Animations start at the server clock's phase of their cycle, so the five-second refresh does not restart them.
 All text is escaped; no style attributes."""
 import math
+from urllib.parse import quote
 
 from . import buildings, terrain, yard
 from .views import esc
@@ -610,6 +611,33 @@ def notifiers(x0, y, items: list[dict]) -> str:
     return out + f'<text class="fm-lab" x="{_f(x0)}" y="{_f(y + len(items) * 92 + 12)}">NOTIFIERS · WIRELESS</text>'
 
 
+# ---------------------------------------------------------------- the server: the machine the factory runs on; it takes no belt
+SERVER_WORD = {"ok": "OK", "warn": "Low", "crit": "Critical"}
+
+
+def server_building(x, y, s: dict | None = None) -> str:
+    """The server, 160 by 100 at (x, y): a rack and a disk tank that fills as the disk does. s: {"level", "free", "total", "mem", "load"}
+    (None in the editor's tray). It opens the Server page; its outline goes amber when a check warns and red when one is critical."""
+    s = s or {}
+    level = s.get("level") or "ok"
+    total = s.get("total") or 0
+    used = 1 - (s.get("free", 0) / total) if total else 0
+    fill = max(2.0, 44 * used) if total else 0
+    free = f'{s["free"] / 1024 ** 3:.0f} GB' if total else "—"
+    word = SERVER_WORD.get(level, "OK") if total or s.get("level") else "No data"
+    slots = "".join(f'<rect class="sv-slot" x="{_f(x + 12)}" y="{_f(y + 46 + 16 * k)}" width="70" height="12" rx="2"/>'
+                    f'<circle class="sv-led{" hot" if k == 2 and level != "ok" else ""}" cx="{_f(x + 20)}" cy="{_f(y + 52 + 16 * k)}" r="2.4"/>'
+                    f'<path class="sv-bar" d="M {_f(x + 30)} {_f(y + 52 + 16 * k)} h {34 - 8 * k}"/>' for k in range(3))
+    return (f'<a class="sv {level}" href="/machines/server" aria-label="The server: {SERVER_WORD.get(level, "ok")}, {esc(free)} free on the fullest disk. Open its page.">'
+            f'<rect class="sv-box" x="{_f(x)}" y="{_f(y)}" width="160" height="100" rx="3"/>'
+            f'<text class="sv-n" x="{_f(x + 12)}" y="{_f(y + 22)}">Server</text>'
+            f'<text class="sv-s" x="{_f(x + 12)}" y="{_f(y + 36)}">{esc(word)}</text>{slots}'
+            f'<rect class="sv-tank" x="{_f(x + 94)}" y="{_f(y + 44)}" width="24" height="48" rx="5"/>'
+            f'<rect class="sv-fill" x="{_f(x + 96)}" y="{_f(y + 90 - fill)}" width="20" height="{_f(fill)}" rx="3"/>'
+            f'<text class="sv-r" x="{_f(x + 126)}" y="{_f(y + 66)}">{esc(free)}</text>'
+            f'<text class="sv-r" x="{_f(x + 126)}" y="{_f(y + 78)}">free</text></a>')
+
+
 # ---------------------------------------------------------------- the mainland's airport, the plant's airfield, and a 747
 PLANE = ('<path class="ap-wing" d="M 2 0 L -10 -30 L -16 -30 L -8 0 L -16 30 L -10 30 Z"/><path class="ap-tail" d="M -24 0 L -30 -11 L -33 -11 L -29 0 L -33 11 L -30 11 Z"/>'
          '<rect class="ap-eng" x="-5" y="-21" width="7" height="3.5" rx="1.5"/><rect class="ap-eng" x="-8" y="-13" width="7" height="3.5" rx="1.5"/>'
@@ -1010,18 +1038,26 @@ def worker_stop(x, y, w: dict) -> str:
     on = w.get("online")
     job = w.get("job")
     state = ("Online · " + (f'{job["recipe"]} check' if job else "idle")) if on else "Offline"
-    ref = f'job #{int(job["issue"])} · {job["recipe"]}' if job else "stop on the yard's railway"
+    st = w.get("stats") or {}
+    total = st.get("disk_total") or 0
+    free = f'{st["disk_free"] / 1024 ** 3:.0f} GB free' if total else ""
+    ref = f'job #{int(job["issue"])} · {job["recipe"]}' if job else (f"disk {free}" if free else "stop on the yard's railway")
+    level = w.get("level") or "ok"
+    used = max(0.0, min(1.0, 1 - st["disk_free"] / total)) if total else 0
+    bar = (f'<rect class="fm-dk" x="{_f(x + 12)}" y="{_f(y + 70)}" width="156" height="5" rx="2.5"/>'
+           f'<rect class="fm-dku" x="{_f(x + 12)}" y="{_f(y + 70)}" width="{_f(156 * used)}" height="5" rx="2.5"/>') if total else ""
     cx = x + 90
     return (f'<g class="ry-stop">{yard._stop(x - 24, y - 32, w["name"])}'
             + belt(f"M {_f(cx)} {_f(y - RING)} L {_f(cx)} {_f(y)}", "fn-belt thin")
             + f'<rect class="ry-hood" x="{_f(cx - 7)}" y="{_f(y - 6)}" width="14" height="8" rx="2"/></g>'
-            f'<a class="fm-w{"" if on else " off"}" href="/workers" aria-label="Worker {esc(w["name"])}: {esc(state)}">'
+            f'<a class="fm-w{"" if on else " off"}{"" if level == "ok" else " " + level}" href="/workers/machine?name={esc(quote(w["name"]))}" '
+            f'aria-label="Worker {esc(w["name"])}: {esc(state)}{esc(", " + free + " on its disk" if free else "")}. Open its page.">'
             f'<rect class="fm-box" x="{_f(x)}" y="{_f(y)}" width="180" height="80" rx="3"/>'
             f'<path class="ry-wicon" transform="translate({_f(x + 10)} {_f(y + 9)}) scale(.75)" d="{WORKER_ICON}"/>'
             f'<circle class="fm-on" cx="{_f(x + 164)}" cy="{_f(y + 18)}" r="4"/>'
             f'<text class="fm-t" x="{_f(x + 32)}" y="{_f(y + 24)}">{esc(w["name"][:16])}</text>'
             f'<text class="fm-s" x="{_f(x + 12)}" y="{_f(y + 46)}">{esc(state[:26])}</text>'
-            f'<text class="fm-r" x="{_f(x + 12)}" y="{_f(y + 64)}">{esc(ref[:26])}</text></a>')
+            f'<text class="fm-r" x="{_f(x + 12)}" y="{_f(y + 64)}">{esc(ref[:26])}</text>{bar}</a>')
 
 
 def junction(x, y, name: str) -> str:
@@ -1295,6 +1331,8 @@ def node_art(nid: str, label: str, trains: int = 0) -> str:
         return power_station(0, 0, {"name": name, "on": False}, [])
     if kind == "notify":
         return notifier(0, 0, {"name": name, "on": False})
+    if kind == "server":
+        return server_building(0, 0)
     return {"harbor": lambda: harbor(0, 0), "mainland": lambda: mainland(1320), "sea": lambda: sea([], 1320),
             "sources": lambda: f'<g transform="translate({-SRC[0]} {-SRC[1]})">{github()}</g>',
             "receiving": lambda: f'<g transform="translate(-12 -200)">{receiving(0)}</g>',
@@ -1361,6 +1399,7 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
     told = {n["name"]: n for n in extras.get("notify") or []}
     radios = "".join(node(nid, lambda x, y, n=nid.split(":", 1)[1]: notifier(x, y, told.get(n, {"name": n})))
                      for nid in at if nid.startswith("notify:"))
+    box_ = node("server", lambda x, y: server_building(x, y, extras.get("server"))) if "server" in at else ""
     # the outside area, where the workers stand: ground, so under the terrain painted on it (roads and their cars, ponds, trees)
     area = ""
     if "yard" in at and "outside" in at:
@@ -1372,7 +1411,7 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
             + ground("airfield", "ap-field", 6) + f'<g transform="{tr("airfield", 20, AF_Y)}">{airfield(conveyor=False)}</g>'
             + f'<text class="fm-lab" x="{_f(at["sources"][0])}" y="{_f(at["sources"][1] - 8)}">SOURCES</text>'
             + f'<g transform="{tr("sources", *SRC)}">{github()}</g><g transform="{tr("receiving", 12, 200)}">{receiving(len(queued))}</g>'
-            + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>' + harbor_svg + radios + f'<g aria-hidden="true">{land("over")}</g>')
+            + f'<g transform="{tr("queue", 0, 250)}">{_queue_chest(30, len(queued))}</g>' + harbor_svg + radios + box_ + f'<g aria-hidden="true">{land("over")}</g>')
     # the belts, cut where they go under, and the pieces on them
     belts, hoods = [], set()
     for hid, hb in hops.items():

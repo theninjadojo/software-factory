@@ -44,21 +44,21 @@ MAX_WALLS, MAX_WALL_CELLS, MAX_TREES = 60, 4000, 400
 FILE = "floor-layout.json"
 INTAKE, LATER = ("poll", "classify", "route"), ("build", "review", "ci", "pr")
 SIZE = {"station": (7, 5), "power": (10, 5), "sources": (7, 6), "receiving": (7, 5), "queue": (3, 3), "airfield": (34, 11),
-        "mainland": (12, 66), "sea": (15, 66), "harbor": (6, 4), "notify": (6, 4), "yard": (10, 5), "depot": (8, 4), "worker": (9, 4),
+        "mainland": (12, 66), "sea": (15, 66), "harbor": (6, 4), "notify": (6, 4), "server": (8, 5), "yard": (10, 5), "depot": (8, 4), "worker": (9, 4),
         "junction": (2, 2), "outside": (60, 12)}
 MIN = {"station": (5, 4), "power": (7, 4), "sources": (5, 5), "receiving": (5, 4), "queue": (2, 2), "airfield": (17, 6),
-       "mainland": (6, 20), "sea": (6, 20), "harbor": (5, 3), "notify": (5, 3), "depot": (6, 3), "worker": (7, 3), "junction": (2, 2),
+       "mainland": (6, 20), "sea": (6, 20), "harbor": (5, 3), "notify": (5, 3), "server": (6, 4), "depot": (6, 3), "worker": (7, 3), "junction": (2, 2),
        "outside": (10, 4)}                     # the smallest a resized building may be, in cells
 JUNCTIONS = ("a", "b", "c", "d")             # optional: where tracks join or split
 YARD_DX = -14                                # the yard's box starts 14 cells left of its anchor, the top of Build's feeder (on its right)
-SINGLE = ("mainland", "sea", "sources", "receiving", "harbor", "queue", "airfield")
+SINGLE = ("mainland", "sea", "sources", "receiving", "harbor", "queue", "airfield", "server")
 NOTIFIERS = ("telegram", "slack")          # the channels that tell a person what the factory needs: wireless, so they take no belt
 NOTIFY_NAMES = {"telegram": "Telegram", "slack": "Slack"}
 DIRS = {"n": (0, -1), "e": (1, 0), "s": (0, 1), "w": (-1, 0)}
 KINDS = ("splitter", "merger", "sideload", "underground")
 NAMES = {"mainland": "The mainland", "sea": "The sea", "sources": "Sources", "receiving": "Receiving", "queue": "The queue",
          "airfield": "The airfield", "yard": "The Verify yard", "harbor": "The harbor", "depot": "The Train station",
-         "outside": "Outside the factory"}
+         "outside": "Outside the factory", "server": "The server"}
 FREE = ("outside", "sea")                    # areas other buildings may stand in (the harbor in the sea), and belts and track may cross
 DISTRICTS = ("INTAKE", "PLANNING", "PRODUCTION", "QUALITY", "SHIPPING")
 YARD_TOP = 590                             # the yard's feeder top in yard.py's coordinates (yard.BOT_Y + yard.MH + 30)
@@ -190,7 +190,7 @@ ICONS = {"sources": "M4 3h6v18H4zM14 3h6v18h-6zM7 7v.01M7 11v.01M17 7v.01M17 11v
          "receiving": "M2 10l10-6 10 6M4 10v10h16V10M8 14h8M8 17h8",
          "harbor": "M12 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 7v14M5 14a7 7 0 0 0 14 0M8 10h8",
          "airfield": "M2 13l9-2 3-7 2 1-1 6 6 1v2l-6 1 1 6-2 1-3-7-9-2z", "queue": "M3 8h18v12H3zM3 12h18M11 10h2v4h-2z",
-         "notify": "M5 11a10 10 0 0 1 14 0M8 14a6 6 0 0 1 8 0M12 18v.01", "power": "M13 2L4 14h7l-1 8 9-12h-7z",
+         "notify": "M5 11a10 10 0 0 1 14 0M8 14a6 6 0 0 1 8 0M12 18v.01", "server": "M3 4h18v6H3zM3 14h18v6H3zM7 7h.01M7 17h.01M11 7h6M11 17h6", "power": "M13 2L4 14h7l-1 8 9-12h-7z",
          "yard": "M5 17h14M7 17V7h10v10M9 21l-2-4M15 21l2-4", "depot": "M4 6h12l4 4v7H4zM4 11h16M8 20h.01M16 20h.01",
          "worker": "M4 3h16v7H4zM4 14h16v7H4zM8 6.5h.01M8 17.5h.01", "junction": "M12 3v7M12 10l-6 11M12 10l6 11",
          "mainland": "M3 20h18M6 20V10l6-6 6 6v10", "sea": "M2 8c3-2 5 2 8 0s5 2 8 0 3 0 4 0M2 14c3-2 5 2 8 0s5 2 8 0 3 0 4 0",
@@ -208,7 +208,7 @@ def group(nid: str) -> str:
     """Where the editor's parts tray lists a building."""
     kind = nid.split(":")[0]
     return {"station": "Stations", "queue": "Stations", "power": "Power", "yard": "Workers and rail", "depot": "Workers and rail",
-            "worker": "Workers and rail", "junction": "Workers and rail", "notify": "Notifiers", "mainland": "Areas", "sea": "Areas",
+            "worker": "Workers and rail", "junction": "Workers and rail", "notify": "Notifiers", "server": "Power", "mainland": "Areas", "sea": "Areas",
             "outside": "Areas"}.get(kind, "Arrivals")
 
 
@@ -291,6 +291,7 @@ def _default_pos(ctx: Ctx) -> dict:
         P[f"power:{h}"] = (px, 1 + 6 * k)
     for k, n in enumerate(ctx.notifiers):
         P[f"notify:{n}"] = (px + 7 * k, 2 + 6 * len(ctx.harnesses))
+    P["server"] = (px + 15, 2 + 6 * len(ctx.harnesses))              # beside the notifiers, clear of Build's belt to the yard: the machine the factory runs on
     P["yard"] = (79, 46)
     P["depot"] = (112, 47)
     n = len(ctx.workers)

@@ -54,6 +54,8 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE workers ADD COLUMN app_version TEXT NOT NULL DEFAULT ''")
     if "unready" not in {r[1] for r in db.execute("PRAGMA table_info(workers)")}:           # recipes a worker has but cannot run yet: {recipe: why}, as JSON
         db.execute("ALTER TABLE workers ADD COLUMN unready TEXT NOT NULL DEFAULT ''")
+    if "stats" not in {r[1] for r in db.execute("PRAGMA table_info(workers)")}:             # the machine's last report: disk, memory, load, as JSON
+        db.execute("ALTER TABLE workers ADD COLUMN stats TEXT NOT NULL DEFAULT ''")
     db.execute("CREATE TABLE IF NOT EXISTS worker_updates (worker TEXT PRIMARY KEY, requested REAL NOT NULL)")      # the Update worker button
 
 
@@ -83,14 +85,16 @@ def enqueue(db, repo: str, issue: int, base_sha: str, patch: str, recipe: str, p
 APP_VERSION = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
 
 
-def touch_worker(db, name: str, platform: str, recipes: list[str], version: int, now: float, app_version: str = "", unready: dict | None = None) -> None:
+def touch_worker(db, name: str, platform: str, recipes: list[str], version: int, now: float, app_version: str = "", unready: dict | None = None,
+                 stats: dict | None = None) -> None:
     """Note that a worker polled. `app_version` is the release it says it runs; a poll without one keeps what was known. `unready` is
     {recipe: why} for the recipes it has but cannot run yet (a tool is missing); they are not in `recipes`, so no job of theirs goes to it."""
-    keep = db.execute("SELECT app_version FROM workers WHERE name=?", (name,)).fetchone()
+    keep = db.execute("SELECT app_version, stats FROM workers WHERE name=?", (name,)).fetchone()
     app = app_version if APP_VERSION.fullmatch(app_version or "") else (keep[0] if keep and not app_version else "")
+    report = json.dumps(stats) if stats else (keep[1] if keep else "")           # a poll without numbers keeps the last report
     why = json.dumps({n: t[:300] for n, t in list((unready or {}).items())[:20]}) if unready else ""
-    db.execute("INSERT OR REPLACE INTO workers (name, platform, recipes, last_seen, version, app_version, unready) VALUES (?,?,?,?,?,?,?)",
-               (name, platform, ",".join(recipes), now, version, app, why))
+    db.execute("INSERT OR REPLACE INTO workers (name, platform, recipes, last_seen, version, app_version, unready, stats) VALUES (?,?,?,?,?,?,?,?)",
+               (name, platform, ",".join(recipes), now, version, app, why, report))
 
 
 def online_workers(db, now: float, within: float) -> list[dict]:
@@ -116,11 +120,11 @@ def expire_stale(db, now: float, lease: int, claim_wait: int, max_attempts: int)
 
 
 def claim(db, worker: str, platform: str, recipes: list[str], now: float, lease: int, claim_wait: int, max_attempts: int,
-          app_version: str = "", unready: dict | None = None) -> dict | None:
+          app_version: str = "", unready: dict | None = None, stats: dict | None = None) -> dict | None:
     """Atomically hand the oldest matching queued job to `worker`. A job for platform 'any' matches every worker."""
     db.execute("BEGIN IMMEDIATE")
     try:
-        touch_worker(db, worker, platform, recipes, 1, now, app_version, unready)
+        touch_worker(db, worker, platform, recipes, 1, now, app_version, unready, stats)
         expire_stale(db, now, lease, claim_wait, max_attempts)
         if not recipes:
             db.commit()

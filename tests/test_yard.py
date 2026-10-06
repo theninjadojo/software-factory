@@ -196,8 +196,8 @@ class WorkersSeen(unittest.TestCase):
         jobs.touch_worker(db, "old", "linux", ["web"], 1, now - 3600)
         db.execute("INSERT INTO verify_jobs (repo, issue, base_sha, patch, recipe, status, worker, created, claimed) VALUES (?,?,?,?,?,?,?,?,?)",
                    ("o/r", 42, "abc", "", "web", "claimed", "mac", now, now))
-        self.assertEqual(workers_seen(db, now), [{"name": "mac", "online": True, "job": {"issue": 42, "recipe": "web"}},
-                                                 {"name": "old", "online": False, "job": None}])
+        self.assertEqual(workers_seen(db, now), [{"name": "mac", "online": True, "job": {"issue": 42, "recipe": "web"}, "stats": None, "level": "ok"},
+                                                 {"name": "old", "online": False, "job": None, "stats": None, "level": "ok"}])
 
 
 

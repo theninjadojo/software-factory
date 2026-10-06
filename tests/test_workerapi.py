@@ -52,6 +52,13 @@ class Handle(unittest.TestCase):
         self.api = workerapi.Api(lambda: replace(self.cfg, workers=WorkersCfg()))
         self.assertEqual(self.call("/v1/claim", {})[0], 404)
 
+    def test_a_claim_stores_the_machines_report_cleaned(self):
+        self.call("/v1/claim", {"platform": "macos", "recipes": ["ios-test"], "stats": {"disk_free": 5, "disk_total": 10, "junk": "x"}})
+        row = self.db.execute("SELECT stats FROM workers WHERE name='mac'").fetchone()
+        self.assertEqual(json.loads(row[0]), {"disk_free": 5, "disk_total": 10})
+        self.call("/v1/claim", {"platform": "macos", "recipes": ["ios-test"]})                 # an older worker: the last report stays
+        self.assertEqual(json.loads(self.db.execute("SELECT stats FROM workers WHERE name='mac'").fetchone()[0])["disk_free"], 5)
+
     def test_claim_heartbeat_result_round_trip(self):
         jid = jobs.enqueue(self.db, "o/r", 7, "a" * 40, "the patch", "ios-test", "macos", 1000)
         self.assertEqual(self.call("/v1/claim", {"platform": "linux", "recipes": ["ios-test"]})[0], 204)
