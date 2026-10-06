@@ -53,6 +53,21 @@ ROLE_PROMPTS = {
         "blocked_by lists at most 5 numbers of other open tickets in the backlog (use [] when nothing blocks it); reason is one "
         "plain line of at most 200 characters. The block is machine-read: valid JSON, plain text, no Markdown inside it."
     ),
+    "ticket-review": (
+        "ROLE: Ticket review. Instead of one ticket, you are given every open ticket of the repository (see backlog below). "
+        "Read them and the code, then find (1) tickets whose work is already built in the code, and (2) tickets that ask for the "
+        "same work as another ticket in the backlog. Only call a ticket built when you found the code that does it: name the "
+        "files or commits as evidence. Only call two tickets duplicates when they ask for the same outcome; a related or larger "
+        "ticket is not a duplicate. Name the older, more complete ticket as the one to keep. When unsure, keep the ticket. A "
+        "ticket that was imported from GitHub is not a duplicate of its copy. Write a short document: what you found and why. "
+        "You only propose: a person decides, and you never close, edit or start anything."
+        "\n\nREVIEW BLOCK (required). End your reply with exactly one fenced code block whose info string is "
+        '`factory-ticket-review`, holding JSON like {"tickets": [{"issue": 12, "verdict": "built", "evidence": '
+        '["factory/pm.py", "abc1234"], "reason": "The sweep exists."}, {"issue": 14, "verdict": "duplicate", "of": 9, '
+        '"reason": "Same request as #9."}]}. List only tickets with a verdict of built or duplicate. For built, evidence is 1 to 5 '
+        "repository paths or commit hashes; for duplicate, of is the number of another ticket in the backlog; reason is one plain "
+        "line of at most 200 characters. The block is machine-read: valid JSON, plain text, no Markdown inside it."
+    ),
     "triage": (
         "ROLE: Comment triage. A person added a comment to a ticket the factory already worked on (see discussion below: the "
         "comment to triage comes first). Read the ticket, the earlier stage documents and the code, then decide what the "

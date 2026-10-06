@@ -216,6 +216,19 @@ class PmCfg:
 
 
 @dataclass(frozen=True)
+class TicketReviewCfg:
+    """The ticket review: a person asks in the admin UI for a read-only agent to look at every open ticket of a repository and
+    propose which are already built or duplicates. It only proposes; a person picks what to close. On by default because nothing
+    runs until a person asks."""
+    enabled: bool = True
+    max_tickets: int = 40                 # tickets sent to the agent per review
+    body_chars: int = 1500                # of each ticket's body
+    model: str = "sonnet"
+    effort: str = "medium"
+    harness: str = "claude-code"
+
+
+@dataclass(frozen=True)
 class ChatCfg:
     """Quick replies about a ticket, outside the label-driven pipeline. A person writes in the admin UI; the orchestrator answers
     with a short read-only run in a sandbox with no repository clone and no GitHub token. The chat can only propose sending the
@@ -451,6 +464,7 @@ class Config:
     design_links: DesignLinksCfg = field(default_factory=DesignLinksCfg)
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
+    ticket_review: TicketReviewCfg = field(default_factory=TicketReviewCfg)
     comments: CommentsCfg = field(default_factory=CommentsCfg)
     chat: ChatCfg = field(default_factory=ChatCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
@@ -1009,6 +1023,13 @@ def parse(raw: dict) -> Config:
         v = getattr(pm, name)
         if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 100000:
             raise ValueError(f"pm.{name} must be a whole number from 1 to 100000")
+    tr = TicketReviewCfg(**raw.get("ticket_review", {}))
+    if tr.effort not in ("low", "medium", "high"):
+        raise ValueError("ticket_review.effort must be low, medium or high")
+    for name in ("max_tickets", "body_chars"):
+        v = getattr(tr, name)
+        if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 100000:
+            raise ValueError(f"ticket_review.{name} must be a whole number from 1 to 100000")
     if not isinstance(pm.unblock_label, str) or not pm.unblock_label.strip():
         raise ValueError("pm.unblock_label must not be empty")
     chat = ChatCfg(**raw.get("chat", {}))
@@ -1063,6 +1084,7 @@ def parse(raw: dict) -> Config:
         design_links=design_links,
         updates=updates,
         pm=pm,
+        ticket_review=tr,
         comments=comments,
         chat=chat,
         health=health,

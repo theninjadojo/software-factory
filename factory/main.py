@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tools, tracker, triage, usage, verify
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, ticketreview, tools, tracker, triage, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -1317,6 +1317,50 @@ def maybe_pm_sweep(cfg: Config, gh: GitHub, conn, repo: str) -> None:
     start(cfg, conn, repo, 0, "pm", lambda db: pm_sweep(cfg, gh, db, repo, issues))
 
 
+def ticket_review_job(cfg: Config, gh: GitHub, conn, rid: int, repo: str, sources: str) -> str:
+    """One ticket review: snapshot the open tickets, run the read-only agent, store the validated proposals (see ticketreview.py).
+    Nothing is closed here: a person picks proposals in the UI."""
+    tr = cfg.ticket_review
+    items, notes = ticketreview.snapshot(cfg, gh, conn, repo, sources)
+    if not items:
+        ticketreview.set_status(conn, rid, "done", "; ".join(["no open tickets to review", *notes]))
+        return "stage"
+    route = Route(tr.harness, tr.model, tr.effort)
+    stand_in = {"number": 0, "title": f"Ticket review: {len(items)} ticket(s)", "body": "", "updated_at": ""}
+    run_id, sink = begin_run("ticket-review", repo, stand_in, route, None, "ticket-review"), {}
+    res = runner.run_task(cfg, gh, repo, stand_in, route, role="ticket-review", sink=sink, backlog=pm.backlog_items(items, tr.body_chars))
+    end_run(run_id, res, sink)
+    found = ticketreview.parse(res.output, {i["number"] for i in items}) if res.status == "stage" else None
+    if found is None:
+        if res.status == "rate-limited":
+            if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+                alert(f"Rate limited during the ticket review of {repo}; pausing.", event="rate_limit")
+        elif res.status != "stage":
+            alert(f"Ticket review failed for {repo} ({res.status})\n{res.detail[:300]}", event="failure")
+        ticketreview.set_status(conn, rid, "failed", "the agent did not finish with a valid review" if res.status == "stage" else res.status, len(items), run_id)
+        return res.status
+    kept = ticketreview.store(conn, rid, repo, found, items)
+    ticketreview.set_status(conn, rid, "done", "; ".join([f"{kept} proposal(s) from {len(items)} ticket(s)", *notes]), len(items), run_id)
+    emit("ticket-review", f"ticket review of {repo}: {kept} proposal(s) from {len(items)} ticket(s)", repo, None, run_id)
+    return "stage"
+
+
+def maybe_ticket_review(cfg: Config, gh: GitHub, conn) -> None:
+    """Start the reviews a person asked for. It runs in the pool under ticket number 0 (shared with the PM, so a busy repository waits
+    for a later poll). Never in dry-run or while paused."""
+    if not cfg.ticket_review.enabled or cfg.dry_run or pause.paused(Path(cfg.db_path).parent):
+        return
+    ticketreview.expire(conn, time.time())
+    for r in ticketreview.requested(conn):
+        if r["repo"] not in cfg.repos or r["sources"] not in ticketreview.SOURCES:
+            ticketreview.set_status(conn, r["id"], "failed", "not a configured repository")
+            continue
+        if any(not q.get("reason") for q in queued) or not pool.can_take(jobkey(r["repo"], 0)):
+            continue
+        ticketreview.set_status(conn, r["id"], "running")
+        start(cfg, conn, r["repo"], 0, "ticket-review", lambda db, r=r: ticket_review_job(cfg, gh, db, r["id"], r["repo"], r["sources"]))
+
+
 def report_blocked(cfg: Config, repo: str, now_held: dict) -> None:
     """One event when a ticket becomes blocked or its blockers change, and one alert per cycle of tickets waiting for each other."""
     for k in [k for k in held if k[0] == repo and k[1] not in now_held]:
@@ -1388,6 +1432,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     if not cfg.dry_run:
         stop_closed(cfg, gh, conn)
         process_approvals(cfg, gh, conn, classifier)
+        try:
+            ticketreview.process(cfg, gh, conn, emit)             # what a person picked in the ticket review
+        except Exception:
+            log.exception("applying ticket review proposals failed")   # never stops the poll
     for repo in cfg.repos:
         handled: set[int] = set()
         todo = []
@@ -1424,6 +1472,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
             maybe_pm_sweep(cfg, gh, conn, repo)
         except Exception:
             log.exception("project manager sweep of %s failed", repo)        # never stops the poll
+    try:
+        maybe_ticket_review(cfg, gh, conn)
+    except Exception:
+        log.exception("ticket review failed")                   # never stops the poll
     try:
         if cfg.github_issues_enabled:
             schedules.tick(cfg, gh, conn, time.time(), Path(cfg.db_path).parent, emit, alert)

@@ -309,7 +309,7 @@ def filters(cfg, repo, state, label, text, names, csrf: str = "", stage: str = "
     chip = lambda name, key: (f'<a href="/tickets?{esc(urlencode({"repo": repo, "state": state, "label": label, "q": text, **({"stage": key} if key else {})}))}"'
                               f'{" aria-current=page" if key == stage else ""}>{name}</a>')
     chips = "".join(chip(n, k) for n, k in (("All", ""), ("Needs you", "needs"), ("In progress", "progress"), ("PRs &amp; CI", "prs"), ("Done", "done")))
-    return (new_ticket_form(cfg, repo, csrf) + import_form(cfg, repo, csrf) + '<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
+    return (new_ticket_form(cfg, repo, csrf) + import_form(cfg, repo, csrf) + (f'<p><a href="/tickets/review?repo={quote(repo, safe="")}">Review tickets</a> <span class="muted">for built or duplicate ones</span></p>' if cfg.ticket_review.enabled and csrf else "") + '<p class="muted">Changes are made as the factory\'s GitHub account. Sorted: waiting for you first, then failed, ready, in progress and open PRs; newest first within each.</p>'
             f'<form method="get" class="filters"><select name="repo" aria-label="Repository">{opts(cfg.repos, repo)}</select>'
             f'<select name="state" aria-label="State">{opts(STATES, state)}</select>'
             f'<select name="label" aria-label="Label">{opts(["", *names], label, "any label")}</select>'

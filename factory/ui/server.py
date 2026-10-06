@@ -118,6 +118,27 @@ class App:
         finally:
             db.close()
 
+    def request_ticket_review(self, repo: str, sources: str) -> bool:
+        """Queue a ticket review for the orchestrator (the UI has no GitHub token for this). The caller has checked repo and sources.
+        False when one is already waiting or running for the repository."""
+        from .. import ticketreview
+        db = sqlite3.connect(self.cfg().db_path, timeout=10)
+        try:
+            return ticketreview.request(db, repo, sources, time.time()) is not None
+        finally:
+            db.close()
+
+    def decide_proposals(self, repo: str, ids: list[int], accept: bool) -> int:
+        """Queue (accept) or reject the picked ticket review proposals of a repository for the orchestrator. Returns how many changed."""
+        from .. import ticketreview
+        db = sqlite3.connect(self.cfg().db_path, timeout=10)
+        try:
+            ticketreview.ensure_tables(db)
+            ok = [r[0] for r in db.execute(f"SELECT id FROM review_proposals WHERE repo=? AND id IN ({','.join('?' * len(ids))})", (repo, *ids))]
+            return ticketreview.decide(db, ok, accept, time.time())
+        finally:
+            db.close()
+
     def overview(self) -> dict:
         cfg, db = self.cfg(), self.ro_db()
         summary = {"poll_seconds": cfg.poll_seconds, "live": not cfg.dry_run, "classifier": cfg.classifier_backend,
