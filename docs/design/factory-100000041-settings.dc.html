@@ -1,0 +1,33 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Settings</title><script src="./support.js"></script></head><body><x-dc><helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono&display=swap"><style>
+x-dc{display:block}body{margin:0;background:#12161a;color:#e8edf0;font:15px/1.45 "Space Grotesk",system-ui,sans-serif}
+.b{background:#171c20;border-bottom:1px solid #2d363d;height:56px;display:flex;align-items:center;padding:0 40px;gap:28px;color:#a9b5bd}.b b{color:#e8edf0;font-size:18px}.b .a{color:#f2a93b;border-bottom:3px solid #f2a93b;line-height:53px}
+.lab{color:#9aa7b0;font:12px "JetBrains Mono",monospace;padding:14px 40px 0;text-transform:uppercase;letter-spacing:.06em}
+.w{display:flex;gap:28px;padding:20px 40px 40px;align-items:flex-start}
+.s{flex:0 0 220px;display:flex;flex-direction:column;gap:2px}.s h4{margin:16px 10px 4px;font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:#9aa7b0}.s a{padding:9px 10px;color:#a9b5bd;border-radius:6px;display:flex;justify-content:space-between}.s a.on{background:#12161a;color:#e8edf0;box-shadow:inset 2px 0 0 #f2a93b}
+.m{flex:1;min-width:0}h1{font-size:30px;margin:0 0 4px}.mu{color:#a9b5bd}
+.in{display:block;background:#12161a;border:1px solid #3b464e;color:#a9b5bd;padding:11px 12px;min-height:44px;box-sizing:border-box;margin:14px 0}
+.c{background:#1b2126;border:1px solid #2d363d;padding:18px;margin:0 0 14px}.c h3{margin:0 0 2px;font-size:17px}
+.r{display:flex;justify-content:space-between;gap:24px;padding:14px 0;border-top:1px solid #2d363d}.r:first-of-type{border-top:0}.r>div:first-child{max-width:420px}.r b{display:block}.r small{color:#a9b5bd;font-size:13px}
+.f{background:#12161a;border:1px solid #3b464e;padding:10px 12px;min-width:200px;min-height:44px;box-sizing:border-box}
+.t{width:48px;height:28px;border-radius:14px;background:#52c7a1;position:relative;flex:none}.t i{position:absolute;right:3px;top:3px;width:22px;height:22px;border-radius:11px;background:#12161a}.t.off{background:#3b464e}.t.off i{right:auto;left:3px;background:#a9b5bd}
+.p{display:inline-block;font-size:12px;padding:1px 8px;border-radius:999px;border:1px solid #3b464e;color:#a9b5bd}.p.g{color:#52c7a1;border-color:#52c7a1}.p.w{color:#f2a93b;border-color:#f2a93b}.p.e{color:#ff6b5e;border-color:#ff6b5e}
+.bar{position:sticky;bottom:0;background:#232a30;border:1px solid #f2a93b;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
+.bt{background:#8fa8ff;color:#0e1330;font-weight:700;padding:12px 18px;min-height:44px;box-sizing:border-box}.bt.g{background:none;color:#a9b5bd;border:1px solid #3b464e}
+.er{color:#ff6b5e;font-size:13px}
+</style></helmet>
+<div style="width:1440px"><div class="b"><b>Factory</b><span>Tickets</span><span>Events</span><span class="a">Settings</span></div>
+<div class="lab">Frame 1 · Settings section, default (General) with one unsaved change</div>
+<div class="w"><nav class="s" aria-label="Settings"><a class="on">Overview</a><h4>Work</h4><a>General</a><a>Projects</a><a>Labels</a><a>Schedules</a><h4>Agents</h4><a>Routing</a><a>Role agents</a><a>Harnesses</a><a>Prompts</a><h4>Checks</h4><a>Code review <span class="p g">On</span></a><a>CI feedback <span class="p g">On</span></a><a>Merge conflicts <span class="p">Off</span></a><h4>Notify</h4><a>Telegram</a><a>Slack <span class="p w">Set up</span></a><h4>Run</h4><a>Credentials</a><a>Workers</a><a>Updates</a><a>Backup</a></nav><div class="m"><div class="mu" style="font-size:13px">Settings › Work › General</div><h1>General</h1><div class="mu">How often the factory looks for work and where tickets come from.</div>
+<div class="in">Search all settings, e.g. "poll" or "dry run"</div>
+<div class="c"><h3>Mode</h3><div class="mu" style="font-size:14px">Whether the factory acts or only logs.</div>
+<div class="r"><div><b>Dry run <span class="p w">Safety</span></b><small>On: decisions are only logged, nothing is run or written. Turn off to go live.</small></div><div class="t"><i></i></div></div>
+<div class="r"><div><b>Confidence threshold</b><small>Below this the classifier's call goes to a person.</small></div><div><div class="f">0.7</div><small class="mu">Default 0.7 · range 0 to 1</small></div></div></div>
+<div class="c"><h3>Polling</h3><div class="mu" style="font-size:14px">How often work is picked up.</div>
+<div class="r"><div><b>Poll interval (seconds) <span class="p">Changed</span></b><small>How often GitHub is checked.</small></div><div><div class="f" style="border-color:#f2a93b">30</div><small class="mu">Default 60 · <u>Reset to default</u></small></div></div>
+<div class="r"><div><b>Poll interval</b><small>Between 5 and 3600.</small></div><div><div class="f" style="border-color:#ff6b5e">5000</div><div class="er">Enter a number from 5 to 3600.</div></div></div></div>
+<div class="bar"><span>1 change not saved. Saving restarts the factory when it is idle.</span><span style="display:flex;gap:10px"><span class="bt g">Discard</span><span class="bt">Save changes</span></span></div>
+</div></div>
+<div class="lab">Frame 2 · Saved (confirmation) and empty search</div>
+<div class="w"><div class="m"><div class="c" style="border-color:#52c7a1">Saved. The factory restarts when it is idle; nothing running is interrupted.</div>
+<div class="c"><b>No settings match "pol1".</b><div class="mu">Check the spelling, or browse a group on the left. <u>Clear search</u></div></div></div></div>
+</div></x-dc></body></html>
