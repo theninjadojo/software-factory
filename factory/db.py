@@ -20,6 +20,8 @@ def connect(path: str) -> sqlite3.Connection:
             outcome TEXT NOT NULL, detail TEXT NOT NULL, decided_at REAL NOT NULL,
             PRIMARY KEY (repo, issue, updated_at))"""
     )
+    if "scores" not in {r[1] for r in db.execute("PRAGMA table_info(decisions)")}:
+        db.execute("ALTER TABLE decisions ADD COLUMN scores TEXT")      # added later: JSON of why a person was asked; NULL on older rows
     db.execute(
         """CREATE TABLE IF NOT EXISTS approvals (
             repo TEXT NOT NULL, issue INTEGER NOT NULL, action TEXT NOT NULL, created REAL NOT NULL,
@@ -127,10 +129,10 @@ def seen(db, repo: str, issue: int, updated_at: str) -> bool:
     ).fetchone() is not None
 
 
-def record(db, repo: str, issue: int, updated_at: str, outcome: str, detail: str) -> None:
+def record(db, repo: str, issue: int, updated_at: str, outcome: str, detail: str, scores: str | None = None) -> None:
     db.execute(
-        "INSERT OR REPLACE INTO decisions VALUES (?,?,?,?,?,?)",
-        (repo, issue, updated_at, outcome, detail, time.time()),
+        "INSERT OR REPLACE INTO decisions (repo, issue, updated_at, outcome, detail, decided_at, scores) VALUES (?,?,?,?,?,?,?)",
+        (repo, issue, updated_at, outcome, detail, time.time(), scores),
     )
     db.commit()
 
@@ -507,7 +509,7 @@ def watched_prs(db, limit: int = 100) -> list[dict]:
 def tickets(db, limit: int = 100) -> list[dict]:
     """One row per ticket the factory has looked at: its latest decision and how many runs it has had."""
     return _dicts(db.execute(
-        """SELECT d.repo, d.issue, d.outcome, d.detail, d.decided_at,
+        """SELECT d.repo, d.issue, d.outcome, d.detail, d.decided_at, d.scores,
                   (SELECT COUNT(*) FROM runs r WHERE r.repo=d.repo AND r.issue=d.issue) AS runs,
                   (SELECT r.status FROM runs r WHERE r.repo=d.repo AND r.issue=d.issue ORDER BY r.id DESC LIMIT 1) AS last_run,
                   (SELECT r.title FROM runs r WHERE r.repo=d.repo AND r.issue=d.issue ORDER BY r.id DESC LIMIT 1) AS title

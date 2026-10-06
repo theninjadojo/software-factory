@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from .. import db as dbm
 from .. import questions as Q
+from .. import why as W
 from ..tracker import display, is_local
 from . import floorplan, localtickets as LT, plant, views, yard
 from .views import ago, esc, tok
@@ -614,6 +615,39 @@ def summary_card(db, repo: str, issue: int, docs, files: list[dict]) -> str:
             f'<ul class="sd-sumlist">{rows}</ul></section>')
 
 
+def why_part(row: dict) -> tuple[str, str]:
+    """(heading, body html) for a decision a person must make: the classifier's scores when they were recorded, else the old short reason."""
+    d = row.get("scores")
+    if not d:
+        return row.get("reason") or "A decision needs a person", '<p class="muted">Decided before scores were recorded. The scores for this decision are not available.</p>'
+    if d["reason"] != "low":
+        return "Needs a person", f'<p class="muted">{esc(W.SENTENCES[d["reason"]])}</p>'
+    th, head = d["threshold"], "Needs a person: low confidence"
+    if d["missing"]:
+        which = " and ".join(d["missing"])
+        return head, (f'<p class="muted">The labels-only classifier is in use and the {esc(which)} label is missing (fixed confidence {d["confidence"]:.2f}, '
+                      f'threshold {th:.2f}). Add a {esc(which)} label to this ticket, or choose below.</p>')
+    weak, rows = W.weakest(d), ""
+    for key, name in W.ROWS:
+        if key not in d["answers"]:
+            continue
+        v = d["answers"][key]
+        if v is None:
+            rows += f'<tr><td data-label="Answer">{name}</td><td data-label="Choice">Set by label</td><td data-label="Score" class="mono">-</td><td data-label="Against {th:.2f}" class="muted">Not scored</td></tr>'
+            continue
+        below = v[1] < th
+        verdict = f'<span style="color:var(--warn)">Below by {th - v[1]:.2f}</span>' if below else '<span style="color:var(--good)">Above</span>'
+        label = f"<b>{name} (weakest)</b>" if key == weak else name
+        rows += (f'<tr class="{"sd-weak" if key == weak else ""}"><td data-label="Answer">{label}</td>'
+                 f'<td data-label="Choice">{esc(v[0])}</td><td data-label="Score" class="mono">{v[1]:.2f}</td>'
+                 f'<td data-label="Against {th:.2f}">{verdict}</td></tr>')
+    src = "labels-only" if d["source"] == "labels" else "Jev"
+    return head, (f'<p class="muted">Confidence {d["confidence"]:.2f}, below the threshold of {th:.2f}.</p><div class="scroll"><table class="stack sd-table">'
+                  f'<caption class="sr">Classifier answers and scores</caption><thead><tr><th scope="col">Answer</th><th scope="col">Choice</th>'
+                  f'<th scope="col">Score</th><th scope="col">Against {th:.2f}</th></tr></thead><tbody>{rows}</tbody></table></div>'
+                  f'<p class="muted sd-fine">Scored by the {src} classifier. The overall score is the lowest of these.</p>')
+
+
 def needs_card(row: dict | None, csrf: str, back: str) -> str:
     """What the ticket needs from a person. Questions: each one a person must answer, its options with the recommendation marked
     (and chosen to start with), Accept recommendations, and the ones answered with safe defaults folded away. It posts the same
@@ -624,8 +658,9 @@ def needs_card(row: dict | None, csrf: str, back: str) -> str:
     repo, n, st = row["repo"], int(row["issue"]), row.get("st")
     if not st:
         acts = L.action_forms(repo, n, row.get("acts") or [], csrf, back)
-        return (f'<section class="sd-card sd-needs" aria-labelledby="nq-h"><div class="sd-cardhead"><h3 id="nq-h">{esc(row.get("reason") or "A decision needs a person")}</h3></div>'
-                f'<div class="sd-acts">{acts}</div></section>')
+        head, why = why_part(row)
+        return (f'<section class="sd-card sd-needs" aria-labelledby="nq-h"><div class="sd-cardhead"><h3 id="nq-h">{esc(head)}</h3></div>'
+                f'{why}<div class="sd-acts">{acts}</div></section>')
     pend = st.pending()
     pend_ids = {q.id for q in pend}
     hidden = (f'{views.csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{n}">'

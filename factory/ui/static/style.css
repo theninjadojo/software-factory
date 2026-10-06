@@ -195,7 +195,7 @@ table.tickets td:first-child { overflow-wrap:anywhere; min-width:0; max-width:22
 /* ---- The Factory and Tickets screens (board.py), to the "Ticket list and detail" design ----
    States: done green, run amber (moving), wait blue (a person), fail red, none dim and dashed. Square corners throughout. */
 .mono { font-family:var(--mono); } .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
-.sd-grow { flex:1 1 auto; } .sd-fine { font-size:13px; } .sd-pad { padding:16px 24px; margin:0; }
+.sd-grow { flex:1 1 auto; } .sd-fine { font-size:13px; } .sd-pad { padding:16px 24px; margin:0; } .sd-weak td { background:var(--panel2); }
 .sd-card { background:var(--panel); border:1px solid var(--line); padding:20px 24px; margin:0 0 20px; }
 .sd-card h2, .sd-card h3 { margin:0; font-size:18px; font-weight:700; text-transform:none; letter-spacing:0; color:var(--text); }
 .sd-cardhead { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:8px 20px; margin:0 0 16px; }

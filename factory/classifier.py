@@ -1,6 +1,6 @@
 """Classification. Output is validated against fixed enums: whatever the model
 (or the issue text) says, the only thing it can do is select a value from these sets."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 KINDS = {"bug", "feature", "docs", "chore", "question"}
@@ -25,6 +25,7 @@ class Classification:
     effort: str | None = None   # low/medium/high when the classifier chose it; else the routing row decides
     stage: str | None = None             # analyze/design/architect/implement: the recommended next stage
     stage_confidence: float | None = None
+    scores: dict | None = field(default=None, compare=False)   # per-answer [choice, confidence] (kind, size, human, stage); {"missing": [...]} from labels
 
     def __post_init__(self):
         if self.kind not in KINDS or self.complexity not in COMPLEXITY:
@@ -50,5 +51,6 @@ class RuleClassifier:
         kind = kind_from_labels(names, self.kind_aliases)
         level = next((c for c in COMPLEXITY if f"complexity:{c}" in names), None)
         if kind is None or level is None:
-            return Classification(kind or "chore", level or "medium", needs_human=False, confidence=0.4)
+            missing = (["kind"] if kind is None else []) + (["size"] if level is None else [])
+            return Classification(kind or "chore", level or "medium", needs_human=False, confidence=0.4, scores={"missing": missing})
         return Classification(kind, level, needs_human=False, confidence=0.9)
