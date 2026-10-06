@@ -194,7 +194,7 @@ class Detail(unittest.TestCase):
         files = [{"repo": REPO, "path": "docs/design/previews/factory-5-x.png", "url": f"https://github.com/{REPO}/blob/{'a' * 40}/docs/design/previews/factory-5-x.png",
                   "pr": f"https://github.com/{REPO}/pull/77"}]
         html = board.detail_html(r, "<section>NEEDS</section>", files, ["analyst", "designer"], [{"ts": time.time() - 30, "message": "Design <done>"}], 2, time.time(), True)
-        order = [html.index(x) for x in ('class="sd-tiles"', "NEEDS", 'id="j-h"', 'id="d-h"', "Steps in order", 'id="pr-h"', 'id="ev-h"')]
+        order = [html.index(x) for x in ('id="j-h"', "NEEDS", 'class="sd-tiles"', 'id="pr-h"', 'id="d-h"', "Steps in order", 'id="ev-h"')]
         self.assertEqual(order, sorted(order))
         for needle in ("Draft PR #77", "PR #9", "Checks failing", "Read design", 'id="live" data-src="/fragment/ticket"', "Design &lt;done&gt;", "/runs/1"):
             self.assertIn(needle, html)

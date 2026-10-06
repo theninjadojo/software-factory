@@ -530,13 +530,15 @@ def journey_card(st: dict, verify: dict | None = None, now: float | None = None)
             f'<span class="muted sd-fine">The same stations as the Factory floor</span></div>{strip(st, verify, now)}</section>')
 
 
-def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, csrf: str = "") -> str:
-    """Everything below the questions, which changes while the ticket runs (refreshed in place on the ticket's own page)."""
+def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, csrf: str = "", needs_html: str = "") -> str:
+    """Everything under the ticket's header, in the order a person needs it: Journey, what needs them, status, pull requests, then
+    the detail. It changes while the ticket runs (refreshed in place on the ticket's own page); needs_html rides along."""
     repo, n, j = r["repo"], r["issue"], r["journey"]
     design_prs = sorted({f.get("pr") for f in files if f.get("pr")})
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
-    return (journey_card(r["stations"], r.get("verify"), now) + design_html(files, repo, n, docs, design_link, r.get("design_imports")) + steps_html(j, repo, n, docs) + phone_journey(r, files, docs)
-            + prs_html(r["prs"], fix_rounds, csrf) + activity_html(events, now))
+    return (journey_card(r["stations"], r.get("verify"), now) + phone_journey(r, files, docs) + needs_html + _tiles(j, r["state"])
+            + prs_html(r["prs"], fix_rounds, csrf) + design_html(files, repo, n, docs, design_link, r.get("design_imports")) + steps_html(j, repo, n, docs)
+            + activity_html(events, now))
 
 
 def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_rounds: int, now: float, live: bool, images: bool = False,
@@ -555,14 +557,14 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
              + "".join(f'<a href="{views.doc_url(repo, n, s)}">Read {esc(views.DOC_NOUN[s])}</a>' for s in docs)
              + (f'<a href="/ticket/images?{esc(_qs(repo=repo, n=n))}">View images</a>'
                 f'<a href="/ticket/review?{esc(_qs(repo=repo, n=n))}">Review the screens</a>' if images else ""))
-    body = live_part(r, files, docs, events, fix_rounds, now, csrf)
+    body = live_part(r, files, docs, events, fix_rounds, now, csrf, needs_html)
     if live and j["status"] in ("running", "waiting", "queued"):
         body = f'<div id="live" data-src="/fragment/ticket">{body}</div>'
     return (f'<article class="sd-detail" aria-label="Ticket {esc(display(int(n)))}">'
             f'<div class="sd-dhead"><div class="sd-row"><span class="mono muted">{esc(views.ref(repo, n))}</span>'
             f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></div>'
             f'<h2>{esc(r["title"])}</h2><div class="sd-links">{links}</div></div>'
-            + _tiles(j, r["state"]) + needs_html + local_html + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + body + handling + "</article>")
+            + body + local_html + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + handling + "</article>")
 
 
 SUMMARY_LINE = re.compile(r"^\s*(?:\*\*)?Summary:?(?:\*\*)?:?\s*(.+)$", re.I | re.M)
