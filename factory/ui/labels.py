@@ -416,10 +416,19 @@ def action_forms_for(need: dict, csrf: str, back: str = "/") -> str:
     return action_forms(need["repo"], need["issue"], need["acts"], csrf, back)
 
 
-_needs_cache: dict = {"at": 0.0, "rows": None, "titles": {}}
+_needs_cache: dict = {"at": 0.0, "rows": None, "titles": {}, "dirty": False}
 _needs_lock = threading.Lock()
 NEEDS_TTL = 20      # seconds: the Floor refreshes every 5s, GitHub is asked at most this often
 NEEDS_EXTRA = 40    # waiting tickets older than the first page of open issues, fetched one by one
+
+
+def needs_forget(repo: str, n: int) -> None:
+    """A ticket was acted on from the UI: drop it from the cached rows (the page that follows still has a GitHub-checked list)
+    and make the next needs_you read GitHub again."""
+    with _needs_lock:
+        if _needs_cache["rows"] is not None:
+            _needs_cache["rows"] = [r for r in _needs_cache["rows"] if (r["repo"], r["issue"]) != (repo, n)]
+        _needs_cache["dirty"] = True
 
 
 def needs_cached():
@@ -437,7 +446,7 @@ def needs_you(h) -> list | None:
         return None
     gh_on = cfg.github_issues_enabled           # off: only local tickets are read (their questions and calls for a person are in the local store)
     with _needs_lock:
-        if _needs_cache["rows"] is not None and time.time() - _needs_cache["at"] < NEEDS_TTL:
+        if _needs_cache["rows"] is not None and not _needs_cache["dirty"] and time.time() - _needs_cache["at"] < NEEDS_TTL:
             return _needs_cache["rows"]
     db = h.app.ro_db()
     if db is None:
@@ -489,7 +498,7 @@ def needs_you(h) -> list | None:
         return None
     rows.sort(key=lambda r: r["at"], reverse=True)
     with _needs_lock:
-        _needs_cache.update(at=time.time(), rows=rows, titles=titles)
+        _needs_cache.update(at=time.time(), rows=rows, titles=titles, dirty=False)
     return rows
 
 
@@ -804,8 +813,7 @@ def start(h, form, csrf: str) -> None:
                 for lab in trigger_labels(cfg):
                     if lab in held and lab != chosen:
                         gh.remove_label(repo, n, lab)
-        with _needs_lock:
-            _needs_cache["rows"] = None                      # the Floor's tray must not show it again
+        needs_forget(repo, n)                                # the Floor's tray must not show it again
     except Refused as e:
         return _done(h, form, csrf, str(e), "bad")
     except (urllib.error.URLError, OSError) as e:
@@ -978,8 +986,7 @@ def close(h, form, csrf: str) -> None:
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: close %s#%d failed", repo, n)
         return _done(h, form, csrf, _github_error(e), "bad")
-    with _needs_lock:
-        _needs_cache["rows"] = None
+    needs_forget(repo, n)
     log.info("tickets: closed %s %s from the UI", repo, tracker.display(n))
     _done(h, form, csrf, f"Closed {views.ref(repo, n)}.")
 
@@ -1094,8 +1101,7 @@ def answer(h, form, csrf: str) -> None:
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: answer on %s#%d failed", repo, n)
         return _done(h, form, csrf, _github_error(e), "bad")
-    with _needs_lock:
-        _needs_cache["rows"] = None                          # the tray must not show it again
+    needs_forget(repo, n)                                    # the tray must not show it again
     log.info("tickets: answers recorded on %s#%d from the UI", repo, n)
     _done(h, form, csrf, FLASH["continued" if done else "answered"])
 
@@ -1119,11 +1125,10 @@ def answer_all(h, form, csrf: str) -> None:
         try:
             _repo(cfg, repo), _number(num)
             _record(gh, cfg, h, repo, int(num), None, None, True)
+            needs_forget(repo, int(num))
             ok += 1
         except (Q.Refused, Refused, urllib.error.URLError, OSError):
             failed.append(ref.split("/")[-1])
-    with _needs_lock:
-        _needs_cache["rows"] = None
     log.info("tickets: recommendations accepted on %d ticket(s) from the UI, %d failed", ok, len(failed))
     msg = f"Recommendations accepted on {ok} ticket{'s' if ok != 1 else ''}." + (f" Could not do: {', '.join(failed)}." if failed else "")
     _done(h, form, csrf, msg, "bad" if failed and not ok else "ok")
