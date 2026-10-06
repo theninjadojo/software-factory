@@ -17,6 +17,9 @@ FAKE = """#!/bin/sh
 printf '%s %s\\n' "$(basename "$0")" "$*" >> "$FAKE_LOG"
 env | grep '^GIT_CONFIG' >> "$FAKE_LOG" || true
 case "$(basename "$0")" in
+  docker) [ "$1" = compose ] && [ "$3" = build ] && [ -n "$FAKE_BUILD_FAILS" ] && exit 1; [ "$1" = ps ] && [ -n "$FAKE_BUSY" ] && { i=0; while [ $i -lt "$FAKE_BUSY" ]; do echo "box$i"; i=$((i+1)); done; } ;;
+esac
+case "$(basename "$0")" in
   git) [ "$1" = symbolic-ref ] && { [ -n "$FAKE_DETACHED" ] && exit 1; echo "${FAKE_BRANCH:-main}"; }; [ "$1" = pull ] && [ -n "$FAKE_PULL_FAILS" ] && exit 1 ;;
 esac
 exit 0
@@ -61,7 +64,43 @@ class SourceCheckout(unittest.TestCase):
         self.assertEqual(pulls, ["git pull --ff-only https://github.com/theninjadojo/software-factory.git +refs/heads/main:refs/remotes/origin/main"])
         self.assertIn("docker compose --profile build build", calls)
         self.assertLess(calls.index(pulls[0]), calls.index("docker compose --profile build build"))      # pull first, then build
-        self.assertIn("docker compose up -d", r.stdout)                # told how to restart, not done for the person
+        self.assertNotIn("docker compose up -d", calls)                # one "y" answers the pull; the restart question gets no answer
+        self.assertIn("Not restarting", r.stdout)
+        self.assertIn("docker compose up -d", r.stdout)                # ...and says how to do it later
+
+    def test_yes_to_the_restart_runs_up_after_the_build(self):
+        r, calls = self.run_update("y\ny\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("docker compose up -d", calls)
+        self.assertLess(calls.index("docker compose --profile build build"), calls.index("docker compose up -d"))
+        self.assertIn("Restarted.", r.stdout)
+
+    def test_no_to_the_restart_leaves_the_services_running(self):
+        for answer in ("n\n", "\n", "maybe\n"):
+            with self.subTest(answer=answer):
+                self.log.unlink(missing_ok=True)
+                r, calls = self.run_update("y\n" + answer)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("docker compose --profile build build", calls)       # the update itself still happened
+                self.assertNotIn("docker compose up -d", calls)
+                self.assertIn("Not restarting", r.stdout)
+
+    def test_the_restart_question_warns_about_runs_in_flight(self):
+        r, calls = self.run_update("y\nn\n", env={"FAKE_BUSY": "2"})
+        self.assertIn("2 agent run(s) are in flight; restarting now would kill them", r.stdout)
+        self.assertNotIn("docker compose up -d", calls)
+        r, _ = self.run_update("y\nn\n")
+        self.assertNotIn("agent run(s) are in flight", r.stdout)
+
+    def test_declining_the_update_never_asks_about_a_restart(self):
+        r, calls = self.run_update("n\ny\n")
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("docker compose up -d", calls)
+
+    def test_a_failed_build_never_asks_about_a_restart(self):
+        r, calls = self.run_update("y\ny\n", env={"FAKE_BUILD_FAILS": "1"})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("docker compose up -d", calls)
 
     def test_the_token_goes_in_the_environment_only_for_github_and_never_on_a_command_line(self):
         r, calls = self.run_update("yes\n")
@@ -109,6 +148,13 @@ class SourceCheckout(unittest.TestCase):
         self.assertIn("detached", r.stderr)
         self.assertEqual([c for c in calls if c.startswith(("git pull", "docker"))], [])
 
+    def test_a_fresh_checkout_without_a_dot_env_still_gets_the_question(self):
+        (self.d / ".env").unlink()
+        r, calls = self.run_update("y\n", token_file=None)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("source checkout", r.stdout)
+        self.assertIn("docker compose --profile build build", calls)
+
     def test_a_worktree_counts_as_a_source_checkout(self):
         (self.d / ".git").rmdir()
         (self.d / ".git").write_text("gitdir: /elsewhere\n")           # in a worktree .git is a file
@@ -120,7 +166,8 @@ class SourceCheckout(unittest.TestCase):
         r, calls = self.run_update("y\n", env={"DRY_RUN": "1"})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("+ docker compose --profile build build", r.stdout)
-        self.assertFalse([c for c in calls if c.startswith(("git pull", "docker"))])
+        self.assertFalse([c for c in calls if c.startswith(("git pull", "docker")) and not c.startswith("docker ps")])   # (ps only reads)
+        self.assertNotIn("docker compose up -d", calls)
         self.assertNotIn(TOKEN, r.stdout)
 
     def test_a_release_install_is_not_treated_as_a_source_checkout(self):

@@ -106,5 +106,5 @@ first and rolls back like a manual update. `journalctl --user -u shikumi-update.
 
 ## Not covered
 
-- **Source checkouts** update with `git pull` and `docker compose --profile build build`. `scripts/update.sh` does both after asking (the pull uses `GITHUB_TOKEN` or `$FACTORY_HOME/secrets/github_token`, and falls back to git's own credentials without one); it never restarts the services, so run `docker compose up -d` yourself when no agent run is in flight.
+- **Source checkouts** update with `git pull` and `docker compose --profile build build`. `scripts/update.sh` does both after asking (the pull uses `GITHUB_TOKEN` or `$FACTORY_HOME/secrets/github_token`, and falls back to git's own credentials without one); it then asks separately whether to restart the services (`docker compose up -d`), warning when an agent run is in flight, and the default is no.
 - **Config or database changes** between versions are not migrated automatically: read the release notes before a major update.
