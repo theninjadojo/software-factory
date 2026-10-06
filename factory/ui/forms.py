@@ -1,5 +1,6 @@
 """HTML forms for settings, credentials, Telegram and Slack. Values come from the effective configuration, never from secrets."""
 import json
+from pathlib import Path
 import time
 
 from ..events import ALL_EVENTS, LEVELS
@@ -265,7 +266,46 @@ def telegram_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") ->
         f'<form method="post" action="/telegram/test" class="inline">{csrf_field(csrf)}<button>Send a test message</button></form>{found}')
 
 
-def harnesses_page(cfg, eff: dict, csrf: str, errors=None) -> str:
+def tools_section(state_dir, csrf: str) -> str:
+    """Installed and newest version of each agent CLI, with an Update button. The UI never touches the container engine: the button
+    leaves a request file and the orchestrator does the rebuild (factory/tools.py)."""
+    if state_dir is None:
+        return ""
+    from .. import tools as T
+    st, newest = T.read(state_dir), T.latest(state_dir)
+    installed, building, last, queued = st.get("installed") or {}, st.get("building") or "", st.get("last") or {}, T.requested(state_dir)
+    rows = []
+    for name, info in installed.items():
+        if name not in T.TOOLS:
+            continue
+        have, want = str(info.get("version") or ""), newest.get(name, "")
+        if name == building or name in queued:
+            state, action = badge("updating" if name == building else "queued", "warn"), ""
+        elif not info.get("managed"):
+            state, action = badge("custom image", "warn"), ""
+        else:
+            state = badge("update available", "warn") if T.outdated(have, want) else (badge("up to date", "good") if have and want else badge("unknown", "warn"))
+            action = (f'<form method="post" action="/tools/update" class="inline">{csrf_field(csrf)}<input type="hidden" name="name" value="{esc(name)}">'
+                      f'<button>Update {esc(T.TOOLS[name].label)}</button></form>')
+        rows.append(f'<tr><td data-l="Tool">{esc(T.TOOLS[name].label)}</td><td data-l="Installed">{esc(have or "?")}</td><td data-l="Newest">{esc(want or "?")}</td><td data-l="Status">{state}</td><td class="actions">{action}</td></tr>')
+    if not rows:
+        table = '<p class="muted">No agent image was found on this machine yet. Versions appear here a minute after the factory starts.</p>'
+    else:
+        table = ('<div class="scroll"><table class="stack"><thead><tr><th>Tool</th><th>Installed</th><th>Newest</th><th>Status</th><th></th></tr></thead>'
+                 f'<tbody>{"".join(rows)}</tbody></table></div>')
+    result = ""
+    if last.get("message"):
+        result = f'<p>{badge("done" if last.get("ok") else "failed", "good" if last.get("ok") else "bad")} {esc(str(last["message"])[:400])} <span class="muted">{esc(ago(float(last.get("at") or 0)))}</span></p>'
+    checked = T.checked(state_dir)
+    return ('<div class="card tools"><h3>Agent tools</h3>'
+            '<p class="muted">The agent programs live inside the sandbox images, so they only change when the image is rebuilt. Update rebuilds one with the '
+            'newest release, checks it starts, then switches to it; the old image is kept as <code>:previous</code>. Runs already in flight finish on the old one. '
+            'It takes a few minutes and needs the internet. A newer CLI can change its flags: check the first run afterwards.</p>'
+            f'{table}{result}<form method="post" action="/tools/check" class="inline">{csrf_field(csrf)}<button>Check for newer versions</button></form> '
+            f'<span class="muted">{"Last checked " + esc(ago(checked)) + "." if checked else "Not checked yet."}</span></div>')
+
+
+def harnesses_page(cfg, eff: dict, csrf: str, errors=None, state_dir=None) -> str:
     from .integrations import harness_credential_status
     used = {}
     for k, r in cfg.routes.items():
@@ -301,4 +341,4 @@ def harnesses_page(cfg, eff: dict, csrf: str, errors=None) -> str:
     note = ('<p class="muted">A harness is the agent program the sandbox runs. Routes and roles choose one by name (Settings → Routing and Role agents). '
             'Codex, Gemini and OpenCode (OpenRouter, Zen) are <strong>experimental templates</strong>: the plumbing is tested, but their command lines have not been verified end to end. '
             'Build their images from <code>sandbox/codex</code>, <code>sandbox/gemini</code> and <code>sandbox/opencode</code>. Each login also has its own terms for unattended use.</p>')
-    return note + '<div class="cards one">' + "".join(cards) + "</div>"
+    return note + tools_section(state_dir, csrf) + '<div class="cards one">' + "".join(cards) + "</div>"
