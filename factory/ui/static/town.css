@@ -14,6 +14,7 @@
 @keyframes tw-beam{0%,100%{transform:rotate(-12deg);opacity:.25}50%{transform:rotate(12deg);opacity:.5}}
 @keyframes tw-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 @keyframes tw-glow{0%,100%{fill:#f2a93b}50%{fill:#ffcb73}}
+@keyframes tw-legs{from{transform:rotate(-24deg)}to{transform:rotate(24deg)}}
 .tw-lit{animation:tw-flick 5s ease-in-out infinite}
 .tw-lit.d2{animation-delay:-1.7s}
 .tw-lit.d1{animation-delay:-.8s}
@@ -72,10 +73,60 @@
 @keyframes tw-flamek{0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.35)}}
 .tw-flame{transform-box:fill-box;transform-origin:bottom center;animation:tw-flamek .3s ease-in-out infinite}
 .tw-flame.b{animation-delay:-.15s}
+.tw-walk .tw-lg.a{animation:tw-legs .5s ease-in-out infinite alternate}
 @keyframes tw-boltk{0%,90%{opacity:0}91%{opacity:1}92%{opacity:.2}93%{opacity:1}95%,100%{opacity:0}}
 .tw-bolt{opacity:0;animation:tw-boltk 6s linear infinite}
 @keyframes tw-flashk{0%,90%{opacity:0}91%{opacity:.28}92%{opacity:.05}93%{opacity:.22}95%,100%{opacity:0}}
 .tw-flash{opacity:0;animation:tw-flashk 6s linear infinite;pointer-events:none}
+.tw-ch-tail{transform-box:fill-box;transform-origin:100% 50%;animation:tw-ch-tailk .8s ease-in-out infinite alternate}
+@keyframes tw-ch-tailk{from{transform:rotate(-8deg)}to{transform:rotate(10deg)}}
+.tw-ch-wing{transform-box:fill-box;transform-origin:92% 96%;animation:tw-ch-flapk .9s ease-in-out infinite alternate}
+@keyframes tw-ch-flapk{from{transform:rotate(14deg)}to{transform:rotate(-30deg)}}
+.tw-ch-hop{animation:tw-ch-hopk .7s ease-in-out infinite}
+@keyframes tw-ch-hopk{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+.tw-ch-bob{animation:tw-ch-bobk .5s ease-in-out infinite alternate}
+@keyframes tw-ch-bobk{from{transform:translateY(0)}to{transform:translateY(-1.1px)}}
+.tw-ch-waddle{transform-box:fill-box;transform-origin:50% 100%;animation:tw-ch-waddlek .6s ease-in-out infinite alternate}
+@keyframes tw-ch-waddlek{from{transform:rotate(-7deg)}to{transform:rotate(7deg)}}
+.tw-ch-trav{animation:tw-ch-travk var(--t,30s) linear infinite}
+@keyframes tw-ch-travk{0%{transform:translateX(0);opacity:0}4%{opacity:1}96%{opacity:1}100%{transform:translateX(var(--dx));opacity:0}}
+.tw-ch-tw{transform-box:fill-box;transform-origin:center;animation:tw-ch-twk 1.6s ease-in-out infinite}
+@keyframes tw-ch-twk{0%,100%{opacity:0;transform:scale(.3)}50%{opacity:1;transform:scale(1)}}
+.tw-ch-breath{transform-box:fill-box;transform-origin:0% 50%;animation:tw-ch-breathk 6s ease-in-out infinite}
+@keyframes tw-ch-breathk{0%,56%{opacity:0;transform:scaleX(.2)}62%{opacity:1;transform:scaleX(1)}72%{transform:scaleX(.7)}80%{transform:scaleX(1)}90%,100%{opacity:0;transform:scaleX(.3)}}
+.tw-ch-scarf{transform-box:fill-box;transform-origin:50% 0%;animation:tw-ch-scarfk 1.8s ease-in-out infinite alternate}
+@keyframes tw-ch-scarfk{from{transform:rotate(-6deg)}to{transform:rotate(9deg)}}
+.tw-sn-blob{transform-box:fill-box;transform-origin:center;animation:tw-sn-blobk 40s linear infinite}
+@keyframes tw-sn-blobk{0%,4%{transform:scale(0)}10%,70%{transform:scale(1)}76%,100%{transform:scale(0)}}
+.tw-sn-cap{transform-box:fill-box;transform-origin:50% 100%;animation:tw-sn-capk 40s linear infinite}
+@keyframes tw-sn-capk{0%,4%{transform:scaleY(0)}10%,70%{transform:scaleY(1)}76%,100%{transform:scaleY(0)}}
+.tw-sn-sheet{animation:tw-sn-sheetk 40s linear infinite}
+@keyframes tw-sn-sheetk{0%,32%{opacity:0}36%,70%{opacity:1}76%,100%{opacity:0}}
+.tw-sn-fall{animation:tw-sn-fallk 40s linear infinite}
+@keyframes tw-sn-fallk{0%{opacity:0}3%,70%{opacity:1}76%,100%{opacity:0}}
+.tw-sn-pop{transform-box:fill-box;transform-origin:50% 100%;animation:tw-sn-popk 40s linear infinite}
+@keyframes tw-sn-popk{0%,38%{transform:scale(0)}44%{transform:scale(1.08)}47%,70%{transform:scale(1)}76%,100%{transform:scale(0)}}
+.tw-sn-melt{transform-box:fill-box;transform-origin:50% 100%;animation:tw-sn-meltk 7s ease-in-out infinite alternate}
+@keyframes tw-sn-meltk{from{transform:scale(1,1)}to{transform:scale(1.18,.5)}}
+.tw-sn-puddle{transform-box:fill-box;transform-origin:center;animation:tw-sn-puddlek 7s ease-in-out infinite alternate}
+@keyframes tw-sn-puddlek{from{transform:scale(.4)}to{transform:scale(1.5,1.2)}}
+.tw-sn-step{transform-box:fill-box;transform-origin:50% 100%;opacity:0;animation:tw-sn-stepk 14s ease-out infinite}
+.tw-sn-step.s1{animation-name:tw-sn-stepk1}
+.tw-sn-step.s2{animation-name:tw-sn-stepk2}
+.tw-sn-step.s3{animation-name:tw-sn-stepk3}
+.tw-sn-step.s4{animation-name:tw-sn-stepk4}
+.tw-sn-step.s0{animation-name:tw-sn-stepk0}
+@keyframes tw-sn-stepk0{0%{opacity:0;transform:scale(0)}6%{opacity:1;transform:scale(1.06)}9%,92%{opacity:1;transform:scale(1)}98%,100%{opacity:0;transform:scale(1)}}
+@keyframes tw-sn-stepk1{0%,14%{opacity:0;transform:scale(0)}20%{opacity:1;transform:scale(1.06)}23%,92%{opacity:1;transform:scale(1)}98%,100%{opacity:0;transform:scale(1)}}
+@keyframes tw-sn-stepk2{0%,28%{opacity:0;transform:scale(0)}34%{opacity:1;transform:scale(1.06)}37%,92%{opacity:1;transform:scale(1)}98%,100%{opacity:0;transform:scale(1)}}
+@keyframes tw-sn-stepk3{0%,44%{opacity:0;transform:scale(0)}50%{opacity:1;transform:scale(1.04)}53%,92%{opacity:1;transform:scale(1)}98%,100%{opacity:0;transform:scale(1)}}
+@keyframes tw-sn-stepk4{0%,58%{opacity:0;transform:scale(0)}64%{opacity:1;transform:scale(1.04)}67%,92%{opacity:1;transform:scale(1)}98%,100%{opacity:0;transform:scale(1)}}
+.tw-ch-trav{opacity:1;transform:translateX(calc(var(--dx,0px) * var(--p,0)))}
+.tw-ch-tw{opacity:1}
+.tw-ch-breath{opacity:0}
+.tw-sn-step{opacity:1}
+.tw-lg,.tw-am{transform-box:fill-box;transform-origin:50% 0%}
+.tw-walk .tw-lg.b,.tw-walk .tw-am{animation:tw-legs .5s ease-in-out infinite alternate-reverse}
 .tws0{animation-delay:0s}
 .tws1{animation-delay:-1.3s}
 .tws2{animation-delay:-0.7s}
@@ -108,12 +159,16 @@
 .tws29{animation-delay:-2.6999999999999997s;transform-origin:88px 80px;transform-box:view-box}
 .tws30{animation-delay:-3.0s;transform-origin:96px 80px;transform-box:view-box}
 .tws31{animation-delay:-3.3s;transform-origin:104px 80px;transform-box:view-box}
-.tws32{filter:brightness(.85)}
-.tws33{animation-delay:-0.9s}
-.tws34{animation-delay:-1.8s}
-.tws35{transform-origin:-8px 0px;transform-box:view-box}
-.tws36{transform-origin:9px 0px;transform-box:view-box}
-.tws37{animation-delay:-1.5s}
-.tws38{animation-delay:-0.5s}
-.tws39{transform-origin:6px -2px;transform-box:view-box}
-@media (prefers-reduced-motion:reduce){.tw-art *{animation:none !important}.tw-art .tw-steam{opacity:.6}}
+.tws32{animation-delay:-0.0s}
+.tws33{animation-delay:-0.25s}
+.tws34{animation-delay:-0s}
+.tws35{animation-delay:-.3s}
+.tws36{filter:brightness(.85)}
+.tws37{animation-delay:-0.9s}
+.tws38{animation-delay:-1.8s}
+.tws39{transform-origin:-8px 0px;transform-box:view-box}
+.tws40{transform-origin:9px 0px;transform-box:view-box}
+.tws41{animation-delay:-1.5s}
+.tws42{animation-delay:-0.5s}
+.tws43{transform-origin:6px -2px;transform-box:view-box}
+@media (prefers-reduced-motion:reduce){.tw-art *{animation:none !important}.tw-art .tw-steam{opacity:.6}.tw-art .tw-ch-breath{opacity:0}}
