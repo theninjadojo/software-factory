@@ -965,6 +965,8 @@ def parse(raw: dict) -> Config:
         if level not in routes:
             raise ValueError(f"routing.{level} missing")
     rn = {k: (tuple(v) if isinstance(v, list) else v) for k, v in raw.get("runner", {}).items()}
+    if isinstance(rn.get("thinking_tokens"), dict):              # one effort level set alone keeps the built-in budget of the others
+        rn["thinking_tokens"] = {**RunnerCfg().thinking_tokens, **rn["thinking_tokens"]}
     projects = tuple(
         Project(name=p["name"], description=p.get("description", ""),
                 repos=tuple(ProjectRepo(**r) if isinstance(r, dict) else ProjectRepo(r) for r in p["repos"]))

@@ -133,7 +133,7 @@ class Ui(AdminCase):
         self.assertEqual(s, 200)
         self.assertIn("Built-in instructions", html)
         self.assertIn("ROLE: Business analyst", html)
-        self.assertIn("Agent prompts", self.req("GET", "/settings?section=general", cookie=cookie)[2])
+        self.assertIn("Agent instructions", self.req("GET", "/settings?section=general", cookie=cookie)[2])
         text = "Answer in German 😀.\r\nKeep <b>it</b> short."
         s, _, html = self.post(cookie, csrf, "/settings/save", self.form(analyst=text))
         self.assertEqual(s, 422)

@@ -78,16 +78,24 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           _n(len(cfg.schedules), "schedule"), "info", ("Tickets", "Factory"), "/schedules", "Schedules"),
         F("projects", "source", "Projects", "Repositories that work together, each with a one-line role the agents read.",
           _n(len(cfg.projects), "project"), "info", ("Tickets", "A ticket"), "/settings?section=projects", "Projects"),
-        F("routing", "work", "Routing", f"Which model and effort each size of ticket gets: {tiers}.",
-          _n(len(cfg.routes), "tier"), "info", ("A ticket",), "/settings?section=routing", "Routing"),
-        F("roles", "work", "Role agents", "The stages before a build: " + (", ".join(r.name for r in cfg.roles) or "none") + ".",
-          _n(len(cfg.roles), "role"), "info", ("A ticket", "Factory"), "/settings?section=roles", "Role agents"),
+        F("comments", "source", "Comment triage", "An agent reads new comments on tickets the factory worked on and works out what they ask for.",
+          *_onoff(cfg.comments.enabled), ("A ticket",), "/settings?section=comments", "Comment triage"),
+        F("design_links", "source", "Design links", "Design exports linked in a ticket are fetched from hosts you list and shown to agents.",
+          *_onoff(cfg.design_links.enabled), ("A ticket",), "/settings?section=design_links", "Design links"),
+        F("ticket_review", "source", "Ticket review", "On request, an agent proposes which open tickets are already built or duplicates.",
+          *_onoff(cfg.ticket_review.enabled), ("Tickets",), "/settings?section=ticket_review", "Ticket review"),
+        F("scanner", "source", "Scan limits", "How many tickets and findings a code-smell scan may open.",
+          f"{cfg.scanner.max_tickets} tickets a run", "info", ("Tickets",), "/settings?section=scanner", "Scan limits"),
+        F("routing", "work", "Models by ticket size", f"Which model and effort each size of ticket gets: {tiers}.",
+          _n(len(cfg.routes), "tier"), "info", ("A ticket",), "/settings?section=routing", "Models by ticket size"),
+        F("roles", "work", "Stage agents", "The stages before a build: " + (", ".join(r.name for r in cfg.roles) or "none") + ".",
+          _n(len(cfg.roles), "role"), "info", ("A ticket", "Factory"), "/settings?section=roles", "Stage agents"),
         F("classifier", "work", "Classifier", f"Decides each ticket's kind and size; below confidence {cfg.confidence_threshold:g} it asks you.",
           "Jev" if cfg.classifier_backend == "jev" else "Labels", "info", ("A ticket", "Needs you"), "/settings?section=classifier", "Classifier"),
-        F("runner", "work", "Agent runner", "How many agents run at once, their time and memory limits, and the only hosts a sandbox may reach.",
-          f"{cfg.runner.max_parallel} at once", "info", ("Factory",), "/settings?section=runner", "Agent runner"),
+        F("runner", "work", "Sandbox & limits", "How many agents run at once, their time and memory limits, and the only hosts a sandbox may reach.",
+          f"{cfg.runner.max_parallel} at once", "info", ("Factory",), "/settings?section=runner", "Sandbox & limits"),
         F("harnesses", "work", "Harnesses", "The agent programs available, and the credential each one uses.",
-          _n(len(cfg.harnesses) or 1, "harness", "harnesses"), "info", ("Routing", "Role agents"), "/harnesses", "Harnesses"),
+          _n(len(cfg.harnesses) or 1, "harness", "harnesses"), "info", ("Models by ticket size", "Stage agents"), "/harnesses", "Harnesses"),
         F("workers", "work", "Verification workers", "Run a repository's checks (Android, iOS …) on another machine before anything is pushed.",
           *_onoff(cfg.workers.enabled), ("Factory", "A ticket"), "/workers", "Workers"),
         F("ci", "checks", "CI feedback", f"Watches CI on factory pull requests; after a failure an agent tries up to {_n(cfg.ci.fix_rounds, 'fix')}.",
@@ -105,6 +113,8 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           ("Factory", "Needs you"), "/telegram", "Telegram"),
         F("slack", "loop", "Slack", "Alerts, buttons and /factory in a Slack channel. Set it up from start to finish on the Slack page.",
           *slack, ("Factory", "Needs you"), "/slack", "Slack"),
+        F("chat", "loop", "Ticket chat", "Ask about a ticket and get a quick answer from a short read-only run.",
+          *_onoff(cfg.chat.enabled), ("A ticket",), "/settings?section=chat", "Ticket chat"),
         F("screens", "loop", "Screens", "Screenshots of each app at every viewport, compared with the approved ones.",
           "Every " + cfg.screens.board_every if cfg.screens.board_every else "On request", "info", ("Screens",), "/settings?section=screens", "Screens"),
         F("mode", "run", "Mode", "Live: agents run and open pull requests. Dry run: decisions are only logged.",
@@ -114,7 +124,11 @@ def features(cfg, slack_conn=None) -> list[Feature]:
         F("general", "run", "Polling and labels", f"Checks for work every {cfg.poll_seconds} s; who may apply the labels the factory reacts to.",
           f"{cfg.poll_seconds} s", "info", ("Factory",), "/settings?section=general", "General"),
         F("labels", "run", "Labels", "The labels the factory reads and writes.", "", "info", ("Tickets",), "/settings?section=labels", "Labels"),
-        F("prompts", "run", "Agent prompts", "Your own instructions for each agent, before its built-in ones.", "", "info", ("A ticket",), "/settings?section=prompts", "Agent prompts"),
+        F("prompts", "work", "Agent instructions", "Your own instructions for each agent, before its built-in ones.", "", "info", ("A ticket",), "/settings?section=prompts", "Agent instructions"),
+        F("health", "run", "Health alerts", "Telegram alerts when disk, memory, polling or runs go wrong.",
+          *_onoff(cfg.health.enabled), ("Telegram",), "/settings?section=health", "Health alerts"),
+        F("update_check", "run", "Update checks", "A banner when a newer release is out.",
+          *_onoff(cfg.updates.check), ("Everywhere",), "/settings?section=update_check", "Update checks"),
         F("backup", "run", "Backup", "Download the database and settings, or restore them.", "", "info", ("Settings",), "/backup", "Backup"),
     ]
 
@@ -155,9 +169,16 @@ def home(cfg, csrf: str, show: str = "", q: str = "", slack_conn=None) -> str:
     keep = [f for f in fs if (not show or f.kind == show) and (not q or q.lower() in (f.name + " " + f.text + " " + " ".join(f.where)).lower())]
     chips = "".join(f'<a class="ft-chip{" on" if k == show else ""}" href="/settings?show={k}{"&amp;q=" + esc(quote(q)) if q else ""}"'
                     f'{" aria-current=page" if k == show else ""}>{esc(t)}{f" <b>{count(k)}</b>" if k else ""}</a>' for k, t in FILTERS)
-    mode = badge("Live", "good") + " agents run and open pull requests" if not cfg.dry_run else badge("Dry run", "warn") + " decisions are only logged"
-    head = (f'<p class="muted ft-lede">Everything the factory can do, whether it is on, and which screens it changes. Off features are listed too.</p>'
-            f'<div class="ft-bar card"><span>{mode}</span><span class="muted">{count("on")} on · {count("off")} off · {count("setup")} need set-up</span></div>'
+    mode = (('<span class="ft-mode-w good">Live</span><span>Agents run and open pull requests for labelled tickets.</span>', "Switch to dry run…") if not cfg.dry_run
+            else ('<span class="ft-mode-w warn">Dry run</span><span>Decisions are only logged; nothing is run or written.</span>', "Go live…"))
+    attn = [f for f in fs if f.kind == "setup"]
+    attn_html = ("" if not attn else '<section class="ft-attn" aria-labelledby="ft-attn-h"><h2 id="ft-attn-h">Needs your attention</h2>'
+                 + "".join(f'<div class="ft-attn-row card"><div><strong>{esc(f.name)}: {esc(f.word.lower())}</strong><span class="muted">{esc(f.text)}</span></div>'
+                           f'<a class="btn" href="{esc(f.href)}">Set up {esc(f.name)}</a></div>' for f in attn) + "</section>")
+    head = (f'<p class="muted ft-lede">Everything the factory does, grouped by what it is for. {APPLIES}</p>'
+            f'<section class="ft-mode card" aria-label="Mode"><div class="ft-mode-t">{mode[0]}</div><a class="btn secondary" href="/?mode=confirm">{mode[1]}</a></section>'
+            f'{attn_html}'
+            f'<div class="ft-bar"><span class="muted">{count("on")} on · {count("off")} off · {count("setup")} need set-up</span></div>'
             f'<div class="ft-tools"><form method="get" action="/settings" class="ft-search" role="search"><label for="ft-q">Find a setting</label>'
             f'<span class="ft-q"><input id="ft-q" type="search" name="q" value="{esc(q)}" placeholder="local tickets, dry run, Slack…">'
             f'{f"<input type=hidden name=show value={esc(show)}>" if show else ""}<button class="secondary">Find</button></span></form>'
@@ -168,7 +189,25 @@ def home(cfg, csrf: str, show: str = "", q: str = "", slack_conn=None) -> str:
         if cards:
             body += (f'<section class="ft-group" aria-labelledby="g-{gid}"><h2 id="g-{gid}">{esc(name)}</h2><p class="muted">{esc(blurb)}</p>'
                      f'<div class="ft-grid">{"".join(_card(f, csrf) for f in cards)}</div></section>')
+    hits = _field_hits(q) if q else []
+    if hits:
+        body = (f'<section class="ft-group" aria-labelledby="g-fields"><h2 id="g-fields">Settings inside the pages</h2><ul class="ft-hits">'
+                + "".join(f'<li><a href="{esc(href)}"><strong>{esc(label)}</strong><span class="muted">{esc(where)}</span></a></li>' for label, where, href in hits)
+                + "</ul></section>") + body
     return head + (body or '<p class="muted">No setting matches. <a href="/settings">Show them all</a></p>')
+
+
+def _field_hits(q: str) -> list[tuple[str, str, str]]:
+    """Every single setting whose name or help mentions the search, with the page it is on, so a setting is found
+    without knowing which page holds it."""
+    from . import settings as S
+    q, out = q.lower(), []
+    for key, (title, fields) in S.SECTIONS.items():
+        for f in fields:
+            if q in (f.label + " " + f.help).lower():
+                where = title + (" › Advanced" if f.adv else "")
+                out.append((f.label, where, f"/settings?section={key}#s-{f.key}"))
+    return out[:30]
 
 
 def strip(items: list[tuple[str, str]], extra: str = "", label: str = "The settings that shape this page", anchor: str = "") -> str:
@@ -237,4 +276,4 @@ def ticket_handling(cfg, repo: str, issue: int, detail: str = "") -> str:
     dl = "".join(f'<div class="ft-row"><dt>{esc(k)}</dt><dd>{v}</dd></div>' for k, v in rows)
     return (f'<section class="sd-card ft-handling" aria-labelledby="hd-h"><div class="sd-cardhead"><h3 id="hd-h">How {esc(display(int(issue)))} is handled</h3></div>'
             f'<dl>{dl}</dl><p class="muted sd-fine">These apply to every ticket of this size. '
-            '<a href="/settings?section=routing">Routing</a> · <a href="/settings?section=roles">Role agents</a> · <a href="/settings#f-ci">Checks</a></p></section>')
+            '<a href="/settings?section=routing">Models by ticket size</a> · <a href="/settings?section=roles">Stage agents</a> · <a href="/settings#f-ci">Checks</a></p></section>')

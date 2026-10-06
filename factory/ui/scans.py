@@ -143,11 +143,12 @@ def smell_flat(entry: dict | None, cfg, sid: str = "") -> dict:
     if sid in sn.PRESETS:
         return {"id": sid, "pattern": "", "globs": "", "advice": sn.advice_for(cfg.scanner, sid), "sample": "", "preset": "1"}
     e = entry or {}
-    return {"id": e.get("id", ""), "pattern": e.get("pattern", ""), "globs": ", ".join(e.get("globs", ["**/*"])), "advice": e.get("advice", ""), "sample": "", "preset": ""}
+    return {"id": e.get("id", ""), "pattern": e.get("pattern", ""), "globs": ", ".join(e.get("globs", ["**/*"])), "advice": e.get("advice", ""), "sample": "", "preset": "",
+            "title": e.get("name", "") if e.get("name") != e.get("id") else "", "description": e.get("description", "")}
 
 
 def smell_from_form(form) -> dict:
-    return {k: str(form.get(k, "")) for k in ("id", "pattern", "globs", "advice", "sample", "preset")}
+    return {k: str(form.get(k, "")) for k in ("id", "pattern", "globs", "advice", "sample", "preset", "title", "description")}
 
 
 def smell_form_page(cfg, v: dict, csrf: str, original: str = "", preview: str = "", bad: str = "") -> str:
@@ -169,6 +170,8 @@ def smell_form_page(cfg, v: dict, csrf: str, original: str = "", preview: str = 
         fields = (top
                   + _input("pattern", v, "Lines over 2000 characters are skipped.", "Pattern (regular expression, matched per line)", extra="required maxlength=500 spellcheck=false" + mark("pattern"))
                   + _input("globs", v, "Comma-separated globs, for example **/*.py, **/*.ts.", "Files", extra=mark("globs"))
+                  + _input("title", v, "Shown on tickets and in the library. Empty: the name above.", "Title", extra="maxlength=80" + mark("title"))
+                  + _input("description", v, "One line on what it finds and why it matters.", "Description", extra="maxlength=300" + mark("description"))
                   + fix
                   + _field("Sample text to test on", f'<textarea name="sample" rows="5" maxlength="{SAMPLE_CHARS}">{esc(v["sample"])}</textarea>',
                            "Optional. Paste a few lines; Test shows which match. Nothing is saved and no repository is read."))
@@ -297,7 +300,14 @@ def build_smell(v: dict, existing: dict | None, taken: set[str]) -> dict:
     if errs:
         raise S.SettingsError(errs)
     e = dict(existing or {})
-    e.update({"id": sid, "name": e.get("name") or sid, "pattern": v["pattern"], "globs": globs})
+    title, desc = v.get("title", "").strip(), v.get("description", "").strip()
+    if len(title) > 80 or len(desc) > 300 or "\n" in title + desc:
+        raise S.SettingsError(["Title: one line, at most 80 characters. Description: one line, at most 300."])
+    e.update({"id": sid, "name": title or sid, "pattern": v["pattern"], "globs": globs})
+    if desc:
+        e["description"] = desc
+    else:
+        e.pop("description", None)
     if advice:
         e["advice"] = advice
     else:

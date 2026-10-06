@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, ChatCfg, CommentsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -31,12 +31,14 @@ class SettingsError(Exception):
 class Field:
     key: str                 # dotted path in the config
     label: str
-    kind: str                # int float bool text select checks repos hosts kv models prompt wchecks every viewports
+    kind: str                # int float bool text url labellist select checks repos hosts hostlist paths kv models prompt wchecks every viewports
     help: str = ""
     choices: tuple = ()
     lo: float | None = None
     hi: float | None = None
     danger: str = ""         # non-empty: changing it requires an explicit confirmation
+    group: str = ""          # a heading the page puts it under (fields of one group are listed together)
+    adv: bool = False        # shown under Advanced, closed until opened
 
 FALLBACK_HELP = ("Tried in order, on the same harness and effort, when the model hits a usage limit or an API error. "
                  "One model id per line, up to 3; empty for none.")
@@ -49,8 +51,8 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
                 Field(f"roles.{r.name}.done_label", f"{r.name.title()}: done label", "text"),
                 Field(f"roles.{r.name}.model", f"{r.name.title()}: model", "text", "sonnet, opus, haiku (or a full model id)"),
                 Field(f"roles.{r.name}.effort", f"{r.name.title()}: effort", "select", choices=EFFORTS),
-                Field(f"roles.{r.name}.harness", f"{r.name.title()}: agent harness", "select", choices=harnesses),
-                Field(f"roles.{r.name}.fallback_models", f"{r.name.title()}: fallback models", "models", FALLBACK_HELP)]
+                Field(f"roles.{r.name}.harness", f"{r.name.title()}: agent harness", "select", choices=harnesses, adv=True),
+                Field(f"roles.{r.name}.fallback_models", f"{r.name.title()}: fallback models", "models", FALLBACK_HELP, adv=True)]
         if r.name == "designer":
             out.append(Field("roles.designer.design_files", "Designer: write design mockup files", "bool",
                              "In a repo that has Claude Design canvases (*.dc.html), add static mockups on a draft PR and link them from the ticket."))
@@ -70,10 +72,10 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
 def _routing_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
     out = []
     for tier in ("low", "medium", "high"):
-        out += [Field(f"routing.{tier}.harness", f"{tier.title()} tier: agent harness", "select", choices=harnesses),
+        out += [Field(f"routing.{tier}.harness", f"{tier.title()} tier: agent harness", "select", choices=harnesses, adv=True),
                 Field(f"routing.{tier}.model", f"{tier.title()} tier: model", "text"),
                 Field(f"routing.{tier}.effort", f"{tier.title()} tier: effort", "select", choices=EFFORTS),
-                Field(f"routing.{tier}.fallback_models", f"{tier.title()} tier: fallback models", "models", FALLBACK_HELP)]
+                Field(f"routing.{tier}.fallback_models", f"{tier.title()} tier: fallback models", "models", FALLBACK_HELP, adv=True)]
     return out
 
 
@@ -91,45 +93,59 @@ def _prompt_fields() -> list[Field]:
 
 SECTIONS: dict[str, tuple[str, list[Field]]] = {
     "general": ("General", [
-        Field("general.poll_seconds", "Poll interval (seconds)", "int", "How often GitHub is checked.", lo=5, hi=3600),
+        Field("general.poll_seconds", "Check for work every (seconds)", "int", "How often the factory looks for new work.", lo=5, hi=3600, group="Mode"),
         Field("general.dry_run", "Dry run", "bool", "On: decisions are only logged, nothing is run or written. Turn off to go live.",
-              danger="Going live means the factory will start agents and open PRs for labeled issues."),
-        Field("general.confidence_threshold", "Confidence threshold", "float", "Below this the classifier's call goes to a person.", lo=0, hi=1),
-        Field("github.trigger_label", "Build label", "text", "Applying it makes the factory build the ticket."),
+              danger="Going live means the factory will start agents and open PRs for labeled issues.", group="Mode"),
+        Field("general.confidence_threshold", "Confidence threshold", "float", "Below this the classifier's call goes to a person.", lo=0, hi=1, group="Mode"),
+        Field("github.trigger_label", "Build label", "text", "Applying it makes the factory build the ticket.", group="Labels"),
         Field("github.trusted_permissions", "Who may apply labels", "checks", "A label counts only if its author has one of these repository roles.",
-              choices=("admin", "maintain", "write", "triage")),
-        Field("github.repos", "Standalone repositories", "repos", "owner/name, one per line. Repos of a project (see Projects) are added automatically."),
+              choices=("admin", "maintain", "write", "triage"), group="Labels"),
+        Field("github.repos", "Standalone repositories", "repos", "owner/name, one per line. Repos of a project (see Projects) are added automatically.", group="Where tickets come from"),
         Field("github.issues_enabled", "Work from GitHub issues", "bool",
               "Off: GitHub issues are not read or acted on (no polling, approvals, schedules, sub-issues or Import). Running jobs finish. "
-              "Pull requests and CI still use GitHub. Turn on local tickets or nothing has tickets to work on."),
+              "Pull requests and CI still use GitHub. Turn on local tickets or nothing has tickets to work on.", group="Where tickets come from"),
         Field("local.enabled", "Keep tickets in the factory", "bool",
               "On: tickets can live in the factory's own database (L-1, L-2 ...) instead of GitHub issues. New ticket offers both, and Import "
-              "moves GitHub issues across. Pull requests still go to GitHub."),
-        Field("local.max_attachment_mb", "Largest attachment (MB)", "int", "Files attached to a local ticket.", lo=1, hi=50),
-        Field("local.max_attachments", "Attachments per ticket", "int", "Files attached to one local ticket.", lo=1, hi=20),
-        Field("local.max_attachments_total_mb", "All attachments of a ticket (MB)", "int", "Together, for one local ticket.", lo=1, hi=200),
+              "moves GitHub issues across. Pull requests still go to GitHub.", group="Where tickets come from"),
+        Field("subtasks.enabled", "Mirror pipeline steps as GitHub sub-issues", "bool",
+              "Each stage of a ticket also shows as a sub-issue on GitHub. Off by default: it adds writes and notifications.", group="Where tickets come from"),
+        Field("local.max_attachment_mb", "Largest attachment (MB)", "int", "Files attached to a local ticket.", lo=1, hi=50, adv=True),
+        Field("local.max_attachments", "Attachments per ticket", "int", "Files attached to one local ticket.", lo=1, hi=20, adv=True),
+        Field("local.max_attachments_total_mb", "All attachments of a ticket (MB)", "int", "Together, for one local ticket.", lo=1, hi=200, adv=True),
         Field("github.poll_seconds", "Read GitHub every (seconds)", "int",
               "Local tickets are handled at every poll; GitHub issues can be read less often to spare API calls. "
-              "The same as the poll interval reads GitHub at every poll.", lo=5, hi=86400),
+              "The same as the poll interval reads GitHub at every poll.", lo=5, hi=86400, adv=True),
     ]),
-    "routing": ("Routing", _routing_fields()),
-    "roles": ("Role agents", _role_fields()),     # the harness choices are filled in by fields_for()
+    "routing": ("Models by ticket size", _routing_fields()),
+    "roles": ("Stage agents", _role_fields()),     # the harness choices are filled in by fields_for()
     "classifier": ("Classifier", [
         Field("classifier.backend", "Classifier", "select", "Jev reads the whole ticket; labels uses only your labels.", choices=("rules", "jev")),
         Field("classifier.model", "Jev model", "text", "typesafe/jev-1.13 pins a version; ~typesafe/jev-latest follows the newest."),
         Field("classifier.kind_aliases", "Label → kind aliases", "kv",
-              "One per line, label=kind, where kind is bug, feature, docs, chore or question. Lets existing labels (like GitHub's enhancement) count."),
+              "One per line, label=kind, where kind is bug, feature, docs, chore or question. Lets existing labels (like GitHub's enhancement) count.", adv=True),
     ]),
-    "runner": ("Agent runner", [
+    "runner": ("Sandbox & limits", [
         Field("runner.max_parallel", "Agents at once", "int", "Sandboxes that may run at the same time. Each may use the memory and CPUs below.", lo=1, hi=8),
         Field("runner.timeout_seconds", "Task timeout (seconds)", "int", lo=60, hi=14400),
-        Field("runner.max_turns", "Max agent turns", "int", lo=1, hi=200),
-        Field("runner.rate_limit_backoff_seconds", "Pause after a rate limit (seconds)", "int", lo=60, hi=86400),
+        Field("runner.max_turns", "Max agent turns", "int", lo=1, hi=200, adv=True),
+        Field("runner.rate_limit_backoff_seconds", "Pause after a rate limit (seconds)", "int", lo=60, hi=86400, adv=True),
         Field("runner.memory", "Sandbox memory", "text", "For example 3g or 512m."),
         Field("runner.cpus", "Sandbox CPUs", "text", "For example 2 or 1.5."),
         Field("runner.allow_hosts", "Hosts the sandbox may reach", "hosts",
               "One per line. This is the ONLY way out of the sandbox. Keep it to the model API unless tasks truly need a registry.",
-              danger="Widening the sandbox's reachable hosts weakens its isolation."),
+              danger="Widening the sandbox's reachable hosts weakens its isolation.", adv=True),
+        Field("runner.render_previews", "Render mockup previews", "bool",
+              "Turn the designer's canvases into PNGs in a sealed container and add them to the draft PR. Turns itself off if the render image is missing."),
+        Field("runner.thinking_tokens.low", "Thinking budget at low effort (tokens)", "int", lo=0, hi=200000, adv=True),
+        Field("runner.thinking_tokens.medium", "Thinking budget at medium effort (tokens)", "int", lo=0, hi=200000, adv=True),
+        Field("runner.thinking_tokens.high", "Thinking budget at high effort (tokens)", "int", lo=0, hi=200000, adv=True),
+        Field("runner.max_patch_bytes", "Largest patch an agent may produce (bytes)", "int", "A bigger change fails instead of being pushed.", lo=10000, hi=50_000_000, adv=True),
+        Field("runner.max_files", "Most files one patch may change", "int", lo=1, hi=5000, adv=True),
+        Field("runner.render_timeout_seconds", "Preview render timeout (seconds)", "int", lo=10, hi=3600, adv=True),
+        Field("runner.engine", "Container engine", "select", "What runs the sandboxes on this host.", choices=("podman", "docker"), adv=True,
+              danger="A wrong engine stops every run until it is changed back."),
+        Field("runner.image", "Sandbox image", "text", "The container image agents run in.", adv=True, danger="A wrong image stops every run until it is changed back."),
+        Field("runner.render_image", "Preview render image", "text", adv=True),
     ]),
     "review": ("Code review", [
         Field("review.enabled", "Enable the code reviewer", "bool", "An independent agent reviews the factory's PRs and comments. It never approves or changes code."),
@@ -138,20 +154,20 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("review.done_label", "Reviewed label", "text"),
         Field("review.model", "Reviewer model", "text", "Use a different harness and model family from the builder for a genuinely independent opinion."),
         Field("review.effort", "Reviewer effort", "select", choices=EFFORTS),
-        Field("review.harness", "Reviewer agent harness", "select", choices=("claude-code",)),
-        Field("review.fallback_models", "Reviewer: fallback models", "models", FALLBACK_HELP),
+        Field("review.harness", "Reviewer agent harness", "select", choices=("claude-code",), adv=True),
+        Field("review.fallback_models", "Reviewer: fallback models", "models", FALLBACK_HELP, adv=True),
     ]),
     "pm": ("Project manager", [
         Field("pm.enabled", "Enable the project manager", "bool",
               "On a sweep an agent ranks each repository's factory tickets with priority labels and records blockers; while it is on, "
               "a build waits for its open blockers. A person's priority label always wins. It never starts or stops work."),
         Field("pm.interval_minutes", "Minutes between sweeps", "int", "Only when the tickets changed; each sweep is one run per repository.", lo=10, hi=10080),
-        Field("pm.max_tickets", "Tickets per sweep", "int", lo=1, hi=200),
-        Field("pm.body_chars", "Characters of each ticket body", "int", lo=200, hi=10000),
+        Field("pm.max_tickets", "Tickets per sweep", "int", lo=1, hi=200, adv=True),
+        Field("pm.body_chars", "Characters of each ticket body", "int", lo=200, hi=10000, adv=True),
         Field("pm.unblock_label", "Unblock label", "text", "A person with write access applies it to make the factory ignore the project manager's blockers on a ticket."),
         Field("pm.model", "Project manager model", "text"),
         Field("pm.effort", "Project manager effort", "select", choices=EFFORTS),
-        Field("pm.harness", "Project manager agent harness", "select", choices=("claude-code",)),
+        Field("pm.harness", "Project manager agent harness", "select", choices=("claude-code",), adv=True),
     ]),
     "mockups": ("Design mockups", [
         Field("mockups.mode", "When a design stage left no mockup", "select",
@@ -167,9 +183,11 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
     "ci": ("CI feedback", [
         Field("ci.enabled", "Watch CI on factory PRs", "bool"),
         Field("ci.fix_rounds", "Agent fix rounds after a failure", "int", "0 = report only.", lo=0, hi=5),
-        Field("ci.wait_for_checks_minutes", "Wait for checks to appear (minutes)", "int", lo=1, hi=120),
-        Field("ci.timeout_minutes", "Give up on pending checks after (minutes)", "int", lo=5, hi=720),
-        Field("ci.log_tail_chars", "Failing-log excerpt size", "int", lo=1000, hi=20000),
+        Field("ci.wait_for_checks_minutes", "Wait for checks to appear (minutes)", "int", lo=1, hi=120, adv=True),
+        Field("ci.timeout_minutes", "Give up on pending checks after (minutes)", "int", lo=5, hi=720, adv=True),
+        Field("ci.log_tail_chars", "Failing-log excerpt size", "int", lo=1000, hi=20000, adv=True),
+        Field("ci.queued_warn_minutes", "Warn when CI is queued for (minutes)", "int", "Self-hosted runners may be offline.", lo=1, hi=1440, adv=True),
+        Field("ci.manual_wait_hours", "Keep watching for hand-started CI (hours)", "int", "How long to wait for CI that a person starts by hand.", lo=1, hi=168, adv=True),
     ]),
     "conflicts": ("Merge conflicts", [
         Field("conflicts.enabled", "Resolve merge conflicts on factory PRs", "bool",
@@ -187,9 +205,10 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               danger="Warn lets a change that failed its checks be pushed as a PR."),
         Field("workers.fix_rounds", "Agent fix rounds after a failed check", "int",
               "When a required check really FAILS (not when no worker could run it), the agent tries again with the log. 0 = report only.", lo=0, hi=3),
-        Field("workers.claim_wait_seconds", "Give up if no worker claims a job (seconds)", "int", lo=10, hi=86400),
-        Field("workers.max_wait_seconds", "Give up on a check after (seconds)", "int", lo=30, hi=86400),
-        Field("workers.lease_seconds", "A worker must report in every (seconds)", "int", lo=10, hi=3600),
+        Field("workers.claim_wait_seconds", "Give up if no worker claims a job (seconds)", "int", lo=10, hi=86400, adv=True),
+        Field("workers.max_wait_seconds", "Give up on a check after (seconds)", "int", lo=30, hi=86400, adv=True),
+        Field("workers.lease_seconds", "A worker must report in every (seconds)", "int", lo=10, hi=3600, adv=True),
+        Field("workers.max_attempts", "Claims per job", "int", "How often a job may be picked up again after a worker lost it.", lo=1, hi=5, adv=True),
         Field("workers.checks", "Checks", "wchecks",
               "One per line: owner/name recipe platform, with an optional fourth word, advisory (a failure is noted on the PR but never blocks). "
               "The recipe is a name defined on the worker; platform is macos, linux ... or any.",
@@ -201,12 +220,84 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("screens.viewports", "Viewports", "viewports",
               "One per line: name widthxheight, for example desktop 1440x900. Every screen is shot at each one unless it picks some."),
         Field("screens.baseline_dir", "Baseline folder", "text", "Where each repository keeps its approved shots, as <name>-<viewport>.png."),
-        Field("screens.threshold", "Pixel tolerance", "float", "Colour distance (0 to 1) above which a pixel counts as different.", lo=0, hi=1),
-        Field("screens.max_diff_ratio", "Share of pixels allowed to differ", "float", "0.001 is 0.1 %.", lo=0, hi=1),
-        Field("screens.timeout_seconds", "Shoot timeout (seconds)", "int", lo=10, hi=3600),
+        Field("screens.threshold", "Pixel tolerance", "float", "Colour distance (0 to 1) above which a pixel counts as different.", lo=0, hi=1, adv=True),
+        Field("screens.max_diff_ratio", "Share of pixels allowed to differ", "float", "0.001 is 0.1 %.", lo=0, hi=1, adv=True),
+        Field("screens.timeout_seconds", "Shoot timeout (seconds)", "int", lo=10, hi=3600, adv=True),
+        Field("screens.image", "Screenshot image", "text", "The container image screens are shot in.", adv=True),
         Field("screens.label", "Screens-changed label", "text", "Put on a draft PR whose patch changes baseline images."),
     ]),
-    "prompts": ("Agent prompts", _prompt_fields()),
+    "prompts": ("Agent instructions", _prompt_fields()),
+    "comments": ("Comment triage", [
+        Field("comments.enabled", "Triage new comments", "bool",
+              "A read-only agent reads each new comment a person with write access adds to a ticket the factory worked on, and decides: nothing to do, "
+              "needs a person, send it back to a stage, or open a follow-up. The last two wait for a person to confirm."),
+        Field("comments.max_per_day", "Triage runs per ticket per day", "int", "Later comments wait.", lo=1, hi=100),
+        Field("comments.model", "Triage model", "text"),
+        Field("comments.effort", "Triage effort", "select", choices=EFFORTS),
+        Field("comments.harness", "Triage agent harness", "select", choices=("claude-code",), adv=True),
+    ]),
+    "ticket_review": ("Ticket review", [
+        Field("ticket_review.enabled", "Allow ticket reviews", "bool",
+              "On request, an agent looks at every open ticket of a repository and proposes which are already built or duplicates. A person picks what to close."),
+        Field("ticket_review.max_tickets", "Tickets per review", "int", lo=1, hi=500),
+        Field("ticket_review.body_chars", "Characters of each ticket body", "int", lo=100, hi=20000, adv=True),
+        Field("ticket_review.model", "Review model", "text"),
+        Field("ticket_review.effort", "Review effort", "select", choices=EFFORTS),
+        Field("ticket_review.harness", "Review agent harness", "select", choices=("claude-code",), adv=True),
+    ]),
+    "design_links": ("Design links", [
+        Field("design_links.enabled", "Fetch linked design exports", "bool",
+              "Design exports (single HTML files) linked in a ticket are fetched and shown to agents as intent. The UI shows them in a sandboxed tab without scripts."),
+        Field("design_links.hosts", "Hosts links may come from", "hostlist", "One per line, plain host names, no wildcards. Needed when this is on.",
+              danger="Every listed host can put content in front of the agents."),
+        Field("design_links.max_links", "Links per ticket", "int", lo=1, hi=5),
+        Field("design_links.max_bytes", "Largest export (bytes)", "int", lo=1, hi=5_000_000, adv=True),
+        Field("design_links.ttl_hours", "Fetch again after (hours)", "int", lo=1, hi=720, adv=True),
+    ]),
+    "scanner": ("Scan limits", [
+        Field("scanner.max_tickets", "Tickets per scan run", "int", "The rest is considered again next run.", lo=1, hi=100),
+        Field("scanner.max_findings_per_ticket", "Findings per ticket", "int", lo=1, hi=1000),
+        Field("scanner.max_lines", "A file is long from (lines)", "int", "Used by the long-files check.", lo=50, hi=100000),
+        Field("scanner.labels", "Labels on scan tickets", "labellist",
+              "Comma separated. Empty: the analyst label, so scan tickets are analysed, not built."),
+        Field("scanner.recipe", "Worker recipe", "text", "The recipe on the worker that runs scans.", adv=True),
+        Field("scanner.platform", "Worker platform", "text", "any, or a platform such as linux or macos.", adv=True),
+    ]),
+    "chat": ("Ticket chat", [
+        Field("chat.enabled", "Enable ticket chat", "bool",
+              "Quick replies about a ticket from a short read-only run, with no repository clone and no GitHub token. Each reply is a model run."),
+        Field("chat.model", "Chat model", "text"),
+        Field("chat.effort", "Chat effort", "select", choices=EFFORTS),
+        Field("chat.max_per_hour", "Messages per ticket per hour", "int", lo=1, hi=1000),
+        Field("chat.max_parallel", "Chats at once", "int", "Their own lane, on top of Agents at once.", lo=1, hi=20),
+        Field("chat.harness", "Chat agent harness", "select", choices=("claude-code",), adv=True),
+        Field("chat.max_turns", "Max turns per reply", "int", lo=1, hi=1000, adv=True),
+        Field("chat.timeout_seconds", "Reply timeout (seconds)", "int", lo=10, hi=10000, adv=True),
+        Field("chat.check_seconds", "Look for new messages every (seconds)", "int", lo=1, hi=1000, adv=True),
+        Field("chat.context_turns", "Chat turns later stages read", "int", "The newest turns that stage prompts carry.", lo=1, hi=1000, adv=True),
+    ]),
+    "health": ("Health alerts", [
+        Field("health.enabled", "Health alerts", "bool", "Alerts on Telegram when something that would stop the factory goes wrong."),
+        Field("health.disk_warn_percent", "Warn when free disk is below (%)", "int", "Free space is checked in % and in GB; the lower threshold trips first.",
+              lo=1, hi=100, group="Disk and memory"),
+        Field("health.disk_crit_percent", "Critical when free disk is below (%)", "int", lo=1, hi=100, group="Disk and memory"),
+        Field("health.disk_warn_gb", "Warn when free disk is below (GB)", "int", lo=1, hi=100000, group="Disk and memory"),
+        Field("health.disk_crit_gb", "Critical when free disk is below (GB)", "int", lo=1, hi=100000, group="Disk and memory"),
+        Field("health.mem_warn_mb", "Warn when free memory is below (MB)", "int", lo=1, hi=100000, group="Disk and memory"),
+        Field("health.mem_crit_mb", "Critical when free memory is below (MB)", "int", lo=1, hi=100000, group="Disk and memory"),
+        Field("health.stale_poll_minutes", "Alert when the factory has not checked for work in (minutes)", "int", "It is hung or down.", lo=1, hi=100000, group="The factory"),
+        Field("health.failed_runs_warn", "Alert after this many failed runs in a row", "int", lo=1, hi=100000, group="The factory"),
+        Field("health.github_rate_warn", "Alert when GitHub API calls left this hour drop below", "int", lo=1, hi=100000, group="The factory"),
+        Field("health.repeat_hours", "Remind every (hours) while a problem lasts", "int", lo=1, hi=100000, group="The factory"),
+        Field("health.heartbeat_url", "Heartbeat address", "url",
+              "Optional dead-man's switch such as healthchecks.io, called each check while nothing is critical. Must start with https://.", adv=True),
+        Field("health.extra_disk_paths", "More folders to watch", "paths",
+              "One absolute path per line. State, work and container storage are watched already.", adv=True),
+    ]),
+    "update_check": ("Update checks", [
+        Field("updates.check", "Check for new releases", "bool", "One cached read of GitHub's public releases list every few hours; a banner says when one is out."),
+        Field("updates.repo", "Release repository", "text", "owner/name of the repository releases come from.", adv=True),
+    ]),
 }
 VIEWPORT_LINE = re.compile(r"([a-z0-9][a-z0-9-]{0,60})\s+(\d{1,5})\s*[x×]\s*(\d{1,5})")
 
@@ -224,11 +315,11 @@ def fields_for(section: str, eff: dict) -> list[Field]:
         return _routing_fields(harness_choices(eff))
     if section == "roles":
         return _role_fields(harness_choices(eff))
-    if section == "review":
-        return [replace(f, choices=harness_choices(eff)) if f.key == "review.harness" else f for f in SECTIONS["review"][1]]
-    if section == "pm":
-        return [replace(f, choices=harness_choices(eff)) if f.key == "pm.harness" else f for f in SECTIONS["pm"][1]]
-    return SECTIONS[section][1]
+    fields = SECTIONS[section][1]
+    if any(f.kind == "select" and f.key.endswith(".harness") for f in fields):
+        hc = harness_choices(eff)
+        fields = [replace(f, choices=hc) if f.kind == "select" and f.key.endswith(".harness") else f for f in fields]
+    return fields
 
 
 # ---------------------------------------------------------------- dotted-path helpers
@@ -261,12 +352,21 @@ def del_in(d: dict, dotted: str) -> None:
             chain[i - 1].pop(parts[i - 1], None)
 
 
+DATACLASS_DEFAULTS = {"chat": ChatCfg, "comments": CommentsCfg, "ticket_review": TicketReviewCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
+                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg}
+
+
 def default_for(key: str):
     section, _, name = key.partition(".")
     if section == "harnesses":
         hname, _, field = name.partition(".")
         h = default_harnesses(RunnerCfg()).get(hname)
         v = getattr(h, field, None) if h else None
+        return list(v) if isinstance(v, tuple) else v
+    if section == "runner" and name.startswith("thinking_tokens."):
+        return RunnerCfg().thinking_tokens.get(name.partition(".")[2])
+    if section in DATACLASS_DEFAULTS:
+        v = getattr(DATACLASS_DEFAULTS[section](), name, None)
         return list(v) if isinstance(v, tuple) else v
     if section == "runner":
         v = getattr(RunnerCfg(), name, None)
@@ -403,6 +503,26 @@ def parse_value(f: Field, form: Form):
             if not vals or len(vals) > 50 or not all(HOST_RE.match(v) for v in vals):
                 raise ValueError
             return vals
+        if f.kind == "hostlist":                # like hosts, but may be empty
+            vals = [v.lower() for v in _lines(raw)]
+            if len(vals) > 50 or not all(HOST_RE.match(v) for v in vals):
+                raise ValueError
+            return vals
+        if f.kind == "paths":
+            vals = _lines(raw)
+            if len(vals) > 20 or not all(v.startswith("/") and len(v) < 300 and "\0" not in v for v in vals):
+                raise ValueError
+            return vals
+        if f.kind == "labellist":               # empty: None, the built-in default
+            vals = [v.strip() for v in raw.replace("\n", ",").split(",") if v.strip()]
+            if len(vals) > 10 or any(len(v) > 50 for v in vals):
+                raise ValueError
+            return vals or None
+        if f.kind == "url":
+            v = raw.strip()
+            if v and (not v.startswith("https://") or len(v) > 500 or any(c.isspace() for c in v)):
+                raise ValueError
+            return v
         if f.kind == "models":
             vals = _lines(raw)
             if len(vals) > MAX_FALLBACKS or len(set(vals)) != len(vals) or not all(MODEL_RE.fullmatch(v) for v in vals):
@@ -451,7 +571,8 @@ def parse_value(f: Field, form: Form):
         pass
     hint = {"int": f"a whole number between {f.lo} and {f.hi}", "float": f"a number between {f.lo} and {f.hi}",
             "select": "one of " + ", ".join(f.choices), "checks": "at least one choice", "repos": "owner/name per line",
-            "hosts": "valid host names, one per line, at least one", "kv": "label=kind per line, kind one of " + ", ".join(sorted(KINDS)),
+            "hosts": "valid host names, one per line, at least one", "hostlist": "valid host names, one per line",
+            "paths": "absolute paths, one per line, at most 20", "url": "empty, or an https:// address", "labellist": "at most 10 labels, comma separated, each at most 50 characters", "kv": "label=kind per line, kind one of " + ", ".join(sorted(KINDS)),
             "every": "like 6h, 1d or 1w, or empty",
             "viewports": "name widthxheight per line, 1 to 10 of them, distinct names of lowercase letters, digits and dashes (not design)",
             "wchecks": "owner/name recipe platform [advisory] per line, names of lowercase letters, digits and dashes, no repeated repo and recipe",
@@ -478,7 +599,7 @@ def _store(new_ov: dict, base: dict, key: str, value) -> None:
         current = fallback(base, key)
     if current is None:
         current = default_for(key)
-    if current == value or (isinstance(current, tuple) and list(current) == value):
+    if value is None or current == value or (isinstance(current, tuple) and list(current) == value):
         del_in(new_ov, key)
     else:
         set_in(new_ov, key, value)
@@ -591,6 +712,13 @@ def save_telegram(cfg_path: str, state_dir: Path, form: Form) -> None:
         raise SettingsError(["Choose quiet, normal or verbose."])
     _store(new_ov, base, "telegram.chat_id", chat)
     _store(new_ov, base, "telegram.verbosity", verbosity)
+    ui_url = (form.get("telegram.ui_url") or "").strip()
+    if ui_url and not re.fullmatch(r"https?://[^\s\"'<>|]{1,200}", ui_url):
+        raise SettingsError(["The address of this UI must be an http(s) URL (or empty)."])
+    if ui_url or "ui_url" in base.get("telegram", {}):
+        _store(new_ov, base, "telegram.ui_url", ui_url.rstrip("/"))
+    else:
+        del_in(new_ov, "telegram.ui_url")
     if form.get("telegram.mode") == "events":
         chosen = [e for e in form.getall("telegram.events") if e in ALL_EVENTS]
         if not chosen:

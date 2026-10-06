@@ -453,4 +453,37 @@
     });
   }
   Array.prototype.forEach.call(document.querySelectorAll("[data-attach]"), setupAttach);
+
+  // --- Settings: say how many changes are not saved yet, and let Reset put a setting back to its default.
+  function changed(el) {
+    if (el.type === "checkbox" || el.type === "radio") return el.checked !== el.defaultChecked;
+    if (el.tagName === "SELECT") { for (var i = 0; i < el.options.length; i++) if (el.options[i].selected !== el.options[i].defaultSelected) return true; return false; }
+    return el.value !== el.defaultValue;
+  }
+  function dirty(form) {
+    var n = 0, els = form.elements, note = form.querySelector(".s-dirty");
+    for (var i = 0; i < els.length; i++) if (els[i].name && els[i].type !== "hidden" && els[i].name.indexOf("confirm__") !== 0 && changed(els[i])) n++;
+    if (!note) return;
+    if (!note.dataset.idle) note.dataset.idle = note.textContent;
+    note.textContent = n ? (n === 1 ? "1 unsaved change" : n + " unsaved changes") : note.dataset.idle;
+    note.classList.toggle("on", n > 0);
+  }
+  function onEdit(e) { var f = e.target.closest("form[data-dirty]"); if (f) dirty(f); }
+  document.addEventListener("input", onEdit);
+  document.addEventListener("change", onEdit);
+  Array.prototype.forEach.call(document.querySelectorAll(".s-reset"), function (b) { b.hidden = false; });
+  // A link to one setting (from the search on the Settings home) opens the Advanced or More section it is in.
+  if (location.hash.indexOf("#s-") === 0) {
+    var t = document.getElementById(decodeURIComponent(location.hash.slice(1))), d = t && t.closest("details");
+    if (d) { d.open = true; t.scrollIntoView(); }
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest(".s-reset");
+    if (!b) return;
+    var el = document.getElementById(b.dataset.for);
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = b.dataset.value === "1"; else el.value = b.dataset.value;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.focus();
+  });
 })();

@@ -93,7 +93,7 @@ class HarnessPage(AdminCase):
 
     def test_the_designer_design_files_switch_is_a_setting(self):
         cookie, csrf = self.session()
-        self.assertIn("Designer: write design mockup files", self.req("GET", "/settings?section=roles", cookie=cookie)[2])
+        self.assertIn("Write design mockup files", self.req("GET", "/settings?section=roles", cookie=cookie)[2])
         self.assertTrue(next(r for r in self.cfg().roles if r.name == "designer").design_files)          # on by default
         form = {"section": "roles", "auto.label": "factory:auto"}
         for name, label, done, model, eff in (("analyst", "factory:analyze", "stage:analysed", "sonnet", "medium"),

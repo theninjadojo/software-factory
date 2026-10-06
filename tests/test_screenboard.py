@@ -320,7 +320,8 @@ class Manage(BoardUi):
         self.assertIn("desktop 1440x900\nmobile 390x844", html)
         form = {"section": "screens", "screens.board_every": "6h", "screens.viewports": "desktop 1280x800\ntablet 768x1024",
                 "screens.baseline_dir": "screens/baselines", "screens.threshold": "0.1", "screens.max_diff_ratio": "0.001",
-                "screens.timeout_seconds": "300", "screens.label": "factory:screens-changed"}
+                "screens.timeout_seconds": "300", "screens.label": "factory:screens-changed",
+                "screens.image": "localhost/factory-screens:latest"}
         s, h, _ = self.post("/settings/save", **form)
         self.assertEqual((s, h["Location"]), (303, "/settings?section=screens&ok=saved"))
         sc = load(str(self.root / "config.toml")).screens

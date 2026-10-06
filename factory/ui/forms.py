@@ -18,16 +18,17 @@ EVENT_HELP = {
     "fallback": "A model was unavailable (limit or API error) and the next fallback model was tried", "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from chat",
     "info": "Anything else",
 }
-TABS = [("general", "General"), ("routing", "Routing"), ("roles", "Role agents"), ("projects", "Projects"), ("classifier", "Classifier"), ("review", "Code review"), ("pm", "Project manager"), ("mockups", "Design mockups"), ("runner", "Agent runner"), ("ci", "CI feedback"), ("conflicts", "Merge conflicts"), ("screens", "Screens"), ("prompts", "Agent prompts")]
 
 
 def _fmt(f: S.Field, v) -> str:
     if v is None:
         return ""
-    if f.kind in ("repos", "hosts", "models"):
+    if f.kind in ("repos", "hosts", "hostlist", "paths", "models"):
         return "\n".join(v)
     if f.kind == "kv":
         return "\n".join(f"{k}={x}" for k, x in sorted(v.items()))
+    if f.kind == "labellist":
+        return ", ".join(v)
     if f.kind == "viewports":
         return "\n".join(f'{x["name"]} {x["width"]}x{x["height"]}' for x in S.canon(f.key, v))
     if f.kind == "wchecks":
@@ -35,18 +36,59 @@ def _fmt(f: S.Field, v) -> str:
     return str(v)
 
 
-SIDE = [("home", "Overview", "/settings"), ("general", "General", "/settings?section=general"), ("routing", "Routing", "/settings?section=routing"),
-        ("roles", "Role agents", "/settings?section=roles"), ("projects", "Projects", "/settings?section=projects"),
-        ("harnesses", "Harnesses", "/harnesses"), ("workers", "Workers", "/workers"), ("schedules", "Schedules", "/schedules"), ("scans", "Scans", "/scans"), ("credentials", "Credentials", "/credentials"), ("telegram", "Telegram", "/telegram"), ("slack", "Slack", "/slack"),
-        ("labels", "Labels", "/settings?section=labels"), ("release", "Releases", "/release"), ("backup", "Backup", "/backup"), ("updates", "Updates", "/updates")]
-SIDE_MORE = [(k, t, f"/settings?section={k}") for k, t in TABS if k not in {s[0] for s in SIDE}]
+# The settings menu, grouped by what each page is for (the same groups as the Settings home). A row: (key, name, link).
+SIDE_GROUPS = [
+    ("Where work comes from", [("projects", "Projects", "/settings?section=projects"), ("schedules", "Schedules", "/schedules"), ("scans", "Scans", "/scans"),
+                               ("scanner", "Scan limits", "/settings?section=scanner"), ("comments", "Comment triage", "/settings?section=comments"),
+                               ("design_links", "Design links", "/settings?section=design_links"), ("ticket_review", "Ticket review", "/settings?section=ticket_review")]),
+    ("How the work is done", [("routing", "Models by ticket size", "/settings?section=routing"), ("roles", "Stage agents", "/settings?section=roles"),
+                              ("classifier", "Classifier", "/settings?section=classifier"), ("runner", "Sandbox & limits", "/settings?section=runner"),
+                              ("harnesses", "Harnesses", "/harnesses"), ("prompts", "Agent instructions", "/settings?section=prompts")]),
+    ("Before a pull request is done", [("review", "Code review", "/settings?section=review"), ("ci", "CI feedback", "/settings?section=ci"),
+                                       ("conflicts", "Merge conflicts", "/settings?section=conflicts"), ("mockups", "Design mockups", "/settings?section=mockups"),
+                                       ("workers", "Workers", "/workers"), ("pm", "Project manager", "/settings?section=pm")]),
+    ("Keeping you in the loop", [("telegram", "Telegram", "/telegram"), ("slack", "Slack", "/slack"), ("chat", "Ticket chat", "/settings?section=chat"),
+                                 ("screens", "Screens", "/settings?section=screens")]),
+    ("Running the factory", [("credentials", "Credentials", "/credentials"), ("labels", "Labels", "/settings?section=labels"), ("health", "Health alerts", "/settings?section=health"),
+                             ("release", "Releases", "/release"), ("updates", "Updates", "/updates"), ("update_check", "Update checks", "/settings?section=update_check"),
+                             ("backup", "Backup", "/backup")]),
+]
+SIDE_TOP = [("home", "Overview", "/settings"), ("general", "General", "/settings?section=general")]
+STATE_WORD = {"off": "Off", "setup": "Set up"}
 
 
-def side_list(active: str) -> str:
-    link = lambda k, t, href: f'<a href="{href}"{" class=active aria-current=page" if k == active else ""}>{esc(t)}</a>'
-    cls = "side on-home" if active == "home" else "side"            # on a phone the home keeps the list to one scrolling row
-    return (f'<nav class="{cls}" aria-label="Settings">' + "".join(link(*x) for x in SIDE)
-            + '<span class="side-h">More settings</span>' + "".join(link(*x) for x in SIDE_MORE) + "</nav>")
+def section_group(key: str) -> str:
+    """The menu group a settings page sits in, for its breadcrumb ("" for the pages above the groups)."""
+    return next((g for g, rows in SIDE_GROUPS if any(k == key for k, _, _ in rows)), "")
+
+
+def _states(cfg) -> dict:
+    """Feature key -> on | off | setup, for the markers in the menu. Never fails the page: no markers instead."""
+    if cfg is None:
+        return {}
+    from .features import features
+    try:
+        return {f.key: f.kind for f in features(cfg) if f.kind in ("on", "off", "setup")}
+    except Exception:  # noqa: BLE001 - a marker is a nicety; the menu itself must render
+        return {}
+
+
+def side_list(active: str, cfg=None) -> str:
+    states = _states(cfg)
+
+    def link(k, t, href):
+        st = states.get(k, "")
+        mark = f'<span class="sdot {st}" aria-hidden="true"></span>' if st else '<span class="sdot" aria-hidden="true"></span>'
+        word = (f'<span class="sstate {st}">{STATE_WORD[st]}</span>' if st in STATE_WORD else
+                '<span class="vh"> (on)</span>' if st == "on" else "")
+        return f'<a href="{href}"{" class=active aria-current=page" if k == active else ""}>{mark}{esc(t)}{word}</a>'
+
+    top = "".join(f'<a href="{href}"{" class=active aria-current=page" if k == active else ""}>{esc(t)}</a>' for k, t, href in SIDE_TOP)
+    groups = "".join(f'<div class="side-g{" cur" if any(k == active for k, _, _ in rows) else ""}"><span class="side-h">{esc(g)}</span>'
+                     + "".join(link(*x) for x in rows) + "</div>" for g, rows in SIDE_GROUPS)
+    cls = "side on-home" if active == "home" else "side"            # on a phone the home lists everything itself, so the menu steps aside
+    return (f'<nav class="{cls}" aria-label="Settings"><a class="side-back" href="/settings">‹ All settings</a>'
+            f'<div class="side-top">{top}</div>{groups}</nav>')
 
 
 def labels_page(cfg) -> str:
@@ -56,34 +98,52 @@ def labels_page(cfg) -> str:
             + "".join(f"<tr><th>{esc(k)}</th><td><code>{esc(v)}</code></td></tr>" for k, v in rows) + "</table>")
 
 
-def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = False) -> str:
-    value = effective_value(f, eff, submitted)
+SIMPLE = ("int", "float", "text", "url", "select", "every", "bool")      # the kinds whose default is shown and can be put back with Reset
+
+
+def _default_note(f: S.Field, eff: dict) -> str:
+    """'Default: x', plus 'Changed' and a Reset button (shown by the script) when the saved value is not the default."""
+    if f.kind not in SIMPLE:
+        return ""
+    d = S.default_for(f.key)
+    if d is None or d == "":
+        return ""
+    shown = ("On" if d else "Off") if f.kind == "bool" else str(d)
+    changed = S.effective(eff, f.key) != d
+    reset = (f'<button type="button" class="link s-reset" data-for="{esc(f.key)}" data-value="{esc("1" if d is True else "0" if d is False else d)}" hidden>Reset</button>'
+             if changed else "")
+    return (f'<span class="s-def">{"<span class=s-chg>Changed</span> " if changed else ""}Default: <code>{esc(shown)}</code>{reset}</span>')
+
+
+def control(f: S.Field, value, submitted=None) -> str:
+    """The input for one field, named by its dotted key (the form posts every field of the section)."""
     name = esc(f.key)
     if f.kind == "bool":
         on = (submitted.get(f.key) == "1") if submitted is not None else bool(value)
-        if row:
-            control = f'<input type="checkbox" id="{name}" name="{name}" value="1"{" checked" if on else ""}>'
-            head = f'<label for="{name}">{esc(f.label)}</label>'
-        else:
-            control = f'<label class="check"><input type="checkbox" name="{name}" value="1"{" checked" if on else ""}> {esc(f.label)}</label>'
-            head = ""
-    else:
-        head = f'<label for="{name}">{esc(f.label)}</label>'
-        if f.kind == "select":
-            control = f'<select id="{name}" name="{name}">' + "".join(f'<option{" selected" if c == value else ""}>{esc(c)}</option>' for c in f.choices) + "</select>"
-        elif f.kind == "checks":
-            have = set(submitted.getall(f.key)) if submitted is not None else set(value or [])
-            control = " ".join(f'<label class="check"><input type="checkbox" name="{name}" value="{esc(c)}"{" checked" if c in have else ""}> {esc(c)}</label>' for c in f.choices)
-        elif f.kind in ("repos", "hosts", "kv", "models", "wchecks", "viewports"):
-            control = f'<textarea id="{name}" name="{name}" rows="{max(3, min(8, len((value or "").splitlines()) + 1))}">{esc(value)}</textarea>'
-        elif f.kind == "prompt":           # the newline after the tag is dropped by the browser, so a leading one in the value survives
-            control = f'<textarea id="{name}" name="{name}" rows="6" maxlength="{S.PROMPT_MAX}">\n{esc(value)}</textarea>'
-            agent = f.key.partition(".")[2]
-            if agent in PROMPT_AGENTS:
-                control += (f'<details><summary class="muted">Built-in instructions (always included, and they win)</summary>'
-                            f'<pre>{esc(builtin_prompt(agent))}</pre></details>')
-        else:
-            control = f'<input id="{name}" name="{name}" value="{esc(value)}" autocomplete="off">'
+        return f'<input type="checkbox" id="{name}" name="{name}" value="1"{" checked" if on else ""}>'
+    if f.kind == "select":
+        return f'<select id="{name}" name="{name}">' + "".join(f'<option{" selected" if c == value else ""}>{esc(c)}</option>' for c in f.choices) + "</select>"
+    if f.kind == "checks":
+        have = set(submitted.getall(f.key)) if submitted is not None else set(value or [])
+        return " ".join(f'<label class="check"><input type="checkbox" name="{name}" value="{esc(c)}"{" checked" if c in have else ""}> {esc(c)}</label>' for c in f.choices)
+    if f.kind in ("repos", "hosts", "hostlist", "paths", "kv", "models", "wchecks", "viewports"):
+        return f'<textarea id="{name}" name="{name}" rows="{max(3, min(8, len((value or "").splitlines()) + 1))}">{esc(value)}</textarea>'
+    if f.kind == "prompt":                 # the newline after the tag is dropped by the browser, so a leading one in the value survives
+        out = f'<textarea id="{name}" name="{name}" rows="6" maxlength="{S.PROMPT_MAX}">\n{esc(value)}</textarea>'
+        agent = f.key.partition(".")[2]
+        if agent in PROMPT_AGENTS:
+            out += (f'<details><summary class="muted">Built-in instructions (always included, and they win)</summary>'
+                    f'<pre>{esc(builtin_prompt(agent))}</pre></details>')
+        return out
+    return f'<input id="{name}" name="{name}" value="{esc(value)}" autocomplete="off">'
+
+
+def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = True, label: str = "", switch: bool = False) -> str:
+    """One setting: its name and what it does on the left, the control on the right (stacked on a phone).
+    switch: the section's own on/off, drawn large at the top of the page."""
+    name = esc(f.key)
+    ctl = control(f, effective_value(f, eff, submitted), submitted)
+    head = f'<label for="{name}">{esc(label or f.label)}</label>' if f.kind != "checks" else f'<span class="s-lab">{esc(label or f.label)}</span>'
     pinned = S.get_in(base, f.key)
     note = ""
     if S.get_in(eff, f.key) is not None and S.get_in(eff, f.key) != pinned and pinned is not None:
@@ -92,9 +152,11 @@ def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = Fal
         note = f'<span class="muted"> · changed here (config.toml says: {esc(said)})</span>'
     help_ = f'<div class="muted">{esc(f.help)}{note}</div>' if (f.help or note) else ""
     confirm = (f'<label class="check danger"><input type="checkbox" name="confirm__{name}" value="1"> I understand: {esc(f.danger)}</label>' if f.danger else "")
-    if row:
-        return f'<div class="srow"><div class="what">{head}{help_}</div><div class="ctl">{control}</div>{confirm}</div>'
-    return f'<div class="field">{head}{control}{help_}{confirm}</div>'
+    if switch:                             # the real checkbox sits invisibly over the drawn track, so it keeps its keyboard and label behaviour
+        return (f'<div class="s-switch card" id="s-{name}"><div class="what">{head}{help_}</div>'
+                f'<span class="s-toggle">{ctl}<span class="s-track" aria-hidden="true"></span></span>{confirm}</div>')
+    wide = " s-wide" if f.kind in ("prompt", "wchecks", "repos", "hosts", "hostlist", "paths", "kv", "viewports", "models") else ""
+    return f'<div class="srow{wide}" id="s-{name}"><div class="what">{head}{help_}{_default_note(f, eff)}</div><div class="ctl">{ctl}</div>{confirm}</div>'
 
 
 def effective_value(f: S.Field, eff: dict, submitted=None):
@@ -103,14 +165,103 @@ def effective_value(f: S.Field, eff: dict, submitted=None):
     return _fmt(f, S.effective(eff, f.key)) if f.kind not in ("bool", "checks", "select") else S.effective(eff, f.key)
 
 
+SECTION_INTRO = {
+    "general": "Whether the factory is live, how often it looks for work, where tickets come from and who may start work with a label.",
+    "routing": "The classifier sizes each ticket. Its size picks the model and effort the build runs with.",
+    "roles": "Before a build a ticket can go through up to three stages. Each stage is an agent that writes one document on the ticket; "
+             "start one with its label, or let Auto pick.",
+    "classifier": "Decides each ticket's kind and size, and asks you when it is unsure.",
+    "runner": "How many agents run at once, the time, memory and CPUs each one gets, and the only hosts a sandbox may reach.",
+    "review": "A second agent reads each pull request the factory opens and posts a review. It never approves, requests changes, merges or edits code.",
+    "pm": "An agent ranks each repository's factory tickets and records blockers; a build waits for its open blockers.",
+    "mockups": "Whether a build waits for the designer's mockups, and for your approval of them.",
+    "ci": "The factory watches CI on its pull requests and an agent tries to fix a failure.",
+    "conflicts": "When a factory pull request conflicts with its base branch, an agent merges the base in and resolves the conflicted files.",
+    "workers": "Run a repository's checks on another machine before anything is pushed.",
+    "screens": "Screenshots of each app at every viewport, compared with the approved ones.",
+    "prompts": "Your own instructions for each agent. They come before its built-in instructions, which always apply.",
+    "comments": "When a person comments on a ticket the factory worked on, an agent can work out what the comment asks for.",
+    "ticket_review": "On request, an agent proposes which open tickets are already built or duplicates. Nothing runs until a person asks.",
+    "design_links": "Design exports linked in a ticket, fetched only from hosts you list.",
+    "scanner": "Limits for code-smell scans. The scans themselves, and what they look for, are on the Scans page.",
+    "chat": "Ask about a ticket and get a quick answer, outside the label-driven pipeline.",
+    "health": "Alerts on Telegram when something that would stop the factory goes wrong: disk, memory, a hung poll, failing runs.",
+    "update_check": "Whether the UI tells you when a newer release is out.",
+}
+APPLY_NOTE = "Changes apply the next time the factory is idle; nothing running is interrupted."
+TIERS = [("low", "Small tickets", "The classifier sized them low."), ("medium", "Medium tickets", "Also any ticket not sized yet."),
+         ("high", "Large tickets", "The classifier sized them high.")]
+ROLE_TEXT = {"analyst": "Writes up what the ticket asks for, as testable requirements.", "designer": "Designs the screens, and adds mockups if asked.",
+             "architect": "Writes the technical plan an engineer can follow."}
+
+
+def _short(label: str) -> str:
+    """'Analyst: fallback models' -> 'Fallback models'."""
+    t = label.split(": ", 1)[-1]
+    return t[:1].upper() + t[1:]
+
+
+def _rows(fields, eff, base, submitted) -> str:
+    """Fields under their group headings, in order; Advanced ones closed at the end."""
+    main, adv = [f for f in fields if not f.adv], [f for f in fields if f.adv]
+    out, groups = [], []
+    for f in main:
+        if f.group not in groups:
+            groups.append(f.group)
+    for g in groups:
+        rows = "".join(field_row(f, eff, base, submitted) for f in main if f.group == g)
+        out.append(f'<fieldset class="s-group"><legend>{esc(g)}</legend>{rows}</fieldset>' if g else f'<div class="s-group">{rows}</div>')
+    if adv:
+        names = ", ".join(_short(f.label) for f in adv[:3]) + (" …" if len(adv) > 3 else "")
+        out.append(f'<details class="s-adv"{" open" if submitted is not None else ""}><summary>Advanced <span class="muted">{esc(names)}</span></summary>'
+                   + "".join(field_row(f, eff, base, submitted) for f in adv) + "</details>")
+    return "".join(out)
+
+
+def _matrix(section: str, fields, eff, base, submitted) -> tuple[str, list]:
+    """Models by ticket size and Stage agents: one card per tier or stage with its model and effort side by side; the rest of its
+    settings behind More. Returns the cards and the fields that belong to no tier or stage."""
+    names = TIERS if section == "routing" else [(r.name, r.name.title(), ROLE_TEXT.get(r.name, "")) for r in S.DEFAULT_ROLES]
+    used, cards = set(), []
+    for key, title, text in names:
+        mine = [f for f in fields if f.key.startswith(f"{section}.{key}.")]
+        used.update(f.key for f in mine)
+        top = [f for f in mine if f.key.rsplit(".", 1)[1] in ("model", "effort")]
+        rest = [f for f in mine if f not in top]
+        cells = "".join(f'<div class="mx-cell" id="s-{esc(f.key)}"><label for="{esc(f.key)}">{esc(_short(f.label))}</label>{control(f, effective_value(f, eff, submitted), submitted)}'
+                        f'{_default_note(f, eff)}</div>' for f in top)
+        labels = ""
+        if section == "roles":
+            lab, done = S.effective(eff, f"roles.{key}.label"), S.effective(eff, f"roles.{key}.done_label")
+            labels = f'<p class="mx-labels"><code>{esc(lab)}</code> <span aria-hidden="true">→</span><span class="vh">then</span> <code>{esc(done)}</code></p>'
+        more = ", ".join((lambda t: t[:1].lower() + t[1:])(_short(f.label)) for f in rest)
+        cards.append(f'<section class="mx-row card" aria-labelledby="mx-{esc(key)}"><div class="mx-main"><div class="mx-name"><h2 id="mx-{esc(key)}">{esc(title)}</h2>'
+                     f'<span class="muted">{esc(text)}</span>{labels}</div>{cells}</div>'
+                     f'<details class="mx-more"{" open" if submitted is not None else ""}><summary>More for {esc(title.lower())} <span class="muted">{esc(more)}</span></summary>'
+                     + "".join(field_row(f, eff, base, submitted, label=_short(f.label)) for f in rest) + "</details></section>")
+    flow = ""
+    if section == "roles":
+        steps = [r.name.title() for r in S.DEFAULT_ROLES] + ["Build"]
+        flow = ('<ol class="mx-flow" aria-label="The order of stages">' + "".join(f"<li>{esc(t)}</li>" for t in steps)
+                + '</ol>')
+    return flow + "".join(cards), [f for f in fields if f.key not in used]
+
+
 def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None) -> str:
-    title, fields = S.SECTIONS[section][0], S.fields_for(section, eff)
-    general = section == "general"
-    rows = "".join(field_row(f, eff, base, submitted, row=general) for f in fields)
-    return (f'<form method="post" action="/settings/save" class="settings{" rows" if general else ""}">{csrf_field(csrf)}'
-            f'<input type="hidden" name="section" value="{esc(section)}">{rows}<button>{"Save changes" if general else "Save " + esc(title.lower())}</button></form>'
-            '<p class="muted">Saving writes <code>config.overrides.toml</code>; your <code>config.toml</code> is never touched. '
-            + ("Changes apply the next time the factory is idle.</p>" if general else "Changes apply when the orchestrator is next idle (it never restarts mid-task).</p>"))
+    fields = S.fields_for(section, eff)
+    intro = f'<p class="s-lede muted">{esc(SECTION_INTRO[section])}</p>' if section in SECTION_INTRO else ""
+    head = ""
+    if fields and fields[0].kind == "bool" and fields[0].key.endswith(".enabled"):
+        head, fields = field_row(fields[0], eff, base, submitted, switch=True), fields[1:]
+    if section in ("routing", "roles"):
+        cards, rest = _matrix(section, fields, eff, base, submitted)
+        body = cards + (f'<fieldset class="s-group"><legend>Auto</legend>{_rows(rest, eff, base, submitted)}</fieldset>' if rest else "")
+    else:
+        body = _rows(fields, eff, base, submitted)
+    return (f'{intro}<form method="post" action="/settings/save" class="settings rows" data-dirty>{csrf_field(csrf)}'
+            f'<input type="hidden" name="section" value="{esc(section)}">{head}{body}'
+            f'<div class="s-save card"><span class="s-dirty" aria-live="polite">{APPLY_NOTE}</span><button>Save changes</button></div></form>'
+            '<p class="muted s-foot">Saving writes <code>config.overrides.toml</code>; your <code>config.toml</code> is never touched.</p>')
 
 
 def projects_form(base: dict, eff: dict, csrf: str, submitted=None) -> str:
@@ -256,6 +407,8 @@ def telegram_page(cfg, eff: dict, csrf: str, unknown: list, result: str = "") ->
         f'<form method="post" action="/telegram/save" class="settings">{csrf_field(csrf)}'
         f'<div class="field"><label>Your Telegram user id</label><input name="telegram.chat_id" value="{esc(tg.get("chat_id", 0))}" autocomplete="off">'
         '<div class="muted">The only account the bot will obey. 0 turns Telegram off.</div></div>'
+        f'<div class="field"><label for="tg-ui">Address of this UI</label><input id="tg-ui" name="telegram.ui_url" value="{esc(tg.get("ui_url", ""))}" autocomplete="off" placeholder="https://factory.example.internal">'
+        '<div class="muted">Optional: adds an <em>Open in UI</em> button to messages with questions for you.</div></div>'
         f'<div class="field"><label>How chatty</label><label class="check"><input type="radio" name="telegram.mode" value="level"{"" if mode_events else " checked"}> Use a level</label> '
         f'<select name="telegram.verbosity">{lv}</select>'
         '<div class="muted">quiet: needs-a-person, failures, rate limits · normal: + PR ready, stage done, CI results · verbose: everything</div>'
