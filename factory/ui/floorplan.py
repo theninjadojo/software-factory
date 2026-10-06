@@ -689,8 +689,8 @@ def terrain_shape(t) -> list[str]:
         for it in items:
             ok = isinstance(it, list) and len(it) == 5 and it[0] in T.KINDS and px(it[1], W * G) and px(it[2], H * G) and _int(it[3]) and _int(it[4])
             if not ok or not (T.SIZES[it[0]][0] <= it[3] <= T.SIZES[it[0]][1]) or not 0 <= it[4] <= 0xFFFFFFFF:
-                errs.append("A terrain item is [kind, x, y, size, seed]: a tree, pine, bush, rock, pond, lamp, fog, shade or park or town piece (fetch, "
-                            "playground, picnic, bench, dog walker, a building, a vehicle...) inside the floor, its size in range.")
+                errs.append("A terrain item is [kind, x, y, size, seed]: a tree, pine, bush, rock, pond, lamp, fog, shade or park, town or uploaded "
+                            "scene piece (fetch, playground, picnic, bench, dog walker, a building, a vehicle...) inside the floor, its size in range.")
                 break
     rivers = t.get("rivers", [])
     if not isinstance(rivers, list) or len(rivers) > L["rivers"] or not all(
@@ -1035,13 +1035,15 @@ def rev(state_dir) -> str:
 
 
 def read(state_dir) -> tuple[dict | None, str]:
-    """(the saved document or None, why it is not used). Parsed once per change of the file."""
+    """(the saved document or None, why it is not used). Parsed once per change of the file, or of the scene packs it may use."""
+    from . import scenes
+    kinds = tuple(scenes.sync(state_dir))
     p = path(state_dir)
     try:
         st = p.stat()
     except OSError:
         return None, ""
-    key = (str(p), st.st_mtime_ns, st.st_size)
+    key = (str(p), st.st_mtime_ns, st.st_size, kinds)
     if key not in _READ:
         doc, why = None, ""
         try:

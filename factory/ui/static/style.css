@@ -898,7 +898,11 @@ p.fe-part.later { cursor:default; border-style:dashed; color:var(--muted); backg
 .fe-problems { margin:.6rem 0; padding-left:1.2rem; color:var(--bad); } .fe-problems li.ok { color:var(--good); list-style:none; margin-left:-1.2rem; }
 .fe-data textarea { width:100%; font:12px/1.4 var(--mono); }
 .fe-save, .fe-reset { margin-top:.8rem; }
-@media (max-width:760px) { .fe, .fe-save, .fe-reset, a.btn.fm-edit { display:none; } .fe-phone { display:block; } }
+.fe-packs { margin-top:1.6rem; }
+.fe-pack-list { padding-left:0; list-style:none; }
+.fe-pack-list li { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .8rem; padding:.3rem 0; }
+.fe-pack-list form { margin:0 0 0 auto; }
+@media (max-width:760px) { .fe, .fe-save, .fe-reset, .fe-packs, a.btn.fm-edit { display:none; } .fe-phone { display:block; } }
 .lt-card .lt-body { margin:.4rem 0; overflow-wrap:anywhere; } .lt-card h4 { margin:1rem 0 .4rem; }
 .lt-comments { list-style:none; margin:0 0 .8rem; padding:0; display:grid; gap:.6rem; }
 .lt-c { border-left:2px solid var(--line2); padding:.1rem 0 .1rem .7rem; overflow-wrap:anywhere; } .lt-by { margin:0 0 .2rem; font-size:13px; }

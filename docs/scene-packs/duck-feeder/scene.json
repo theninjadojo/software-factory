@@ -1,0 +1,47 @@
+{
+  "format": 1,
+  "name": "Duck feeder",
+  "size": [
+    70,
+    40
+  ],
+  "art": "bench.svg",
+  "actor": {
+    "at": [
+      35,
+      37
+    ],
+    "poses": {
+      "sit": "sit.svg",
+      "walk": "walk.svg",
+      "feed": "feed.svg"
+    },
+    "rest": "sit",
+    "target": "water",
+    "reach": 600,
+    "steps": [
+      {
+        "pose": "sit",
+        "seconds": 7.3
+      },
+      {
+        "pose": "walk",
+        "seconds": 5.6,
+        "walk": "there"
+      },
+      {
+        "pose": "feed",
+        "seconds": 8
+      },
+      {
+        "pose": "walk",
+        "seconds": 5.6,
+        "walk": "home"
+      },
+      {
+        "pose": "sit",
+        "seconds": 1.5
+      }
+    ]
+  }
+}

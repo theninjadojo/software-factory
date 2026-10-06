@@ -6,13 +6,15 @@ import json
 import logging
 import threading
 
-from . import board, floorplan, plant, terrain, views
+from . import board, floorplan, plant, scenes, terrain, views
 from .town_art import ART as TOWN
 from .views import esc
 
 log = logging.getLogger("factory.ui")
 LOCK = threading.Lock()                    # the server is threaded: the revision check and the write happen as one step
-FLASH = {"layout_reset": "Back to the default layout. The floor is drawn as it was before any layout was saved."}
+FLASH = {"layout_reset": "Back to the default layout. The floor is drawn as it was before any layout was saved.",
+         "scene_added": "The scene pack was added: find it under Your scenes in the build panel.",
+         "scene_removed": "The scene pack was removed."}
 STALE = ("The layout was saved by someone else since you opened it. Save again to replace it with yours, or open the page again to "
          "start from theirs.")
 # the layout tools, each with the category of the build panel it is listed under
@@ -86,6 +88,9 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
               + _ico(GROUP_ICONS["Buildings"], " fe-cat-ico") + '<span class="fe-cat-name">Buildings</span> <span class="fe-cat-n"></span></button></h3>'
               '<div class="fe-cat-body" role="group" aria-label="Buildings"><div class="fe-tray-list"><p class="muted">Loading parts…</p></div></div></section>')
     panel += "".join(_category(g, ts, False) for g, ts in TERRAIN_TOOLS)
+    installed = scenes.sync(h.app.state_dir())
+    if installed:
+        panel += _category("Your scenes", [(k, sc["name"]) for k, sc in sorted(installed.items(), key=lambda kv: kv[1]["name"].lower())], True)
     dirs = "".join(f'<option value="{d}">{n}</option>' for d, n in (("e", "Facing east"), ("w", "Facing west"), ("s", "Facing south"), ("n", "Facing north")))
     art = "".join(f'<g data-art="{esc(nid)}">{plant.node_art(nid, m["label"], ctx.trains)}</g>'
                   for nid, m in floorplan.meta(ctx)["nodes"].items())
@@ -106,7 +111,8 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'buttons or Ctrl and the mouse wheel. Every hop of the route needs its belt, so every station stays reachable. Moving a station '
             'changes the picture, not the workflow. New stations, agents or workers get a default spot until you place them.</p>' + note
             + '<p class="fe-phone muted">Editing the layout is for wider screens. On a phone the floor is the column of its stations.</p>'
-            f'<div class="fe" data-meta="{esc(json.dumps(floorplan.meta(ctx), separators=(",", ":")))}">'
+            f'<div class="fe" data-meta="{esc(json.dumps(floorplan.meta(ctx), separators=(",", ":")))}" '
+            f'data-scenes="{esc(json.dumps(installed, separators=(",", ":")))}">'
             '<div class="fe-tools" role="toolbar" aria-label="Layout options">'
             '<select class="fe-hop" aria-label="The belt to draw"></select>'
             f'<select class="fe-dir" aria-label="Which way the piece faces">{dirs}</select>'
@@ -142,8 +148,68 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             '<button>Save layout</button></form>'
             f'<form method="post" action="/floor/layout/reset" class="fe-reset">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
             '<button class="secondary">Reset to the default layout</button></form>'
+            + _packs(csrf, installed) +
             '<script src="/static/town.js" defer></script><script src="/static/terrain.js" defer></script><script src="/static/floor-edit.js" defer></script>')
     h._send(status, views.page("Floor layout", body, "/", csrf, wide=True, full=True, flash=flash, flash_kind=kind))
+
+
+def _packs(csrf: str, installed: dict) -> str:
+    """The scene packs section: the ones installed, each with a Remove button, and the upload form."""
+    rows = "".join(f'<li><span>{esc(sc["name"])}</span> <span class="muted">{sc["w"]}×{sc["h"]}'
+                   + (f', walks to the nearest {esc(sc["actor"]["target"])}' if sc["actor"] else "") + '</span>'
+                   f'<form method="post" action="/floor/scenes/remove">{views.csrf_field(csrf)}<input type="hidden" name="id" value="{esc(sc["id"])}">'
+                   f'<button class="secondary" aria-label="Remove {esc(sc["name"])}">Remove</button></form></li>'
+                   for _, sc in sorted(installed.items(), key=lambda kv: kv[1]["name"].lower()))
+    return ('<section class="fe-packs" aria-labelledby="fe-packs-h"><h2 id="fe-packs-h">Scene packs</h2>'
+            '<p class="muted">Add your own pictures and little stories to the floor: a zip of a scene.json and SVG pictures, like the bench '
+            'whose old man walks to the water to feed the ducks. A pack holds no code. Its steps come from a fixed list (show a pose, walk '
+            'to the nearest water or tree, walk home), and its pictures are redrawn from a safe set of shapes and animations, so scripts, '
+            'links and styles are left out. The format is described in docs/scene-packs.md in the repository.</p>'
+            + (f'<ul class="fe-pack-list">{rows}</ul>' if rows else '<p class="muted">No scene packs yet.</p>')
+            + f'<form method="post" action="/floor/scenes/upload" enctype="multipart/form-data" class="field fe-pack-up">{views.csrf_field(csrf)}'
+            f'<label>Scene pack (.zip, at most {scenes.MAX_UPLOAD // 1024} KB)<input type="file" name="file" accept=".zip,application/zip" required></label>'
+            '<button>Add scene pack</button></form></section>')
+
+
+def _again(h, csrf: str, status: int, flash: str, kind: str = "bad") -> None:
+    """The editor again, over the saved layout, with a message (a scene pack refused or added)."""
+    ctx, state = _ctx(h), h.app.state_dir()
+    plan, _ = floorplan.current(state, ctx)
+    text = json.dumps(floorplan.canonical(plan or floorplan.default_plan(ctx)), separators=(",", ":"))
+    _page(h, csrf, ctx, text, floorplan.rev(state), status, flash, kind)
+
+
+def scene_upload(h, form, csrf: str, files) -> None:
+    """A scene pack from the upload form (multipart, CSRF-checked by the server): compiled and kept, or refused with the reason."""
+    if len(files) != 1:
+        return _again(h, csrf, 422, "Choose one scene pack (a .zip file) to add.")
+    name, data = files[0]
+    if data is None:
+        return _again(h, csrf, 413, f"The scene pack is larger than {scenes.MAX_UPLOAD // 1024} KB.")
+    try:
+        sc, dropped = scenes.compile_pack(data)
+    except scenes.PackError as e:
+        return _again(h, csrf, 422, f"The scene pack was not added: {e}")
+    if not scenes.add(h.app.state_dir(), sc):
+        return _again(h, csrf, 422, f"There are already {scenes.MAX_SCENES} scene packs; remove one first.")
+    log.info("scene pack added: %s (%d bytes, %d things left out)", sc["id"], len(data), len(dropped))
+    if dropped:
+        return _again(h, csrf, 200, f"The scene pack {sc['name']} was added, without what is not allowed in a pack: "
+                      + ", ".join(dropped[:8]) + ("…" if len(dropped) > 8 else "") + ".", "ok")
+    h._redirect("/floor/edit?ok=scene_added")
+
+
+def scene_remove(h, form, csrf: str) -> None:
+    """Remove a scene pack, unless the saved layout still has one on the floor."""
+    state, sid = h.app.state_dir(), form.get("id", "")
+    plan, _ = floorplan.read(state)
+    used = any(it[0] == "sc-" + sid for it in ((plan or {}).get("terrain") or {}).get("items") or [] if isinstance(it, list) and it)
+    if used:
+        return _again(h, csrf, 409, "That scene is still on the floor. Erase it from the layout and save, then remove the pack.")
+    if not scenes.remove(state, sid):
+        return _again(h, csrf, 404, "There is no such scene pack.")
+    log.info("scene pack removed: %s", sid)
+    h._redirect("/floor/edit?ok=scene_removed")
 
 
 def edit_get(h, q: dict, csrf: str) -> None:
@@ -157,6 +223,7 @@ def save(h, form, csrf: str) -> None:
     """Check the whole layout here (the editor's own check is only a convenience), refuse a save made over someone else's, then write
     it and log a line."""
     ctx, state = _ctx(h), h.app.state_dir()
+    scenes.sync(state)
     text = form.get("plan", "")
     doc = None
     if len(text.encode()) > floorplan.MAX_BYTES:

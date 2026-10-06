@@ -58,6 +58,8 @@ DIRS = ((1.0, 0.0), (0.9659, 0.2588), (0.866, 0.5), (0.7071, 0.7071), (0.5, 0.86
         (-0.5, 0.866), (-0.7071, 0.7071), (-0.866, 0.5), (-0.9659, 0.2588), (-1.0, 0.0), (-0.9659, -0.2588), (-0.866, -0.5),
         (-0.7071, -0.7071), (-0.5, -0.866), (-0.2588, -0.9659), (0.0, -1.0), (0.2588, -0.9659), (0.5, -0.866), (0.7071, -0.7071),
         (0.866, -0.5), (0.9659, -0.2588))
+SCENES: dict = {}                           # uploaded scene packs (scenes.py), kind "sc-<id>" -> compiled scene; set_scenes fills it
+BASE = (dict(PARK), dict(PARK_NAMES), dict(SIZES), KINDS, SOLID)
 GREENS = (("#24452d", "#3a6b45", "#5e9a5c"), ("#21463f", "#336e5f", "#56a08a"), ("#33502a", "#4f7838", "#7da658"))
 
 
@@ -242,6 +244,52 @@ def water_spots(t: dict) -> list:
     return out
 
 
+def set_scenes(scenes: dict) -> None:
+    """Make the installed scene packs park pieces like the rest: a box, a name, a hitbox. Each table is replaced whole, never changed in
+    place, so a page being drawn meanwhile sees the old one or the new one."""
+    global SCENES, PARK, PARK_NAMES, SIZES, KINDS, SOLID
+    park, names, sizes, kinds, solid = BASE
+    PARK = {**park, **{k: (s["w"], s["h"]) for k, s in scenes.items()}}
+    PARK_NAMES = {**names, **{k: s["name"] for k, s in scenes.items()}}
+    SIZES = {**sizes, **{k: (s["w"], s["w"]) for k, s in scenes.items()}}
+    KINDS, SOLID = kinds + tuple(scenes), solid + tuple(scenes)
+    SCENES = scenes
+
+
+def target_spots(t: dict, target: str) -> list:
+    """Where a scene's actor can walk to, as circles (x, y, r): the water, or the trees, pines and bushes."""
+    if target == "water":
+        return water_spots(t)
+    return [(x, y, s * 0.4) for kind, x, y, s, v in t.get("items") or [] if kind in ("tree", "pine", "bush")]
+
+
+def scene(it, t: dict, mirrored: bool) -> str:
+    """An uploaded scene in its box: its picture, and its actor, who walks from home to the nearest target and back as its steps say
+    (with nothing in reach the actor stays home in its resting pose). The same reckoning as old_man."""
+    import math
+    sc = SCENES[it[0]]
+    a, out = sc["actor"], sc["art"]
+    if not a:
+        return out
+    _, x, y, s, v = it
+    w, h = sc["w"], sc["h"]
+    sx, sy = (x + w / 2 - a["x"] if mirrored else x - w / 2 + a["x"]), y - h / 2 + a["y"]
+    best = None
+    for cx, cy, r in target_spots(t, a["target"]):
+        d = math.sqrt((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy))
+        if best is None or d - r < best[0]:
+            best = (d - r, cx, cy, r, d)
+    if best is None or best[0] > a["reach"] or best[0] < 12:
+        return out + f'<g transform="translate({f(a["x"])} {f(a["y"])})">{a["rest"]}</g>'
+    _, cx, cy, r, d = best
+    k = (r + 8) / d
+    tx, ty = cx + (sx - cx) * k, cy + (sy - cy) * k
+    lx, ly = ((x + w / 2 - tx) if mirrored else (tx - (x - w / 2))), ty - (y - h / 2)
+    way, back = ("scale(-1 1)", "scale(1 1)") if lx < a["x"] else ("scale(1 1)", "scale(-1 1)")
+    return (out + f'<g class="sc-actor"><animateMotion path="M {f(a["x"])} {f(a["y"])} L {f(lx)} {f(ly)}" {a["keys"]}/>'
+            + a["moving"].replace("__WAY__", way).replace("__BACK__", back) + "</g>")
+
+
 def old_man(it, t: dict, mirrored: bool) -> str:
     """He sits on the bench (its seat at (35, 37) in the bench's box), walks to the nearest water, scatters crumbs for the ducks and
     walks back; with no water near he stays on his bench."""
@@ -284,6 +332,9 @@ def park(it, t: dict) -> str:
         body = f'<g class="tw-art">{TOWN[kind]["svg"]}</g>'
     if kind == "bench":
         body = PK_BENCH + old_man(it, t, mirrored)
+    if kind in SCENES:
+        body = scene(it, t, mirrored)
+        kind = "scene"
     if kind in WILD:
         body = wander(body, w, v)
     return f'<g class="pk-{kind}" transform="{tf}">{body}</g>'

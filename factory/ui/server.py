@@ -24,7 +24,7 @@ from .. import questions as Q
 from ..config import load
 from .. import tracker
 from ..tracker import display, is_local
-from . import admin, board, features, floor, floorplan, views
+from . import admin, board, features, floor, floorplan, scenes, views
 from . import chat as CH
 from . import workers as WK
 from . import labels as L
@@ -298,10 +298,11 @@ class Handler(BaseHTTPRequestHandler):
             shutil.rmtree(work, ignore_errors=True)
 
     def _ticket_upload(self, path: str, csrf: str) -> None:
-        """A multipart ticket form (/tickets/create with files, /tickets/local/attach): spooled to a private size-capped file, the
-        CSRF token checked before the handler sees anything, and the work files always removed. The handler gets the text fields
-        and the files as (name, bytes), bytes being None for a file over the size limit."""
-        max_bytes, max_files, max_total = tracker.attach_limits(self.app.cfg())
+        """A multipart form with files (/tickets/create, /tickets/local/attach, a scene pack to /floor/scenes/upload): spooled to a
+        private size-capped file, the CSRF token checked before the handler sees anything, and the work files always removed. The
+        handler gets the text fields and the files as (name, bytes), bytes being None for a file over the size limit."""
+        max_bytes, max_files, max_total = ((scenes.MAX_UPLOAD, 1, scenes.MAX_UPLOAD) if path == "/floor/scenes/upload"
+                                           else tracker.attach_limits(self.app.cfg()))
         n = self._length(max_total + 8 * MAX_BODY + 64 * 1024 * (max_files + 1))
         if n is None:
             return

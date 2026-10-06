@@ -421,3 +421,32 @@ def test_the_floors_weather_is_chosen_with_buttons_and_kept(wide, server):
     assert pg.get_attribute("html", "data-wx") == "rain" and shown(".fm-rain") != "none"
     pg.click('.fm-time [data-wx="clear"]')
     assert shown(".fm-rain") == "none" and pg.errors == []
+
+
+def test_an_uploaded_scene_is_drawn_by_the_editor_exactly_as_by_the_floor(wide, server):
+    import io
+    import zipfile
+    from pathlib import Path
+    from factory.ui import scenes as S
+    pg = wide
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        for p in (Path(__file__).resolve().parents[2] / "docs" / "scene-packs" / "duck-feeder").iterdir():
+            z.writestr(p.name, p.read_bytes())
+    sc, _ = S.compile_pack(b.getvalue())
+    S.add(server.root / "state", sc)
+    try:
+        editor(pg, server)
+        assert pg.locator('[data-tool="sc-duck-feeder"]').count() == 1
+        for t in ({"items": [["sc-duck-feeder", 400, 400, 70, 2], ["pond", 600, 500, 90, 1]]},
+                  {"items": [["sc-duck-feeder", 900, 400, 70, 3], ["pond", 600, 500, 90, 1]]},
+                  {"items": [["sc-duck-feeder", 400, 400, 70, 2]], "rivers": [[[100, 900], [300, 950], [500, 900]]]},
+                  {"items": [["sc-duck-feeder", 400, 400, 70, 2]]}):
+            js = pg.evaluate("t => window.FT.svg(t, 20, 4000, 2400, [], [], 'over')", t)
+            assert js == T.svg(t, 20, 4000, 2400, [], [], "over")
+            assert 'class="pk-scene"' in js
+        assert pg.evaluate("window.FT.footprint(['sc-duck-feeder', 400, 400, 70, 2])") == [365, 380, 70, 40]
+        assert not pg.errors
+    finally:
+        S.remove(server.root / "state", "duck-feeder")
+        T.set_scenes({})
