@@ -1035,3 +1035,5 @@ html[data-snow="melting"] .gd-grass { animation:gd-melt 12s linear forwards; }
 .fm[data-shops="idle"] :is(.pk-t-coffee, .pk-t-fuel) .tw-blink { animation:none; opacity:.2; }
 .fm[data-shops="fail"] :is(.pk-t-coffee, .pk-t-fuel) .tw-lit { animation:none; fill:#3a2422; }
 .fm[data-shops="wait"] :is(.pk-t-coffee, .pk-t-fuel) .tw-lit { animation:none; fill:#8fa8ff; }
+.chat-turn { margin:0 0 14px; padding:10px 14px; border:1px solid var(--line); } .chat-turn p { margin:0 0 6px; } .chat-agent { background:var(--panel); border-left:3px solid var(--text); }
+.chat-text { white-space:pre-wrap; overflow-wrap:anywhere; } .chat-proposal { margin:0 0 14px; padding:10px 14px; border:1px dashed var(--line); }

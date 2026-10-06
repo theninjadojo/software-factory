@@ -7,10 +7,11 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
-from . import backup, captures, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, triage, usage, verify
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, triage, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -353,6 +354,78 @@ def ticket_design_imports(cfg: Config, repo: str, issue: dict) -> list[dict]:
         return []
 
 
+def chat_conversation(cfg: Config, repo: str, num: int) -> list:
+    """The ticket chat's newest turns, as untrusted context for a stage run or a review ([] when there are none)."""
+    try:
+        return chat.prompt_turns(_ev(), repo, num, cfg.chat.context_turns)
+    except Exception:
+        log.exception("could not read the conversation of %s#%s", repo, num)
+        return []
+
+
+def chat_answer(cfg: Config, gh: GitHub, db, turn: dict) -> None:
+    """Answer one claimed message with a read-only run (no clone, no GitHub token). Nothing here touches a label, a decision or an
+    approval: the reply, and a validated proposal a person may confirm in the UI, are only stored."""
+    repo, num = turn["repo"], turn["issue"]
+    if cfg.dry_run or (not tracker.is_local(num) and not cfg.github_issues_enabled):
+        return chat.settle(db, turn["id"], "refused", "The factory is in dry-run, so no reply was written." if cfg.dry_run
+                           else "GitHub issues are switched off.")
+    try:
+        issue = gh.get_issue(repo, num)
+    except Exception:
+        log.exception("chat: could not read %s#%s", repo, num)
+        return chat.settle(db, turn["id"], "failed", "The ticket could not be read.")
+    if issue.get("state") != "open" or "pull_request" in issue:
+        return chat.settle(db, turn["id"], "failed", "The ticket is closed.")
+    route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
+    run_id, sink = begin_run("chat", repo, issue, route), {}
+    res = runner.run_chat(cfg, repo, issue, route, human_comments(gh, repo, num), stage_outputs(gh, repo, num),
+                          Q.summary(question_state(gh, repo, num)),
+                          chat.prompt_turns(db, repo, num, cfg.chat.context_turns, upto=turn["id"]), sink)
+    end_run(run_id, res, sink)
+    if res.status == "stage":
+        chat.add_reply(db, turn, res.output, [r.name for r in cfg.roles], run_id)
+        emit("chat", "replied in the ticket chat", repo, num, run_id)
+    elif res.status == "rate-limited":
+        chat.settle(db, turn["id"], "failed", "The model is rate limited. Try again later.")
+        if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+            alert(f"Rate limited during a ticket chat reply ({repo}#{num}); pausing.", event="rate_limit")
+    else:
+        log.warning("chat: %s#%s: %s %s", repo, num, res.status, res.detail[:300])
+        chat.settle(db, turn["id"], "failed", "The reply could not be written. Try again.")
+
+
+def chat_lane(cfg: Config, gh: GitHub) -> None:
+    """The chat's own lane, next to the job pool: every chat.check_seconds it takes the oldest waiting message, up to
+    chat.max_parallel at once. A reply never waits for a stage run, and it changes nothing a stage run reads or writes."""
+    slots = threading.Semaphore(cfg.chat.max_parallel)
+
+    def work(turn: dict) -> None:
+        try:
+            chat_answer(cfg, gh, dbm.local(cfg.db_path), turn)
+        except Exception:
+            log.exception("chat reply failed")
+            try:
+                chat.settle(dbm.local(cfg.db_path), turn["id"], "failed", "The reply could not be written. Try again.")
+            except Exception:
+                pass
+        finally:
+            slots.release()
+
+    db = dbm.local(cfg.db_path)
+    while True:
+        try:
+            if cfg.chat.enabled and not pause.paused(Path(cfg.db_path).parent) and slots.acquire(blocking=False):
+                turn = chat.claim(db)
+                if turn is None:
+                    slots.release()
+                else:
+                    threading.Thread(target=work, args=(turn,), daemon=True, name="chat-reply").start()
+        except Exception:
+            log.exception("chat lane failed")
+        time.sleep(cfg.chat.check_seconds)
+
+
 def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route, c=None, stage: str | None = None, **kw):
     """Run the task with the route's model, then with each admin-configured fallback while a model is unavailable (rate
     limit or API error). Every attempt is its own run: fresh workspace, container, branch and `runs` row. The last result is
@@ -392,7 +465,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         gh.comment(repo, num, why)
     alert(f"Starting {repo}#{num}: {issue['title'][:80]}\n{picked(route, c)}", event="started")
     claim(gh, repo, num, trigger_label, "implement")
-    kw = dict(prior=prior, mockups=shown, comments=human_comments(gh, repo, num), answers=Q.summary(question_state(gh, repo, num)))
+    kw = dict(prior=prior, mockups=shown, comments=human_comments(gh, repo, num), answers=Q.summary(question_state(gh, repo, num)),
+              conversation=chat_conversation(cfg, repo, num))
     res, route = run_chain(cfg, gh, "build", repo, issue, route, c, **kw)
     if res.status == "failed" and getattr(res, "screen_failure", None):      # one fix round with the diffs, then it stays failed
         emit("screens:retry", "the screens did not match the baselines: one fix round with the diffs", repo, num)
@@ -501,7 +575,8 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         except Exception:
             log.exception("could not read the review notes of %s#%s", repo, num)
     res, route = run_chain(cfg, gh, "stage", repo, issue, route, c, role.name, role=role.name, prior=stage_outputs(gh, repo, num),
-                           comments=comments, answers=Q.summary(before), **({"review": review} if review else {}))
+                           comments=comments, answers=Q.summary(before), conversation=chat_conversation(cfg, repo, num),
+                           **({"review": review} if review else {}))
     if review and res.status == "stage":
         reviewnotes.mark_sent(conn, review["ids"])
     # The working label comes off only once the outcome is on the ticket: a crash or a restart before that leaves it on, so the
@@ -628,7 +703,8 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
     route = Route(cfg.review.harness, cfg.review.model, cfg.review.effort, cfg.review.fallback_models)
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
-                           comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num))
+                           comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num),
+                           conversation=chat_conversation(cfg, repo, num))
     if res.status == "rate-limited":
         if trigger_label:
             requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
@@ -1416,6 +1492,7 @@ def main() -> None:
     step_gh = gh if cfg.subtasks.enabled and cfg.github_issues_enabled and not cfg.dry_run and token else None
     if not args.once:
         stranded = dbm.mark_interrupted(conn)
+        chat.mark_interrupted(conn)
         emit("startup", f"orchestrator started ({'dry-run' if cfg.dry_run else 'LIVE'}), {len(cfg.repos)} repo(s)"
                         + (f"; {stranded} run(s) were interrupted by the restart" if stranded else ""))
         if restored:
@@ -1440,6 +1517,8 @@ def main() -> None:
     if (warning := resource_warning(cfg.runner)) and not args.once:
         log.warning("%s", warning)
         alert(warning, event="startup")
+    if not args.once and cfg.chat.enabled:
+        threading.Thread(target=chat_lane, args=(cfg, gh), daemon=True, name="chat-lane").start()
     if not args.once and not cfg.dry_run:
         recover(cfg, gh)
     while True:

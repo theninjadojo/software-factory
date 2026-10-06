@@ -366,4 +366,10 @@
       .catch(function () {});
   }
   setInterval(tick, 5000);
+  function chatTick() {          // the ticket chat while a reply is awaited: the panel replaces itself (its form is hidden meanwhile)
+    var box = document.querySelector(".sd-chat[data-pending=\"1\"]");
+    if (!box || document.hidden) return;
+    get(box.getAttribute("data-src")).then(function (html) { if (html !== null && box.isConnected) box.outerHTML = html; }).catch(function () {});
+  }
+  setInterval(chatTick, 3000);
 })();

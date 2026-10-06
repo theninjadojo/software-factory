@@ -25,6 +25,7 @@ from ..config import load
 from .. import tracker
 from ..tracker import display, is_local
 from . import admin, board, features, floor, floorplan, views
+from . import chat as CH
 from . import workers as WK
 from . import labels as L
 from . import localtickets as LT
@@ -484,6 +485,7 @@ class Handler(BaseHTTPRequestHandler):
                     if is_local(sel["issue"]) and (issue := LT.ticket(db, sel["repo"], sel["issue"])) is not None:
                         local = LT.card(cfg, issue, sel["repo"], csrf, back, L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])),
                                         (sel["repo"], sel["issue"]) in L._approved(self))
+                    local += CH.card(cfg, db, sel["repo"], sel["issue"], csrf, back)
                     decided = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])) or {}
                     close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
                                                                           sel["state"] in ("working", "needs"))

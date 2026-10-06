@@ -177,6 +177,23 @@ model = "sonnet"
 effort = "medium"
 harness = "claude-code"
 
+# Ticket chat: a person writes about a ticket in the admin UI and gets a quick reply from a short read-only run in a sandbox with
+# no repository clone and no GitHub token. The conversation stays in the factory's database (it is never posted to GitHub) and
+# later stage runs and reviews see the newest context_turns turns as untrusted data. The chat can only propose sending the ticket
+# back to a stage; a signed-in admin confirms it in the UI. It has its own lane (max_parallel) next to runner.max_parallel.
+# At most max_per_hour messages per ticket. Off by default (a reply is a model run).
+[chat]
+enabled = false
+harness = "claude-code"
+model = "sonnet"
+effort = "low"
+max_turns = 6
+timeout_seconds = 180
+max_parallel = 1
+check_seconds = 2
+max_per_hour = 20
+context_turns = 20
+
 # Comment triage: a person with write access (or the admin UI) comments on a ticket the factory already worked on, and a read-only
 # agent reads that comment. It can only say: nothing to do, needs a person, send the ticket back to a stage (the redirect the
 # admin UI offers), or open a linked follow-up ticket (no labels, so nothing starts by itself). The last two wait for a person to

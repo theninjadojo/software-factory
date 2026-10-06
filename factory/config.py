@@ -216,6 +216,23 @@ class PmCfg:
 
 
 @dataclass(frozen=True)
+class ChatCfg:
+    """Quick replies about a ticket, outside the label-driven pipeline. A person writes in the admin UI; the orchestrator answers
+    with a short read-only run in a sandbox with no repository clone and no GitHub token. The chat can only propose sending the
+    ticket back to a stage; a signed-in admin confirms. Off by default (a reply is a model run)."""
+    enabled: bool = False
+    harness: str = "claude-code"
+    model: str = "sonnet"
+    effort: str = "low"
+    max_turns: int = 6
+    timeout_seconds: int = 180
+    max_parallel: int = 1                 # its own lane, on top of runner.max_parallel
+    check_seconds: int = 2                # how often the lane looks for a new message
+    max_per_hour: int = 20                # messages per ticket
+    context_turns: int = 20               # newest turns that later stage prompts carry
+
+
+@dataclass(frozen=True)
 class HealthCfg:
     """The health watchdog (factory.health, run by factory-health.timer): alerts on Telegram when something that would stop the
     factory goes wrong. Free space is checked as a percentage and in GB; the lower of the two thresholds trips first."""
@@ -435,6 +452,7 @@ class Config:
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
     comments: CommentsCfg = field(default_factory=CommentsCfg)
+    chat: ChatCfg = field(default_factory=ChatCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
     workers: WorkersCfg = field(default_factory=WorkersCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
@@ -993,6 +1011,16 @@ def parse(raw: dict) -> Config:
             raise ValueError(f"pm.{name} must be a whole number from 1 to 100000")
     if not isinstance(pm.unblock_label, str) or not pm.unblock_label.strip():
         raise ValueError("pm.unblock_label must not be empty")
+    chat = ChatCfg(**raw.get("chat", {}))
+    if chat.effort not in ("low", "medium", "high"):
+        raise ValueError("chat.effort must be low, medium or high")
+    if not isinstance(chat.enabled, bool):
+        raise ValueError("chat.enabled must be true or false")
+    for name in ("max_turns", "timeout_seconds", "max_parallel", "check_seconds", "max_per_hour", "context_turns"):
+        top = 10000 if name == "timeout_seconds" else 1000
+        v = getattr(chat, name)
+        if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= top:
+            raise ValueError(f"chat.{name} must be a whole number from 1 to {top}")
     comments = CommentsCfg(**raw.get("comments", {}))
     if comments.effort not in ("low", "medium", "high"):
         raise ValueError("comments.effort must be low, medium or high")
@@ -1036,6 +1064,7 @@ def parse(raw: dict) -> Config:
         updates=updates,
         pm=pm,
         comments=comments,
+        chat=chat,
         health=health,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         schedules=_schedules(raw.get("schedules", []), repos),
