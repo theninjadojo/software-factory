@@ -256,6 +256,25 @@ class StageDocuments(UiCase):
         doc = "<!-- factory:stage=analyst -->\n<!-- factory:questions {} -->\nBody\n\n```factory-questions\n{}\n```\n"
         self.assertEqual(Q.readable(doc), "Body")
 
+    def test_factory_markers_in_a_comment_collapse_into_an_escaped_expander(self):
+        from factory import questions as Q
+        from factory.ui import localtickets as LT
+        qs = [Q.Question("q1", "Which <b>one</b>?", (("a", "Yes"), ("b", "No")), "a", "why", Q.PERSON)]
+        body = "<!-- factory:stage=architect -->\n" + Q.stored(qs) + "Body <script>x</script>"
+        data, rest = LT.factory_data(body)
+        self.assertTrue(data.startswith('<details class="disclose"><summary>'))
+        self.assertNotIn("factory:", data)
+        self.assertIn("Which &lt;b&gt;one&lt;/b&gt;?", data)
+        self.assertEqual(rest, "Body <script>x</script>")
+        bad, rest = LT.factory_data("<!-- factory:stage=analyst -->\n<!-- factory:questions {<script> -->\nBody")
+        self.assertIn("&lt;script&gt;", bad)
+        self.assertNotIn("<script", bad)
+        plain = "plain\n<!-- factory:stage=x -->\n"
+        self.assertEqual(LT.factory_data(plain), ("", plain))
+        ans, _ = LT.factory_data(Q.answers_comment("analyst", qs, {"q1": ("option", "a")}, "ui"))
+        self.assertIn("Answers", ans)
+        self.assertNotIn("factory:", ans)
+
     def test_the_page_shows_the_stored_document_and_ignores_request_text(self):
         cookie, _ = self.session()
         rid = dbm.start_run(self.db, "stage", self.REPO, 5, "t", "h", "m", "e", stage="analyst")

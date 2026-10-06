@@ -8,6 +8,7 @@ import logging
 import sqlite3
 
 from .. import db as dbm
+from .. import questions as Q
 from .. import tracker
 from ..sanitize import md_render
 from . import labels as L
@@ -18,6 +19,45 @@ AUTHOR = {tracker.FACTORY_AUTHOR: "Factory", tracker.UI_ACTOR: "You (admin UI)",
 
 
 # ---------------------------------------------------------------- reading
+def _questions_html(raw: str) -> str:
+    qs = Q.parse(raw)
+    if qs is None:                      # malformed: the raw line, escaped
+        return f'<pre tabindex="0">{esc(raw)}</pre>'
+    items = "".join(
+        f'<li><b>{esc(q.id)}. {esc(q.text)}</b><ul>'
+        + "".join(f'<li><code>{esc(o)}</code> {esc(lab)}{" (recommended)" if o == q.recommended else ""}</li>' for o, lab in q.options)
+        + f'</ul><span class="muted">{esc(q.cls)}. {esc(q.reason)}</span></li>' for q in qs)
+    return f'<p>Questions</p><ul>{items}</ul>'
+
+
+def factory_data(body: str) -> tuple[str, str]:
+    """(a closed expander with the marker lines at the very start of a comment, the rest of the text).
+    The expander is built here and every part of it is escaped; markers anywhere else stay plain text. It shows raw
+    data, it is not a sign that the factory wrote the comment."""
+    parts, rest = [], body
+    if (m := Q.STAGE_HEAD.match(rest)):
+        parts.append(f'<p>Stage: {esc(m.group(1))}</p>')
+        rest = rest[m.end():]
+    elif (m := Q.REDIRECT_HEAD.match(rest)):
+        parts.append(f'<p>Sent back past: {esc(m.group(1))}</p>')
+        rest = rest[m.end():]
+    elif rest.startswith(Q.ANSWERS + "\n"):
+        parts.append('<p>Answers</p>')
+        rest = rest[len(Q.ANSWERS) + 1:]
+        line, _, tail = rest.partition("\n")
+        if line.startswith("<!-- ") and line.endswith(" -->"):
+            parts.append(f'<pre tabindex="0">{esc(line[5:-4])}</pre>')
+            rest = tail
+    if rest.startswith(Q.DATA_HEAD):
+        line, _, tail = rest.partition("\n")
+        if line.endswith(" -->"):
+            parts.append(_questions_html(line[len(Q.DATA_HEAD):-4]))
+            rest = tail
+    if not parts:
+        return "", body
+    return f'<details class="disclose"><summary>Factory data</summary>{"".join(parts)}</details>', rest
+
+
 def rows(db, limit: int = 300) -> list[dict]:
     """Every local ticket, most recently changed first, as ticket_rows seeds ({} fields it fills in)."""
     try:
@@ -88,8 +128,8 @@ def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | Non
     body = md_render(issue["body"])[0] if issue["body"].strip() else '<p class="muted">No description.</p>'
     comments = "".join(
         f'<li class="lt-c"><p class="muted lt-by"><b>{esc(AUTHOR.get(c["user"]["login"], c["user"]["login"]))}</b> · '
-        f'{esc(ago(L._epoch(c["created_at"])))}</p><div class="doc">{md_render(c["body"])[0]}</div></li>'
-        for c in issue["comment_list"])
+        f'{esc(ago(L._epoch(c["created_at"])))}</p>{data}<div class="doc">{md_render(rest)[0]}</div></li>'
+        for c in issue["comment_list"] for data, rest in [factory_data(c["body"])])
     if closed:
         state = (f'<form method="post" action="/tickets/local/state" class="inline">{hidden}<input type="hidden" name="state" value="open">'
                  '<button class="secondary">Reopen</button></form>')
