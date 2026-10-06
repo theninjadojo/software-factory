@@ -20,14 +20,14 @@ def checked_line(state_dir) -> str:
     return f"Last checked {views.ago(when)}." if when else "Not checked yet."
 
 
-STAGES = ("Pause and check no agent run is in flight", "Download the release", "Run its tests", "Back up and install",
+STAGES = ("Pause and check no agent run is in flight", "Download and check the release", "Back up and install",
           "Rebuild sandbox images", "Restart services", "Health check")
-_MARK = re.compile(r"^##STAGE ([1-7])/7 [a-z]+$", re.M)   # only these exact lines count; deploy/update-native.sh prints them
+_MARK = re.compile(r"^##STAGE ([1-6])/6 [a-z]+$", re.M)   # only these exact lines count; deploy/update-native.sh prints them
 _TARGET = re.compile(r"^Updating: \S+ -> (v\d+\.\d+\.\d+)$", re.M)
 
 
 def parse_log(tail: str):
-    """(last step 1-7 or 0, the target tag or "", the log without the marker lines)."""
+    """(last step 1-6 or 0, the target tag or "", the log without the marker lines)."""
     marks, tags = _MARK.findall(tail), _TARGET.findall(tail)
     return (int(marks[-1]) if marks else 0), (tags[-1] if tags else ""), _MARK.sub("", tail).strip("\n")
 
@@ -52,7 +52,7 @@ def live_body(state_dir, csrf: str, run=None) -> str:
     step, tag, log = parse_log(tail)
     if SU.running(run):
         n, total = step or 1, len(STAGES)
-        note = ('<p>The factory is restarting. This page will reconnect by itself.</p>' if n >= 6 else
+        note = ('<p>The factory is restarting. This page will reconnect by itself.</p>' if n >= 5 else
                 '<p class="muted">It refuses (and says so) if an agent run is in flight.</p>')
         return (f'<div class="card" aria-live="polite"><h3>Updating{" to " + esc(tag) if tag else ""}</h3>'
                 f'<p>Step {n} of {total}: <strong>{esc(STAGES[n - 1])}</strong></p>'
@@ -64,6 +64,8 @@ def live_body(state_dir, csrf: str, run=None) -> str:
     failed_step = f'<p class="bad-text"><span aria-hidden="true">✕</span> {esc(STAGES[step - 1])}</p>' if step else ""
     if "Now on " in tail or "Already on" in tail:
         state, text, msg, failed_step = "good", "finished", (f"Now on {tag}." if tag and "Now on " in tail else "Already up to date."), ""
+    elif "CHECK FAILED" in tail:
+        state, text, msg = "bad", "did not finish", f"{tag or 'The new version'} does not start on this machine. Nothing was changed."
     elif "TESTS FAILED" in tail:
         state, text, msg = "bad", "did not finish", f"The tests failed on {tag or 'the new version'}. Nothing was changed."
     elif "rolling back" in tail:

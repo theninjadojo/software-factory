@@ -87,8 +87,8 @@ sudo -n -u factory bash -c 'T=$(cat /srv/factory/secrets/github_token_bot); R=th
 ```
 
 After that first update it is part of the install (`/srv/factory/app/deploy/update-native.sh`). It downloads the release's source tarball (a private repo needs a token: `SHIKUMI_TOKEN_FILE`, else `secrets/github_token_bot`, else
-`github_token`, whichever can read the repo), pauses the factory (so no run can start during the update; the pause is lifted afterwards unless you had paused it) and refuses while an agent run is in flight, **runs the tests on the new code first** (nothing
-changes if they fail), rebuilds the sandbox images, restarts the services and checks they stay up, and rolls back (previous code and
+`github_token`, whichever can read the repo), pauses the factory (so no run can start during the update; the pause is lifted afterwards unless you had paused it) and refuses while an agent run is in flight, **checks the new code starts on the host first** (nothing
+changes if it does not; the release workflow has already run the tests on that commit, and `SHIKUMI_RUN_TESTS=1` runs the whole suite on the host too), rebuilds the sandbox images, restarts the services and checks they stay up, and rolls back (previous code and
 images) if they do not. For the UI banner on a private repo set `[updates] token_file` to a token that can read it.
 `scripts/deploy.sh user@host` still deploys the working tree you have checked out (for development).
 

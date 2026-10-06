@@ -59,7 +59,7 @@ class Core(unittest.TestCase):
         self.assertEqual(cmd[:4], ["systemd-run", "--user", "--collect", "--unit"])
         self.assertIn(SU.UNIT, cmd)
         self.assertEqual(cmd[-2:], [str(self.root / "app/deploy/update-native.sh"), "v0.21.0"])
-        self.assertIn(f"StandardOutput=file:{self.state / SU.LOG}", cmd)
+        self.assertIn(f"StandardOutput=truncate:{self.state / SU.LOG}", cmd)
 
     def test_a_tag_is_checked_before_it_reaches_a_command_line(self):
         install(self.root)
@@ -193,7 +193,7 @@ class Page(UiCase):
             frag = self.get("/updates/status")[2]
             page = self.get()[2]
         self.assertIn("Updating to v9.9.9", frag)
-        self.assertIn("Step 1 of 7", frag)          # no marker yet
+        self.assertIn("Step 1 of 6", frag)          # no marker yet
         self.assertIn("&lt;script&gt;", frag)
         self.assertNotIn("<script>x", frag)
         self.assertIn('data-src="/updates/status"', page)
@@ -204,21 +204,21 @@ class Page(UiCase):
 
     def test_stage_markers_drive_the_step_list_and_hostile_lines_do_not(self):
         from factory.ui import updatespage as UP
-        log = ("Updating: v0.20.0 -> v9.9.9\n##STAGE 1/7 pause\n##STAGE 2/7 download\n##STAGE 3/7 tests\n"
-               "##STAGE 9/7 x\n  ##STAGE 7/7 health\n##STAGE 6/7 <b>x</b>\n")
-        self.assertEqual(UP.parse_log(log)[:2], (3, "v9.9.9"))
+        log = ("Updating: v0.20.0 -> v9.9.9\n##STAGE 1/6 pause\n##STAGE 2/6 download\n"
+               "##STAGE 9/6 x\n  ##STAGE 6/6 health\n##STAGE 5/6 <b>x</b>\n")
+        self.assertEqual(UP.parse_log(log)[:2], (2, "v9.9.9"))
         (self.state_dir / SU.LOG).write_text(log)
         with mock.patch.object(SU, "running", return_value=True):
             frag = self.get("/updates/status")[2]
-        self.assertIn("Step 3 of 7: <strong>Run its tests</strong>", frag)
-        self.assertIn('aria-valuenow="3"', frag)
+        self.assertIn("Step 2 of 6: <strong>Download and check the release</strong>", frag)
+        self.assertIn('aria-valuenow="2"', frag)
         self.assertNotIn("<b>x</b>", frag)
         with mock.patch.object(SU, "running", return_value=False):
-            (self.state_dir / SU.LOG).write_text("##STAGE 3/7 tests\nTESTS FAILED on v9.9.9: nothing was changed\n")
+            (self.state_dir / SU.LOG).write_text("##STAGE 2/6 download\nCHECK FAILED on v9.9.9: it does not start on this host, nothing was changed\n")
             frag = self.get("/updates/status")[2]
             self.assertIn("did not finish", frag)
             self.assertIn("✕", frag)
-            (self.state_dir / SU.LOG).write_text("##STAGE 7/7 health\nThe new version did not come up healthy: rolling back to v0.20.0\n")
+            (self.state_dir / SU.LOG).write_text("##STAGE 6/6 health\nThe new version did not come up healthy: rolling back to v0.20.0\n")
             self.assertIn("rolled back", self.get("/updates/status")[2])
 
     def test_everything_needs_a_session_and_a_csrf_token(self):

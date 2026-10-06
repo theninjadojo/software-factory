@@ -7,8 +7,9 @@
 #                                    # (or any newer release when $ROOT/state/AUTO_UPDATE says "all", which Settings -> Updates writes),
 #                                    # and quietly does nothing while a run is in flight
 # It reads the release's source tarball from GitHub (a private repo needs a token: SHIKUMI_TOKEN_FILE, default
-# /srv/factory/secrets/github_token_bot, else github_token), refuses while an agent run is in flight, runs the tests on the new code,
+# /srv/factory/secrets/github_token_bot, else github_token), refuses while an agent run is in flight, checks the new code starts here (the release workflow already ran its tests),
 # rebuilds the sandbox images, restarts the services and checks they stay up. Docker-compose installs use scripts/update.sh instead.
+# SHIKUMI_RUN_TESTS=1 also runs the release's whole test suite on this host first (minutes; the release workflow has already run it).
 # Testing: SHIKUMI_TARBALL=/path/x.tar.gz uses a local tarball and DRY_RUN=1 prints the service/image commands instead of running them.
 set -euo pipefail
 ROOT="${SHIKUMI_ROOT:-/srv/factory}"
@@ -18,7 +19,7 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 cd "$ROOT"      # the caller's directory may be unreadable to the factory user (python then fails to start)
 run() { if [ -n "${DRY_RUN:-}" ]; then echo "+ $*"; else "$@"; fi; }
 die() { echo "$*" >&2; exit 1; }
-stage() { echo "##STAGE $1/7 $2"; }   # progress markers the Updates page reads (factory/ui/updatespage.py); keep the count in step with it
+stage() { echo "##STAGE $1/6 $2"; }   # progress markers the Updates page reads (factory/ui/updatespage.py); keep the count in step with it
 command -v curl >/dev/null && command -v python3 >/dev/null || die "curl and python3 are required"
 
 TOKEN=""
@@ -83,12 +84,14 @@ else api -o "$TMP/src.tgz" "https://api.github.com/repos/$REPO/tarball/$TAG" || 
 mkdir "$TMP/src" && tar -C "$TMP/src" --strip-components=1 -xzf "$TMP/src.tgz"
 [ "v$(cat "$TMP/src/VERSION" 2>/dev/null)" = "$TAG" ] || die "the downloaded source is not $TAG (its VERSION file says '$(cat "$TMP/src/VERSION" 2>/dev/null)')"
 
-# test the new code before touching the running install
-stage 3 tests
-( cd "$TMP/src" && python3 -m unittest discover -s tests > "$TMP/tests.log" 2>&1 ) || { tail -25 "$TMP/tests.log"; die "TESTS FAILED on $TAG: nothing was changed"; }
-tail -3 "$TMP/tests.log"
+# check the new code starts on this host before touching the running install (the release workflow already ran its tests on this exact commit)
+( cd "$TMP/src" && python3 -c 'import factory.main, factory.ui.admin' ) > "$TMP/check.log" 2>&1 || { tail -25 "$TMP/check.log"; die "CHECK FAILED on $TAG: it does not start on this host, nothing was changed"; }
+if [ -n "${SHIKUMI_RUN_TESTS:-}" ]; then
+  ( cd "$TMP/src" && python3 -m unittest discover -s tests > "$TMP/tests.log" 2>&1 ) || { tail -25 "$TMP/tests.log"; die "TESTS FAILED on $TAG: nothing was changed"; }
+  tail -3 "$TMP/tests.log"
+fi
 
-stage 4 install
+stage 3 install
 PARTS=(factory tests sandbox deploy worker config.example.toml VERSION)
 rm -rf "$APP.prev"; mkdir "$APP.prev"
 for p in "${PARTS[@]}"; do [ -e "$APP/$p" ] && cp -a "$APP/$p" "$APP.prev/"; done
@@ -106,15 +109,15 @@ rollback() {
 }
 
 cd "$APP"
-stage 5 images
+stage 4 images
 run podman build -q -t factory-agent -f sandbox/Dockerfile sandbox || rollback
 run podman build -q -t factory-render -f sandbox/render/Dockerfile sandbox/render || rollback
 [ -f sandbox/screens/Dockerfile ] && { run podman build -q -t factory-screens -f sandbox/screens/Dockerfile sandbox/screens || rollback; }
-stage 6 restart
+stage 5 restart
 run systemctl --user restart factory.service
 systemctl --user is-enabled factory-workers.service >/dev/null 2>&1 && run systemctl --user disable --now factory-workers.service   # the UI runs the worker API now
 systemctl --user is-enabled factory-ui.service >/dev/null 2>&1 && run systemctl --user restart factory-ui.service
-stage 7 health
+stage 6 health
 if [ -z "${DRY_RUN:-}" ]; then
   sleep 10
   for u in factory-proxy factory factory-ui; do systemctl --user is-enabled $u.service >/dev/null 2>&1 || continue
