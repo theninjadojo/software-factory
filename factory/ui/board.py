@@ -469,13 +469,15 @@ def prs_html(prs: list[dict], fix_rounds: int, csrf: str = "") -> str:
             + '</p></section>')
 
 
-def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str) -> str:
+def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str, imports: list[dict] | None = None) -> str:
     imgs = "".join(views.mockup_img(f) for f in files)
-    if not imgs:
+    linked = views.import_links(imports)
+    if not imgs and not linked:
         return ""
     read = f'<a href="{views.doc_url(repo, issue, "designer")}">Read design</a>' if "designer" in docs else ""
+    body = f'<div class="mockups">{imgs}</div>' if imgs else ""
     return (f'<section class="sd-card sd-design" aria-labelledby="d-h"><div class="sd-cardhead"><h3 id="d-h">Design output</h3>'
-            f'<span class="sd-links">{read}{prs_link}</span></div><div class="mockups">{imgs}</div></section>')
+            f'<span class="sd-links">{read}{prs_link}</span></div>{body}{linked}</section>')
 
 
 def activity_html(events: list[dict], now: float) -> str:
@@ -533,7 +535,7 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, c
     repo, n, j = r["repo"], r["issue"], r["journey"]
     design_prs = sorted({f.get("pr") for f in files if f.get("pr")})
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
-    return (journey_card(r["stations"], r.get("verify"), now) + design_html(files, repo, n, docs, design_link) + steps_html(j, repo, n, docs) + phone_journey(r, files, docs)
+    return (journey_card(r["stations"], r.get("verify"), now) + design_html(files, repo, n, docs, design_link, r.get("design_imports")) + steps_html(j, repo, n, docs) + phone_journey(r, files, docs)
             + prs_html(r["prs"], fix_rounds, csrf) + activity_html(events, now))
 
 

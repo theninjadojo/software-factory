@@ -30,7 +30,8 @@ CHUNK = 64 * 1024
 MEMBERS = ("manifest.json", "factory.db", "config.toml", "config.overrides.toml")
 TMP_BACKUP, TMP_RESTORE, STAGED, MARKER, LAST = ".backup-tmp", ".restore-tmp", "restore", "RESTORE.json", "last_backup.json"
 
-BLANK = {"runs": ("output", "log_tail"), "verify_jobs": ("patch", "log", "progress")}          # run output, logs and agent-written diffs
+BLANK = {"runs": ("output", "log_tail"), "verify_jobs": ("patch", "log", "progress"),
+         "design_imports": ("html", "png")}          # run output, logs and agent-written diffs
 SKIP = ("approvals", "schedule_requests")                                          # queued actions: restoring them would start work
 SKIP_WHERE = {"verify_jobs": "status IN ('queued','claimed')"}                      # work a worker has not finished (its patch is blanked)
 

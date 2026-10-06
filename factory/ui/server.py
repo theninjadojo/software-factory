@@ -461,6 +461,7 @@ class Handler(BaseHTTPRequestHandler):
             detail = ""
             if sel is not None:
                 files, docs, events, images = board.ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
+                sel["design_imports"] = dbm.design_imports(db, sel["repo"], sel["issue"])
                 sel["verify"] = board.ticket_verify(db, sel["repo"], sel["issue"])
                 if path == "/fragment/ticket":
                     return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now, csrf))
@@ -552,6 +553,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, "no such image", "text/plain")
                 png = dbm.mockup_image(db, repo, pth)
                 return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
+            if path in ("/design-import", "/design-import/png"):
+                imp = dbm.design_import(db, int(q["id"])) if q.get("id", "").isdigit() and len(q["id"]) < 10 else None
+                if not imp or (path.endswith("/png") and not imp["png"]):
+                    return self._send(404, "no such design", "text/plain")
+                if path.endswith("/png"):
+                    return self._send(200, imp["png"], "image/png")
+                # Third-party HTML: an opaque origin (sandbox without allow-same-origin or allow-scripts), no script, no network, no forms.
+                return self._send(200, imp["html"], "text/html; charset=utf-8", {
+                    "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; "
+                                               "form-action 'none'; base-uri 'none'; frame-ancestors 'none'"})
             if path == "/runs":
                 n = max(0, int(q.get("page", "0") or 0)) if q.get("page", "0").isdigit() else 0
                 rows = dbm.recent_runs(db, PAGE + 1, n * PAGE, q.get("status") or None, q.get("repo") or None)

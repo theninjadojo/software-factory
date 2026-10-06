@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import backup, captures, ci, conflicts, designfiles, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, usage, verify
+from . import backup, captures, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -337,11 +337,28 @@ def design_pr_merged(gh: GitHub, previews: list[dict]) -> bool:
         return False
 
 
+def ticket_design_imports(cfg: Config, repo: str, issue: dict) -> list[dict]:
+    """The design exports linked in the issue body, fetched or reused ([] on any failure: a missing design never stops a run)."""
+    try:
+        db = _ev()
+        if db is None:
+            return []
+        found = designlinks.refresh(db, cfg, cfg.runner, repo, issue["number"], issue.get("body") or "")
+        if found:
+            emit("design-link:fetched", f"{len(found)} linked design export(s) handed to the agent", repo, issue["number"])
+        return found
+    except Exception:
+        log.exception("could not read the design links of %s#%s", repo, issue.get("number"))
+        return []
+
+
 def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route, c=None, stage: str | None = None, **kw):
     """Run the task with the route's model, then with each admin-configured fallback while a model is unavailable (rate
     limit or API error). Every attempt is its own run: fresh workspace, container, branch and `runs` row. The last result is
     returned unchanged when the chain ends, so requeue/backoff/failure handling is as without fallbacks."""
     models = chain(route)
+    if cfg.design_links.enabled and "design_imports" not in kw:
+        kw["design_imports"] = ticket_design_imports(cfg, repo, issue)
     for i, r in enumerate(models):
         run_id, sink = begin_run(kind, repo, issue, r, c, stage), {}
         res = runner.run_task(cfg, gh, repo, issue, r, sink=sink, **kw)
