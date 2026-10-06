@@ -902,7 +902,13 @@ p.fe-part.later { cursor:default; border-style:dashed; color:var(--muted); backg
 .lt-card .lt-body { margin:.4rem 0; overflow-wrap:anywhere; } .lt-card h4 { margin:1rem 0 .4rem; }
 .lt-comments { list-style:none; margin:0 0 .8rem; padding:0; display:grid; gap:.6rem; }
 .lt-c { border-left:2px solid var(--line2); padding:.1rem 0 .1rem .7rem; overflow-wrap:anywhere; } .lt-by { margin:0 0 .2rem; font-size:13px; }
-.lt-card .sd-acts { flex-wrap:wrap; }
+.lt-card .sd-acts { flex-wrap:wrap; margin-bottom:.8rem; }
+.lt-sec { border-top:1px solid var(--line2); margin:0; } .lt-sec:last-child { border-bottom:1px solid var(--line2); }
+.lt-sec > summary { display:flex; flex-direction:column; gap:2px; min-height:44px; justify-content:center; padding:.5rem 0; cursor:pointer; list-style:none; }
+.lt-sec > summary::-webkit-details-marker { display:none; }
+.lt-sec > summary::after { content:"▾"; position:absolute; right:0; color:var(--muted); } .lt-sec { position:relative; } .lt-sec[open] > summary::after { content:"▴"; }
+.lt-sec-t { font-weight:700; color:var(--text); } .lt-sec-s { font-size:14px; padding-right:1.5rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lt-sec[open] > summary { padding-bottom:.3rem; } .lt-sec > :not(summary) { margin-left:0; }
 /* settings home and the settings strips (features.py) */
 .ft-lede { margin:-.4rem 0 1rem; max-width:44rem; }
 .ft-bar { display:flex; flex-wrap:wrap; gap:.4rem 1.6rem; align-items:center; margin:0 0 1rem; }

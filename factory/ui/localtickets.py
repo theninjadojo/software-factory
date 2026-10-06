@@ -5,6 +5,7 @@ connection the page already holds (the tables may not exist yet); writes go thro
 Titles, bodies and comments are untrusted text (an import copies them from GitHub): they are escaped, and bodies go through
 md_render, which never renders raw HTML."""
 import logging
+import re
 import sqlite3
 
 from .. import db as dbm
@@ -102,6 +103,17 @@ def attach_help(cfg) -> str:
             'Agents working on the ticket can read them, so they are sent to the model provider.')
 
 
+def _section(title: str, count: int, summary: str) -> str:
+    """Opens a collapsed row: a title with its count and a one-line summary. The caller closes the </details>."""
+    return (f'<details class="lt-sec"><summary><span class="lt-sec-t">{esc(title)} <span class="muted">· {count}</span></span>'
+            f'<span class="muted lt-sec-s">{esc(summary)}</span></summary>')
+
+
+def _preview(text: str, limit: int = 140) -> str:
+    flat = " ".join(re.sub(r"[#*`>_]", "", text).split())
+    return flat if len(flat) <= limit else flat[:limit - 1].rstrip() + "…"
+
+
 def attachments_html(cfg, issue: dict, repo: str, n: int, hidden: str) -> str:
     """The files on the ticket (downloads only, nothing is shown inline), a delete form with a confirmation, and the upload form."""
     items = "".join(
@@ -112,10 +124,12 @@ def attachments_html(cfg, issue: dict, repo: str, n: int, hidden: str) -> str:
         f'<input type="hidden" name="id" value="{int(a["id"])}"><p>Remove “{esc(a["name"])}” from this ticket? It cannot be undone.</p>'
         '<button class="secondary">Remove attachment</button></form></details></li>'
         for a in issue.get("attachment_list", []))
-    return (f'<h4>Attachments</h4>{f"<ul class=lt-attachments>{items}</ul>" if items else "<p class=muted>No attachments.</p>"}'
+    count = len(issue.get("attachment_list", []))
+    return (f'{_section("Attachments", count, "None yet. Add files for agents to read." if not count else f"{count} file{"" if count == 1 else "s"}.")}'
+            f'{f"<ul class=lt-attachments>{items}</ul>" if items else "<p class=muted>No attachments.</p>"}'
             f'<form method="post" action="/tickets/local/attach" enctype="multipart/form-data" class="field">{hidden}'
             f'<label>Attach a file<input type="file" name="file" multiple required accept=".png,.jpg,.jpeg,.gif,.pdf,.txt,.md,.log,.json,.csv"></label>'
-            f'<p class="muted">{esc(attach_help(cfg))}</p><button>Attach</button></form>')
+            f'<p class="muted">{esc(attach_help(cfg))}</p><button>Attach</button></form></details>')
 
 
 def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | None, approved: bool) -> str:
@@ -130,6 +144,9 @@ def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | Non
         f'<li class="lt-c"><p class="muted lt-by"><b>{esc(AUTHOR.get(c["user"]["login"], c["user"]["login"]))}</b> · '
         f'{esc(ago(L._epoch(c["created_at"])))}</p>{data}<div class="doc">{md_render(rest)[0]}</div></li>'
         for c in issue["comment_list"] for data, rest in [factory_data(c["body"])])
+    last = issue["comment_list"][-1] if issue["comment_list"] else None
+    latest = (f'Latest, {AUTHOR.get(last["user"]["login"], last["user"]["login"])}: {_preview(factory_data(last["body"])[1])}'
+              if last else "No comments yet.")
     if closed:
         state = (f'<form method="post" action="/tickets/local/state" class="inline">{hidden}<input type="hidden" name="state" value="open">'
                  '<button class="secondary">Reopen</button></form>')
@@ -143,16 +160,17 @@ def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | Non
             f'<p class="muted">Opened by {esc(who)} {esc(ago(issue["created"]))}. Kept in the factory\'s own database, not on GitHub.</p>'
             f'<div class="doc lt-body">{body}</div><p class="lt-labels">{labels}</p>'
             f'<div class="sd-acts">{start}{state}</div>'
-            f'<details class="disclose"><summary class="btn secondary">Edit title and description</summary>'
+            f'<details class="lt-sec"><summary><span class="lt-sec-t">Edit title and description</span></summary>'
             f'<form method="post" action="/tickets/local/edit" class="field">{hidden}'
             f'<label>Title<input name="title" required maxlength="{L.MAX_TITLE}" value="{esc(issue["title"])}"></label>'
             f'<label>Description<textarea name="body" rows="6" maxlength="{L.MAX_BODY}">{esc(issue["body"])}</textarea></label>'
             '<button>Save</button></form></details>'
             f'{attachments_html(cfg, issue, repo, n, hidden)}'
-            f'<h4>Comments</h4>{f"<ol class=lt-comments>{comments}</ol>" if comments else "<p class=muted>No comments yet.</p>"}'
+            f'{_section("Comments", len(issue["comment_list"]), latest)}'
+            f'{f"<ol class=lt-comments>{comments}</ol>" if comments else "<p class=muted>No comments yet.</p>"}'
             f'<form method="post" action="/tickets/local/comment" class="field">{hidden}'
             f'<label>Add a comment<textarea name="body" rows="3" required maxlength="{L.MAX_BODY}"></textarea></label>'
-            '<button>Comment</button></form></section>')
+            '<button>Comment</button></form></details></section>')
 
 
 # ---------------------------------------------------------------- actions
