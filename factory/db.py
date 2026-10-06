@@ -3,7 +3,7 @@ import sqlite3
 import threading
 import time
 
-from . import captures, chat, designfiles, jobs, reviewnotes, scanner, schedules, screenboard, tracker, triage
+from . import captures, chat, designfiles, jobs, reviewnotes, scanner, schedules, screenboard, ticketreview, tracker, triage
 from .render import png_ok
 
 _local = threading.local()
@@ -109,6 +109,7 @@ def connect(path: str) -> sqlite3.Connection:
     captures.ensure_tables(db)
     tracker.ensure_tables(db)
     triage.ensure_tables(db)
+    ticketreview.ensure_tables(db)
     return db
 
 

@@ -249,7 +249,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
     head = (
         f"You are working in a multi-repository workspace for the project '{project.name}'. {project.description}\n"
         f"Each directory under the current directory is a separate git repository:\n{repos}\n\n"
-        + (f"The backlog below is the open factory tickets of '{issue_repo.split('/')[1]}'. " if backlog else
+        + (f"The backlog below is the {'open tickets' if role == 'ticket-review' else 'open factory tickets'} of '{issue_repo.split('/')[1]}'. " if backlog else
            f"The ticket below was filed in '{issue_repo.split('/')[1]}'. "
            + (f"Its number is {ticket[1]} (use it in design file names). " if ticket else ""))
     )

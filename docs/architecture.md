@@ -13,6 +13,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 | `runner.py` | Runs one task: clones every repo of the project, starts the sandbox, then either validates and applies patches and opens PRs, or returns a role's document. Also contains the patch validator and the push guard. |
 | `roles.py` | Prompts for the analyst, designer and architect, and the stage names. |
 | `pm.py` | The project manager: validates its `factory-priorities` block, applies only the priority labels it owns, records blockers (`pm_assessments`), and answers "which open tickets hold this one back" for the poll loop. |
+| `ticketreview.py` | The ticket review: validates the `factory-ticket-review` block into proposals (built / duplicate), stores them (`ticket_reviews`, `review_proposals`), and applies the ones a person picked in the UI, one resumable step at a time. |
 | `ci.py` | Watches CI on factory PRs; reports; drives the optional fix round. |
 | `verify.py` / `jobs.py` / `workerapi.py` | Verification workers ([workers.md](workers.md)): `verify.gate` enqueues one job per configured check after the patch is applied and waits; `jobs.py` is the SQLite queue and the strict validation of results; `workerapi.py` is the separate process workers poll. `worker/worker.py` is the reference worker. |
 | `proxy.py` | The egress proxy: a CONNECT-only tunnel on a unix socket that allows only listed host names on port 443. |
