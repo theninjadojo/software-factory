@@ -117,8 +117,10 @@ def validate_html(text: str) -> None:
         raise DesignFileRejected("must wrap its content in <x-dc>, like the other canvases")
 
 
-BLOB_URL = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+)/blob/([0-9a-f]{40}|factory/design-\d+-[\w.-]+)/"
-                      r"([a-z0-9][a-z0-9_/-]*/(?:factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.dc\.html|previews/factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.png))$")
+FILE_PATH = (r"[a-z0-9][a-z0-9_/-]*/(?:factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.dc\.html|"
+             r"previews/factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.png)")
+REPO_NAME = re.compile(r"^[\w.-]+/[\w.-]+$")
+BLOB_URL = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+)/blob/([0-9a-f]{40}|factory/design-\d+-[\w.-]+)/(" + FILE_PATH + ")$")
 
 
 def preview_path(path: str) -> str:
@@ -142,6 +144,19 @@ def link_ok(f) -> bool:
     m = BLOB_URL.match(url)
     return bool(m and m.group(1) == repo and m.group(3) == path and ".." not in path.split("/")
                 and (not pr or re.fullmatch(r"https://github\.com/" + re.escape(repo) + r"/pull/\d+", pr)))
+
+
+def record_ok(f) -> bool:
+    """True when a recorded design file is safe to show or serve from the factory: a link_ok file, or a file kept only in the factory
+    (empty url and pr: the designer's `design_pr = false`), whose repo and path have the design-file shape."""
+    if link_ok(f):
+        return True
+    try:
+        repo, path = f["repo"], f["path"]
+        return bool(isinstance(repo, str) and isinstance(path, str) and not f.get("url") and not f.get("pr")
+                    and REPO_NAME.match(repo) and re.fullmatch(FILE_PATH, path) and ".." not in path.split("/"))
+    except (KeyError, TypeError, AttributeError):
+        return False
 
 
 def valid_dir(design_dir: str) -> bool:

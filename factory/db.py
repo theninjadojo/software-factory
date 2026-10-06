@@ -79,6 +79,10 @@ def connect(path: str) -> sqlite3.Connection:
         """CREATE TABLE IF NOT EXISTS mockup_images (
             repo TEXT NOT NULL, path TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL, PRIMARY KEY (repo, path))"""
     )
+    db.execute(                                     # the designer's validated canvas files, for the UI to offer as a download
+        """CREATE TABLE IF NOT EXISTS design_sources (
+            repo TEXT NOT NULL, path TEXT NOT NULL, html TEXT NOT NULL, created REAL NOT NULL, PRIMARY KEY (repo, path))"""
+    )
     db.execute(                                     # design exports linked from a ticket (untrusted; fetched by the orchestrator)
         """CREATE TABLE IF NOT EXISTS design_imports (
             id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, issue INTEGER NOT NULL, url TEXT NOT NULL, url_hash TEXT NOT NULL,
@@ -296,12 +300,15 @@ def finish_run(db, run_id: int, status: str, detail: str = "", pr_urls: str = ""
 
 
 def add_design_files(db, run_id: int, files: list) -> None:
-    """Record a run's published design files; entries that fail designfiles.link_ok are dropped."""
+    """Record a run's published design files (on a draft PR, or kept in the factory only: an empty url); entries that fail
+    designfiles.record_ok are dropped."""
     for f in files:
-        if designfiles.link_ok(f):
-            png = f.get("png")
+        if designfiles.record_ok(f):
+            png, html = f.get("png"), f.get("html")
             if isinstance(png, bytes) and f["path"].endswith(".png") and png_ok(png):
                 db.execute("INSERT OR REPLACE INTO mockup_images (repo, path, png, created) VALUES (?,?,?,?)", (f["repo"], f["path"], png, time.time()))
+            if isinstance(html, str) and f["path"].endswith(".dc.html") and len(html.encode()) <= designfiles.MAX_BYTES:
+                db.execute("INSERT OR REPLACE INTO design_sources (repo, path, html, created) VALUES (?,?,?,?)", (f["repo"], f["path"], html, time.time()))
             db.execute("INSERT OR IGNORE INTO design_files (run_id, repo, path, url, pr, created) VALUES (?,?,?,?,?,?)",
                        (run_id, f["repo"], f["path"], f["url"], f.get("pr") or "", time.time()))
     db.commit()
@@ -359,6 +366,15 @@ def mockup_image(db, repo: str, path: str) -> bytes | None:
     except sqlite3.OperationalError:
         return None
     return bytes(row[0]) if row else None
+
+
+def design_source(db, repo: str, path: str) -> str | None:
+    """The stored canvas file (repo, path), or None."""
+    try:
+        row = db.execute("SELECT html FROM design_sources WHERE repo=? AND path=?", (repo, path)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return row[0] if row else None
 
 
 def add_design_import(db, repo: str, issue: int, url: str, url_hash: str, status: str, detail: str, html: bytes | None,

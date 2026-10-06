@@ -54,6 +54,9 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
         if r.name == "designer":
             out.append(Field("roles.designer.design_files", "Designer: write design mockup files", "bool",
                              "In a repo that has Claude Design canvases (*.dc.html), add static mockups on a draft PR and link them from the ticket."))
+            out.append(Field("roles.designer.design_pr", "Designer: put mockups on a draft PR", "bool",
+                             "Off keeps them in the factory only: the rendered images and the canvas files are on the ticket's pages here, "
+                             "the build and review agents still get the images, and nothing is added to the repository."))
             out.append(Field("roles.designer.design_dir", "Designer: mockup folder", "text",
                              "Relative folder in the repo, for example docs/design. Avoid design/ if your repo git-ignores it."))
     return out + [Field("auto.label", "Auto-allocate label", "text", "A person applies it and the classifier picks the next stage."),

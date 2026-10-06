@@ -61,6 +61,8 @@ claude_env_file = "/srv/factory/secrets/claude.env"   # CLAUDE_CODE_OAUTH_TOKEN=
 # [roles.analyst]   label = "factory:analyze"   done_label = "stage:analysed"    model = "sonnet"  effort = "medium"
 # [roles.designer]  label = "factory:design"    done_label = "stage:designed"    model = "sonnet"  effort = "medium"
 # [roles.architect] label = "factory:architect" done_label = "stage:architected" model = "opus"    effort = "high"
+# Designer mockups, set under [roles.designer]: design_files = true / design_dir = "docs/design": the designer also writes static mockups (see docs/architecture.md).
+# design_pr = false: keep them in the factory only (the UI, the build and review agents) instead of a draft PR in the repository. Default true.
 # [auto]  label = "factory:auto"   # a person applies it and the classifier picks the next stage
 
 [telegram]

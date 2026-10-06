@@ -563,10 +563,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
             if path == "/mockup":
                 repo, pth = q.get("repo", ""), q.get("path", "")
-                if not designfiles.link_ok({"repo": repo, "path": pth, "url": f"https://github.com/{repo}/blob/{'0' * 40}/{pth}", "pr": ""}):
+                if not designfiles.record_ok({"repo": repo, "path": pth, "url": "", "pr": ""}):
                     return self._send(404, "no such image", "text/plain")
                 png = dbm.mockup_image(db, repo, pth)
                 return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
+            if path == "/design-source":                     # a canvas the designer wrote, as a download only (agent-written HTML is never shown here)
+                repo, pth = q.get("repo", ""), q.get("path", "")
+                html = dbm.design_source(db, repo, pth) if designfiles.record_ok({"repo": repo, "path": pth, "url": "", "pr": ""}) and pth.endswith(".dc.html") else None
+                if not html:
+                    return self._send(404, "no such design", "text/plain")
+                return self._send(200, html, "application/octet-stream", {
+                    "Content-Disposition": 'attachment; filename="' + pth.rpartition("/")[2] + '"', "X-Content-Type-Options": "nosniff",
+                    "Content-Security-Policy": "sandbox; default-src 'none'"})
             if path in ("/design-import", "/design-import/png"):
                 imp = dbm.design_import(db, int(q["id"])) if q.get("id", "").isdigit() and len(q["id"]) < 10 else None
                 if not imp or (path.endswith("/png") and not imp["png"]):

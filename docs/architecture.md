@@ -44,6 +44,9 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 7. **Design files (designer only).** The designer's workspace may contain new `design/*.dc.html` files. They are collected as a patch, which
    may only ADD files with the allowed name; each file is validated (see SECURITY.md), then committed to a `factory/design-*` branch and opened as a
    draft PR, and the ticket comment links them by commit SHA (a designer run with none gets a fixed explanatory line). The files are also recorded per run in the `design_files` table, and the admin UI links them on the run and ticket pages.
+   With `[roles.designer] design_pr = false` nothing is committed, pushed or opened: the validated canvases and their rendered previews are kept only in the factory's
+   database (`design_sources`, `mockup_images`), with an empty `url` in `design_files`. The ticket comment then says so and links nothing; the UI shows the previews and
+   offers each canvas as a download (`/design-source`, an attachment, never rendered).
 8. **Review (optional).** After a build opens PRs, or when a person labels the ticket `factory:review`, a read-only reviewer is run with the PR
    branches checked out and its comment is posted on every PR of the change. It is a role like the analyst, so it uses the same sandbox,
    sanitizer and harness selection; it only ever comments.
@@ -105,7 +108,7 @@ are kept on the host under `<work_dir>/../artifacts/screens/`. A patch that chan
 
 ## Mockups and screens in the build loop
 
-1. The designer's rendered mockup PNGs are stored in the `mockup_images` table when the design PR is published (the UI serves them at `/mockup`, behind the login).
+1. The designer's rendered mockup PNGs are stored in the `mockup_images` table when the design files are published (the UI serves them at `/mockup`, behind the login). A build or review reads them from there; only a record with no stored image is downloaded from its commit.
 2. A build is held when the design stage ran but no mockup exists (`[mockups] mode = "block"`; `warn` and `off` also exist; the `bypass_label` skips it per ticket;
    `require_approval` additionally needs the `approve_label` or a merged design PR). A designer that said the ticket has no screens is never held.
 3. The implementer and the reviewer get the mockups as images in `/task/mockups/`. The reviewer also gets the built pages (`/task/built/`), rendered from the PR

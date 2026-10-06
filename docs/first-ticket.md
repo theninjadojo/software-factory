@@ -37,6 +37,7 @@ Add `factory:design`. If the ticket changes what people see, the designer writes
 - On the issue: a Designer comment with links to the mockup files.
 - In the UI: the mockup images, inline on the run page.
 - On GitHub: a draft PR holding the mockups and their preview images.
+  (With `design_pr = false` under `[roles.designer]` there is no PR: the previews and the canvas downloads are on the ticket's Images page in the UI.)
 
 Look at the mockups. They are what the builder is asked to match.
 

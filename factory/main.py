@@ -324,7 +324,13 @@ def ticket_mockups(repo: str, num: int) -> list[dict]:
     """The rendered design mockups recorded for a ticket ([] when there are none or the database is unavailable)."""
     try:
         db = _ev()
-        return dbm.mockup_previews(db, repo, num) if db is not None else []
+        if db is None:
+            return []
+        out = dbm.mockup_previews(db, repo, num)
+        for f in out:                                   # the image the factory stored, so a build needs no GitHub fetch
+            if png := dbm.mockup_image(db, f["repo"], f["path"]):
+                f["png"] = png
+        return out
     except Exception:
         log.exception("could not read the mockups of %s#%s", repo, num)
         return []
@@ -529,14 +535,21 @@ MOCKUPS_OFF = "Design mockups are turned off for this project, so only the docum
 def design_section(files: list, notes: str, designer: bool = False, enabled: bool = True) -> str:
     """Links to the design files, built here from validated values (never from agent text)."""
     out = ""
-    if files:
+    linked = [f for f in files if designfiles.link_ok(f)]
+    local = [f for f in files if not designfiles.link_ok(f) and designfiles.record_ok(f)]       # kept in the factory only (no draft PR)
+    if linked or local:
         prs = sorted({f["pr"] for f in files if PR_URL.match(f["pr"])})
         out += "\n\n### Design files\n" + (f"Draft PR: {prs[0]}\n\n" if prs else "")
-        out += "\n".join(f"- [`{f['path']}`]({f['url']})" + (" (rendered preview)" if f.get("preview") else "")
-                         for f in files if designfiles.link_ok(f))
-        out += ("\n\nStatic Claude Design canvases. Import a file into Claude Design to work on it, or merge the draft PR to keep them "
-                "with the repository." + ("\n\nThe preview images are screenshots of the canvases, rendered in a sealed container "
-                                         "with no network." if any(f.get("preview") for f in files) else ""))
+        out += "\n".join([f"- [`{f['path']}`]({f['url']})" + (" (rendered preview)" if f.get("preview") else "") for f in linked]
+                         + [f"- `{f['path']}`" + (" (rendered preview)" if f.get("preview") else "") for f in local])
+        if linked:
+            out += ("\n\nStatic Claude Design canvases. Import a file into Claude Design to work on it, or merge the draft PR to keep them "
+                    "with the repository.")
+        else:
+            out += ("\n\nStatic Claude Design canvases, kept in the factory and not added to the repository. Open this ticket's Images page "
+                    "in the factory UI to see the previews and download the canvases to import into Claude Design.")
+        if any(f.get("preview") for f in files):
+            out += "\n\nThe preview images are screenshots of the canvases, rendered in a sealed container with no network."
     if notes:
         out += f"\n\n_Note: {sanitize_markdown(notes)}_"
     elif designer and not files:                        # fixed text, never agent text

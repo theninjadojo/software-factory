@@ -352,10 +352,11 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: Harnes
 
 
 def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, title: str, d: Path, names: dict, patches: dict,
-                         env: dict, stamp: str, design_dir: str = designfiles.DEFAULT_DIR) -> tuple[list, list, str]:
+                         env: dict, stamp: str, design_dir: str = designfiles.DEFAULT_DIR, to_repo: bool = True) -> tuple[list, list, str]:
     """Turn the designer's new design/*.dc.html files into a draft PR. Every file is validated twice (the patch may only ADD
     files with the right names, then each file's content is checked); anything that fails is dropped and reported, never
-    published. Returns (files, notes, pr_urls)."""
+    published. With to_repo=False nothing is committed or pushed: the canvases and their rendered previews come back as records with
+    an empty url, kept in the factory's database only. Returns (files, notes, pr_urls)."""
     files, notes, urls = [], [], []
     for r, patch in patches.items():
         base, short = d / "base" / names[r], names[r]
@@ -382,13 +383,20 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
             try:
                 for stem, png in preview_render(rn, {st: (base / x).read_text(errors="strict") for st, x in by_stem.items()}).items():
                     pp = designfiles.preview_path(by_stem[stem])
-                    (base / pp).parent.mkdir(parents=True, exist_ok=True)
-                    (base / pp).write_bytes(png)
-                    git(["add", "-f", pp], base, env)       # -f: a repository may git-ignore its design folder
+                    if to_repo:
+                        (base / pp).parent.mkdir(parents=True, exist_ok=True)
+                        (base / pp).write_bytes(png)
+                        git(["add", "-f", pp], base, env)       # -f: a repository may git-ignore its design folder
                     previews[by_stem[stem]] = pp
                     pngs[pp] = png
             except Exception:
                 log.exception("rendering previews failed; publishing the design files without them")
+        if not to_repo:                                    # kept in the factory only: no branch, no push, no pull request
+            files += [{"repo": r, "path": x, "url": "", "pr": "", "html": (base / x).read_text(errors="strict")} for x in paths]
+            files += [{"repo": r, "path": pp, "url": "", "pr": "", "preview": True, "png": png} for pp, png in pngs.items()]
+            if not pngs:
+                notes.append(f"{short}: no preview image was rendered for the design files")
+            continue
         git([*ident, "checkout", "-q", "-b", branch], base, env)
         git([*ident, "commit", "-q", "-m", f"Design mockups for {home_repo}#{num}\n\nStatic canvases written by the designer agent."], base, env)
         sha = git(["rev-parse", "HEAD"], base, env).stdout.strip()
@@ -658,7 +666,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                         if (d / "out" / f"{names[r.repo]}.diff").exists() and (d / "out" / f"{names[r.repo]}.diff").stat().st_size > 0}
                 if diffs:
                     try:
-                        files, notes, urls = publish_design_files(rn, gh, repo, num, issue["title"], d, names, diffs, env, stamp, design_dir)
+                        files, notes, urls = publish_design_files(rn, gh, repo, num, issue["title"], d, names, diffs, env, stamp, design_dir,
+                                                                 role_cfg.design_pr if role_cfg else True)
                         result.files, result.notes, result.pr_url = files, "; ".join(notes), urls or None
                     except Exception as e:             # publishing is a bonus: the written document is never lost to it
                         log.exception("design files could not be published")
