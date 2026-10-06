@@ -7,7 +7,7 @@
 #   for ios (a Mac with Tart): WORKER_IOS_SCHEME and WORKER_IOS_PROJECT (or WORKER_IOS_WORKSPACE), WORKER_IOS_DESTINATION,
 #   WORKER_IOS_PULL=1 to download the Xcode image (about 30 GB) as VM "shikumi-ios",
 #   WORKER_GIT_URL (default https://github.com/{repo}.git; use git@github.com:{repo}.git for SSH keys), SHIKUMI_REPO (image owner),
-#   SKIP_IMAGE=1, SKIP_SERVICE=1, SKIP_CHECK=1.
+#   SKIP_IMAGE=1, SKIP_SERVICE=1, SKIP_CHECK=1, SKIP_NODE=1 (web and screens get a Node of the worker's own in tools/node unless the machine has one).
 # The worker runs agent-written code: use a dedicated unprivileged account or a throwaway VM, with no credentials on it except a
 # read-only way to clone the repos it verifies. Nothing is changed outside this folder except the service file.
 set -euo pipefail
@@ -101,6 +101,18 @@ artifacts = ["build/screens/*.png"]
 open("worker.toml", "w").write(out)
 PY
   chmod 600 worker.toml; echo "wrote worker.toml (platform: $PLATFORM, recipes: $RECIPES)"
+fi
+
+if [[ " $RECIPES " == *" web "* || " $RECIPES " == *" screens "* ]] && [ -z "${SKIP_NODE:-}" ]; then
+  say "Node.js (the web and screens recipes)"
+  if [ -x tools/node/bin/node ]; then echo "tools/node exists ($(tools/node/bin/node --version)): keeping it"
+  elif command -v node >/dev/null && command -v npm >/dev/null && node -e 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)' 2>/dev/null \
+       && { command -v corepack >/dev/null || command -v pnpm >/dev/null; }; then
+    echo "this machine's Node $(node --version) will do: not installing another (SKIP_NODE=1 also skips this step)"
+  else
+    echo "no usable Node.js here (18 or newer, with npm and corepack or pnpm): installing one of the worker's own into tools/node"
+    ./worker/install-node.sh || echo "(could not install it: the recipes stay switched off until Node.js is available; retry with ./worker/install-node.sh)"
+  fi
 fi
 
 if [ -z "${SKIP_IMAGE:-}" ] && [[ " $RECIPES " == *" android "* ]]; then

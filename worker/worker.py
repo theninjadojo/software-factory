@@ -82,6 +82,7 @@ class Config:
         self.git_url = str(raw.get("git_url", "https://github.com/{repo}.git"))
         self.work_dir = Path(raw.get("work_dir", tempfile.gettempdir())).expanduser()
         self.recipes = {n: Recipe(n, r) for n, r in raw.get("recipes", {}).items()}
+        self.install_tools = bool(raw.get("install_tools", True))      # let the worker install its own Node when a JavaScript recipe lacks one
         if not NAME.fullmatch(self.platform):
             raise ValueError("platform must match [a-z0-9-]")
         for n in self.recipes:
@@ -315,9 +316,59 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def poll_once(cfg: Config, api: Api) -> bool:
+PREFLIGHT_EVERY = 60
+JS_RECIPES = ("web-test.sh", "playwright-screens.sh")      # the shipped recipes that need Node (worker/install-node.sh gives them one)
+
+
+def install_node(root: Path = ROOT) -> str:
+    """Run worker/install-node.sh (a pinned, checksummed Node into tools/node in this folder; no sudo). '' on success, else why not."""
+    script = root / "worker" / "install-node.sh"
+    if not script.is_file():
+        return "this install has no worker/install-node.sh"
+    try:
+        r = subprocess.run(["bash", str(script)], cwd=root, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900)
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"{type(e).__name__}: {e}"
+    return "" if r.returncode == 0 else (r.stderr or r.stdout or "install-node.sh failed")[-300:].strip()
+
+
+def preflight(recipe: Recipe) -> list[str]:
+    """What this machine lacks for a recipe, from the recipe's own `--preflight` (worker/recipes/*.sh): exit 3 and a line per missing tool.
+    Anything else, such as a recipe of your own that has no such flag, counts as ready."""
+    try:
+        r = subprocess.run([*recipe.command, "--preflight"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30, cwd=ROOT)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    lines = [ln.strip()[:300] for ln in r.stdout.splitlines() if ln.strip()]
+    return lines[:5] if r.returncode == 3 and lines else []
+
+
+def readiness(cfg: Config, state: dict, now: float | None = None) -> tuple[list[str], dict[str, str]]:
+    """(recipes this machine can run now, {recipe: why not}). Asked again every PREFLIGHT_EVERY seconds, so installing a tool is noticed
+    without a restart. Only ready recipes are offered to the factory, so a job it cannot run is never handed over."""
+    now = time.time() if now is None else now
+    if "ready" not in state or now - state.get("at", 0) >= PREFLIGHT_EVERY:
+        problems = {n: preflight(r) for n, r in sorted(cfg.recipes.items())}
+        needs_node = [n for n, p in problems.items() if p and Path(cfg.recipes[n].command[0]).name in JS_RECIPES]
+        if needs_node and cfg.install_tools and not state.get("node_tried"):       # once per run: a failed download is not retried every minute
+            state["node_tried"] = True
+            log.info("%s need Node.js, which this machine lacks: installing one of its own (worker/install-node.sh)", ", ".join(needs_node))
+            why = install_node()
+            if why:
+                log.warning("could not install Node.js: %s", why)
+            else:
+                log.info("Node.js installed in tools/node")
+            problems = {n: preflight(r) for n, r in sorted(cfg.recipes.items())}
+        state.update(at=now, ready=[n for n, p in problems.items() if not p], unready={n: p[0] for n, p in problems.items() if p})
+        for n, why in state["unready"].items():
+            log.warning("recipe %s is not ready: %s", n, why)
+    return state["ready"], state["unready"]
+
+
+def poll_once(cfg: Config, api: Api, ready: dict | None = None) -> bool:
     """Claim and run at most one job. True if one ran."""
-    status, job = api.call("/v1/claim", {"platform": cfg.platform, "recipes": sorted(cfg.recipes), "version": PROTOCOL, "app_version": app_version()}, 30)
+    names, unready = readiness(cfg, ready if ready is not None else {})
+    status, job = api.call("/v1/claim", {"platform": cfg.platform, "recipes": names, "unready": unready, "version": PROTOCOL, "app_version": app_version()}, 30)
     if status != 200 or not job:
         if status not in (200, 204):
             log.warning("claim refused (%s): %s", status, job)
@@ -399,6 +450,9 @@ def check(cfg: Config, api: Api) -> list[tuple[str, str]]:
         exe = r.command[0]
         found = exe if os.access(exe, os.X_OK) and os.path.isfile(exe) else shutil.which(exe)
         out.append(("ok" if found else "FAIL", f"recipe {name}: {exe}" + ("" if found else " is not an executable file or on PATH")))
+        if found:
+            for why in preflight(r):             # a warning, not a failure: a missing tool must not roll an update back
+                out.append(("warn", f"recipe {name} cannot run yet, so the factory will not send it jobs: {why}"))
     out.append(("ok" if shutil.which("git") else "FAIL", "git is installed" if shutil.which("git") else "git is not installed"))
     try:
         status, reply = api.call("/v1/ping", {}, 15)
@@ -429,9 +483,10 @@ def main() -> None:
         sys.exit(1 if any(lvl == "FAIL" for lvl, _ in results) else 0)
     log.info("worker up: platform=%s recipes=%s server=%s version=%s", cfg.platform, sorted(cfg.recipes), cfg.server, app_version() or "dev")
     upd: dict = {}
+    ready: dict = {}
     while True:
         try:
-            ran = poll_once(cfg, api)
+            ran = poll_once(cfg, api, ready)
             if not ran and not args.once and maybe_update(cfg, api, upd, time.time()):
                 os._exit(0)                                   # the service manager starts the new version
         except (OSError, ValueError) as e:

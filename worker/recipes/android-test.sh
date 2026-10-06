@@ -15,6 +15,7 @@
 # Exit 0 = passed; 1 = the build or tests failed (a failure: gets a fix round); 2 = the environment is wrong (no engine, no image, no
 # gradlew, no /dev/kvm, emulator did not boot...), which is never the patch's fault and is never retried.
 set -u
+PREFLIGHT=0
 IMAGE="factory-android:latest"; ENGINE=""; DIR="."; TASK="test"; EMULATOR=0
 CACHE="${HOME:-/tmp}/.cache/factory-android-gradle"; KVM=/dev/kvm; MEMORY=6g; CPUS=4
 while [ $# -gt 0 ]; do
@@ -28,6 +29,7 @@ while [ $# -gt 0 ]; do
     --kvm-device) KVM="${2:-}"; shift 2 ;;
     --memory) MEMORY="${2:-}"; shift 2 ;;
     --cpus) CPUS="${2:-}"; shift 2 ;;
+    --preflight) PREFLIGHT=1; shift ;;
     *) echo "[android-test] unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -41,8 +43,13 @@ case "$CACHE" in /*) ;; *) die "--cache must be an absolute folder" ;; esac
 if [ -z "$ENGINE" ]; then
   for e in docker podman; do command -v "$e" >/dev/null 2>&1 && { ENGINE="$e"; break; }; done
 fi
-case "$ENGINE" in docker|podman) ;; "") die "neither docker nor podman is installed" ;; *) die "--engine must be docker or podman" ;; esac
+case "$ENGINE" in docker|podman) ;; "") if [ "$PREFLIGHT" = 1 ]; then echo "neither docker nor podman is installed (the Android build runs in a container)"; exit 3; fi; die "neither docker nor podman is installed" ;; *) die "--engine must be docker or podman" ;; esac
 command -v "$ENGINE" >/dev/null 2>&1 || die "$ENGINE is not installed"
+if [ "$PREFLIGHT" = 1 ]; then       # the worker's question before it takes jobs: one line per thing missing, exit 3 when any
+  bad=0
+  "$ENGINE" image inspect "$IMAGE" >/dev/null 2>&1 || { echo "the image $IMAGE is not on this machine: build or pull it (see docs/workers.md, Android)"; bad=3; }
+  exit $bad
+fi
 [ -d "$DIR" ] || die "no folder $DIR in the checkout"
 [ -f "$DIR/gradlew" ] || die "no gradlew in $DIR: this recipe needs the project's Gradle wrapper"
 WORK="$(cd "$DIR" && pwd)"

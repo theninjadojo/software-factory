@@ -100,8 +100,11 @@ class Api:
             if data.get("version", PROTOCOL) != PROTOCOL:
                 return 400, {"error": f"this server speaks protocol {PROTOCOL}"}
             app = data.get("app_version")
+            unready = data.get("unready")
+            unready = ({k: v for k, v in unready.items() if isinstance(k, str) and jobs.NAME.fullmatch(k) and isinstance(v, str)}
+                       if isinstance(unready, dict) else None)
             job = jobs.claim(db, worker, platform, recipes, now, w.lease_seconds, w.claim_wait_seconds, w.max_attempts,
-                             app if isinstance(app, str) else "")
+                             app if isinstance(app, str) else "", unready)
             if not job:
                 return 204, None
             reply = {"id": job["id"], "repo": job["repo"], "base_sha": job["base_sha"], "patch": job["patch"],
