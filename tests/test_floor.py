@@ -173,6 +173,15 @@ class Ordering(unittest.TestCase):
 class Inline(UiCase):
     """The Floor's tray lets a person finish an interaction without leaving the page."""
 
+    def test_needs_forget_prunes_the_cache_and_forces_a_reread(self):
+        from factory.ui import labels as L
+        import time
+        L._needs_cache.update(at=time.time(), rows=[{"repo": "o/r", "issue": 7}, {"repo": "o/r", "issue": 8}], dirty=False)
+        L.needs_forget("o/r", 7)
+        self.assertEqual([r["issue"] for r in L.needs_cached()], [8])
+        self.assertTrue(L._needs_cache["dirty"])
+        L._needs_cache.update(at=0.0, rows=None, dirty=False)
+
     def test_needs_you_attaches_the_questions_and_drops_stale_rows(self):
         from factory.ui import labels as L
         L._needs_cache.update(at=0.0, rows=None)

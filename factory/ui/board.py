@@ -195,10 +195,10 @@ def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -
     asked or a person called can be out of date: answered on GitHub, or the issue closed)."""
     j = dbm.journey(db, t["repo"], int(t["issue"]), now)
     st = stations(j, prs)
-    if known and need is None:
+    loc = LT.info(db, t["repo"], int(t["issue"])) if is_local(int(t["issue"])) else None
+    if need is None and (known or (loc and loc["state"] == "closed")):     # a closed local ticket waits for no one
         st = {k: ("done" if v == "wait" else v) for k, v in st.items()}
     state = ticket_state(st, need is not None, prs)
-    loc = LT.info(db, t["repo"], int(t["issue"])) if is_local(int(t["issue"])) else None
     if loc and state == "done" and loc["state"] == "open" and not j["steps"] and not prs:
         state = "new"                           # an open local ticket nothing has run on yet
     at = current(st)

@@ -270,8 +270,7 @@ def send(h, form, csrf: str) -> None:
     if any(x == "factory:working" or x.startswith("factory:working-") for x in names):
         return _back(h, csrf, repo, n, "", "The factory is working on this ticket now. Send the notes when it is done; they stay here.", "bad")
     h.app.add_approval(repo, n, f"stage:{DESIGNER}")
-    with L._needs_lock:
-        L._needs_cache["rows"] = None
+    L.needs_forget(repo, n)
     log.info("review: design run queued for %s#%d with %d note(s)", repo, n, len(opened))
     _back(h, csrf, repo, n, "", f"Sent. The designer runs again with {len(opened)} note{'' if len(opened) == 1 else 's'} at the factory's next poll.")
 
@@ -398,6 +397,5 @@ def board_issue(h, form, csrf: str) -> None:
     except (urllib.error.URLError, OSError) as e:
         log.warning("screens: starting %s#%d failed", repo, n)
         msg += f" It was not started: {L._github_error(e)}"
-    with L._needs_lock:
-        L._needs_cache["rows"] = None
+    L.needs_forget(repo, n)
     _back(h, csrf, repo, n, "", msg)
