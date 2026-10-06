@@ -278,6 +278,7 @@ class SmellCfg:
     pattern: str
     globs: tuple[str, ...] = ("**/*",)
     description: str = ""
+    advice: str = ""                       # the recommended fix, written by an admin and shown on every ticket outside the untrusted fence (at most 2000 characters)
 
 
 @dataclass(frozen=True)
@@ -305,6 +306,7 @@ class ScannerCfg:
     labels: tuple[str, ...] | None = None
     smells: tuple[SmellCfg, ...] = ()
     scans: tuple[ScanCfg, ...] = ()
+    advice: dict = field(default_factory=dict)      # preset id -> recommended fix; overrides the preset's (none) and is merged key by key from the overrides file
 
 
 @dataclass(frozen=True)
@@ -860,8 +862,20 @@ def _scanner(raw: dict, repos: list[str], workers: "WorkersCfg") -> ScannerCfg:
                 raise ValueError(f"{w}: pattern must not match an empty line")
         except re.error as e:
             raise ValueError(f"{w}: pattern is not a valid regular expression: {e}")
+        if (why := sn.regex_problem(m.pattern)):
+            import logging
+            logging.getLogger(__name__).warning("%s: %s; the worker stops a slow match after a few seconds, but rewrite it (the UI refuses such patterns)", w, why)
+        if (why := sn.advice_problem(m.advice)):
+            raise ValueError(f"{w}: advice {why}")
         if not m.globs or not all(isinstance(g, str) and g and not g.startswith("/") and ".." not in g.split("/") for g in m.globs):
             raise ValueError(f"{w}: globs must be relative patterns without ..")
+    if not isinstance(s.advice, dict):
+        raise ValueError("scanner.advice must be a table of preset id = text")
+    for k, text in s.advice.items():
+        if k not in sn.PRESETS:
+            raise ValueError(f"scanner.advice.{k}: only the presets ({', '.join(sn.PRESETS)}) take advice here; a custom smell has its own advice key")
+        if (why := sn.advice_problem(text)):
+            raise ValueError(f"scanner.advice.{k}: advice {why}")
     seen: set[str] = set()
     for c in s.scans:
         w = f"scanner.scans.{c.name!r}"

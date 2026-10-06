@@ -1,9 +1,11 @@
 import importlib.util
+import io
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from factory import db as dbm
 from factory import jobs, scanner
@@ -89,6 +91,38 @@ class FindingTests(unittest.TestCase):
         self.assertNotEqual(scanner.fingerprint("s", "p", "a"), scanner.fingerprint("s", "q", "a"))
 
 
+class RegexSafetyTests(unittest.TestCase):
+    def test_refused_and_accepted_patterns(self):
+        for p in (r"(a+)+$", r"(a|ab)*c", r"(x*)*", r"(\w+\s?)+", r"(a)\1", r"(?P<n>a)(?P=n)", r"a(?=b)", r"(?<!a)b", r"(?(1)a|b)",
+                  r"(?s)a", r"a{1001}", r"a{2,5000}"):
+            self.assertTrue(scanner.regex_problem(p), p)
+        for p in (r"\b(TODO|FIXME|XXX|HACK)\b", r"^\s*print\(", r"https?://(localhost|10[.])", r"(?i)todo", r"[\]()+*]+x", r"a{2,3}",
+                  r"\\1", r"(?:foo)+", r"(foo)+", r"[^]]+", "TODO|FIXME", r"x{,5}"):
+            self.assertEqual(scanner.regex_problem(p), "", p)
+
+    def test_advice_limits(self):
+        self.assertEqual(scanner.advice_problem("Move it to config.\nThen test."), "")
+        for bad in ("x" * 2001, "a\x00b", 5):
+            self.assertTrue(scanner.advice_problem(bad))
+
+    def test_config_advice(self):
+        c = cfg_with({"smells": [{"id": "a", "name": "n", "pattern": "x", "advice": "Fix it."}], "advice": {"todo-debt": "Open an issue."}})
+        self.assertEqual((scanner.advice_for(c.scanner, "a"), scanner.advice_for(c.scanner, "todo-debt"), scanner.advice_for(c.scanner, "long-files")),
+                         ("Fix it.", "Open an issue.", ""))
+        for extra in ({"advice": {"a": "x"}}, {"advice": {"todo-debt": "x" * 2001}},
+                      {"smells": [{"id": "a", "name": "n", "pattern": "x", "advice": "x" * 2001}]}):
+            raw = dict(BASE)
+            raw["workers"] = {"enabled": True}
+            raw["scanner"] = {"enabled": True, **extra}
+            with self.assertRaises(ValueError, msg=str(extra)):
+                parse(raw)
+
+    def test_hand_written_slow_pattern_still_loads(self):
+        with self.assertLogs("factory.config", "WARNING"):
+            c = cfg_with({"smells": [{"id": "slow", "name": "n", "pattern": "(a+)+$"}]})
+        self.assertEqual(c.scanner.smells[0].id, "slow")
+
+
 class TicketTests(unittest.TestCase):
     def test_untrusted_text_is_fenced_and_neutralised(self):
         c = cfg_with()
@@ -101,6 +135,17 @@ class TicketTests(unittest.TestCase):
         _, big = scanner.render_ticket(c.scanner.scans[0], "TODO", "desc @octocat", f * 5000, 5000, "d", 2000)
         self.assertLessEqual(len(big), 2100)
         self.assertIn("desc @\u200bocto", big)           # admin prose outside the fence is still neutralised
+
+    def test_advice_sits_outside_the_fence(self):
+        c = cfg_with()
+        f = [{"smell": "todo-debt", "path": "a.py", "line": 1, "snippet": "# TODO"}]
+        _, plain = scanner.render_ticket(c.scanner.scans[0], "TODO", "desc", f, 1, "d", 60000)
+        self.assertNotIn("Recommended fix", plain)
+        _, body = scanner.render_ticket(c.scanner.scans[0], "TODO", "desc", f, 1, "d", 60000, "Use the tracker, ask @octocat. ```")
+        self.assertEqual(body.count("```"), 2)
+        self.assertGreater(body.index("## Recommended fix (from the smell definition)"), body.rindex("```"))
+        self.assertIn("ask @\u200bocto", body)
+
 
 
 class RunTests(unittest.TestCase):
@@ -211,6 +256,22 @@ class RecipeTests(unittest.TestCase):
             got = {(f["smell"], f["path"]) for f in recipe.scan(d, params)}
             self.assertEqual(got, {("todo-debt", "pkg/a.py"), ("long-files", "pkg/a.py"), ("missing-tests", "pkg/a.py"),
                                    ("no-print", "pkg/b.py")})
+
+    def test_a_slow_pattern_is_cut_off_and_then_dropped(self):
+        if not hasattr(recipe.signal, "setitimer"):
+            self.skipTest("no setitimer here")
+        with tempfile.TemporaryDirectory() as d:
+            for n in range(5):
+                (Path(d) / f"f{n}.txt").write_text("a" * 40 + "b\n")
+            (Path(d) / "g.txt").write_text("ok TODO\n")
+            params = {"smells": [{"id": "slow", "type": "regex", "pattern": r"(a+)+$", "globs": ["**/f*.txt"]},
+                                 {"id": "todo", "type": "regex", "pattern": "TODO", "globs": ["**/*"]}]}
+            with mock.patch.object(recipe, "FILE_SECONDS", 0.2), mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                got = recipe.scan(d, params)
+            self.assertEqual([(f["smell"], f["path"]) for f in got], [("todo", "g.txt")])
+            self.assertEqual(err.getvalue().count("took more than"), 3)           # the fourth and fifth file are not tried
+            self.assertIn("smell slow dropped: too slow", err.getvalue())
+
 
 
 if __name__ == "__main__":

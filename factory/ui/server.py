@@ -107,6 +107,16 @@ class App:
         finally:
             db.close()
 
+    def request_scan_run(self, name: str) -> None:
+        """Queue a "Run now" for a scan for the orchestrator (the UI has no GitHub token). The caller has checked `name` is a configured scan."""
+        from .. import scanner
+        db = sqlite3.connect(self.cfg().db_path, timeout=10)
+        try:
+            scanner.ensure_tables(db)
+            scanner.request_run(db, name, time.time())
+        finally:
+            db.close()
+
     def overview(self) -> dict:
         cfg, db = self.cfg(), self.ro_db()
         summary = {"poll_seconds": cfg.poll_seconds, "live": not cfg.dry_run, "classifier": cfg.classifier_backend,

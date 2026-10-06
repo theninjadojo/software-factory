@@ -7,18 +7,45 @@ named by FACTORY_FINDINGS_FILE: [{"smell", "path", "line", "snippet"}]. The orch
 
     command = ["/path/to/smell-scan.py"]        in worker.toml
 """
+import contextlib
 import json
 import os
 import re
+import signal
 import sys
 
 MAX_FILE = 1_000_000          # bytes; larger files are skipped
 MAX_FINDINGS = 1000           # the orchestrator refuses more than this in one result
 MAX_LINE = 2000               # characters of a line that are searched
+FILE_SECONDS = 2.0            # one smell may spend this long matching one file; then the file is skipped for that smell
+MAX_SLOW = 3                  # after this many slow files the smell is dropped for the rest of the run
 SKIP_DIRS = {".git", "node_modules", "vendor", "dist", "build", "__pycache__", ".venv", "venv", "target"}
 SOURCE_EXT = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".swift", ".kt", ".java", ".rb", ".rs", ".c", ".cc", ".cpp", ".cs", ".php", ".sh"}
 TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e"}
 IGNORED_STEMS = {"__init__", "__main__", "conftest", "setup"}
+
+
+class Slow(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def time_limit(seconds: float):
+    """Raise Slow in the block after `seconds` (SIGALRM; CPython checks for signals inside a regex match). No limit off the main thread or
+    where there is no setitimer; the worker's recipe timeout is then the only bound."""
+    def fire(signum, frame):
+        raise Slow()
+    try:
+        old = signal.signal(signal.SIGALRM, fire)
+    except (ValueError, AttributeError):
+        yield
+        return
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
 
 
 def glob_re(pattern: str) -> re.Pattern:
@@ -80,6 +107,7 @@ def scan(root: str, params: dict) -> list[dict]:
 
     rules = params.get("smells", [])
     regexes = {r["id"]: (re.compile(r["pattern"]), [glob_re(g) for g in r.get("globs", ["**/*"])]) for r in rules if r["type"] == "regex"}
+    slow: dict[str, int] = {}
     test_names = {os.path.basename(rel).lower() for rel, _ in files if is_test(rel)}
     for rel, full in files:
         ext = os.path.splitext(rel)[1].lower()
@@ -88,11 +116,18 @@ def scan(root: str, params: dict) -> list[dict]:
             sid, kind = r["id"], r["type"]
             if kind == "regex":
                 pattern, globs = regexes[sid]
-                if any(g.fullmatch(rel) for g in globs):
+                if slow.get(sid, 0) < MAX_SLOW and any(g.fullmatch(rel) for g in globs):
                     text = lines_of(full) if text is None else text
-                    for n, line in enumerate(text, 1):
-                        if pattern.search(line[:MAX_LINE]):
-                            add(sid, rel, n, line)
+                    try:
+                        with time_limit(FILE_SECONDS):
+                            for n, line in enumerate(text, 1):
+                                if pattern.search(line[:MAX_LINE]):
+                                    add(sid, rel, n, line)
+                    except Slow:
+                        slow[sid] = slow.get(sid, 0) + 1
+                        print(f"[smell-scan] smell {sid}: {rel} skipped, the pattern took more than {FILE_SECONDS:g}s", file=sys.stderr)
+                        if slow[sid] >= MAX_SLOW:
+                            print(f"[smell-scan] smell {sid} dropped: too slow", file=sys.stderr)
             elif kind == "long-file" and ext in SOURCE_EXT:
                 text = lines_of(full) if text is None else text
                 if len(text) > int(r.get("max_lines", 800)):

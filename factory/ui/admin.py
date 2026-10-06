@@ -14,7 +14,7 @@ from ..router import decide
 import time
 
 from .. import schedules as sched
-from . import features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, release as REL, review as RV, schedules as SC, screens as SB, settings as S, updatespage as UP, views, workers as WK
+from . import features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, release as REL, review as RV, schedules as SC, scans as SN, screens as SB, settings as S, updatespage as UP, views, workers as WK
 from .views import esc
 
 log = logging.getLogger("factory.ui")
@@ -28,6 +28,11 @@ FLASH = {
     "run": "Run requested. The factory runs it within a poll (up to a minute) and opens a real ticket, whatever dry-run says.",
     "sched_saved": "Schedule saved. The factory applies it at its next idle moment (never mid-task).",
     "sched_deleted": "Schedule deleted. Snapshots already on disk were kept.",
+    "scan_saved": "Scan saved. The factory applies it at its next idle moment (never mid-task).",
+    "scan_deleted": "Scan deleted. Tickets already opened were kept.",
+    "scan_run": "Scan requested. It starts within a poll (up to a minute); tickets follow when the worker has finished. Nothing runs in dry-run or while paused.",
+    "smell_saved": "Smell saved. The factory applies it at its next idle moment (never mid-task).",
+    "smell_deleted": "Smell deleted. Tickets already opened were kept.",
     "live": "Going live. The factory applies it at its next idle moment (never mid-task); after that it starts agents and opens PRs for labeled issues.",
     "layout_saved": "Floor layout saved. The floor is drawn from it; Edit layout changes it again or resets it.",
     "dry": "Back to dry run. The factory applies it at its next idle moment: it only logs decisions and writes nothing.",
@@ -467,6 +472,136 @@ def schedules_delete(h, form, csrf: str) -> None:
     h._redirect("/schedules?ok=sched_deleted")
 
 
+# ------------------------------------------------------------------ scans
+def _scan_page(h, csrf: str, title: str, body: str, status: int = 200, flash=None, kind="ok") -> None:
+    _send_page(h, status, title, body, "/scans", csrf, flash, kind, section="scans")
+
+
+def _smell_form(h, csrf: str, v: dict, original: str, status: int = 200, flash=None, kind="ok", preview: str = "", bad: str = "") -> None:
+    _scan_page(h, csrf, "Edit smell" if original else "New smell", SN.smell_form_page(h.app.cfg(), v, csrf, original, preview, bad), status, flash, kind)
+
+
+def scans_get(h, q: dict, csrf: str) -> None:
+    cfg, path = h.app.cfg(), h.path.split("?")[0]
+    if path == "/scans/smells/edit":
+        sid = q.get("id", "")
+        if not sid:
+            return _smell_form(h, csrf, SN.smell_flat(None, cfg), "")
+        entry = next((x for x in SN.raw_scanner(h.app.config_path).get("smells", []) if x.get("id") == sid), None)
+        if entry is None and sid not in SN.sn.PRESETS:
+            return _scan_page(h, csrf, "Smell library", '<p class="muted">No such smell.</p>', 404)
+        return _smell_form(h, csrf, SN.smell_flat(entry, cfg, sid), sid)
+    if path == "/scans/smells":
+        return _scan_page(h, csrf, "Smell library", SN.smells_page(cfg, csrf), flash=FLASH.get(q.get("ok", "")))
+    if path == "/scans/edit":
+        name = q.get("name", "")
+        entry = next((x for x in SN.raw_scanner(h.app.config_path).get("scans", []) if x.get("name") == name), None) if name else None
+        if name and entry is None:
+            return _scan_page(h, csrf, "Scans", '<p class="muted">No such scan.</p>', 404)
+        return _scan_page(h, csrf, "Edit scan" if name else "New scan", SN.scan_form_page(cfg, SN.scan_flat(entry, cfg), csrf, name))
+    db = h.app.ro_db()
+    try:
+        _scan_page(h, csrf, "Scans", SN.list_page(cfg, db, csrf), flash=FLASH.get(q.get("ok", "")))
+    finally:
+        if db is not None:
+            db.close()
+
+
+def scans_run(h, form, csrf: str) -> None:
+    name = form.get("name", "")
+    if name not in {s.name for s in h.app.cfg().scanner.scans}:
+        return h._send(404, "no such scan", "text/plain")
+    h.app.request_scan_run(name)
+    h._redirect("/scans?ok=scan_run")
+
+
+def scans_save(h, form, csrf: str) -> None:
+    cfg, orig = h.app.cfg(), form.get("orig", "")
+    existing = next((x for x in SN.raw_scanner(h.app.config_path).get("scans", []) if x.get("name") == orig), None) if orig else None
+    if orig and existing is None:
+        return h._send(404, "no such scan", "text/plain")
+    v = SN.scan_from_form(form)
+    if orig:
+        v["name"] = orig
+    try:
+        entry = SN.build_scan(v, cfg, existing, {s.name for s in cfg.scanner.scans})
+        SN.store(h.app.config_path, h.app.state_dir(), "scans", orig or entry["name"], entry)
+    except S.SettingsError as e:
+        return _scan_page(h, csrf, "Edit scan" if orig else "New scan", SN.scan_form_page(cfg, v, csrf, orig), 422, " · ".join(e.messages), "bad")
+    h._redirect("/scans?ok=scan_saved")
+
+
+def scans_delete(h, form, csrf: str) -> None:
+    name = form.get("name", "")
+    if not any(x.get("name") == name for x in SN.raw_scanner(h.app.config_path).get("scans", [])):
+        return h._send(404, "no such scan", "text/plain")
+    if form.get("confirm") != "1":
+        return _scan_page(h, csrf, "Scans", '<p class="muted">Tick the box to confirm the delete.</p>', 400, kind="bad")
+    try:
+        SN.store(h.app.config_path, h.app.state_dir(), "scans", name, None)
+    except S.SettingsError as e:
+        return _scan_page(h, csrf, "Scans", "", 422, " · ".join(e.messages), "bad")
+    h._redirect("/scans?ok=scan_deleted")
+
+
+def _smell_prepare(h, form):
+    """(cfg, values, original id, existing raw entry) from a submitted smell form."""
+    cfg, orig = h.app.cfg(), form.get("orig", "")
+    existing = next((x for x in SN.raw_scanner(h.app.config_path).get("smells", []) if x.get("id") == orig), None) if orig else None
+    v = SN.smell_from_form(form)
+    if orig:
+        v["id"] = orig
+        v["preset"] = "1" if orig in SN.sn.PRESETS else ""
+    return cfg, v, orig, existing
+
+
+def smells_save(h, form, csrf: str) -> None:
+    cfg, v, orig, existing = _smell_prepare(h, form)
+    try:
+        if v["preset"]:
+            if orig not in SN.sn.PRESETS:
+                return h._send(404, "no such smell", "text/plain")
+            advice = v["advice"].replace("\r\n", "\n").strip()
+            if (why := SN.sn.advice_problem(advice)):
+                raise S.SettingsError(["Advice is too long (max %d)." % SN.sn.MAX_ADVICE if "too long" in why else f"Advice {why}."])
+            SN.store_advice(h.app.config_path, h.app.state_dir(), orig, advice)
+        else:
+            if orig and existing is None:
+                return h._send(404, "no such smell", "text/plain")
+            entry = SN.build_smell(v, existing, {x.id for x in cfg.scanner.smells})
+            SN.store(h.app.config_path, h.app.state_dir(), "smells", orig or entry["id"], entry, "id")
+    except S.SettingsError as e:
+        return _smell_form(h, csrf, v, orig, 422, " · ".join(e.messages), "bad", bad=SN.invalid_field(e.messages))
+    h._redirect("/scans/smells?ok=smell_saved")
+
+
+def smells_sample(h, form, csrf: str) -> None:
+    """Try the pattern on pasted text with the worker recipe: nothing is saved and no repository is read."""
+    cfg, v, orig, existing = _smell_prepare(h, form)
+    if (why := SN.pattern_problem(v["pattern"])):
+        return _smell_form(h, csrf, v, orig, 422, why, "bad", bad="pattern")
+    try:
+        preview = SN.sample_html(SN.run_sample(v["pattern"], v["sample"].replace("\r\n", "\n")))
+    except ValueError as e:
+        preview = SN.sample_html(error=str(e))
+    _smell_form(h, csrf, v, orig, 200, preview=preview)
+
+
+def smells_delete(h, form, csrf: str) -> None:
+    sid = form.get("id", "")
+    if not any(x.get("id") == sid for x in SN.raw_scanner(h.app.config_path).get("smells", [])):
+        return h._send(404, "no such smell", "text/plain")
+    if form.get("confirm") != "1":
+        return _scan_page(h, csrf, "Smell library", '<p class="muted">Tick the box to confirm the delete.</p>', 400, kind="bad")
+    if (users := SN.smell_users(h.app.cfg(), sid)):
+        return _scan_page(h, csrf, "Smell library", "", 422, f"{sid} is still used by: {', '.join(users)}. Take it out of those scans first.", "bad")
+    try:
+        SN.store(h.app.config_path, h.app.state_dir(), "smells", sid, None, "id")
+    except S.SettingsError as e:
+        return _scan_page(h, csrf, "Smell library", "", 422, " · ".join(e.messages), "bad")
+    h._redirect("/scans/smells?ok=smell_deleted")
+
+
 # ------------------------------------------------------------------ updates
 def updates_get(h, q: dict, csrf: str) -> None:
     shown = L.flash_pop(csrf)
@@ -578,9 +713,9 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
     h._redirect("/backup?ok=restore")
 
 
-GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
+GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get}
-POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete,
+POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
