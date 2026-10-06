@@ -289,6 +289,9 @@ bypass_label = "factory:skip-mockup"
 # name = "Debug prints"
 # pattern = '^\s*print\('
 # globs = ["**/*.py"]
+# advice = "Use the logging module."       # optional recommended fix, shown on every ticket for this smell (trusted text, at most 2000 characters)
+# [scanner.advice]                     # the same for a preset, keyed by its id
+# todo-debt = "Turn each TODO into a ticket, or delete it."
 # [[scanner.scans]]
 # name = "shop-web-weekly"
 # repo = "your-org/shop-web"

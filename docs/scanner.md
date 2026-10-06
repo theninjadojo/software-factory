@@ -24,3 +24,28 @@ Instruction (agent-evaluated) smells are not implemented yet.
 - Repository content is untrusted. It goes into a ticket only inside a fence labelled untrusted, with mentions and images neutralised and a size cap.
   Labels come only from the admin's config (default: the analyst role's label).
 - `python3 -m factory.ctl scans` lists scans; `scans run <name>` asks for one at the next poll.
+
+## Managing scans and smells in the UI
+
+Settings → **Scans** lists the scans (status, next run, **Run now**) and has a form to add, edit or delete one. The **Smell library** tab lists the
+three presets and your own smells, with a form for a smell: a name (lower-case id, fixed once created), a regular expression matched per line, file
+globs, and an optional recommended fix. Anything saved goes to `config.overrides.toml` (the first save copies the hand-written `[[scanner.smells]]`
+and `[[scanner.scans]]` across, because a list in the overrides replaces the one in `config.toml`); the factory applies it when next idle. Turning the
+scanner on (`[scanner] enabled`) stays in `config.toml`. **Test on sample text** runs the real recipe on pasted lines in a throw-away folder: nothing
+is saved and no repository is read. Anyone who can sign in to the UI can change smells and scans.
+
+## Recommended fix
+
+A smell can carry `advice` (a preset takes it from `[scanner.advice]`, keyed by its id): plain text of at most 2000 characters, written by an admin.
+Each ticket for that smell shows it under **Recommended fix (from the smell definition)**, after the fenced, untrusted list of findings and never
+inside it. The ticket still goes to the analyst role, which proposes a fix for each finding. Without advice the ticket is unchanged.
+
+## Slow patterns
+
+A custom pattern runs on a worker, so a pattern that backtracks without end could stall a scan. Two limits apply:
+
+- The UI refuses patterns outside a safe subset (`scanner.regex_problem`): no backreferences, lookahead or lookbehind, conditional groups or inline
+  flags other than `(?i)`; no repeat count above 1000; and no repeated group that itself holds a repeat or an alternation, such as `(a+)+` or
+  `(a|ab)*`. A hand-written pattern outside the subset still loads (it is logged as a warning), so existing config keeps working.
+- The recipe stops a smell after 2 seconds on one file (`SIGALRM`) and skips that file. After 3 such files the smell is dropped for the rest of
+  the run and the job log says `smell <id> dropped: too slow`. Workers that have not updated yet have no such limit, only the recipe timeout.
