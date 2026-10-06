@@ -179,3 +179,51 @@ class Published(DesignerFlow):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CropOnWhite(unittest.TestCase):
+    def test_unpainted_areas_become_white_never_the_old_pink(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow is only in the render image")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("render_container", Path(__file__).resolve().parent.parent / "sandbox" / "render" / "render.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        img = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+        for x in range(10, 30):
+            for y in range(10, 30):
+                img.putpixel((x, y), (18, 52, 86, 255))
+        img.putpixel((10, 10), (0, 0, 0, 0))                    # a rounded corner
+        out = mod.crop_on_white(img)
+        self.assertEqual(out.size, (20, 20))
+        self.assertEqual(out.getpixel((0, 0)), (255, 255, 255))
+        self.assertEqual(out.getpixel((5, 5)), (18, 52, 86))
+        self.assertNotIn((255, 0, 255), set(out.getdata()))
+        with self.assertRaises(ValueError):
+            mod.crop_on_white(Image.new("RGBA", (40, 40), (0, 0, 0, 0)))
+
+
+class CropOnWhite(unittest.TestCase):
+    def test_unpainted_areas_become_white_never_the_old_pink(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow is only in the render image")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("render_container", Path(__file__).resolve().parent.parent / "sandbox" / "render" / "render.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        img = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+        for x in range(10, 30):
+            for y in range(10, 30):
+                img.putpixel((x, y), (18, 52, 86, 255))
+        img.putpixel((10, 10), (0, 0, 0, 0))                    # a rounded corner
+        out = mod.crop_on_white(img)
+        self.assertEqual(out.size, (20, 20))
+        self.assertEqual(out.getpixel((0, 0)), (255, 255, 255))
+        self.assertEqual(out.getpixel((5, 5)), (18, 52, 86))
+        self.assertNotIn((255, 0, 255), set(out.getdata()))
+        with self.assertRaises(ValueError):
+            mod.crop_on_white(Image.new("RGBA", (40, 40), (0, 0, 0, 0)))
