@@ -36,7 +36,7 @@ class Scans(AdminCase):
         _, _, html = self.req("GET", "/scans/smells", cookie=self.cookie)
         for sid in scanner.PRESETS:
             self.assertIn(sid, html)
-        self.assertIn("Only the three built-in smells so far", html)
+        self.assertIn("Only the built-in smells so far", html)
         self.assertIn('name="pattern"', self.req("GET", "/scans/smells/edit", cookie=self.cookie)[2])
         self.assertIn('name="smell"', self.req("GET", "/scans/edit", cookie=self.cookie)[2])
 
