@@ -50,6 +50,7 @@ GROUP_ICONS = {
     "Select": "M5 3l14 8-6 2-2 6z", "Belts": TOOL_ICONS["belt"], "Buildings": "M4 21V9l8-6 8 6v12zM9 21v-6h6v6",
     "Scenery": TOOL_ICONS["tree"], "Water": TOOL_ICONS["pond"], "Ground": "M3 8l9-5 9 5-9 5zM3 13l9 5 9-5M3 17l9 5 9-5",
     "Structures": TOOL_ICONS["wall"], "Light": TOOL_ICONS["lamp"], "Park": TOOL_ICONS["bench"],
+    "Town": "M3 21V10h6v11M9 21V4h6v17M15 21v-8h6v8",
 }
 
 
@@ -63,15 +64,21 @@ def _ctx(h) -> "floorplan.Ctx":
     return board.floor_ctx(d["cfg"], d.get("workers") or [])
 
 
-def _category(name: str, items, open_: bool) -> str:
-    """One collapsible category of the build panel: a heading that toggles it, and its tools (data-tool buttons, as the toolbars had)."""
-    btns = "".join(f'<button type="button" class="fe-part fe-tool" data-tool="{t}" aria-pressed="{"true" if t == "move" else "false"}">'
-                   + (f'<i class="sw sw-{t[2:]}" aria-hidden="true"></i>' if t.startswith("g-")
-                                       else _ico(TOOL_ICONS.get(t) or GROUP_ICONS.get(name, GENERIC_ICON))) + f'<span>{esc(n)}</span></button>'
-                   for t, n in items)
+def _tool_btn(t: str, n: str, name: str) -> str:
+    return (f'<button type="button" class="fe-part fe-tool" data-tool="{t}" aria-pressed="{"true" if t == "move" else "false"}">'
+            + (f'<i class="sw sw-{t[2:]}" aria-hidden="true"></i>' if t.startswith("g-")
+               else _ico(TOOL_ICONS.get(t) or GROUP_ICONS.get(name, GENERIC_ICON))) + f'<span>{esc(n)}</span></button>')
+
+
+def _category(name: str, items, open_: bool, subs=()) -> str:
+    """One tab of the build tray and its panel of tools (data-tool buttons, as the toolbars had). `subs` are (heading, items) groups
+    shown under headings in the same panel (the Town)."""
+    btns = "".join(_tool_btn(t, n, name) for t, n in items)
+    btns += "".join(f'<h3>{esc(g)}</h3>' + "".join(_tool_btn(t, n, name) for t, n in ts) for g, ts in subs)
+    count = len(items) + sum(len(ts) for _, ts in subs)
     closed = "" if open_ else ' data-closed="1"'
     return (f'<section class="fe-cat" data-cat="{esc(name)}"{closed}><h3><button type="button" class="fe-cat-toggle" aria-expanded="{"true" if open_ else "false"}">'
-            f'{_ico(GROUP_ICONS.get(name, GENERIC_ICON), " fe-cat-ico")}<span class="fe-cat-name">{esc(name)}</span> <span class="fe-cat-n">· {len(items)}</span></button></h3>'
+            f'{_ico(GROUP_ICONS.get(name, GENERIC_ICON), " fe-cat-ico")}<span class="fe-cat-name">{esc(name)}</span> <span class="fe-cat-n">· {count}</span></button></h3>'
             f'<div class="fe-cat-body" role="group" aria-label="{esc(name)}"{"" if open_ else " hidden"}>{btns}</div></section>')
 
 
@@ -81,16 +88,20 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'saved again.</p>') if why else ""
     shown = [(t, n, c) for t, n, c in TOOLS if t != "rail" or ctx.yard_on]
     cats = list(dict.fromkeys(c for _, _, c in shown))            # the categories in the order they first appear, from the tool data
-    panel = "".join(_category(c, [(t, n) for t, n, g in shown if g == c], True) for c in cats)
-    panel += ('<section class="fe-cat" data-cat="Buildings"><h3><button type="button" class="fe-cat-toggle" aria-expanded="true">'
-              + _ico(GROUP_ICONS["Buildings"], " fe-cat-ico") + '<span class="fe-cat-name">Buildings</span> <span class="fe-cat-n"></span></button></h3>'
-              '<div class="fe-cat-body" role="group" aria-label="Buildings"><div class="fe-tray-list"><p class="muted">Loading parts…</p></div></div></section>')
-    panel += "".join(_category(g, ts, False) for g, ts in TERRAIN_TOOLS)
+    # the tabs of the tray: Buildings first (open), then the tool categories, then the terrain groups; the town's groups share one tab
+    panel = ('<section class="fe-cat" data-cat="Buildings"><h3><button type="button" class="fe-cat-toggle" aria-expanded="true">'
+             + _ico(GROUP_ICONS["Buildings"], " fe-cat-ico") + '<span class="fe-cat-name">Buildings</span> <span class="fe-cat-n"></span></button></h3>'
+             '<div class="fe-cat-body" role="group" aria-label="Buildings"><div class="fe-tray-list"><p class="muted">Loading parts…</p></div></div></section>')
+    panel += "".join(_category(c, [(t, n) for t, n, g in shown if g == c], False) for c in cats)
+    town = {g for g in (a["group"] for a in TOWN.values())}
+    panel += "".join(_category(g, ts, False) for g, ts in TERRAIN_TOOLS if g not in town)
+    panel += _category("Town", (), False, [(g, ts) for g, ts in TERRAIN_TOOLS if g in town])
+    quick = "".join(_tool_btn(t, n, "Select") for t, n, _ in shown if t in ("move", "erase"))
     dirs = "".join(f'<option value="{d}">{n}</option>' for d, n in (("e", "Facing east"), ("w", "Facing west"), ("s", "Facing south"), ("n", "Facing north")))
     art = "".join(f'<g data-art="{esc(nid)}">{plant.node_art(nid, m["label"], ctx.trains)}</g>'
                   for nid, m in floorplan.meta(ctx)["nodes"].items())
-    body = ('<p><a href="/">← Factory</a></p>'
-            '<p class="muted">Start from the default or from an empty floor, and bring buildings in from the parts tray: drag one onto the '
+    help_ = (
+            'Start from the default or from an empty floor, and bring buildings in from the parts tray: drag one onto the '
             'floor, or click it. Move the buildings on the grid and drag a corner to resize one. With Draw belt, drag from the building a '
             'ticket leaves onto the one it goes to (or click the belt\'s points); with Move, drag a belt sideways to slide it. Place '
             'splitters, mergers, side-loads and underground belts. Paint the land round it with the terrain tools: trees, bushes and rocks, '
@@ -104,37 +115,38 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'with Draw track, lay track from the yard to each worker, on to the Train station and back to the yard; tracks can join at a '
             'junction, whose signals let one train onto the shared track at a time. Drag the ground to pan; zoom with the '
             'buttons or Ctrl and the mouse wheel. Every hop of the route needs its belt, so every station stays reachable. Moving a station '
-            'changes the picture, not the workflow. New stations, agents or workers get a default spot until you place them.</p>' + note
+            'changes the picture, not the workflow. New stations, agents or workers get a default spot until you place them.')
+    btn = '<button type="button" class="secondary" data-act="%s">%s</button>'
+    body = (note
             + '<p class="fe-phone muted">Editing the layout is for wider screens. On a phone the floor is the column of its stations.</p>'
             f'<div class="fe" data-meta="{esc(json.dumps(floorplan.meta(ctx), separators=(",", ":")))}">'
-            '<div class="fe-tools" role="toolbar" aria-label="Layout options">'
+            '<div class="fe-tools" role="toolbar" aria-label="Layout options"><a href="/" class="fe-back">← Factory</a>'
+            '<span class="fe-zoom">' + btn % ("undo", "Undo") + btn % ("redo", "Redo")
+            + '<button type="button" class="secondary" data-act="zoomout" aria-label="Zoom out">−</button>'
+            '<output class="fe-zoomval" aria-live="polite">100%</output>'
+            '<button type="button" class="secondary" data-act="zoomin" aria-label="Zoom in">+</button>' + btn % ("fit", "Fit")
+            + '<details class="fe-more"><summary class="secondary">More ▾</summary><div class="fe-more-list">'
             '<select class="fe-hop" aria-label="The belt to draw"></select>'
             f'<select class="fe-dir" aria-label="Which way the piece faces">{dirs}</select>'
-            '<button type="button" class="secondary" data-act="finish">Finish belt</button>'
-            '<button type="button" class="secondary" data-act="undo">Undo</button><button type="button" class="secondary" data-act="redo">Redo</button>'
-            '<button type="button" class="secondary" data-act="scratch">Start from scratch</button>'
-            '<button type="button" class="secondary" data-act="default">Start from the default</button>'
-            '<button type="button" class="secondary" data-act="hitboxes" aria-pressed="false">Show hitboxes</button>'
-            '<span class="fe-zoom"><button type="button" class="secondary" data-act="zoomout" aria-label="Zoom out">−</button>'
-            '<output class="fe-zoomval" aria-live="polite">100%</output>'
-            '<button type="button" class="secondary" data-act="zoomin" aria-label="Zoom in">+</button>'
-            '<button type="button" class="secondary" data-act="fit">Fit</button>'
-            '<button type="button" class="secondary" data-act="full">Full screen</button></span></div>'
+            + btn % ("finish", "Finish belt") + btn % ("scratch", "Start from scratch") + btn % ("default", "Start from the default")
+            + '<button type="button" class="secondary" data-act="hitboxes" aria-pressed="false">Show hitboxes</button>' + btn % ("full", "Full screen")
+            + '<ul class="fe-legend"><li><i class="lg-belt"></i>Belt</li><li><i class="lg-in"></i>Deliveries in</li>'
+            + ('<li><i class="lg-rail"></i>Rail</li>' if ctx.yard_on else '') + '<li><i class="lg-radio"></i>Notifier, wireless</li></ul>'
+            f'<details class="fe-helpbox"><summary>Help</summary><p class="muted">{help_}</p></details></div></details>'
+            '<button type="submit" form="fe-save-form" class="fe-savebtn">Save</button></span></div>'
             f'<svg class="fm fe-art" aria-hidden="true" width="0" height="0" focusable="false">{terrain.defs()}{art}</svg>'
-            '<div class="fe-status"><p class="fe-msg" aria-live="polite"></p><button type="button" class="secondary fe-remove" hidden>Remove</button>'
-            '<ul class="fe-legend"><li><i class="lg-belt"></i>Belt</li><li><i class="lg-in"></i>Deliveries in</li>'
-            + ('<li><i class="lg-rail"></i>Rail</li>' if ctx.yard_on else '') + '<li><i class="lg-radio"></i>Notifier, wireless</li></ul></div>'
-            '<div class="fe-work"><aside class="fe-tray" aria-label="Build"><h2>Build <span class="fe-tray-left muted"></span></h2>'
-            '<label class="fe-filter-l"><span class="fe-sr">Filter the build panel</span>'
-            '<input type="search" class="fe-filter" placeholder="Filter tools and parts" autocomplete="off"></label>'
+            '<div class="fe-work"><div class="fe-stage"><div class="fe-canvas"><svg class="fe-svg" role="application" aria-label="The floor layout: drag a building, or focus one and use the arrow keys"></svg></div>'
+            '<div class="fe-status"><p class="fe-msg" aria-live="polite"></p><button type="button" class="secondary fe-remove" hidden>Remove</button></div></div>'
+            '<aside class="fe-tray fe-dock" aria-label="Build"><div class="fe-quick" role="group" aria-label="Tools">' + quick
+            + '<span class="fe-tray-left muted"></span></div>'
+            '<label class="fe-filter-l"><span class="fe-sr">Search parts</span>'
+            '<input type="search" class="fe-filter" placeholder="Search parts" autocomplete="off"></label>'
             '<p class="fe-sr fe-found" role="status" aria-live="polite"></p>'
-            '<p class="muted fe-hint">Click a tool to use it. Drag a part onto the floor, or click to drop it in a free spot.</p>'
             + panel +
             '<div class="fe-none" hidden><p class="muted">Nothing matches <q class="fe-q"></q>.</p>'
-            '<button type="button" class="secondary fe-clear">Clear filter</button></div></aside>'
-            '<div class="fe-canvas"><svg class="fe-svg" role="application" aria-label="The floor layout: drag a building, or focus one and use the arrow keys"></svg></div></div>'
+            '<button type="button" class="secondary fe-clear">Clear search</button></div></aside></div>'
             '<div class="fe-check" aria-live="polite"></div><ul class="fe-problems" aria-live="polite">' + "".join(f"<li>{esc(p)}</li>" for p in problems) + '</ul></div>'
-            f'<form method="post" action="/floor/layout/save" class="fe-save field">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
+            f'<form method="post" action="/floor/layout/save" class="fe-save field" id="fe-save-form">{views.csrf_field(csrf)}<input type="hidden" name="rev" value="{esc(rev)}">'
             '<details class="fe-data" open><summary>The layout as data</summary>'
             f'<p class="muted">Positions and belt points are grid cells of {floorplan.G}px. A belt is a list of points, each run straight across '
             'or down; pieces sit on a belt.</p>'

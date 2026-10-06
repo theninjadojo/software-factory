@@ -873,9 +873,10 @@
     if (cnt) cnt.textContent = "· " + root.querySelectorAll(".fe-tray-list [data-part]").length;
     applyFilter();
   }
-  // ---- the build panel's categories (collapsible, remembered) and its filter
-  var panel = root.querySelector(".fe-tray"), filter = root.querySelector(".fe-filter"), COLL = {};
-  try { COLL = JSON.parse(localStorage.getItem("fe-cats-collapsed") || "{}") || {}; } catch (x) { COLL = {}; }
+  // ---- the build tray's tabs (one category open at a time, remembered) and its search
+  var panel = root.querySelector(".fe-tray"), filter = root.querySelector(".fe-filter"), OPEN = "Buildings";
+  try { OPEN = localStorage.getItem("fe-cat-open") || OPEN; } catch (x) { /* private mode: not remembered */ }
+  if (panel && !panel.querySelector('.fe-cat[data-cat="' + OPEN.replace(/"/g, "") + '"]')) OPEN = "Buildings";
   function applyFilter() {
     if (!panel) return;
     var q = filter ? filter.value.trim().toLowerCase() : "", total = 0;
@@ -896,9 +897,10 @@
         if (ok) { hits++; headHits++; }
       }
       total += q ? hits : 0;
-      var coll = secs[i].getAttribute("data-cat") in COLL ? COLL[secs[i].getAttribute("data-cat")] : secs[i].getAttribute("data-closed") === "1";
+      var coll = secs[i].getAttribute("data-cat") !== OPEN;
       tg.setAttribute("aria-expanded", coll ? "false" : "true");
-      body.hidden = !q && coll;                                      // a filter opens every category that has a match
+      secs[i].classList.toggle("open", !coll);
+      body.hidden = !q && coll;                                      // a search shows every part that matches, across the tabs
       secs[i].hidden = !!q && !hits;
     }
     var none = panel.querySelector(".fe-none"), found = panel.querySelector(".fe-found");
@@ -910,8 +912,8 @@
       var t = e.target.closest && e.target.closest(".fe-cat-toggle");
       if (t) {
         var sec = t.closest(".fe-cat"), name = sec.getAttribute("data-cat");
-        COLL[name] = t.getAttribute("aria-expanded") === "true";
-        try { localStorage.setItem("fe-cats-collapsed", JSON.stringify(COLL)); } catch (x) { /* private mode: not remembered */ }
+        OPEN = name;
+        try { localStorage.setItem("fe-cat-open", name); } catch (x) { /* private mode: not remembered */ }
         return applyFilter();
       }
       if (e.target.closest && e.target.closest(".fe-clear")) { filter.value = ""; applyFilter(); filter.focus(); }

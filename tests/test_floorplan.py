@@ -368,6 +368,9 @@ class Editing(AdminCase):
         self.assertIn('data-act="scratch"', page)                       # start from an empty floor, with the parts tray to fill it
         self.assertIn('class="fe-tray-list"', page)
         self.assertIn('aria-label="Build"', page)                     # one build panel: tools by category, the parts, then the terrain groups
+        self.assertIn("fe-tray fe-dock", page)
+        self.assertIn('form="fe-save-form"', page)
+        self.assertIn('data-cat="Town"', page)
         self.assertIn('data-cat="Belts"', page)
         self.assertIn('data-cat="Structures"', page)
         self.assertNotIn('aria-label="Terrain tools"', page)
