@@ -1,7 +1,8 @@
 """The designer's rendered mockups, handed to the build and review agents to match.
 
-The PNGs were rendered in a sealed container and committed to the design draft PR (see render.py). Here they are fetched back by
-commit, re-checked as untrusted images, and put in the agent's read-only task folder. Whether a build may go ahead without them
+The PNGs were rendered in a sealed container and stored in the factory's database, and (unless the designer's design_pr is off) also
+committed to the design draft PR (see render.py). Here they are read back, or fetched by commit, re-checked as untrusted images, and
+put in the agent's read-only task folder. Whether a build may go ahead without them
 is the operator's setting (config.MockupsCfg)."""
 import logging
 import re
@@ -51,23 +52,27 @@ def gate(cfg: MockupsCfg, labels: list[str], previews: list[dict], designer_says
 
 
 def fetch(gh, previews: list[dict], dest: Path) -> list[str]:
-    """Download each recorded preview PNG into dest as <name>.png. Only well-formed links (designfiles.link_ok) are fetched, each
-    is re-checked as a real PNG, and a failure just leaves that image out. Returns the file names written."""
+    """Put each recorded preview PNG into dest as <name>.png. The image the factory stored when it rendered it is used when the record
+    carries one (a "png" the caller read from the database); otherwise it is downloaded from the commit it was published at (only for
+    well-formed links, designfiles.link_ok). Each is re-checked as a real PNG, and a failure just leaves that image out.
+    Returns the file names written."""
     names: list[str] = []
     for f in previews[:MAX_IMAGES]:
-        if not designfiles.link_ok(f) or not f["path"].endswith(".png"):
-            continue
-        m = designfiles.BLOB_URL.match(f["url"])
-        if not m:
+        if not designfiles.record_ok(f) or not f["path"].endswith(".png"):
             continue
         name = f["path"].rpartition("/")[2]
         if not re.fullmatch(r"factory-\d+-[a-z0-9][a-z0-9-]{0,40}\.png", name):
             continue
-        try:
-            data = gh.raw_file(f["repo"], f["path"], m.group(2))
-        except Exception:
-            log.warning("could not fetch mockup %s from %s", f["path"], f["repo"])
-            continue
+        data = f.get("png") if isinstance(f.get("png"), bytes) else None
+        if data is None:
+            m = designfiles.BLOB_URL.match(f.get("url") or "")
+            if not m:
+                continue
+            try:
+                data = gh.raw_file(f["repo"], f["path"], m.group(2))
+            except Exception:
+                log.warning("could not fetch mockup %s from %s", f["path"], f["repo"])
+                continue
         if not png_ok(data):
             log.warning("mockup %s was not a usable PNG; skipped", f["path"])
             continue

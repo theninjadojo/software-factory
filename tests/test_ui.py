@@ -385,6 +385,30 @@ class Images(UiCase):
                     f"/runimg?run={rid}&kind=built&name=nope", f"/runimg?run=x&kind=built&name=home-desktop", f"/runimg?run={rid}&kind=zip&name=home-desktop"):
             self.assertEqual(self.req("GET", bad, cookie=cookie)[0], 404, bad)
 
+    def test_a_mockup_kept_only_in_the_factory_shows_and_its_canvas_downloads_but_never_renders(self):
+        from test_designfiles import VALID
+        rid = dbm.start_run(self.db, "stage", "o/r", 5, "T", "claude-code", "sonnet", "medium", "", "designer")
+        canvas = "docs/design/factory-5-home.dc.html"
+        dbm.add_design_files(self.db, rid, [{"repo": "o/r", "path": canvas, "url": "", "pr": "", "html": VALID},
+                                            {"repo": "o/r", "path": self.PATH, "url": "", "pr": "", "preview": True, "png": self.PNG}])
+        img = f"/mockup?repo=o%2Fr&path={self.PATH.replace('/', '%2F')}"
+        src = f"/design-source?repo=o%2Fr&path={canvas.replace('/', '%2F')}"
+        self.assertEqual((self.req("GET", img)[0], self.req("GET", src)[0]), (303, 303))      # no session: login
+        cookie, _ = self.session()
+        self.assertEqual(self.req("GET", img, cookie=cookie)[0], 200)
+        s, h, body = self.req("GET", src, cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertEqual(h["Content-Type"], "application/octet-stream")                        # a download, never page content
+        self.assertTrue(h["Content-Disposition"].startswith("attachment;") and 'factory-5-home.dc.html"' in h["Content-Disposition"])
+        self.assertEqual((h["X-Content-Type-Options"], "sandbox" in h["Content-Security-Policy"]), ("nosniff", True))
+        for bad in ("/design-source?repo=o%2Fr&path=..%2F..%2Fetc%2Fpasswd", f"/design-source?repo=o%2Fr&path={self.PATH.replace('/', '%2F')}",
+                    "/design-source?repo=o%2Fr&path=docs%2Fdesign%2Ffactory-6-x.dc.html", "/design-source?repo=o%2Fr"):
+            self.assertEqual(self.req("GET", bad, cookie=cookie)[0], 404, bad)
+        s, _, html = self.req("GET", f"/runs/{rid}", cookie=cookie)
+        self.assertIn(img.replace("&", "&amp;"), html)                                         # the run page shows the image
+        self.assertIn("/design-source?", html)                                                 # and offers the canvas
+        self.assertNotIn("github.com/o/r/blob", html)
+
     def test_the_ticket_page_offers_its_images_only_when_there_are_some(self):
         cookie, _ = self.session()
         t = "/ticket?repo=o/r&n=5"

@@ -43,7 +43,7 @@ def images(db, repo: str, issue: int) -> list[dict]:
     out = []
     for f in dbm.mockup_previews(db, repo, issue):
         key = f"mockup:{f['repo']}:{f['path']}"
-        if designfiles.link_ok(f) and f["path"].endswith(".png") and MOCKUP_KEY.fullmatch(key):
+        if designfiles.record_ok(f) and f["path"].endswith(".png") and MOCKUP_KEY.fullmatch(key):
             out.append({"key": key, "label": f["path"].rpartition("/")[2],
                         "src": "/mockup?" + urlencode({"repo": f["repo"], "path": f["path"]})})
     try:

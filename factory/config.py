@@ -56,6 +56,7 @@ class Role:
     harness: str = "claude-code"
     design_files: bool = False           # designer only: also write static design mockups into the repo
     design_dir: str = "docs/design"      # where they go (design/ is often git-ignored: it holds local pulls of the design project)
+    design_pr: bool = True               # designer only: put the mockups on a draft PR; False keeps them in the factory only (UI, build and review agents)
     fallback_models: tuple[str, ...] = ()
 
 

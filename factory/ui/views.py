@@ -74,16 +74,23 @@ def gh_link(url: str, label: str | None = None) -> str:
 
 def mockup_img(f) -> str:
     """The stored preview image of a recorded design file, inline (served by the UI itself, behind the login)."""
-    if not designfiles.link_ok(f) or "/previews/" not in f["path"] or not f["path"].endswith(".png"):
+    if not designfiles.record_ok(f) or "/previews/" not in f["path"] or not f["path"].endswith(".png"):
         return ""
     src = "/mockup?" + urlencode({"repo": f["repo"], "path": f["path"]})
     return f'<a href="{esc(src)}" target="_blank"><img class="mockup" src="{esc(src)}" alt="{esc(f["path"])}" loading="lazy"></a>'
 
 
 def design_links(files) -> str:
-    """One new-tab link per design file, only for files that pass designfiles.link_ok (the rows come from the database)."""
-    return "<br>".join(f'<a href="{esc(f["url"])}" rel="noopener noreferrer" target="_blank">{esc(f["path"])}</a>'
-                       for f in files or [] if designfiles.link_ok(f))
+    """One new-tab link per design file that passes designfiles.link_ok (the rows come from the database). A file kept only in the
+    factory (no GitHub link) shows its path, and a download link for the canvas."""
+    out = []
+    for f in files or []:
+        if designfiles.link_ok(f):
+            out.append(f'<a href="{esc(f["url"])}" rel="noopener noreferrer" target="_blank">{esc(f["path"])}</a>')
+        elif designfiles.record_ok(f):
+            dl = ('/design-source?' + urlencode({"repo": f["repo"], "path": f["path"]}))
+            out.append(esc(f["path"]) + (f' · <a href="{esc(dl)}" download>Download</a>' if f["path"].endswith(".dc.html") else ""))
+    return "<br>".join(out)
 
 
 def import_links(imports) -> str:
@@ -366,12 +373,12 @@ def run_detail(r: dict, files=(), images=()) -> str:
             ("Pull requests", pr_links(r["pr_urls"]) or "—")]
     table = "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in meta)
     out = f'<table class="meta">{table}</table>'
-    shown = [f for f in files or [] if designfiles.link_ok(f)]
+    shown = [f for f in files or [] if designfiles.record_ok(f)]
     if shown:
-        rows = "".join(f'<tr><td data-l="File (opens on GitHub)">{design_links([f])}</td><td data-l="Repo">{esc(f["repo"])}</td><td data-l="Draft PR">{pr_links(f.get("pr") or "") or "—"}</td></tr>' for f in shown)
+        rows = "".join(f'<tr><td data-l="File">{design_links([f])}</td><td data-l="Repo">{esc(f["repo"])}</td><td data-l="Draft PR">{pr_links(f.get("pr") or "") or "—"}</td></tr>' for f in shown)
         imgs = "".join(mockup_img(f) for f in shown)
         out += ("<h2>Design files</h2>" + (f'<div class="mockups">{imgs}</div>' if imgs else "")
-                + "<table class=stack><thead><tr><th>File (opens on GitHub)</th><th>Repo</th><th>Draft PR</th></tr></thead>"
+                + "<table class=stack><thead><tr><th>File</th><th>Repo</th><th>Draft PR</th></tr></thead>"
                 f"<tbody>{rows}</tbody></table>")
     out += run_images_html(r.get("id", 0), images)
     if cls:
@@ -427,7 +434,7 @@ def ticket_images_page(repo: str, issue: int, files_by_run: dict, images_by_run:
     """Every mockup preview and run screenshot kept for a ticket, grouped by run. Each image goes through the same checks as on the run page."""
     out = f'<p>{ticket_link(repo, issue)}</p>'
     for rid in sorted(set(files_by_run) | set(images_by_run)):
-        files = [f for f in files_by_run.get(rid, []) if designfiles.link_ok(f)]
+        files = [f for f in files_by_run.get(rid, []) if designfiles.record_ok(f)]
         mock = "".join(mockup_img(f) for f in files)
         shots = run_images_html(rid, images_by_run.get(rid, []))
         if mock or shots:
