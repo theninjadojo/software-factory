@@ -9,6 +9,8 @@ document), and the orchestrator validates that data before it touches GitHub.
 
 > **Documentation:** start at the [docs index](docs/README.md).
 >
+**[Project site](https://theninjadojo.github.io/software-factory/)**: the same story, with a getting-started walkthrough.
+
 > **Status:** a working prototype, run for real on one multi-repo project. Read [Limits](#limits-and-honest-caveats) and
 > [SECURITY.md](SECURITY.md) before pointing it at anything you care about.
 

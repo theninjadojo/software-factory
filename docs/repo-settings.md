@@ -25,3 +25,7 @@ chromium --headless --screenshot=docs/assets/social-preview.png --window-size=12
 - [ ] The `ghcr.io/theninjadojo/shikumi*` packages (five, see [releasing.md](releasing.md)) are public, then the repository.
 - [ ] Issue templates are added under `.github/ISSUE_TEMPLATE/` by a person (the factory cannot write to `.github/`).
 - [ ] After going public: run the install script and `docker pull` anonymously.
+
+## Project site (GitHub Pages)
+
+The landing page lives in `site/` and is deployed by `.github/workflows/pages.yml` on every push to `main` that touches it. One-time setup: **Settings → Pages → Source: GitHub Actions**. The site is then at `https://theninjadojo.github.io/software-factory/`.
