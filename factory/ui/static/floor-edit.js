@@ -373,12 +373,14 @@
 
   // ---- terrain (terrain.py; window.FT draws it): scenery, water, ground, fences, gates, roads, hazard zones, light
   var TERRAIN = {tree: "item", pine: "item", bush: "item", rock: "item", pond: "item", lamp: "item", fog: "item", shade: "item", river: "river",
-                 "g-grass": "tile", "g-dirt": "tile", "g-sand": "tile", "g-concrete": "tile", "g-water": "tile",
+                 "g-grass": "tile", "g-dirt": "tile", "g-sand": "tile", "g-concrete": "tile", "g-water": "tile", "g-snow": "tile", "g-dusting": "tile", "g-half": "tile", "g-drifts": "tile", "g-prints": "tile", "g-packed": "tile", "g-ice": "tile",
                  wall: "line", fence: "line", road: "line", gate: "gate", hazard: "rect",
                  fetch: "item", playground: "item", picnic: "item", bench: "item", dogwalk: "item"};
   Object.keys(FT.PARK).forEach(function (k) { TERRAIN[k] = "item"; });
   var TOWN_SAYS = {};
-  Object.keys(window.TOWN_ART || {}).forEach(function (k) { TOWN_SAYS[k] = window.TOWN_ART[k].name + ": click to place one; it stands on the floor like a building and has a hitbox."; });
+  Object.keys(window.TOWN_ART || {}).forEach(function (k) {
+    TOWN_SAYS[k] = window.TOWN_ART[k].name + (FT.SOLID.indexOf(k) < 0 ? ": click to place one; it wanders to and fro, and has no hitbox." : ": click to place one; it stands on the floor like a building and has a hitbox.");
+  });
   var showHit = false;
   var GROUND_AREAS = {mainland: 1, sea: 1, airfield: 1, outside: 1};      // floorplan.GROUND_AREAS: the park may stand in these
   var paint = null;
@@ -608,6 +610,9 @@
     pond: "Pond: click to dig one; ducks move in. Belts and track cannot cross water (there is no bridge yet).",
     river: "River: drag where it runs; it widens and narrows as it goes. Belts and track cannot cross it.",
     "g-grass": "Grass: drag to paint ground tiles.", "g-dirt": "Dirt: drag to paint ground tiles (it suits roads).", "g-sand": "Sand: drag to paint ground tiles.",
+    "g-snow": "Snow: drag to paint a permanent winter.", "g-dusting": "Dusting: grass with a few patches of snow.", "g-half": "Half covered: grass half under snow.",
+    "g-drifts": "Deep drifts: snow with drifts across it.", "g-prints": "Footprints: snow with a trail of prints.", "g-packed": "Packed road: what a road becomes once cars have driven over snow.",
+    "g-ice": "Ice: drag to lay ice, over water too.",
     "g-concrete": "Concrete: drag to paint ground tiles (it suits the factory pad).", "g-water": "Water: drag to paint water; it rounds into one body with a sandy shore, and ducks move in.",
     fence: "Fence: drag a straight run. Crates pass it; trains need a gate.", gate: "Gate: click a gap in a fence; it swings open and shut.",
     road: "Road: drag a straight run on the grid. Cars drive on it both ways; where track crosses it, a bridge carries the trains over.",

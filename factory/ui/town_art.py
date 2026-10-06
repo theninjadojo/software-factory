@@ -125,7 +125,9 @@ ART = {'t-house': {'name': 'House',
                      'fill="#2c333a" stroke="#1a1f24" stroke-width="1.2"></rect><rect x="73" y="66" width="12" height="12" fill="#8fd3e6" '
                      'opacity=".4"></rect><circle cx="85" cy="78" r="1" fill="#c99a32"></circle><circle cx="34" cy="86" r="3" '
                      'fill="#c9a46a" stroke="#6b4a1c" stroke-width=".8"></circle><path d="M 34 89 V 90" stroke="#6b4a1c" '
-                     'stroke-width="1.5"></path>'},
+                     'stroke-width="1.5"></path><g class="sf-fail"><path d="M 60 4 V 20" fill="none" stroke="#59636b" stroke-width="1.5" '
+                     'stroke-linecap="round" stroke-linejoin="round"></path><circle cx="60" cy="4" r="3" fill="#ff6b5e" stroke="none" '
+                     'stroke-width="1" class="tw-blink"></circle></g>'},
  't-fuel': {'name': 'Fuel station',
             'group': 'Shops',
             'w': 120,
@@ -148,7 +150,29 @@ ART = {'t-house': {'name': 'House',
                    'height="10" fill="#ffcb73" stroke="#1a1f24" stroke-width=".8"></rect><rect x="100" y="76" width="10" height="14" '
                    'fill="#22282d" stroke="#1a1f24" stroke-width="1"></rect><rect x="96" y="38" width="18" height="12" fill="#1a1f24" '
                    'stroke="#59636b" stroke-width="1.2"></rect><path class="tw-blink" d="M 99 44 H 103 M 106 44 H 110" stroke="#f2a93b" '
-                   'stroke-width="2" stroke-linecap="round"></path><path d="M 105 50 V 52" stroke="#59636b" stroke-width="1.5"></path>'},
+                   'stroke-width="2" stroke-linecap="round"></path><path d="M 105 50 V 52" stroke="#59636b" stroke-width="1.5"></path><g '
+                   'class="sf-busy"><g transform="translate(26 60)"><path d="M 0 10 V 5 Q 0 2 3 2 L 7 1 L 10 -3 H 19 L 22 1 H 25 Q 28 2 28 '
+                   '5 V 10 Z" fill="#3f8fd0" stroke="#1a1f24" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"></path><path '
+                   'd="M 11 -2 H 18 L 20 1 H 9 Z" fill="#8fd3e6" stroke="none" stroke-width="0" stroke-linejoin="round" '
+                   'stroke-linecap="round"></path><circle cx="7" cy="10" r="2.6" fill="#1a1f24" stroke="none" '
+                   'stroke-width="1"></circle><circle cx="21" cy="10" r="2.6" fill="#1a1f24" stroke="none" '
+                   'stroke-width="1"></circle></g></g><g class="sf-queue"><g transform="translate(26 60)"><path d="M 0 10 V 5 Q 0 2 3 2 L '
+                   '7 1 L 10 -3 H 19 L 22 1 H 25 Q 28 2 28 5 V 10 Z" fill="#3f8fd0" stroke="#1a1f24" stroke-width="1" '
+                   'stroke-linejoin="round" stroke-linecap="round"></path><path d="M 11 -2 H 18 L 20 1 H 9 Z" fill="#8fd3e6" stroke="none" '
+                   'stroke-width="0" stroke-linejoin="round" stroke-linecap="round"></path><circle cx="7" cy="10" r="2.6" fill="#1a1f24" '
+                   'stroke="none" stroke-width="1"></circle><circle cx="21" cy="10" r="2.6" fill="#1a1f24" stroke="none" '
+                   'stroke-width="1"></circle></g><g transform="translate(50 60)"><path d="M 0 10 V 5 Q 0 2 3 2 L 7 1 L 10 -3 H 19 L 22 1 '
+                   'H 25 Q 28 2 28 5 V 10 Z" fill="#f2a93b" stroke="#1a1f24" stroke-width="1" stroke-linejoin="round" '
+                   'stroke-linecap="round"></path><path d="M 11 -2 H 18 L 20 1 H 9 Z" fill="#8fd3e6" stroke="none" stroke-width="0" '
+                   'stroke-linejoin="round" stroke-linecap="round"></path><circle cx="7" cy="10" r="2.6" fill="#1a1f24" stroke="none" '
+                   'stroke-width="1"></circle><circle cx="21" cy="10" r="2.6" fill="#1a1f24" stroke="none" '
+                   'stroke-width="1"></circle></g><g transform="translate(4 66)"><path d="M 0 10 V 5 Q 0 2 3 2 L 7 1 L 10 -3 H 19 L 22 1 H '
+                   '25 Q 28 2 28 5 V 10 Z" fill="#52c7a1" stroke="#1a1f24" stroke-width="1" stroke-linejoin="round" '
+                   'stroke-linecap="round"></path><path d="M 11 -2 H 18 L 20 1 H 9 Z" fill="#8fd3e6" stroke="none" stroke-width="0" '
+                   'stroke-linejoin="round" stroke-linecap="round"></path><circle cx="7" cy="10" r="2.6" fill="#1a1f24" stroke="none" '
+                   'stroke-width="1"></circle><circle cx="21" cy="10" r="2.6" fill="#1a1f24" stroke="none" '
+                   'stroke-width="1"></circle></g><circle cx="114" cy="36" r="2.4" fill="#ff6b5e" stroke="none" stroke-width="1" '
+                   'class="tw-blink"></circle></g>'},
  't-restaurant': {'name': 'Restaurant',
                   'group': 'Shops',
                   'w': 120,

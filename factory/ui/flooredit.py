@@ -21,7 +21,8 @@ TOOLS = (("move", "Move", "Select"), ("belt", "Draw belt", "Belts"), ("rail", "D
 # the terrain tools (terrain.py), in the groups of the design's terrain sandbox
 TERRAIN_TOOLS = (("Scenery", (("tree", "Tree"), ("pine", "Pine"), ("bush", "Bush"), ("rock", "Rock"))),
                  ("Water", (("pond", "Pond"), ("river", "River"))),
-                 ("Ground", (("g-grass", "Grass"), ("g-dirt", "Dirt"), ("g-sand", "Sand"), ("g-concrete", "Concrete"), ("g-water", "Water"))),
+                 ("Ground", (("g-grass", "Grass"), ("g-dirt", "Dirt"), ("g-sand", "Sand"), ("g-concrete", "Concrete"), ("g-water", "Water"),
+                            *((f"g-{k}", n) for k, n in terrain.SNOW_NAMES.items()))),
                  ("Structures", (("wall", "Wall"), ("fence", "Fence"), ("gate", "Gate"), ("road", "Road"), ("hazard", "Hazard"))),
                  ("Light", (("lamp", "Lamp"), ("fog", "Fog"), ("shade", "Shade"))),
                  ("Park", (("fetch", "Fetch"), ("playground", "Playground"), ("picnic", "Picnic"), ("bench", "Bench"), ("dogwalk", "Dog walker"))))

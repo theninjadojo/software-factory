@@ -5,6 +5,7 @@
 Each tile of the boards is a 120x96 (vehicles 120x56) side-on picture. The page policy bans style attributes, so each distinct
 style="..." becomes a generated class; the board's bl-* / ma-* animation names become tw-*. Writes the three files; commit them."""
 import json
+import os
 import pprint
 import re
 import sys
@@ -40,6 +41,7 @@ ITEMS = {
     "Yeti": ("creature-yeti", "Creatures"),
     "Classic": ("snowman", "Snowmen"), "Beanie and mittens": ("snowman-beanie", "Snowmen"), "Little one": ("snowman-little", "Snowmen"),
     "Snow family": ("snowman-family", "Snowmen"),
+    "Fuel station · busy": ("fuel-busy", "States"), "Fuel station · queue": ("fuel-queue", "States"), "Coffee shop · failed": ("coffee-fail", "States"),
 }
 # animals, creatures and snowmen are drawn in a viewBox centred on their feet at a small scale; they are placed at this many times that size
 SCALE = {"Animals": 2.2, "Creatures": 2.2, "Snowmen": 1.3}
@@ -86,7 +88,17 @@ def main(paths) -> None:
             body = re.sub(r"></(?:circle|rect|path|ellipse|g|line|polygon)>", lambda m: m.group(0), body)
             art[kind] = {"name": cap.group(1).replace("Residential · ", "").replace("Commercial · ", "").replace("Industrial · ", "").capitalize()
                          if group == "Zones" else cap.group(1), "group": group, "w": w, "h": h,                          "svg": rename(re.sub(r"\s+", " ", body).strip())}
-    missing = ["t-" + v[0] for v in ITEMS.values() if "t-" + v[0] not in art]
+    plain = {}
+    for shop, state, extra in (("t-fuel", "busy", "sf-busy"), ("t-fuel", "queue", "sf-queue"), ("t-coffee", "fail", "sf-fail")):
+        # a shop's states: the board draws each as the shop plus something more (cars at the pumps, a red lamp on a pole); that more goes
+        # into the shop as a group the page shows only for the state it reports (the floor's data-shops, style.css)
+        full = art.pop(f"{shop}-{state}")["svg"]
+        base = plain.setdefault(shop, art[shop]["svg"])
+        at = len(os.path.commonprefix([base, full]))
+        if at < len(base) * 0.9:
+            sys.exit(f"{shop} {state}: the board's state no longer starts as the shop does")
+        art[shop]["svg"] += f'<g class="{extra}">{full[at:]}</g>'
+    missing = ["t-" + v[0] for v in ITEMS.values() if v[1] != "States" and "t-" + v[0] not in art]
     if missing:
         sys.exit("not found on the boards: " + ", ".join(missing))
     used = {c for a in art.values() for c in re.findall(r"tws\d+", a["svg"])}

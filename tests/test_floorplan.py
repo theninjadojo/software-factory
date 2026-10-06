@@ -592,7 +592,7 @@ class Terrain(unittest.TestCase):
         bad(lambda t: t["items"].append(["tree", 99999, 1, 40, 1]), "inside the floor")
         bad(lambda t: t.update(items=[["rock", 1, 1, 30, 1]] * (terrain.LIMITS["items"] + 1)), "at most 600")
         bad(lambda t: t["rivers"].append([[1, 1]]), "A river is 2 to")
-        bad(lambda t: t["tiles"].update(lava=[[0, 0, 1]]), "grass, dirt, sand, concrete or water")
+        bad(lambda t: t["tiles"].update(lava=[[0, 0, 1]]), "grass, dirt, sand, concrete, water, snow or ice")
         bad(lambda t: t["tiles"]["grass"].append([20, 57, 1]), "only one kind")             # already water
         bad(lambda t: t["tiles"]["grass"].append([0, 0, 999]), "inside the floor")
         bad(lambda t: t["fences"].append([[1, 1], [2, 2]]), "straight across or down")

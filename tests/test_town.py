@@ -16,7 +16,7 @@ class TownTest(unittest.TestCase):
         self.assertEqual(len(ART), 70)
         for kind, a in ART.items():
             self.assertIn(kind, terrain.KINDS)
-            self.assertIn(kind, terrain.SOLID)
+            self.assertEqual(kind in terrain.SOLID, kind not in terrain.WILD)      # animals and creatures wander and have no hitbox
             self.assertEqual(terrain.PARK[kind], (a["w"], a["h"]))
             self.assertIn(kind, tools)
 
@@ -27,7 +27,7 @@ class TownTest(unittest.TestCase):
             self.assertNotIn("style=", svg, kind)
 
     def test_every_class_the_art_uses_is_in_the_stylesheet(self):
-        css = (STATIC / "town.css").read_text()
+        css = (STATIC / "town.css").read_text() + (STATIC / "style.css").read_text()      # the shops' state groups are styled with the floor
         for kind, a in ART.items():
             for c in {c for v in re.findall(r'class="([^"]+)"', a["svg"]) for c in v.split()}:
                 self.assertIn("." + c, css, f"{kind}: {c}")
@@ -38,6 +38,28 @@ class TownTest(unittest.TestCase):
 
     def test_the_motion_stops_for_people_who_ask_for_less(self):
         self.assertIn("prefers-reduced-motion:reduce", (STATIC / "town.css").read_text())
+
+    def test_animals_wander_and_the_ground_can_be_snow(self):
+        svg = terrain.svg({"items": [["t-animal-fox", 400, 300, ART["t-animal-fox"]["w"], 1], ["t-snowman", 800, 300, ART["t-snowman"]["w"], 1]]},
+                          20, 1200, 600, layer="over")
+        self.assertEqual(svg.count("<animateTransform"), 2)                    # the fox's walk and its turn; the snowman stands still
+        for kind in terrain.SNOW_NAMES:
+            self.assertIn(kind, terrain.GROUNDS)
+            self.assertIn(f'id="tl-{kind}"', terrain.defs())
+            self.assertNotIn("<figure", terrain.SNOW_TILES[kind])
+        under = terrain.svg({"tiles": {"snow": [[2, 3, 4]], "ice": [[1, 1, 1]]}}, 20, 1200, 600, layer="under")
+        self.assertIn('class="gd-snow"', under)
+        self.assertIn('class="gd-ice"', under)
+        self.assertIn("g-snow", {t for _, ts in flooredit.TERRAIN_TOOLS for t, _ in ts})
+
+    def test_the_shops_follow_the_factory(self):
+        from factory.ui import plant
+        self.assertEqual(plant._shops({}), "idle")
+        self.assertEqual(plant._shops({"a": {"state": "run", "refs": ["x#1"]}, "b": {"state": "wait", "refs": ["x#2"]}}), "wait")
+        self.assertEqual(plant._shops({"a": {"state": "fail", "refs": ["x#1"]}, "b": {"state": "wait", "refs": ["x#2"]}}), "fail")
+        self.assertEqual(plant._shops({"a": {"state": "run", "refs": []}}), "idle")
+        self.assertIn("sf-fail", ART["t-coffee"]["svg"])
+        self.assertIn("sf-busy", ART["t-fuel"]["svg"])
 
 
 if __name__ == "__main__":

@@ -31,9 +31,26 @@ PARK_NAMES.update({k: a["name"].lower() for k, a in TOWN.items()})
 KINDS = ("tree", "pine", "bush", "rock", "pond", "lamp", "fog", "shade") + tuple(PARK)
 SIZES = {"tree": (30, 74), "pine": (28, 68), "bush": (16, 28), "rock": (24, 50), "pond": (68, 108), "lamp": (110, 150),
          "fog": (90, 170), "shade": (60, 120), **{k: (w, w) for k, (w, _) in PARK.items()}}
-SOLID = ("tree", "pine", "bush", "rock", "pond") + tuple(PARK)    # what has a hitbox; light, fog and shade lie over or under anything
+WILD = tuple(k for k in PARK if k.startswith(("t-animal-", "t-creature-")))     # animals and creatures wander over the floor and have no hitbox
+SOLID = ("tree", "pine", "bush", "rock", "pond") + tuple(k for k in PARK if k not in WILD)    # what has a hitbox; light, fog and shade lie over or under anything
 CAR_COLOURS = ("#d9675b", "#8fa8ff", "#e8edf0", "#f2a93b", "#52c7a1", "#59636b", "#c9a46a", "#b69cff")
-GROUNDS = ("grass", "dirt", "sand", "concrete", "water")
+# Snow and ice ground, from the design canvas's snow tiles: kind -> the tile's picture, in a 64 by 64 box drawn at TILE size.
+SNOW_BASES = ('<pattern id="tl-snowbase" width="32" height="32" patternUnits="userSpaceOnUse"><rect width="32" height="32" fill="#dce8ef"/><path d="M0 22 Q8 18 16 21 T32 22" fill="none" stroke="#c9d9e3" stroke-width="2"/><path d="M0 6 Q9 3 17 6 T32 6" fill="none" stroke="#e8f1f6" stroke-width="1.6"/><circle cx="6" cy="12" r="1.1" fill="#ffffff"/><circle cx="22" cy="14" r=".9" fill="#ffffff"/><circle cx="13" cy="28" r="1" fill="#ffffff"/><circle cx="28" cy="29" r=".8" fill="#ffffff"/><circle cx="10" cy="17" r=".9" fill="#c2d3df"/><circle cx="26" cy="3" r="1" fill="#c2d3df"/></pattern>'
+              '<pattern id="tl-icebase" width="32" height="32" patternUnits="userSpaceOnUse"><rect width="32" height="32" fill="#8fbdd4"/><path d="M3 6 L14 11 L22 8 M14 11 L17 22 M24 24 L30 18 M6 26 L12 22" fill="none" stroke="#e4f2f8" stroke-width="1" opacity=".85"/><path d="M2 18 L9 15 M20 3 L27 6" fill="none" stroke="#6fa3be" stroke-width="1"/><ellipse cx="24" cy="14" rx="4" ry="1.6" fill="#b9dbea" opacity=".7"/></pattern>'
+              '<pattern id="tl-grassbase" width="32" height="32" patternUnits="userSpaceOnUse"><rect width="32" height="32" fill="#1c2b1f"/>'
+              '<path d="M6 10l-2-5M6 10v-6M6 10l2-5M22 22l-2-5M22 22v-6M22 22l2-5M26 7l-1-4M26 7l1-4M10 28l-1-4M10 28l1-4" fill="none" stroke="#2f4a30" '
+              'stroke-width="1.3" stroke-linecap="round"/></pattern>')
+SNOW_TILES = {
+ "snow": "<rect width=\"64\" height=\"64\" fill=\"url(#tl-snowbase)\"/>",
+ "dusting": "<rect width=\"64\" height=\"64\" fill=\"url(#tl-grassbase)\"/><ellipse cx=\"10\" cy=\"12\" rx=\"4\" ry=\"2.6\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"34\" cy=\"8\" rx=\"3\" ry=\"2\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"52\" cy=\"20\" rx=\"4.5\" ry=\"2.8\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"20\" cy=\"34\" rx=\"3.5\" ry=\"2.2\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"44\" cy=\"42\" rx=\"4\" ry=\"2.6\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"8\" cy=\"52\" rx=\"3\" ry=\"2\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"30\" cy=\"56\" rx=\"4.5\" ry=\"2.8\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"58\" cy=\"56\" rx=\"3\" ry=\"2\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/>",
+ "half": "<rect width=\"64\" height=\"64\" fill=\"url(#tl-grassbase)\"/><ellipse cx=\"12\" cy=\"14\" rx=\"12\" ry=\"7\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"38\" cy=\"10\" rx=\"10\" ry=\"6\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"56\" cy=\"24\" rx=\"11\" ry=\"7\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"22\" cy=\"36\" rx=\"13\" ry=\"8\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"46\" cy=\"44\" rx=\"12\" ry=\"7\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"10\" cy=\"54\" rx=\"11\" ry=\"6\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"34\" cy=\"58\" rx=\"12\" ry=\"6\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/><ellipse cx=\"58\" cy=\"58\" rx=\"8\" ry=\"5\" fill=\"url(#tl-snowbase)\" stroke=\"#b3c6d3\" stroke-width=\".7\"/>",
+ "drifts": "<rect width=\"64\" height=\"64\" fill=\"url(#tl-snowbase)\"/><path d=\"M0 22 Q 14 12 28 20 T 64 18 V 30 Q 48 24 34 31 T 0 33 Z\" fill=\"#c7d8e3\"/><path d=\"M0 22 Q 14 12 28 20 T 64 18\" fill=\"none\" stroke=\"#f4f9fc\" stroke-width=\"1.6\"/><path d=\"M0 46 Q 12 38 26 45 T 64 42 V 54 Q 46 49 30 55 T 0 56 Z\" fill=\"#c7d8e3\"/><path d=\"M0 46 Q 12 38 26 45 T 64 42\" fill=\"none\" stroke=\"#f4f9fc\" stroke-width=\"1.6\"/><ellipse cx=\"44\" cy=\"8\" rx=\"9\" ry=\"2.4\" fill=\"#f4f9fc\"/>",
+ "prints": "<rect width=\"64\" height=\"64\" fill=\"url(#tl-snowbase)\"/><ellipse cx=\"22\" cy=\"56\" rx=\"2.6\" ry=\"4\" fill=\"#b3c4d0\" transform=\"rotate(-8 22 56)\"/><ellipse cx=\"21.4\" cy=\"55.2\" rx=\"1.6\" ry=\"2.6\" fill=\"#a1b4c2\" transform=\"rotate(-8 22 56)\"/><ellipse cx=\"30\" cy=\"49\" rx=\"2.6\" ry=\"4\" fill=\"#b3c4d0\" transform=\"rotate(8 30 49)\"/><ellipse cx=\"29.4\" cy=\"48.2\" rx=\"1.6\" ry=\"2.6\" fill=\"#a1b4c2\" transform=\"rotate(8 30 49)\"/><ellipse cx=\"22\" cy=\"42\" rx=\"2.6\" ry=\"4\" fill=\"#b3c4d0\" transform=\"rotate(-8 22 42)\"/><ellipse cx=\"21.4\" cy=\"41.2\" rx=\"1.6\" ry=\"2.6\" fill=\"#a1b4c2\" transform=\"rotate(-8 22 42)\"/><ellipse cx=\"31\" cy=\"35\" rx=\"2.6\" ry=\"4\" fill=\"#b3c4d0\" transform=\"rotate(8 31 35)\"/><ellipse cx=\"30.4\" cy=\"34.2\" rx=\"1.6\" ry=\"2.6\" fill=\"#a1b4c2\" transform=\"rotate(8 31 35)\"/><ellipse cx=\"23\" cy=\"28\" rx=\"2.6\" ry=\"4\" fill=\"#b3c4d0\" transform=\"rotate(-8 23 28)\"/><ellipse cx=\"22.4\" cy=\"27.2\" rx=\"1.6\" ry=\"2.6\" fill=\"#a1b4c2\" transform=\"rotate(-8 23 28)\"/><ellipse cx=\"32\" cy=\"21\" rx=\"2.6\" ry=\"4\" fill=\"#b3c4d0\" transform=\"rotate(8 32 21)\"/><ellipse cx=\"31.4\" cy=\"20.2\" rx=\"1.6\" ry=\"2.6\" fill=\"#a1b4c2\" transform=\"rotate(8 32 21)\"/><ellipse cx=\"24\" cy=\"14\" rx=\"2.6\" ry=\"4\" fill=\"#b3c4d0\" transform=\"rotate(-8 24 14)\"/><ellipse cx=\"23.4\" cy=\"13.2\" rx=\"1.6\" ry=\"2.6\" fill=\"#a1b4c2\" transform=\"rotate(-8 24 14)\"/><ellipse cx=\"33\" cy=\"8\" rx=\"2.6\" ry=\"4\" fill=\"#b3c4d0\" transform=\"rotate(8 33 8)\"/><ellipse cx=\"32.4\" cy=\"7.2\" rx=\"1.6\" ry=\"2.6\" fill=\"#a1b4c2\" transform=\"rotate(8 33 8)\"/>",
+ "packed": "<rect width=\"64\" height=\"64\" fill=\"url(#tl-snowbase)\"/><rect x=\"0\" y=\"16\" width=\"64\" height=\"32\" fill=\"#a9b6bd\"/><path d=\"M0 16 Q 8 13 16 16 T 32 16 T 48 16 T 64 16 V 20 H 0 Z\" fill=\"#dce8ef\"/><path d=\"M0 44 Q 8 47 16 44 T 32 44 T 48 44 T 64 44 V 48 H 0 Z\" fill=\"#dce8ef\"/><path d=\"M0 26 H64 M0 38 H64\" stroke=\"#8c979d\" stroke-width=\"2.4\"/><path d=\"M6 32 H18 M30 32 H42 M52 32 H60\" stroke=\"#c5ced3\" stroke-width=\"1.4\"/>",
+ "ice": "<rect width=\"64\" height=\"64\" fill=\"url(#tl-icebase)\"/><rect x=\"1\" y=\"1\" width=\"62\" height=\"62\" fill=\"none\" stroke=\"#c9e4f0\" stroke-width=\"1.4\"/>"
+}
+SNOW_NAMES = {"snow": "Snow", "dusting": "Dusting", "half": "Half covered", "drifts": "Deep drifts", "prints": "Footprints", "packed": "Packed road", "ice": "Ice"}
+GROUNDS = ("grass", "dirt", "sand", "concrete", "water") + tuple(SNOW_NAMES)
 LIMITS = {"items": 600, "rivers": 12, "river_points": 160, "runs": 1500, "tiles": 6000, "fences": 80, "gates": 40, "roads": 80,
           "hazards": 40}
 # 24 directions, 15 degrees apart, to four places: the same numbers in terrain.js, so both sides draw the same shapes
@@ -247,6 +264,15 @@ def old_man(it, t: dict, mirrored: bool) -> str:
     return (f'<g class="pk-man"><animateMotion path="M 35 37 L {f(lx)} {f(ly)}" {OM_KEYS}/>{OM_SIT}<g>{OM_BACK}<g transform="{way}">{OM_GO}{OM_FEED}</g></g></g>')
 
 
+def wander(body: str, w: float, v: int) -> str:
+    """An animal's walk: to and fro along the floor by a distance and at a pace from its seed, turning round at each end."""
+    dx, dur = 50 + (v % 4) * 15, 16 + (v % 7) * 3
+    return (f'<g><animateTransform attributeName="transform" type="translate" values="0 0;{dx} 0;{dx} 0;0 0;0 0" keyTimes="0;.46;.5;.96;1" '
+            f'dur="{dur}s" repeatCount="indefinite"/><g transform="translate({f(w / 2)} 0)"><g><animateTransform attributeName="transform" '
+            f'type="scale" calcMode="discrete" values="1 1;-1 1" keyTimes="0;.5" dur="{dur}s" repeatCount="indefinite"/>'
+            f'<g transform="translate({f(-w / 2)} 0)">{body}</g></g></g></g>')
+
+
 def park(it, t: dict) -> str:
     """A park piece in its box, centred on (x, y); an odd seed mirrors it."""
     kind, x, y, s, v = it
@@ -258,6 +284,8 @@ def park(it, t: dict) -> str:
         body = f'<g class="tw-art">{TOWN[kind]["svg"]}</g>'
     if kind == "bench":
         body = PK_BENCH + old_man(it, t, mirrored)
+    if kind in WILD:
+        body = wander(body, w, v)
     return f'<g class="pk-{kind}" transform="{tf}">{body}</g>'
 
 
@@ -386,7 +414,7 @@ def cells_of(runs_: dict) -> dict:
 def ground(tiles: dict) -> str:
     """Painted ground, in its patterns; water tiles as one rounded body with a sandy shore."""
     out = ""
-    for kind in ("grass", "dirt", "sand", "concrete"):
+    for kind in ("grass", "dirt", "sand", "concrete") + tuple(SNOW_NAMES):
         for c, r, n in tiles.get(kind, ()):
             out += f'<rect class="gd-{kind}" x="{c * TILE}" y="{r * TILE}" width="{n * TILE}" height="{TILE}"/>'
     water = tiles.get("water") or []
@@ -444,6 +472,8 @@ def defs() -> str:
             '<rect width="16" height="16" fill="#15181b"/><rect width="8" height="16" fill="#8a6b22"/></pattern>'
             '<radialGradient id="lg-lamp"><stop offset="0" stop-color="#f2c46b" stop-opacity=".42"/><stop offset="1" stop-color="#f2c46b" stop-opacity="0"/></radialGradient>'
             '<radialGradient id="lg-fog"><stop offset="0" stop-color="#c9d6dd" stop-opacity=".38"/><stop offset="1" stop-color="#c9d6dd" stop-opacity="0"/></radialGradient>'
+            + SNOW_BASES + "".join(f'<pattern id="tl-{k}" width="{TILE}" height="{TILE}" viewBox="0 0 64 64" patternUnits="userSpaceOnUse">{v}</pattern>'
+                                   for k, v in SNOW_TILES.items())
             + PK_CHECK +
             '<radialGradient id="lg-shade"><stop offset="0" stop-color="#000" stop-opacity=".55"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>'
             '</defs>')

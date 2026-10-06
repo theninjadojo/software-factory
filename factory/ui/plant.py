@@ -736,6 +736,13 @@ EM_CREW = (("t-firetruck", "t-firestation"), ("t-ambulance", "t-hospital"), ("t-
 EM_MAX = 3                                          # machines on call at once
 
 
+def _shops(fl: dict) -> str:
+    """What the town's coffee shop and fuel station show (style.css): fail if a station has failed, wait if a ticket needs a person, run
+    if a station is working, else idle."""
+    states = {o.get("state") for o in fl.values() if o.get("refs")}
+    return next((w for w in ("fail", "wait", "run") if w in states), "idle")
+
+
 def _emergency(fl: dict, bx: dict, tn: dict, now: float) -> str:
     """A machine that fails gets a red light (blinking while it is failed) and, in a loop of EM_T seconds, a small fire with smoke, the
     fire truck, ambulance and police car driving out from the nearest fire station, hospital and police station placed on the floor
@@ -846,7 +853,7 @@ def floor_map(order: list[tuple[str, str, str]], fl: dict, workers: list[dict], 
              + f'<g aria-hidden="true">{drones(now, poll.get("every"), poll.get("last"))}</g>')
     width = FX + lay["width"]
     flights = "".join(flight(f["age"], f["label"]) for f in (extras.get("flights") or []) if 0 <= f["age"] < FLIGHT_SECONDS)
-    return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor">'
+    return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor" data-shops="{_shops(fl)}">'
             f'<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>'
             f'<g aria-hidden="true">{mainland(height)}</g><g transform="translate({LAND_W} 0)">{sea(extras.get("schedules") or [], height, pier=True)}</g>'
             f'<g transform="translate({FX} 0)">{plant}</g><g aria-hidden="true">{flights}</g></svg>')
@@ -1475,6 +1482,6 @@ def planned_map(order, fl, workers, workers_on, now, word, href, extras, C) -> s
              + f'<g aria-hidden="true">{"".join(arms.values())}</g>'
              + f'<g aria-hidden="true">{drones(now, poll.get("every"), poll.get("last"), pad("sources", PAD, SRC), pad("receiving", RECV_PAD, (12, 200)))}</g>'
              + f'<g aria-hidden="true">{land("top")}</g>')
-    return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor">'
+    return (f'<svg class="fm" viewBox="0 0 {_f(width)} {_f(height)}" width="{_f(width)}" height="{_f(height)}" role="group" aria-label="The factory floor" data-shops="{_shops(fl)}">'
             f'{terrain.defs()}<rect class="fm-ground" width="{_f(width)}" height="{_f(height)}"/>{plant}{_night(tn, width, height)}{_weather(width, height)}{_emergency(fl, bx, tn, now)}'
             f'<g aria-hidden="true">{flights}</g></svg>')
