@@ -21,6 +21,8 @@ def broken_links(path):
     return bad
 
 
+# The runtime image ships neither the docs nor the top-level markdown files.
+@unittest.skipUnless((ROOT / "README.md").exists() and (ROOT / "docs").is_dir(), "docs are not in this tree")
 class DocsTest(unittest.TestCase):
     def test_relative_links_resolve(self):
         for f in md_files():
