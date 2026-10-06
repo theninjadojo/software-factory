@@ -310,3 +310,15 @@ class StageSummary(unittest.TestCase):
         self.assertIn("No mockup image was made.", html)
         self.assertIn("Read design", html)
         self.assertEqual(board.summary_card(db, REPO, 4, [], []), "")
+
+
+class ImportDialog(unittest.TestCase):
+    def test_import_is_a_dialog_button_beside_new_ticket_not_an_inline_expander(self):
+        from types import SimpleNamespace
+        cfg = SimpleNamespace(repos=["o/r"], local_enabled=True)
+        html = labels.import_form(cfg, "o/r", "tok")
+        self.assertIn('class="btn secondary" data-dialog="im-d"', html)
+        self.assertIn('<dialog id="im-d"', html)
+        self.assertIn('action="/tickets/import"', html)
+        self.assertNotIn("<summary class=\"btn\">", html)
+        self.assertEqual(labels.import_form(cfg, "o/r", ""), "")
