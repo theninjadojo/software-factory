@@ -45,12 +45,20 @@ rollback() {
   restart; exit 1
 }
 rm -rf worker sandbox; cp -R "$TMP/new/worker" worker; [ -d "$TMP/new/sandbox" ] && cp -R "$TMP/new/sandbox" sandbox || true
-chmod +x worker/recipes/*.sh sandbox/android/android-run.sh 2>/dev/null || true
+chmod +x worker/recipes/*.sh worker/install-node.sh sandbox/android/android-run.sh 2>/dev/null || true
 cp "$TMP/VERSION" VERSION
 if [ -z "${SKIP_IMAGE:-}" ] && command -v docker >/dev/null 2>&1 && docker image inspect factory-android:latest >/dev/null 2>&1; then
   docker image inspect factory-android:latest >/dev/null 2>&1 && docker tag factory-android:latest factory-android:previous || true
   if docker pull "ghcr.io/$OWNER/shikumi-android:$TAG"; then docker tag "ghcr.io/$OWNER/shikumi-android:$TAG" factory-android:latest
   else echo "(no prebuilt android image for $TAG: keeping the one you have; rebuild with docker build -t factory-android sandbox/android)"; fi
+fi
+if [ -z "${SKIP_NODE:-}" ] && grep -qE 'web-test\.sh|playwright-screens\.sh' worker.toml 2>/dev/null; then       # a JavaScript recipe on a machine with no Node of its own
+  for r in web-test playwright-screens; do
+    if grep -q "$r\.sh" worker.toml && [ -f "worker/recipes/$r.sh" ] && ! sh "worker/recipes/$r.sh" --preflight >/dev/null 2>&1; then
+      echo "The $r recipe cannot run on this machine yet: installing a Node of the worker's own (worker/install-node.sh)"
+      ./worker/install-node.sh || echo "(could not install it: that recipe stays switched off; the Workers page says why)"; break
+    fi
+  done
 fi
 restart
 sleep "${SETTLE_SECONDS:-3}"

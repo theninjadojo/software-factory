@@ -3,6 +3,7 @@ opened read-only). Everything a worker sent is untrusted text: it is escaped her
 import socket
 import sqlite3
 import time
+import json
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -95,6 +96,13 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
             except sqlite3.OperationalError:
                 req = set()                                  # an older database the orchestrator has not migrated yet
 
+            def unready_note(k: dict) -> str:       # recipes the worker has but cannot run yet, and what it lacks
+                try:
+                    why = json.loads(k.get("unready") or "{}")
+                except ValueError:
+                    why = {}
+                return "".join(f'<div class="muted">{esc(n)} not ready: {esc(t)}</div>' for n, t in why.items())
+
             def version_cell(k: dict) -> str:
                 v = k.get("app_version") or ""
                 if not v:
@@ -108,7 +116,7 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
             rows = "".join(
                 f'<tr><td data-l="Worker">{esc(k["name"])}</td><td data-l="Platform">{esc(k["platform"])}</td>'
                 f'<td data-l="Version">{version_cell(k)}</td>'
-                f'<td data-l="Recipes">{esc(k["recipes"].replace(",", ", ") or "—")}</td><td data-l="Last seen">{esc(ago(k["last_seen"], now))}</td>'
+                f'<td data-l="Recipes">{esc(k["recipes"].replace(",", ", ") or "—")}{unready_note(k)}</td><td data-l="Last seen">{esc(ago(k["last_seen"], now))}</td>'
                 f'<td data-l="State">{badge("online", "good") if now - k["last_seen"] <= ONLINE_SECONDS else badge("offline", "bad")}</td></tr>' for k in known)
             auto = workerupdate.auto(Path(cfg.db_path).parent)
             online = ("<h2>Workers</h2><table class=stack><thead><tr><th>Worker</th><th>Platform</th><th>Version</th><th>Recipes</th><th>Last seen</th><th>State</th></tr></thead>"

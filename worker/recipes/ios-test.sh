@@ -16,6 +16,7 @@
 # One worker per Mac: leftover shikumi-job-* VMs from a crashed run are deleted when the next job starts. Apple's licence allows two macOS
 # VMs at a time on one Mac; this recipe uses one.
 set -u
+PREFLIGHT=0
 IMAGE="shikumi-ios"; SCHEME=""; PROJECT=""; WORKSPACE=""; DEST="platform=iOS Simulator,name=iPhone 15"; DIR="."; BOOT_TIMEOUT=300
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -26,10 +27,17 @@ while [ $# -gt 0 ]; do
     --dir) DIR="${2:-}"; shift 2 ;;
     --image) IMAGE="${2:-}"; shift 2 ;;
     --boot-timeout) BOOT_TIMEOUT="${2:-}"; shift 2 ;;
+    --preflight) PREFLIGHT=1; shift ;;
     *) echo "[ios-test] unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 die() { echo "[ios-test] $*" >&2; exit 2; }
+if [ "$PREFLIGHT" = 1 ]; then       # the worker's question before it takes jobs: one line per thing missing, exit 3 when any
+  bad=0
+  command -v tart >/dev/null 2>&1 || { echo "tart is not installed (brew install cirruslabs/cli/tart)"; exit 3; }
+  tart list 2>/dev/null | awk '{print $2}' | grep -qx "$IMAGE" || { echo "no Tart VM named $IMAGE yet: create it once (docs/workers.md, iOS golden image)"; bad=3; }
+  exit $bad
+fi
 # Everything below ends up inside a shell command line in the VM, so only plain characters are allowed (no quotes, $, ; or backticks).
 case "$SCHEME" in ""|*[!A-Za-z0-9_.-]*) die "--scheme is required and may contain letters, digits, dot, dash and underscore" ;; esac
 for v in "$PROJECT" "$WORKSPACE"; do

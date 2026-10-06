@@ -8,3 +8,4 @@ work/
 *.db
 .venv/
 config/
+tools/

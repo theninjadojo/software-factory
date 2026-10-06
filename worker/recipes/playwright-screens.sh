@@ -17,15 +17,19 @@
 # config says. Every PNG is copied to screens-out/ under a unique, readable name. The screenshots are returned even when tests fail, so a
 # red suite still shows what the screens looked like. Exit 0: the suite passed. Exit 1: install or tests failed. Exit 2: nothing to run.
 set -u
+. "$(dirname "$0")/lib.sh"
 ONLY=""
 BROWSER=""
+PREFLIGHT=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --preflight) PREFLIGHT=1; shift ;;
     --dir) ONLY="${2:-}"; shift 2 ;;
     --browser) BROWSER="${2:-}"; shift 2 ;;
     *) echo "[playwright-screens] unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if [ "$PREFLIGHT" = 1 ]; then js_preflight; exit $?; fi      # a repo with only a Python suite needs no Node, but most do; the check is for the common case
 case "$ONLY" in /*|*..*) echo "[playwright-screens] --dir must be a plain relative folder" >&2; exit 2 ;; esac
 ROOT=$(pwd)
 OUT="$ROOT/screens-out"
@@ -58,8 +62,8 @@ for D in $DIRS; do
   CFG=$(config_in .) || { echo "[playwright-screens] no Playwright config in $D" >&2; status=2; continue; }
   [ -f package.json ] || { echo "[playwright-screens] no package.json in $D" >&2; status=2; continue; }
   echo "[playwright-screens] == $D ($CFG)"
-  if [ -f pnpm-lock.yaml ]; then corepack pnpm install --frozen-lockfile
-  elif [ -f yarn.lock ]; then yarn install --frozen-lockfile
+  if [ -f pnpm-lock.yaml ]; then pnpm_run install --frozen-lockfile
+  elif [ -f yarn.lock ]; then yarn_run install --frozen-lockfile
   elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci --no-audit --no-fund
   else echo "[playwright-screens] WARNING: no lockfile, so versions are not pinned"; npm install --no-audit --no-fund
   fi || { echo "[playwright-screens] FAILED: install in $D" >&2; status=1; continue; }

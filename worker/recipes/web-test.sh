@@ -12,6 +12,8 @@
 # then `playwright test` if a playwright config exists. Exit 0 only when every step that applies passed; anything else is a failure
 # with the step's output above this line. A project this recipe cannot recognise exits 2 (a worker/recipe problem, not a failed test).
 set -u
+. "$(dirname "$0")/lib.sh"
+case " $* " in *" --preflight "*) js_preflight; exit $? ;; esac
 DIR=.
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -32,9 +34,9 @@ has_script() {   # has_script <name>: a script exists and is not npm's placehold
 run() { "$@" || { echo "[web-test] FAILED: $*" >&2; exit 1; }; }
 
 if [ -f pnpm-lock.yaml ]; then
-  RUNNER="pnpm"; step "pnpm install --frozen-lockfile"; run corepack pnpm install --frozen-lockfile
+  RUNNER="pnpm"; step "pnpm install --frozen-lockfile"; run pnpm_run install --frozen-lockfile
 elif [ -f yarn.lock ]; then
-  RUNNER="yarn"; step "yarn install --frozen-lockfile"; run yarn install --frozen-lockfile
+  RUNNER="yarn"; step "yarn install --frozen-lockfile"; run yarn_run install --frozen-lockfile
 elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
   RUNNER="npm"; step "npm ci"; run npm ci --no-audit --no-fund
 else
