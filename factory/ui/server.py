@@ -497,7 +497,7 @@ class Handler(BaseHTTPRequestHandler):
         shown = L.flash_pop(csrf)
         title = f"{display(int(sel['issue']))} · Tickets" if explicit and sel else "Tickets"
         strip = features.tickets_strip(cfg, csrf, q.get("ask") == "local")
-        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip, project, projects, bool(asked and projects and not project)), path, csrf, wide=True,
+        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip, project, projects, bool(asked and projects and not project), gh_on), path, csrf, wide=True,
                                           badges=badges, bare=True, flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
 
     def _get(self, path: str, q: dict, csrf: str) -> None:

@@ -133,6 +133,15 @@ class TicketList(unittest.TestCase):
         many = [dict(self.ROWS[0], issue=n) for n in (9, 19, 109, 90)]
         self.assertEqual([r["issue"] for r in board.pick(many, "all", q="#9")], [9])     # a number is exact
 
+    def test_empty_needs_chip_stays_empty_and_github_off_is_stated(self):
+        rows = [r for r in self.ROWS if r["state"] != "needs"]
+        html = board.tickets_page(rows, None, False, "needs", "", "", "latest", "", "", 0, "tok", github=False)
+        self.assertIn("Nothing needs you right now.", html)
+        self.assertIn("Show all tickets", html)
+        self.assertIn("GitHub issues are off.", html)
+        self.assertNotIn("Beta", html)                       # never falls back to other tickets
+        self.assertNotIn("GitHub issues are off.", board.tickets_page(rows, None, False, "needs", "", "", "latest", "", "", 0, "tok"))
+
     def test_project_scope_filters_rows_and_is_escaped(self):
         from types import SimpleNamespace as NS
         pr = lambda n, *repos: NS(name=n, repos=tuple(NS(repo=r) for r in repos))

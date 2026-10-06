@@ -182,7 +182,8 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
         if key in seen:
             continue
         seen.add(key)
-        out.append(_one(db, t, by_ticket.get(key, []), need.get(key), titles.get(key), now, needs_rows is not None))
+        out.append(_one(db, t, by_ticket.get(key, []), need.get(key), titles.get(key), now,
+                       needs_rows is not None or (not github and not is_local(int(t["issue"])))))
     if not github:
         out = [r for r in out if is_local(r["issue"]) or r["state"] == "working"]
     out.sort(key=lambda r: (ORDER[r["state"]], -r["when"]))
@@ -335,6 +336,11 @@ def in_project(rows: list[dict], cfg, key: str) -> list[dict]:
 
 
 def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf: str = "", project: str = "") -> str:
+    if not rows and not q.strip() and not at:
+        head, sub = ("Nothing needs you right now.", "Every local ticket is either working or done.") if flt == "needs" else ("No tickets here.", "")
+        sub = f'<p class="muted">{sub}</p>' if sub else ""
+        more = "" if flt in ("", "all") else f'<a class="btn secondary" href="/tickets?{esc(_qs(stage="all", project=project))}">Show all tickets</a>'
+        return f'<div class="sd-empty sd-emptybox"><p><strong>{head}</strong></p>{sub}{more}</div>'
     if not rows:
         return '<p class="muted sd-empty">No tickets match. Pick another filter or clear the search.</p>'
     items = ""
@@ -659,7 +665,7 @@ def phone_needs(rows: list[dict], csrf: str) -> str:
 
 
 def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: str, q: str, at: str, order: str, detail: str, new_ticket: str, now: float,
-                 csrf: str = "", settings: str = "", project: str = "", projects=(), unknown: bool = False) -> str:
+                 csrf: str = "", settings: str = "", project: str = "", projects=(), unknown: bool = False, github: bool = True) -> str:
     """settings: the strip of settings that shape this page (features.tickets_strip). rows are already narrowed to project
     (a configured name or STANDALONE; "" is all); projects are the switcher's choices; unknown: the asked-for project is gone."""
     shown = pick(rows, flt, at, q, order)
@@ -675,6 +681,9 @@ def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: st
                 f'<a href="/tickets?{esc(_qs(stage=flt, q=q, at=at))}">Show all projects</a></p>')
     elif unknown:
         note = '<p class="muted sd-scope" role="status">That project no longer exists. Showing all projects.</p>'
+    if not github:
+        note = ('<p class="muted sd-scope" role="status">GitHub issues are off. Showing local tickets and GitHub work that is still running. '
+                '<a href="/settings">Turn on Work from GitHub issues</a></p>') + note
     return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead">{crumb}<div class="sd-h1row"><h1>Tickets</h1>{new_ticket}</div>'
             '<p class="muted sd-lede">Everything about a ticket in one place: what it needs from you, where it is on the floor, every run, and its pull requests and checks.</p></div>'
             + settings + phone_needs(rows, csrf) + filters_html(counts(rows), flt, q, at, order, project=project, projects=projects) + note
