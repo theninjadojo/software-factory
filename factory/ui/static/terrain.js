@@ -9,6 +9,10 @@
   var PARK_NAMES = {fetch: "fetch with a dog", playground: "playground", picnic: "picnic", bench: "bench", dogwalk: "dog walker"};
   var TOWN = window.TOWN_ART || {};         // static/town.js, generated: the town's buildings, vehicles and scenery stand like park pieces
   Object.keys(TOWN).forEach(function (k) { PARK[k] = [TOWN[k].w, TOWN[k].h]; PARK_NAMES[k] = TOWN[k].name.toLowerCase(); });
+  // uploaded scene packs (scenes.py, compiled on the server), from the page's data-scenes: park pieces like the rest (terrain.py's set_scenes)
+  var SCENES = {}, holder = document.querySelector("[data-scenes]");
+  try { SCENES = holder ? JSON.parse(holder.getAttribute("data-scenes")) || {} : {}; } catch (e) { SCENES = {}; }
+  Object.keys(SCENES).forEach(function (k) { PARK[k] = [SCENES[k].w, SCENES[k].h]; PARK_NAMES[k] = SCENES[k].name; });
   Object.keys(PARK).forEach(function (k) { SIZES[k] = [PARK[k][0], PARK[k][0]]; });
   var WILD = Object.keys(PARK).filter(function (k) { return /^t-(animal|creature)-/.test(k); });     // they wander and have no hitbox
   var SOLID = ["tree", "pine", "bush", "rock", "pond"].concat(Object.keys(PARK).filter(function (k) { return WILD.indexOf(k) < 0; }));
@@ -152,6 +156,25 @@
     ((t.tiles || {}).water || []).forEach(function (r) { for (var i = 0; i < r[2]; i++) out.push([(r[0] + i + 0.5) * TILE, (r[1] + 0.5) * TILE, TILE / 2]); });
     return out;
   }
+  function targetSpots(t, target) {
+    if (target === "water") return waterSpots(t);
+    return (t.items || []).filter(function (it) { return ["tree", "pine", "bush"].indexOf(it[0]) >= 0; }).map(function (it) { return [it[1], it[2], it[3] * 0.4]; });
+  }
+  function scene(it, t, mirrored) {
+    var sc = SCENES[it[0]], a = sc.actor, out = sc.art;
+    if (!a) return out;
+    var x = it[1], y = it[2], w = sc.w, h = sc.h;
+    var sx = mirrored ? x + w / 2 - a.x : x - w / 2 + a.x, sy = y - h / 2 + a.y, best = null;
+    targetSpots(t, a.target).forEach(function (q) {
+      var d = Math.sqrt((sx - q[0]) * (sx - q[0]) + (sy - q[1]) * (sy - q[1]));
+      if (best === null || d - q[2] < best[0]) best = [d - q[2], q[0], q[1], q[2], d];
+    });
+    if (best === null || best[0] > a.reach || best[0] < 12) return out + '<g transform="translate(' + f(a.x) + " " + f(a.y) + ')">' + a.rest + "</g>";
+    var k = (best[3] + 8) / best[4], tx = best[1] + (sx - best[1]) * k, ty = best[2] + (sy - best[2]) * k;
+    var lx = mirrored ? x + w / 2 - tx : tx - (x - w / 2), ly = ty - (y - h / 2), left = lx < a.x;
+    return out + '<g class="sc-actor"><animateMotion path="M ' + f(a.x) + " " + f(a.y) + " L " + f(lx) + " " + f(ly) + '" ' + a.keys + "/>" +
+      a.moving.split("__WAY__").join(left ? "scale(-1 1)" : "scale(1 1)").split("__BACK__").join(left ? "scale(1 1)" : "scale(-1 1)") + "</g>";
+  }
   function oldMan(it, t, mirrored) {
     var x = it[1], y = it[2], w = PARK.bench[0], h = PARK.bench[1];
     var sx = mirrored ? x + w / 2 - 35 : x - w / 2 + 35, sy = y - h / 2 + 37, best = null;
@@ -176,6 +199,7 @@
     var body = {fetch: PK_FETCH, playground: PK_PLAYGROUND, picnic: PK_PICNIC, dogwalk: PK_DOGWALK}[kind];
     if (TOWN[kind]) body = '<g class="tw-art">' + TOWN[kind].svg + "</g>";
     if (kind === "bench") body = PK_BENCH + oldMan(it, t, mirrored);
+    if (SCENES[kind]) { body = scene(it, t, mirrored); kind = "scene"; }
     if (WILD.indexOf(kind) >= 0) body = wander(body, w, v);
     return '<g class="pk-' + kind + '" transform="' + tf + '">' + body + "</g>";
   }
@@ -410,5 +434,5 @@
     return layer && layer !== "all" ? parts[layer] : under + bridge + over + top;
   }
   window.FT = {svg: svg, f: f, rng: rng, seedOf: seedOf, sizeFor: sizeFor, runs: runs, cellsOf: cellsOf, bodies: bodies, footprint: footprint, hits: hits,
-    TILE: TILE, SIZES: SIZES, GROUNDS: GROUNDS, PARK: PARK, PARK_NAMES: PARK_NAMES, SOLID: SOLID};
+    TILE: TILE, SIZES: SIZES, GROUNDS: GROUNDS, PARK: PARK, PARK_NAMES: PARK_NAMES, SOLID: SOLID, SCENES: SCENES};
 })();

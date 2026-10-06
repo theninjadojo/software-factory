@@ -6,6 +6,7 @@ Shikumi is an issue-driven software factory: label a GitHub issue and sandboxed 
 
 - [Your first ticket](first-ticket.md): a step-by-step walkthrough with what you should see.
 - [The admin UI](ui.md): the dashboard, tickets, settings and credentials.
+- [Scene packs](scene-packs.md): upload your own pictures and little stories (like the duck feeder) to the floor editor, safely.
 - [Scheduled jobs](schedules.md): recurring work.
 - [Code-smell scans](scanner.md): automatic scans that file tickets.
 

@@ -381,6 +381,10 @@
   Object.keys(window.TOWN_ART || {}).forEach(function (k) {
     TOWN_SAYS[k] = window.TOWN_ART[k].name + (FT.SOLID.indexOf(k) < 0 ? ": click to place one; it wanders to and fro, and has no hitbox." : ": click to place one; it stands on the floor like a building and has a hitbox.");
   });
+  Object.keys(FT.SCENES).forEach(function (k) {
+    var a = FT.SCENES[k].actor;
+    TOWN_SAYS[k] = FT.SCENES[k].name + ": click to place your scene" + (a ? "; it walks to the nearest " + a.target + " and back." : ".");
+  });
   var showHit = false;
   var GROUND_AREAS = {mainland: 1, sea: 1, airfield: 1, outside: 1};      // floorplan.GROUND_AREAS: the park may stand in these
   var paint = null;
