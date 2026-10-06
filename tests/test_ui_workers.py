@@ -167,7 +167,7 @@ class WorkersSettings(UiCase):
 
     def form(self, csrf, **over):
         f = {"csrf": csrf, "section": "workers", "workers.enabled": "1", "workers.mode": "block", "workers.fix_rounds": "1",
-             "workers.claim_wait_seconds": "900", "workers.max_wait_seconds": "3600", "workers.lease_seconds": "120",
+             "workers.claim_wait_seconds": "900", "workers.max_wait_seconds": "3600", "workers.lease_seconds": "120", "workers.max_attempts": "2",
              "workers.checks": f"{self.REPO} ios-test macos\n{self.REPO} lint any advisory",
              "confirm__workers.enabled": "1", "confirm__workers.checks": "1", "confirm__workers.mode": "1"}
         f.update(over)

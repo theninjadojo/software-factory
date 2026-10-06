@@ -78,7 +78,7 @@ class Settings(AdminCase):
         for bad in ("abc", "1", "99999", ""):
             s, _, html = self.post(cookie, csrf, "/settings/save", self.general_form(**{"general.poll_seconds": bad}))
             self.assertEqual(s, 422, bad)
-            self.assertIn("Poll interval (seconds): must be a whole number", html)
+            self.assertIn("Check for work every (seconds): must be a whole number", html)
         self.assertEqual(self.overrides(), {})
         self.assertFalse((self.state / "RESTART").exists())
         _, _, html = self.post(cookie, csrf, "/settings/save", self.general_form(**{"general.poll_seconds": "7x"}))
@@ -101,7 +101,10 @@ class Settings(AdminCase):
         cookie, csrf = self.session()
         form = lambda hosts, **extra: [("section", "runner"), ("runner.max_parallel", "1"), ("runner.timeout_seconds", "1800"), ("runner.max_turns", "40"),
                                        ("runner.rate_limit_backoff_seconds", "3600"), ("runner.memory", "3g"), ("runner.cpus", "2"),
-                                       ("runner.allow_hosts", hosts)] + list(extra.items())
+                                       ("runner.allow_hosts", hosts), ("runner.render_previews", "1"), ("runner.thinking_tokens.low", "2000"),
+                                       ("runner.thinking_tokens.medium", "8000"), ("runner.thinking_tokens.high", "24000"), ("runner.max_patch_bytes", "2000000"),
+                                       ("runner.max_files", "100"), ("runner.render_timeout_seconds", "120"), ("runner.engine", "podman"),
+                                       ("runner.image", "localhost/factory-agent:latest"), ("runner.render_image", "localhost/factory-render:latest")] + list(extra.items())
         self.assertEqual(self.post(cookie, csrf, "/settings/save", form("api.anthropic.com\nregistry.npmjs.org"))[0], 422)   # unconfirmed
         for bad in ("evil", "a b.com", "127.0.0.1", "https://x.com", ""):
             self.assertEqual(self.post(cookie, csrf, "/settings/save", form(bad, **{"confirm__runner.allow_hosts": "1"}))[0], 422, bad)
@@ -766,13 +769,13 @@ class SettingsLayout(UiCase):
             nav = html.split('<nav aria-label="Main">')[1].split("</nav>")[0]
             self.assertIn('<a href="/settings" class="active ">Settings</a>', nav, path)
             self.assertNotIn('href="/harnesses"', nav)
-            self.assertIn(f'<a href="{path}" class=active aria-current=page>{side}</a>', html, path)
-            for item in ("General", "Routing", "Role agents", "Projects", "Harnesses", "Credentials", "Telegram", "Labels"):
-                self.assertIn(f">{item}</a>", html)
+            self.assertRegex(html, rf'<a href="{re.escape(path)}" class=active aria-current=page>(<span class="sdot[^"]*" aria-hidden="true"></span>)?{side}<', path)
+            for item in ("General", "Models by ticket size", "Stage agents", "Projects", "Harnesses", "Credentials", "Telegram", "Labels", "Health alerts"):
+                self.assertIn(f">{item}<", html)
 
     def test_general_is_rows_with_one_save_button(self):
         cookie, _ = self.session()
         _, _, html = self.req("GET", "/settings?section=general", cookie=cookie)
         self.assertIn("Save changes", html)
-        self.assertIn("Changes apply the next time the factory is idle.", html)
-        self.assertEqual(html.count('class="srow"'), 12)
+        self.assertIn("Changes apply the next time the factory is idle", html)
+        self.assertEqual(html.count('class="srow'), 13)

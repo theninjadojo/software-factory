@@ -19,7 +19,8 @@ from .views import ago, badge, csrf_field, esc, ticket_link, ts
 STATUS_BADGE = {"ok": "good", "skipped": "warn", "error": "bad", "new": ""}
 LABEL_MODES = (("auto", "Let the classifier decide", "The analyst proposes changes. It builds only if the classifier is sure they help."),
                ("analyze", "Analysis only", "A person decides what happens next."),
-               ("none", "Just open the ticket", "No labels. Nothing starts by itself."))
+               ("none", "Just open the ticket", "No labels. Nothing starts by itself."),
+               ("custom", "These labels", "Comma separated, in the box below."))
 PREVIEW_CHARS = 6000
 INTERVAL_HELP = "30m, 6h, 2d or 1w. At least 5 minutes."
 
@@ -179,7 +180,7 @@ def flat(entry: dict | None, cfg) -> dict:
     src = e.get("source", {})
     labels = e.get("labels")
     analyst = next((r.label for r in cfg.roles if r.name == "analyst"), "factory:analyze")
-    mode = "auto" if labels is None else "none" if labels == [] else "analyze" if labels == [analyst] else "keep"
+    mode = "auto" if labels is None else "none" if labels == [] else "analyze" if labels == [analyst] else "custom"
     return {"name": e.get("name", ""), "repo": e.get("repo", cfg.repos[0] if cfg.repos else ""),
             "when": "cron" if e.get("cron") else "every", "every": e.get("every", "7d"), "cron": e.get("cron", "0 9 * * 1"),
             "stype": src.get("type", "umami"), "base_url": src.get("base_url", "https://api.umami.is/v1"), "auth": src.get("auth", "api-key"),
@@ -188,12 +189,14 @@ def flat(entry: dict | None, cfg) -> dict:
             "url": src.get("url", ""), "header": src.get("header", "Authorization"), "prefix": src.get("prefix", "Bearer "),
             "title": e.get("title", "Scheduled review: ${name} ${date}"), "instructions": e.get("instructions", ""),
             "labels": mode, "keep_labels": ", ".join(labels or []),
-            "skip_if_open": "1" if e.get("skip_if_open", True) else "", "enabled": "1" if e.get("enabled", True) else ""}
+            "skip_if_open": "1" if e.get("skip_if_open", True) else "", "enabled": "1" if e.get("enabled", True) else "",
+            "keep": str(e.get("keep", 30)), "max_data_chars": str(e.get("max_data_chars", 30000))}
 
 
 def from_form(form) -> dict:
     v = {k: str(form.get(k, "")) for k in ("name", "repo", "when", "every", "cron", "stype", "base_url", "auth", "website_id", "days", "url",
-                                           "header", "prefix", "title", "instructions", "labels", "keep_labels", "skip_if_open", "enabled")}
+                                           "header", "prefix", "title", "instructions", "labels", "keep_labels", "skip_if_open", "enabled",
+                                           "keep", "max_data_chars")}
     v["metrics"] = form.getall("metric")
     return v
 
@@ -221,8 +224,7 @@ def form_page(cfg, v: dict, csrf: str, original: str = "", cred_ok: bool = False
                       for m in sorted(sc.UMAMI_METRICS))
     modes = list(LABEL_MODES)
     labels = "".join(_radio("labels", k, t + (f" ({cfg.auto_label})" if k == "auto" else f" ({analyst})" if k == "analyze" else ""), v["labels"], h) for k, t, h in modes)
-    if v["labels"] == "keep":
-        labels += _radio("labels", "keep", f"Keep the labels in the config: {v['keep_labels']}", v["labels"])
+    labels += _input("keep_labels", v, "For These labels: for example factory:analyze, priority: low.", "Labels")
     key_hint = ("A key is already saved. Leave empty to keep it, or type a new one to replace it." if cred_ok else
                 "Stored in a file only the factory can read, never shown again.")
     body = (f'<p><a href="{"/schedules" if new else "/schedules/view?name=" + esc(original)}">← {"all schedules" if new else esc(original)}</a></p>'
@@ -250,6 +252,8 @@ def form_page(cfg, v: dict, csrf: str, original: str = "", cred_ok: bool = False
             + _field("Instructions for the agent", f'<textarea name="instructions" rows="4" maxlength="4000">{esc(v["instructions"])}</textarea>', "Leave empty for a general review.")
             + f'<div class="field"><label>What happens after the ticket opens</label>{labels}</div>'
             + f'<label class="check"><input type="checkbox" name="skip_if_open" value="1"{" checked" if v["skip_if_open"] else ""}> Skip a run while the previous ticket is still open</label>'
+            + _input("max_data_chars", v, "Of the fetched data, put in the ticket.", "Most data in the ticket (characters)", "number")
+            + _input("keep", v, "Snapshots of the fetched data kept on disk for this schedule. 0 keeps none.", "Snapshots kept", "number")
             + '</fieldset>'
             f'<label class="check"><input type="checkbox" name="enabled" value="1"{" checked" if v["enabled"] else ""}> Enabled</label>'
             '<p><button type="submit">Save schedule</button> '
@@ -314,8 +318,22 @@ def build(v: dict, cfg, existing: dict | None, new: bool, taken: set[str]) -> di
         e["labels"] = [analyst]
     elif mode == "none":
         e["labels"] = []
+    elif mode == "custom":
+        chosen = [x.strip() for x in v["keep_labels"].split(",") if x.strip()]
+        if not chosen or len(chosen) > 10 or any(len(x) > 50 for x in chosen):
+            errs.append("Labels: one to ten labels, comma separated, each at most 50 characters.")
+        e["labels"] = chosen
     elif mode != "keep":
         errs.append("Labels: choose what happens after the ticket opens.")
+    for k, lo, hi, what in (("keep", 0, 1000, "Snapshots kept: a whole number from 0 to 1000."),
+                            ("max_data_chars", 0, 1000000, "Most data in the ticket: a whole number from 0 to 1000000.")):
+        raw = v.get(k, "").strip()
+        if not raw:
+            continue
+        if not raw.isdigit() or not lo <= int(raw) <= hi:
+            errs.append(what)
+        else:
+            e[k] = int(raw)
     old = (existing or {}).get("source", {})
     token_file = old.get("token_file") or str(secrets_dir(cfg) / f"schedule-{name or 'new'}")
     if v["stype"] == "umami":

@@ -45,10 +45,24 @@ FLASH = {
 
 
 def _send_page(h, status: int, title: str, body: str, active: str, csrf: str, flash=None, kind="ok", section: str = "") -> None:
-    """Every admin page renders inside the Settings layout: the Settings tab is lit and the side list marks the page."""
+    """Every admin page renders inside the Settings layout: the Settings tab is lit and the side list marks the page.
+    A settings section is titled by its own name, under a breadcrumb back to the Settings home."""
     cached = L.needs_cached()
-    side = forms.side_list(section or active.lstrip("/"))
-    h._send(status, views.page(title, body, "/settings", csrf, nav=views.NAV, flash=flash, flash_kind=kind, badges={"/tickets": len(cached)} if cached else None, side=side))
+    try:
+        cfg = h.app.cfg()
+    except Exception:  # noqa: BLE001 - the menu then shows no state markers
+        cfg = None
+    key = section or active.lstrip("/")
+    side = forms.side_list(key, cfg)
+    bare = False
+    if title == "Settings" and key in S.SECTIONS or key in ("projects", "labels"):
+        name = S.SECTIONS[key][0] if key in S.SECTIONS else key.title()
+        group = forms.section_group(key)
+        crumb = (f'<nav class="crumb" aria-label="Breadcrumb"><a href="/settings">Settings</a>'
+                 + (f' <span aria-hidden="true">›</span> {views.esc(group)}' if group else "") + "</nav>")
+        body, title, bare = f"{crumb}<h1>{views.esc(name)}</h1>{body}", name, True
+    h._send(status, views.page(title, body, "/settings", csrf, nav=views.NAV, flash=flash, flash_kind=kind, badges={"/tickets": len(cached)} if cached else None,
+                               side=side, bare=bare))
 
 
 def _files(h):
