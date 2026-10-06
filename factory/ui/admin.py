@@ -15,7 +15,7 @@ from ..router import decide
 import time
 
 from .. import schedules as sched
-from . import chat as CH, features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, release as REL, review as RV, schedules as SC, scans as SN, screens as SB, settings as S, ticketreview as TRV, updatespage as UP, views, workers as WK
+from . import chat as CH, features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, machinepages as MP, release as REL, review as RV, schedules as SC, scans as SN, screens as SB, settings as S, ticketreview as TRV, updatespage as UP, views, workers as WK
 from .views import esc
 
 log = logging.getLogger("factory.ui")
@@ -357,6 +357,30 @@ def slack_test(h, form, csrf: str) -> None:
         return _slack(h, csrf, "Set the bot token and the channel id first.", "bad", 400)
     r = I.slack_send(token, cfg.slack_channel, "Test message from the Shikumi UI. Slack is set up correctly.")
     _slack(h, csrf, r["message"], "ok" if r["ok"] else "bad")
+
+
+# ------------------------------------------------------------------ the machines: the server and each worker
+def _machine_page(h, csrf: str, title: str, body: str | None, status: int = 200) -> None:
+    h._send(status if body is not None else 404, views.page(title, body if body is not None else '<p class="muted">No such machine.</p>', "/", csrf, wide=True))
+
+
+def server_machine_get(h, q: dict, csrf: str) -> None:
+    db = h.app.ro_db()
+    try:
+        _machine_page(h, csrf, "Server", MP.server_page(h.app.cfg(), db))
+    finally:
+        if db is not None:
+            db.close()
+
+
+def worker_machine_get(h, q: dict, csrf: str) -> None:
+    db = h.app.ro_db()
+    try:
+        name = q.get("name", "")
+        _machine_page(h, csrf, f"Worker {name[:40]}", MP.worker_page(h.app.cfg(), db, name) if db is not None and len(name) <= 40 else None)
+    finally:
+        if db is not None:
+            db.close()
 
 
 # ------------------------------------------------------------------ verification workers
@@ -764,7 +788,7 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
     h._redirect("/backup?ok=restore")
 
 
-GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
+GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/machines/server": server_machine_get, "/workers/machine": worker_machine_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/tickets/review": TRV.review_get, "/fragment/chat": CH.fragment_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get}
 POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/classify/test": classify_test,

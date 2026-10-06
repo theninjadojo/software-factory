@@ -505,7 +505,7 @@ class Railway(unittest.TestCase):
         self.assertIn('class="ry-yard"', svg)
         self.assertIn('class="ry-depot"', svg)
         self.assertEqual(svg.count('class="ry-junction"'), 2)
-        self.assertIn('aria-label="Worker linux-box: Online · web check"', svg)
+        self.assertIn('aria-label="Worker linux-box: Online · web check. Open its page."', svg)
         self.assertEqual(svg.count('class="ry-stop"'), 3)                # each worker's stop plate and loader, on its loop
         self.assertIn('Verify stop', svg)
         moving = re.findall(r'<g class="fn-car">', svg)

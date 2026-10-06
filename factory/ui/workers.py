@@ -3,6 +3,7 @@ opened read-only). Everything a worker sent is untrusted text: it is escaped her
 import socket
 import sqlite3
 import time
+from urllib.parse import quote
 import json
 from pathlib import Path
 from urllib.parse import urlencode
@@ -114,7 +115,7 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
                 return (f'{esc(v)} <form method="post" action="/workers/update" class="inline">{csrf_field(csrf)}'
                         f'<input type="hidden" name="worker" value="{esc(k["name"])}"><button>Update to {esc(have)}</button></form>')
             rows = "".join(
-                f'<tr><td data-l="Worker">{esc(k["name"])}</td><td data-l="Platform">{esc(k["platform"])}</td>'
+                f'<tr><td data-l="Worker"><a href="/workers/machine?name={esc(quote(k["name"]))}">{esc(k["name"])}</a></td><td data-l="Platform">{esc(k["platform"])}</td>'
                 f'<td data-l="Version">{version_cell(k)}</td>'
                 f'<td data-l="Recipes">{esc(k["recipes"].replace(",", ", ") or "—")}{unready_note(k)}</td><td data-l="Last seen">{esc(ago(k["last_seen"], now))}</td>'
                 f'<td data-l="State">{badge("online", "good") if now - k["last_seen"] <= ONLINE_SECONDS else badge("offline", "bad")}</td></tr>' for k in known)

@@ -51,13 +51,18 @@ touch jobs it claimed. Bodies are capped (results 64 MB, everything else 64 KB).
 
 | Call | Body | Reply |
 |---|---|---|
-| `POST /v1/claim` | `{"recipes": ["ios-test"], "platform": "macos", "version": 1, "unready": {"web-test": "Node.js 18 or newer is not installed"}}` (`unready` is optional) | `200` job, or `204` when nothing matches |
+| `POST /v1/claim` | `{"recipes": ["ios-test"], "platform": "macos", "version": 1, "unready": {"web-test": "Node.js 18 or newer is not installed"}, "stats": {"disk_free": 88000000000, "disk_total": 256000000000, "mem_avail": 11000000000, "load": 0.4, "cpus": 8}}` (`unready` and `stats` are optional) | `200` job, or `204` when nothing matches |
 | `POST /v1/jobs/<id>/heartbeat` | `{}` or `{"progress": "<text>"}` | `200 {"cancel": false}`; `cancel: true` means stop and report nothing |
 | `POST /v1/jobs/<id>/result` | `{"status": "passed"\|"failed"\|"error", "exit_code": 0, "log": "...", "artifacts": [{"name": "home-ios", "png_b64": "..."}]}` | `200` |
 
 A job: `{"id", "repo", "base_sha", "patch", "recipe", "lease_seconds"}`. `patch` is the unified diff the orchestrator already
 validated (protected paths, size, no symlinks). The worker clones the repo with *its own* read credentials, checks out
 `base_sha`, applies the patch with `git apply`, and runs the recipe in that checkout.
+
+Machine stats: each claim may carry `stats`, the free and total bytes of the disk the work dir is on, memory available and total, the load
+average and the CPU count (anything the machine cannot read is left out; other keys and non-numbers are dropped). The factory keeps the
+last report with the worker (a poll without one leaves it as it was) and shows it on the worker's own page, `/workers/machine?name=`,
+and as a disk bar on its stop on the floor, rated by the same `[health]` thresholds as the server's disks.
 
 Leases: a claimed job needs a heartbeat at least every `lease_seconds` (default 120). A job with no heartbeat is put back in the
 queue (at most `max_attempts`, default 2) and then fails. A job nobody claims within `claim_wait_seconds` fails.

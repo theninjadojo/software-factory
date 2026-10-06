@@ -781,7 +781,8 @@ def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
               "schedules": d.get("schedules") or [],
               "poll": {"every": d["cfg"].get("poll_seconds"), "last": float(last) if last else None},
               "flights": L.flights(now),
-              "notify": [{"name": n, "on": bool((d["cfg"].get("notify") or {}).get(n))} for n in floorplan.NOTIFIERS]}
+              "notify": [{"name": n, "on": bool((d["cfg"].get("notify") or {}).get(n))} for n in floorplan.NOTIFIERS],
+              "server": d.get("server")}
     workers = d.get("workers") or []
     ctx = floor_ctx(d["cfg"], workers)
     plan, _ = floorplan.usable(*d["floor_layout"], ctx) if d.get("floor_layout") else (None, "")

@@ -273,7 +273,7 @@ class SelfUpdate(unittest.TestCase):
             def call(self, path, body, timeout=60):
                 seen.update(body)
                 return 204, None
-        cfg = mock.Mock(platform="linux", recipes={"web-test": mock.Mock(command=["/no/such/recipe"])}, install_tools=False)
+        cfg = mock.Mock(platform="linux", recipes={"web-test": mock.Mock(command=["/no/such/recipe"])}, install_tools=False, work_dir=Path(tempfile.gettempdir()))
         W.poll_once(cfg, A())
         self.assertEqual(seen["app_version"], "0.20.0")
 

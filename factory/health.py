@@ -44,31 +44,41 @@ def disk_level(free: int, total: int, hc) -> str:
     return "ok"
 
 
-def check_disk(cfg: Config, hc) -> list[Result]:
-    """Free space and free inodes on every filesystem the factory writes to (state, work dir, container storage)."""
+def disks(cfg: Config, hc) -> list[dict]:
+    """Every filesystem the factory writes to (state, work dir, extra paths, container storage), once each: its path, what it holds,
+    free and total bytes, the % of inodes free (None when the filesystem has none to count) and the level of each."""
     home = Path.home()
-    paths = [Path(cfg.db_path).parent, Path(cfg.runner.work_dir), *map(Path, hc.extra_disk_paths),
-             home / ".local/share/containers", Path("/var/lib/containers")]
-    seen: dict[int, str] = {}
+    paths = [("state", Path(cfg.db_path).parent), ("work", Path(cfg.runner.work_dir)), *(("extra", Path(p)) for p in hc.extra_disk_paths),
+             ("containers", home / ".local/share/containers"), ("containers", Path("/var/lib/containers"))]
+    seen: set[int] = set()
     out = []
-    for p in paths:
+    for holds, p in paths:
         while not p.exists() and p != p.parent:     # the work dir may not exist yet: check the filesystem it will be on
             p = p.parent
         try:
             dev = p.stat().st_dev
             if dev in seen:
                 continue
-            seen[dev] = str(p)
+            seen.add(dev)
             s = os.statvfs(p)
         except OSError:
             continue
         free, total = s.f_bavail * s.f_frsize, s.f_blocks * s.f_frsize
-        level = disk_level(free, total, hc)
-        out.append(Result(f"disk:{p}", level, f"{free / GB:.1f} GB free of {total / GB:.0f} GB ({100 * free / max(total, 1):.0f}%)"))
-        if s.f_files:
-            ipct = 100 * s.f_favail / s.f_files
-            out.append(Result(f"inodes:{p}", "crit" if ipct < hc.disk_crit_percent else "warn" if ipct < hc.disk_warn_percent else "ok",
-                              f"{ipct:.0f}% of inodes free"))
+        ipct = 100 * s.f_favail / s.f_files if s.f_files else None
+        ilevel = "ok" if ipct is None else "crit" if ipct < hc.disk_crit_percent else "warn" if ipct < hc.disk_warn_percent else "ok"
+        out.append({"path": str(p), "holds": holds, "free": free, "total": total, "inodes_free_pct": ipct,
+                    "level": disk_level(free, total, hc), "inodes_level": ilevel})
+    return out
+
+
+def check_disk(cfg: Config, hc) -> list[Result]:
+    """Free space and free inodes on every filesystem the factory writes to (state, work dir, container storage)."""
+    out = []
+    for d in disks(cfg, hc):
+        out.append(Result(f"disk:{d['path']}", d["level"],
+                          f"{d['free'] / GB:.1f} GB free of {d['total'] / GB:.0f} GB ({100 * d['free'] / max(d['total'], 1):.0f}%)"))
+        if d["inodes_free_pct"] is not None:
+            out.append(Result(f"inodes:{d['path']}", d["inodes_level"], f"{d['inodes_free_pct']:.0f}% of inodes free"))
     return out
 
 
