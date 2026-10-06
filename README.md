@@ -142,7 +142,7 @@ When the dry-run log looks right, tick the box and press **Go live** on the home
 | Installed from | Update with |
 |---|---|
 | a release | `./scripts/update.sh` (latest) or `./scripts/update.sh v0.2.0`. Refuses while an agent run is in flight, rolls back if the new version does not start. See [docs/releasing.md](docs/releasing.md). |
-| source | `git pull && docker compose --profile build build && docker compose up -d` |
+| source | `./scripts/update.sh` asks, then runs `git pull --ff-only` (with the factory's GitHub token) and `docker compose --profile build build`; then `docker compose up -d` to restart on the new images. Or by hand: `git pull && docker compose --profile build build && docker compose up -d` |
 | native (Podman) | on the host: `sudo -n -u factory /srv/factory/app/deploy/update-native.sh` (a release, with tests, image rebuild and rollback); or `scripts/deploy.sh user@host [--image]` to push your checkout |
 | a verification worker machine | `./scripts/update-worker.sh` (see [below](#verification-workers-optional)) |
 
