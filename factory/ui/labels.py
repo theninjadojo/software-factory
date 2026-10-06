@@ -433,8 +433,9 @@ def needs_you(h) -> list | None:
     Read from GitHub (labels decide, as on the Tickets page) and cached briefly. None when there is no token or GitHub fails."""
     cfg = h.app.cfg()
     gh = _gh(h)
-    if not cfg.github_issues_enabled or gh is None or not cfg.repos:
+    if not (cfg.github_issues_enabled or cfg.local_enabled) or gh is None or not cfg.repos:
         return None
+    gh_on = cfg.github_issues_enabled           # off: only local tickets are read (their questions and calls for a person are in the local store)
     with _needs_lock:
         if _needs_cache["rows"] is not None and time.time() - _needs_cache["at"] < NEEDS_TTL:
             return _needs_cache["rows"]
@@ -449,7 +450,8 @@ def needs_you(h) -> list | None:
     queued = _approved(h)
     rows, titles = [], {}
     try:
-        pages = dict(zip(cfg.repos, (issues for issues, _ in _par(*[(lambda r=r: gh.issues(r, "open", None, 1)) for r in cfg.repos]))))
+        pages = (dict(zip(cfg.repos, (issues for issues, _ in _par(*[(lambda r=r: gh.issues(r, "open", None, 1)) for r in cfg.repos]))))
+                 if gh_on else {repo: [] for repo in cfg.repos})
         # The first page holds the newest 50 open items, pull requests included. A ticket the factory is waiting on can be older:
         # fetch those by number (the questions it left, or its call for a person), so the tray agrees with the rest of the page.
         for repo in cfg.repos:
@@ -457,6 +459,8 @@ def needs_you(h) -> list | None:
             asked = sorted((d.get("decided_at") or 0, n) for (r, n), d in decisions.items() if r == repo and d.get("outcome") == "human")
             want = [n for n in sorted(waiting.get(repo, ()), reverse=True) if n not in seen]
             want += [n for _, n in reversed(asked) if n not in seen and n not in want]
+            if not gh_on:
+                want = [n for n in want if tracker.is_local(n)]
             more = _par(*[(lambda n=n, r=repo: gh.get_issue(r, n)) for n in want[:NEEDS_EXTRA]]) if want else []
             pages[repo] = pages[repo] + [i for i in more if "pull_request" not in i and i.get("state") == "open"]
         for repo, issues in pages.items():
