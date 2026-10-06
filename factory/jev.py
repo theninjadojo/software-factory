@@ -83,6 +83,7 @@ def effort_from_score(score: float) -> str:
 def parse_answers(answers: dict, labels: set[str], aliases: dict | None = None) -> Classification:
     """Strict parse. Maintainer kind label overrides the model; a complexity label is a floor, never a ceiling."""
     confs = []
+    scores = {"kind": None}                      # None: a maintainer label set the kind, so the model's answer was not counted
     kind = kind_from_labels(labels, aliases)
     if kind is None:
         a = answers["kind"]
@@ -90,11 +91,13 @@ def parse_answers(answers: dict, labels: set[str], aliases: dict | None = None) 
             raise ValueError("bad kind answer")
         kind = a["choice"]
         confs.append(float(a["confidence"]))
+        scores["kind"] = [kind, confs[-1]]
     a = answers["tier"]
     if a["type"] != "choice" or a["choice"] not in TIER_TO_LEVEL:
         raise ValueError("bad tier answer")
     level = TIER_TO_LEVEL[a["choice"]]
     confs.append(float(a["confidence"]))
+    scores["size"] = [a["choice"], confs[-1]]
     floor = next((c for c in COMPLEXITY if f"complexity:{c}" in labels), None)
     if floor and ORDER[floor] > ORDER[level]:
         level = floor
@@ -106,12 +109,14 @@ def parse_answers(answers: dict, labels: set[str], aliases: dict | None = None) 
         raise ValueError("bad needs_human answer")
     p = float(n["noul"])
     confs.append(max(p, 1 - p))
+    scores["human"] = ["yes" if p > 0.5 else "no", confs[-1]]
     stage = stage_conf = None
     st = answers.get("stage")
     if st and st.get("type") == "choice" and st.get("choice") in STAGES:      # tolerant: routing never depends on it
         stage, stage_conf = st["choice"], float(st["confidence"])
+        scores["stage"] = [stage, stage_conf]
     return Classification(kind, level, needs_human=p > 0.5, confidence=min(confs), effort=effort_from_score(float(e["score"])),
-                          stage=stage, stage_confidence=stage_conf)
+                          stage=stage, stage_confidence=stage_conf, scores=scores)
 
 
 def build_state(title: str, body: str, labels: list[str], comments: list[str] | None, project: dict | None = None,

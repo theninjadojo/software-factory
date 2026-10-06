@@ -11,6 +11,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import why as W
 from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, triage, usage, verify
 from . import questions as Q
 from . import db as dbm
@@ -1205,14 +1206,16 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             emit("decision", f"unsure ({summary}): running the analyst first", repo, num)
         # A question that needs a person is never auto-resolved: until it is answered, auto does not build (whatever the classifier says).
         if not read_only_pick and (c.needs_human or open_questions or not sure or (st and (st in done or back))):
-            reason = ("needs a person" if c.needs_human else "open questions need a person" if open_questions
-                      else "low confidence" if not sure else "chose an earlier stage than one already done" if back
-                      else "chose a stage already done")
-            dbm.record(conn, repo, num, updated, "human", f"{why}; {summary}; {reason}")
+            code = ("human" if c.needs_human else "questions" if open_questions else "low" if not sure else "behind" if back else "done")
+            reason = {"human": "needs a person", "questions": "open questions need a person", "low": "low confidence",
+                      "behind": "chose an earlier stage than one already done", "done": "chose a stage already done"}[code]
+            overall = min(c.confidence, c.stage_confidence if c.stage_confidence is not None else c.confidence)
+            scored = W.build(cfg.confidence_threshold, c, code, overall)
+            dbm.record(conn, repo, num, updated, "human", f"{why}; {summary}; {reason}", scored)
             emit("decision", f"needs a person: {reason} ({summary})", repo, num)
             log.info("%s#%d auto -> human (%s)", repo, num, reason)
             if not cfg.dry_run:
-                alert(f"Needs a person: {repo}#{num}\n{issue['title'][:120]}\nReason: {reason}\n"
+                alert(f"Needs a person: {repo}#{num}\n{issue['title'][:120]}\nReason: {W.line(W.parse(scored))}\n"
                       f"Classified {c.kind}/{c.complexity}, stage {c.stage}, confidence {c.confidence:.2f}, by {c.source}" + suggestion(c),
                       human_buttons(cfg, repo, num, c, done), event="needs_human")
             return None
@@ -1239,6 +1242,8 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
 
     d = decide(cfg, c)
     detail = f"{why}; {d.reason}; {summary}; route={d.route}"
+    scored = (W.build(cfg.confidence_threshold, c, "question" if c.kind == "question" else "human" if c.needs_human else "low")
+              if d.action == "human" else None)
     if d.action == "dispatch" and not cfg.dry_run:
         def build_job(db):
             res = dispatch(cfg, gh, repo, issue, d.route, c, label, db)
@@ -1246,11 +1251,11 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             log.info("%s#%d run %s: %s %s", repo, num, res.status, res.detail, res.pr_url or "")
         start(cfg, conn, repo, num, "build", build_job, gh)
     else:
-        dbm.record(conn, repo, num, updated, d.action, detail)
+        dbm.record(conn, repo, num, updated, d.action, detail, scored)
         emit("decision", f"{d.action}: {d.reason} ({summary}){' [dry-run]' if cfg.dry_run else ''}", repo, num)
         log.info("%s#%d -> %s (%s)%s", repo, num, d.action, detail, " [dry-run]" if cfg.dry_run else "")
         if d.action == "human" and not cfg.dry_run:
-            alert(f"Needs a person: {repo}#{num}\n{issue['title'][:120]}\nReason: {d.reason}\n"
+            alert(f"Needs a person: {repo}#{num}\n{issue['title'][:120]}\nReason: {W.line(W.parse(scored))}\n"
                   f"Classified {c.kind}/{c.complexity}, human={c.needs_human}, confidence {c.confidence:.2f}, by {c.source}" + suggestion(c),
                   human_buttons(cfg, repo, num, c, done), event="needs_human")
     return None

@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from .. import db as dbm
 from .. import questions as Q
 from .. import tracker
+from .. import why as W
 from ..github import GitHub
 from ..roles import STAGE_TO_ROLE
 from . import integrations as I, views
@@ -481,6 +482,7 @@ def needs_you(h) -> list | None:
                     detail = (d or {}).get("detail", "")
                     m = re.search(r"cls=(\w+)/(\w+)/human=\w+/conf=([0-9.]+)", detail)
                     rows.append({"repo": repo, "issue": i["number"], "title": i.get("title", "")[:120], "acts": acts, "at": (d or {}).get("decided_at", 0),
+                                 "scores": W.parse((d or {}).get("scores")),
                                  "reason": (detail.rsplit(";", 1)[-1].strip() or "needs a person")[:80],
                                  **({"kind": m.group(1), "complexity": m.group(2), "conf": min(1.0, float(m.group(3)))} if m else {})})
                 elif i["number"] in waiting.get(repo, ()) and status not in ("closed", "running", "queued"):
