@@ -4,10 +4,11 @@ import logging
 import re
 import shutil
 import sqlite3
+import threading
 from pathlib import Path
 
 from .. import backup as B
-from .. import selfupdate as SU, updates, version, workerupdate
+from .. import selfupdate as SU, tools, updates, version, workerupdate
 from .. import db as dbm
 from ..config import deep_merge
 from ..router import decide
@@ -196,7 +197,11 @@ def credentials_test(h, form, csrf: str) -> None:
 # ------------------------------------------------------------------ harnesses
 def harnesses_get(h, q: dict, csrf: str) -> None:
     _, eff = _files(h)
-    _send_page(h, 200, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf), "/harnesses", csrf, FLASH.get(q.get("ok", "")))
+    if tools.latest_due(h.app.state_dir()):          # the npm registry is asked in the background, never on the request
+        threading.Thread(target=tools.refresh_latest, args=(h.app.state_dir(),), daemon=True).start()
+    shown = L.flash_pop(csrf)
+    _send_page(h, 200, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf, state_dir=h.app.state_dir()), "/harnesses", csrf,
+               shown[0] if shown else FLASH.get(q.get("ok", "")), shown[1] if shown else "ok")
 
 
 def harnesses_save(h, form, csrf: str) -> None:
@@ -204,7 +209,7 @@ def harnesses_save(h, form, csrf: str) -> None:
         S.save_harness(h.app.config_path, h.app.state_dir(), form.get("name", ""), form)
     except S.SettingsError as e:
         _, eff = _files(h)
-        return _send_page(h, 422, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf), "/harnesses", csrf, " · ".join(e.messages), "bad")
+        return _send_page(h, 422, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf, state_dir=h.app.state_dir()), "/harnesses", csrf, " · ".join(e.messages), "bad")
     h._redirect("/harnesses?ok=saved")
 
 
@@ -213,9 +218,24 @@ def harnesses_credential(h, form, csrf: str) -> None:
         I.save_harness_credential(h.app.cfg(), form.get("name", ""), form.get("value", ""))
     except ValueError as e:
         _, eff = _files(h)
-        return _send_page(h, 400, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf), "/harnesses", csrf, str(e), "bad")
+        return _send_page(h, 400, "Harnesses", forms.harnesses_page(h.app.cfg(), eff, csrf, state_dir=h.app.state_dir()), "/harnesses", csrf, str(e), "bad")
     S.request_restart(h.app.state_dir())
     h._redirect("/harnesses?ok=secret")
+
+
+def tools_check(h, form, csrf: str) -> None:
+    tools.refresh_latest(h.app.state_dir())
+    L.flash_set(csrf, "Checked the newest versions.")
+    h._redirect("/harnesses")
+
+
+def tools_update(h, form, csrf: str) -> None:
+    names = list(tools.TOOLS) if form.get("name") == "all" else [form.get("name", "")]
+    asked = tools.request(h.app.state_dir(), names)
+    log.info("tools: update requested for %s", asked or "nothing")
+    L.flash_set(csrf, ("Update requested. The factory starts it within a poll (up to a minute) and it takes a few minutes; runs in flight are not interrupted."
+                       if asked else "Pick one of the listed tools."), "ok" if asked else "bad")
+    h._redirect("/harnesses")
 
 
 # ------------------------------------------------------------------ telegram
@@ -717,7 +737,7 @@ GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": 
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/fragment/chat": CH.fragment_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get}
 POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/classify/test": classify_test,
-        "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/credentials/test": credentials_test,
+        "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/tools/check": tools_check, "/tools/update": tools_update, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
         "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/local/comment": LT.comment, "/tickets/local/edit": LT.edit, "/tickets/local/state": LT.set_state, "/tickets/local/attachment/delete": LT.attachment_delete, "/tickets/import": L.import_issues, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
         "/tickets/chat/send": CH.send, "/tickets/chat/confirm": CH.confirm, "/tickets/chat/dismiss": CH.dismiss, "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/capture": SB.capture, "/screens/captures/save": SB.captures_save, "/screens/save": SB.save, "/screens/delete": SB.delete, "/screens/issue": RV.board_issue}

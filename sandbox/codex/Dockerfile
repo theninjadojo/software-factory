@@ -2,6 +2,8 @@
 #   docker build -t factory-agent-codex -f sandbox/codex/Dockerfile sandbox
 # The command line used by the factory is in config (harnesses.codex.command); it has not been verified end to end.
 FROM docker.io/library/node:22-slim
+# Changing TOOL_REFRESH (factory/tools.py does, from the UI's Update button) re-runs this layer, so npm fetches the newest CLI.
+ARG TOOL_REFRESH=0
 RUN apt-get update && apt-get install -y --no-install-recommends git socat curl ca-certificates \
  && rm -rf /var/lib/apt/lists/* && npm install -g @openai/codex
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
