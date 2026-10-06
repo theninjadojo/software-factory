@@ -57,7 +57,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline:3px solid
 @media (prefers-reduced-motion:reduce) { .fl-b, .fl-rail:before { animation:none; } }
 .fl-work { background:var(--panel2); } .fl-t { font-weight:600; } .fl-mono { font:12px ui-monospace,Menlo,Consolas,monospace; color:var(--muted); }
 a.btn, label.btn, summary.btn { display:inline-flex; align-items:center; justify-content:center; min-height:44px; padding:0 18px; border-radius:0; border:1px solid var(--blue); background:var(--blue); color:var(--blue-ink); font-weight:700; text-decoration:none; box-sizing:border-box; }
-a.btn.secondary, label.btn.secondary, summary.btn { background:var(--panel2); color:var(--text); border-color:var(--line2); font-weight:500; }
+a.btn.secondary, label.btn.secondary, button.btn.secondary, summary.btn { background:var(--panel2); color:var(--text); border-color:var(--line2); font-weight:500; }
 .fl-tray { margin:1.4rem 0 0; } .fl-tray h2 { margin:0 0 .6rem; font-size:1.1rem; }
 .ph-home, .ph-only { display:none; }
 

@@ -126,6 +126,13 @@ installs used). For the Docker install, `FACTORY_WORKERS=1 ./scripts/setup.sh` d
 - **Do not run a second proxy**: it replaces the socket file under the first.
 - **Don't `pkill -f` a pattern that appears in your own command line.**
 - **A rebuilt image** is only needed when `sandbox/` changes; code changes need only a restart.
+- **Updating the agent CLIs.** Claude Code, Codex and Gemini are installed with `npm install -g` inside their sandbox images, and the build
+  cache keeps that layer, so a plain rebuild never changes their version. Settings → Harnesses → *Agent tools* shows the installed and newest
+  version of each and has an *Update* button. It only leaves a request; the orchestrator (the one process with the container engine) rebuilds
+  the image with a new `TOOL_REFRESH` build argument, runs `<cli> --version` in the result, then moves the tag over and keeps the old image as
+  `<image>:previous`. A failed build or a CLI that does not start changes nothing, and runs in flight finish on the image they started with.
+  Images you pointed a harness at yourself are never rebuilt. By hand: `docker build --build-arg TOOL_REFRESH=$(date +%s) -t factory-agent -f sandbox/Dockerfile sandbox`.
+  To go back: `docker tag localhost/factory-agent:previous localhost/factory-agent:latest`. Release updates do not touch the CLIs.
 - **Unit tests are safe to run anywhere**: they never start containers or use the network.
 
 ## Verifying a sandbox by hand

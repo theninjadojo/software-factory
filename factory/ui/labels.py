@@ -340,8 +340,7 @@ def import_form(cfg, repo: str, csrf: str) -> str:
     if not csrf or not cfg.repos or not cfg.local_enabled:
         return ""
     opts = "".join(f'<option value="{esc(r)}"{" selected" if r == repo else ""}>{esc(r)}</option>' for r in cfg.repos)
-    return ('<details class="disclose"><summary class="btn">Import</summary>'
-            f'<form method="post" action="/tickets/import" class="field">{csrf_field(csrf)}'
+    form = (f'<form method="post" action="/tickets/import" class="field">{csrf_field(csrf)}'
             f'<label>Repository<select name="repo">{opts}</select></label>'
             '<label>Issue number<input name="n" inputmode="numeric" maxlength="9"></label>'
             f'<label>Or every open issue with the label<input name="label" maxlength="50"></label>'
@@ -349,12 +348,13 @@ def import_form(cfg, repo: str, csrf: str) -> str:
             '<label><input type="checkbox" name="close" value="1"> Also close the issue on GitHub</label>'
             '<label><input type="checkbox" name="confirm" value="1"> Confirm closing every issue imported with &ldquo;every open issue&rdquo;</label>'
             f'<p class="muted">Copies the issue and its comments to a local ticket, then removes its trigger labels on GitHub, labels it <code>{tracker.MOVED_LABEL}</code> and links to the local ticket. At most {tracker.MAX_BULK} issues at a time; submit again for the rest.</p>'
-            '<button>Import</button></form></details>')
+            '<button>Import</button></form>')
+    return ticket_dialog("im-d", "Import", "Move GitHub issues into the local tracker.", form, "secondary")
 
 
-def ticket_dialog(dom_id: str, label: str, sub: str, form: str) -> str:
+def ticket_dialog(dom_id: str, label: str, sub: str, form: str, kind: str = "") -> str:
     """A trigger button and the form in a popup (as Answer… does); without JavaScript the form is shown in the page."""
-    return (f'<button type="button" class="btn" data-dialog="{dom_id}">{esc(label)}</button>'
+    return (f'<button type="button" class="btn{" " + kind if kind else ""}" data-dialog="{dom_id}">{esc(label)}</button>'
             f'<noscript><details class="disclose" open><summary>{esc(label)}</summary>{form}</details></noscript>'
             f'<dialog id="{dom_id}" class="nd-dialog" data-backdrop aria-label="{esc(label)}"><div class="nd-dhead"><div><strong>{esc(label)}</strong>'
             f'<p class="muted">{esc(sub)}</p></div><button type="button" class="secondary" data-close aria-label="Close">Close</button></div>'

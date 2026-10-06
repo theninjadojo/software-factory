@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tracker, triage, usage, verify
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, tools, tracker, triage, usage, verify
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -1534,6 +1534,10 @@ def main() -> None:
             dbm.set_status(conn, "paused", pause.paused(Path(cfg.db_path).parent) or "")
             dbm.set_status(conn, "poll_started", str(time.time()))
             check_usage(cfg, conn)
+            try:
+                tools.tick(cfg, Path(cfg.db_path).parent)        # a requested CLI update, or the periodic version scan (background thread)
+            except Exception:
+                log.exception("tool update check failed")       # never stops the poll
             poll_once(cfg, gh, conn, clf)
             dbm.set_status(conn, "pool", pool_status())
             dbm.set_status(conn, "last_poll_ok", str(time.time()))
