@@ -51,7 +51,7 @@ def start(state_dir, tag: str = "", run=subprocess.run) -> str:
     if running(run):
         return "An update is already running."
     log = root_of(state_dir) / "state" / LOG
-    cmd = ["systemd-run", "--user", "--collect", "--unit", UNIT, "-p", f"StandardOutput=file:{log}", "-p", f"StandardError=file:{log}",
+    cmd = ["systemd-run", "--user", "--collect", "--unit", UNIT, "-p", f"StandardOutput=truncate:{log}", "-p", f"StandardError=truncate:{log}",
            "-p", f"WorkingDirectory={root_of(state_dir)}", str(script(state_dir)), *([tag] if tag else [])]
     try:
         r = run(cmd, capture_output=True, text=True, timeout=30)
