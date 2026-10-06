@@ -443,4 +443,7 @@ class AddTicketPopup(unittest.TestCase):
         self.assertIn('enctype="multipart/form-data"', with_files)
         self.assertIn('type="file" name="file"', with_files)
         self.assertIn("png up to 3 files", with_files)
+        self.assertNotIn("data-attach", html)
+        self.assertIn('data-attach data-max-files="0" data-max-mb="0"', with_files)
+        self.assertIn('data-max-files="3" data-max-mb="2"', board.add_ticket(["o/r"], "tok", [], "png", (3, 2)))
         self.assertEqual(board.add_ticket(["o/r"], "", []), "")
