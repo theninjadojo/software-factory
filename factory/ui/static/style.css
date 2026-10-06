@@ -943,6 +943,7 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 .wt-bank { fill:none; stroke:#7c6c43; stroke-width:42; stroke-linecap:round; stroke-linejoin:round; }
 .wt-shimmer { fill:none; stroke:#5fa8c4; stroke-width:1.5; stroke-dasharray:6 10; opacity:.6; animation:wt-shim 3s linear infinite; } @keyframes wt-shim { to { stroke-dashoffset:-32; } }
 .gd-grass { fill:url(#tl-grass); } .gd-dirt { fill:url(#tl-dirt); } .gd-sand { fill:url(#tl-sand); } .gd-concrete { fill:url(#tl-concrete); }
+.gd-snow { fill:url(#tl-snow); } .gd-dusting { fill:url(#tl-dusting); } .gd-half { fill:url(#tl-half); } .gd-drifts { fill:url(#tl-drifts); } .gd-prints { fill:url(#tl-prints); } .gd-packed { fill:url(#tl-packed); } .gd-ice { fill:url(#tl-ice); }
 .fc-rail { fill:none; stroke:#a77f45; stroke-width:2.2; } .fc-post { fill:#c4955a; stroke:#5a4228; } .fc-leaf { stroke:#c4955a; stroke-width:3; stroke-linecap:round; }
 .rd-road { fill:none; stroke:#2f363c; stroke-width:18; stroke-linejoin:round; } .rd-line { fill:none; stroke:#9aa3a9; stroke-width:2; stroke-dasharray:9 9; }
 .hz-zone { fill:url(#tl-hazard); stroke:#e0b33a; stroke-width:2; stroke-dasharray:6 4; }
@@ -954,10 +955,15 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 .dk-ripple { fill:none; stroke:#7fb3c8; stroke-width:1.2; }
 .bd-wing { fill:#7a5a3a; } .bd-body { fill:#d0703a; } .bd-head { fill:#9aa3a9; } .bd-bill { fill:#f2a93b; } .bd-tail { fill:#6a4a2a; } .bd-shadow ellipse { fill:rgba(0,0,0,.35); }
 .tr-tree, .tr-pine, .tr-bush, .tr-rock, .tr-pond, .tr-river, .tr-ground, .lt-lamp, .lt-fog, .lt-shade, .fc-gate, .dk-duck, .dk-ripple, .bd-bird, .bd-shadow-wrap, .hz-zone, .rd-road, .rd-line, .fc-rail, .fc-post { pointer-events:none; }
-@media (prefers-reduced-motion:reduce) { .wt-shimmer, .lt-pool, .lt-fog { animation:none !important; } }
+/* snow settling: while it snows the painted grass turns over in stages (grass, a dusting, half covered, snow) and melts back in the same order */
+@keyframes gd-settle { 0%, 12% { fill:url(#tl-grass); } 13%, 38% { fill:url(#tl-dusting); } 39%, 64% { fill:url(#tl-half); } 65%, 100% { fill:url(#tl-snow); } }
+@keyframes gd-melt { 0%, 24% { fill:url(#tl-snow); } 25%, 49% { fill:url(#tl-half); } 50%, 74% { fill:url(#tl-dusting); } 75%, 100% { fill:url(#tl-grass); } }
+html[data-snow="falling"] .gd-grass { animation:gd-settle 40s linear forwards; }
+html[data-snow="melting"] .gd-grass { animation:gd-melt 12s linear forwards; }
+@media (prefers-reduced-motion:reduce) { .wt-shimmer, .lt-pool, .lt-fog { animation:none !important; } html[data-snow="falling"] .gd-grass { animation:none; fill:url(#tl-snow); } html[data-snow="melting"] .gd-grass { animation:none; } }
 .fe-terrain-tools .fe-group { display:inline-flex; flex-wrap:wrap; align-items:center; gap:.3rem; margin-right:.6rem; } .fe-terrain-tools .lab { margin-right:.1rem; }
 .sw { display:inline-block; width:10px; height:10px; margin-right:6px; border:1px solid #59636b; vertical-align:-1px; }
-.sw-grass { background:#1d3624; } .sw-dirt { background:#3a2a1b; } .sw-sand { background:#5b5132; } .sw-concrete { background:#30363b; } .sw-water { background:#102838; }
+.sw-grass { background:#1d3624; } .sw-dirt { background:#3a2a1b; } .sw-sand { background:#5b5132; } .sw-concrete { background:#30363b; } .sw-water { background:#102838; } .sw-snow { background:#dce8ef; } .sw-dusting { background:#6f8f86; } .sw-half { background:#a4bcc0; } .sw-drifts { background:#c7d8e3; } .sw-prints { background:#b3c4d0; } .sw-packed { background:#a9b6bd; } .sw-ice { background:#8fbdd4; }
 .fe-terrain, .fe-preview { pointer-events:none; } .fe-preview { opacity:.8; }
 /* the park (terrain.py PARK), traffic and bridges: side-on pictures moved with SVG animation; none of them takes the pointer */
 .pk-fetch, .pk-playground, .pk-picnic, .pk-bench, .pk-dogwalk, .pk-man, .tf-car, .tf-bridge { pointer-events:none; }
@@ -1017,3 +1023,13 @@ button.ft-step { width:44px; padding:0; font-size:18px; } button.ft-step:disable
 .stage-list li.done { color:var(--good); } .stage-list li.now { color:var(--warn); } .stage-list small { color:var(--muted); }
 .bar { height:6px; background:var(--line); margin:.5rem 0; } .bar div { height:100%; background:var(--accent); }
 @media (max-width:640px) { .stage-list li { min-height:44px; } }
+/* the coffee shop and the fuel station show what the factory is doing (plant.py _shops: data-shops on the floor): idle is dark and still, running
+   is as drawn (the fuel station gets a car at the pumps), a ticket waiting for you lights the windows blue (and queues cars at the pumps), a failure
+   puts out the lights and raises a red lamp on the coffee shop */
+.sf-busy, .sf-queue, .sf-fail { display:none; }
+.fm[data-shops="run"] .pk-t-fuel .sf-busy, .fm[data-shops="wait"] .pk-t-fuel .sf-queue, .fm[data-shops="fail"] .pk-t-coffee .sf-fail { display:inline; }
+.fm[data-shops="idle"] :is(.pk-t-coffee, .pk-t-fuel) :is(.tw-steam, .tw-smoke), .fm[data-shops="fail"] :is(.pk-t-coffee, .pk-t-fuel) :is(.tw-steam, .tw-smoke) { animation:none; opacity:0; }
+.fm[data-shops="idle"] :is(.pk-t-coffee, .pk-t-fuel) .tw-lit { animation:none; fill:#3b464e; }
+.fm[data-shops="idle"] :is(.pk-t-coffee, .pk-t-fuel) .tw-blink { animation:none; opacity:.2; }
+.fm[data-shops="fail"] :is(.pk-t-coffee, .pk-t-fuel) .tw-lit { animation:none; fill:#3a2422; }
+.fm[data-shops="wait"] :is(.pk-t-coffee, .pk-t-fuel) .tw-lit { animation:none; fill:#8fa8ff; }

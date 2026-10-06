@@ -699,7 +699,7 @@ def terrain_shape(t) -> list[str]:
         errs.append(f"A river is 2 to {L['river_points']} points inside the floor (at most {L['rivers']} rivers).")
     tiles = t.get("tiles", {})
     if not isinstance(tiles, dict) or set(tiles) - set(T.GROUNDS):
-        errs.append("The ground is painted in grass, dirt, sand, concrete or water.")
+        errs.append("The ground is painted in grass, dirt, sand, concrete, water, snow or ice.")
     else:
         seen, nruns = set(), 0
         for kind, rs in tiles.items():

@@ -10,9 +10,11 @@
   var TOWN = window.TOWN_ART || {};         // static/town.js, generated: the town's buildings, vehicles and scenery stand like park pieces
   Object.keys(TOWN).forEach(function (k) { PARK[k] = [TOWN[k].w, TOWN[k].h]; PARK_NAMES[k] = TOWN[k].name.toLowerCase(); });
   Object.keys(PARK).forEach(function (k) { SIZES[k] = [PARK[k][0], PARK[k][0]]; });
-  var SOLID = ["tree", "pine", "bush", "rock", "pond"].concat(Object.keys(PARK));
+  var WILD = Object.keys(PARK).filter(function (k) { return /^t-(animal|creature)-/.test(k); });     // they wander and have no hitbox
+  var SOLID = ["tree", "pine", "bush", "rock", "pond"].concat(Object.keys(PARK).filter(function (k) { return WILD.indexOf(k) < 0; }));
   var CAR_COLOURS = ["#d9675b", "#8fa8ff", "#e8edf0", "#f2a93b", "#52c7a1", "#59636b", "#c9a46a", "#b69cff"];
-  var GROUNDS = ["grass", "dirt", "sand", "concrete", "water"];
+  var SNOW = ["snow", "dusting", "half", "drifts", "prints", "packed", "ice"];
+  var GROUNDS = ["grass", "dirt", "sand", "concrete", "water"].concat(SNOW);
   var DIRS = [[1.0, 0.0], [0.9659, 0.2588], [0.866, 0.5], [0.7071, 0.7071], [0.5, 0.866], [0.2588, 0.9659], [0.0, 1.0], [-0.2588, 0.9659],
               [-0.5, 0.866], [-0.7071, 0.7071], [-0.866, 0.5], [-0.9659, 0.2588], [-1.0, 0.0], [-0.9659, -0.2588], [-0.866, -0.5],
               [-0.7071, -0.7071], [-0.5, -0.866], [-0.2588, -0.9659], [0.0, -1.0], [0.2588, -0.9659], [0.5, -0.866], [0.7071, -0.7071],
@@ -162,12 +164,19 @@
     var lx = mirrored ? x + w / 2 - tx : tx - (x - w / 2), ly = ty - (y - h / 2), way = lx < 35 ? "scale(-1 1)" : "scale(1 1)";
     return '<g class="pk-man"><animateMotion path="M 35 37 L ' + f(lx) + " " + f(ly) + '" ' + OM_KEYS + "/>" + OM_SIT + "<g>" + OM_BACK + '<g transform="' + way + '">' + OM_GO + OM_FEED + "</g></g></g>";
   }
+  function wander(body, w, v) {
+    var dx = 50 + (v % 4) * 15, dur = 16 + (v % 7) * 3;
+    return '<g><animateTransform attributeName="transform" type="translate" values="0 0;' + dx + " 0;" + dx + ' 0;0 0;0 0" keyTimes="0;.46;.5;.96;1" dur="' + dur +
+      's" repeatCount="indefinite"/><g transform="translate(' + f(w / 2) + ' 0)"><g><animateTransform attributeName="transform" type="scale" calcMode="discrete" values="1 1;-1 1" keyTimes="0;.5" dur="' +
+      dur + 's" repeatCount="indefinite"/><g transform="translate(' + f(-w / 2) + ' 0)">' + body + "</g></g></g></g>";
+  }
   function park(it, t) {
     var kind = it[0], x = it[1], y = it[2], v = it[4], w = PARK[kind][0], h = PARK[kind][1], mirrored = v % 2 === 1;
     var tf = mirrored ? "translate(" + f(x + w / 2) + " " + f(y - h / 2) + ") scale(-1 1)" : "translate(" + f(x - w / 2) + " " + f(y - h / 2) + ")";
     var body = {fetch: PK_FETCH, playground: PK_PLAYGROUND, picnic: PK_PICNIC, dogwalk: PK_DOGWALK}[kind];
     if (TOWN[kind]) body = '<g class="tw-art">' + TOWN[kind].svg + "</g>";
     if (kind === "bench") body = PK_BENCH + oldMan(it, t, mirrored);
+    if (WILD.indexOf(kind) >= 0) body = wander(body, w, v);
     return '<g class="pk-' + kind + '" transform="' + tf + '">' + body + "</g>";
   }
   function lane(pts, o) {
@@ -275,7 +284,7 @@
   function cellsOf(rs) { var out = []; (rs || []).forEach(function (r) { for (var i = 0; i < r[2]; i++) out.push([r[0] + i, r[1]]); }); return out; }
   function ground(tiles) {
     var out = "";
-    ["grass", "dirt", "sand", "concrete"].forEach(function (kind) {
+    ["grass", "dirt", "sand", "concrete"].concat(SNOW).forEach(function (kind) {
       (tiles[kind] || []).forEach(function (r) { out += '<rect class="gd-' + kind + '" x="' + r[0] * TILE + '" y="' + r[1] * TILE + '" width="' + r[2] * TILE + '" height="' + TILE + '"/>'; });
     });
     var water = tiles.water || [];

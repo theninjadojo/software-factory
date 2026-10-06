@@ -251,12 +251,22 @@
   try { TOD = localStorage.getItem("floor-time") || "auto"; } catch (e) {}
   var WX = "clear";
   try { WX = localStorage.getItem("floor-weather") || "clear"; } catch (e) {}
+  var SNOWING = false, MELT = 0;
+  function settle() {         // snow settles on painted grass in stages while it falls (style.css gd-settle), and melts back in 12 s when it clears
+    var root = document.documentElement;
+    if (WX === "snow" && !SNOWING) { SNOWING = true; clearTimeout(MELT); root.setAttribute("data-snow", "falling"); }
+    else if (WX !== "snow" && SNOWING) {
+      SNOWING = false; root.setAttribute("data-snow", "melting");
+      MELT = setTimeout(function () { root.removeAttribute("data-snow"); }, 12000);
+    }
+  }
   function tod() {
     document.documentElement.setAttribute("data-tod", TOD);
     var phase = -((Date.now() % 40000) / 1000) + "s", sky = document.querySelectorAll(".fm-tod, .fm-nglow"), b = document.querySelectorAll(".fm-time [data-tod]"), i;
     for (i = 0; i < sky.length; i++) sky[i].style.animationDelay = phase;
     for (i = 0; i < b.length; i++) b[i].setAttribute("aria-pressed", b[i].getAttribute("data-tod") === TOD ? "true" : "false");
     document.documentElement.setAttribute("data-wx", WX);
+    settle();
     var flash = -((Date.now() % 6000) / 1000) + "s", fx = document.querySelectorAll(".fm-bolt, .fm-flash");     // the lightning keeps its own 6 s beat
     for (i = 0; i < fx.length; i++) fx[i].style.animationDelay = flash;
     var w = document.querySelectorAll(".fm-time [data-wx]");
