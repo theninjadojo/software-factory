@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><script src="./support.js"></script></head>
+<body><x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;700&family=JetBrains+Mono&display=swap"><style>body{margin:0;background:#12161a}</style></helmet>
+<div style="width:390px;box-sizing:border-box;padding:24px;background:#12161a;color:#e8edf0;font-family:'Space Grotesk',system-ui,sans-serif;font-size:15px">
+<section style="background:#1b2126;border:1px solid #2d363d;padding:20px 24px;margin:0 0 20px">
+<h3 style="margin:0 0 6px;font-size:18px;font-weight:700">Needs a person: low confidence</h3>
+<p style="margin:0 0 14px;color:#a9b5bd">Confidence 0.62, below the threshold of 0.75.</p>
+<table style="border-collapse:collapse;width:100%;font-size:15px"><thead><tr style="text-align:left;color:#9aa7b0;font-size:13px"><th style="padding:6px 8px;border-bottom:1px solid #2d363d">Answer</th><th style="padding:6px 8px;border-bottom:1px solid #2d363d">Choice</th><th style="padding:6px 8px;border-bottom:1px solid #2d363d">Score</th><th style="padding:6px 8px;border-bottom:1px solid #2d363d">Against 0.75</th></tr></thead><tbody>
+<tr><td style="padding:8px">Kind</td><td style="padding:8px">feature</td><td style="padding:8px;font-family:'JetBrains Mono',monospace">0.91</td><td style="padding:8px;color:#52c7a1">Above</td></tr>
+<tr style="background:#232a30"><td style="padding:8px"><b>Size (weakest)</b></td><td style="padding:8px">medium</td><td style="padding:8px;font-family:'JetBrains Mono',monospace">0.62</td><td style="padding:8px;color:#f2a93b">Below by 0.13</td></tr>
+<tr><td style="padding:8px">Needs a person</td><td style="padding:8px">no</td><td style="padding:8px;font-family:'JetBrains Mono',monospace">0.88</td><td style="padding:8px;color:#52c7a1">Above</td></tr>
+<tr><td style="padding:8px">Next stage</td><td style="padding:8px">designer</td><td style="padding:8px;font-family:'JetBrains Mono',monospace">0.80</td><td style="padding:8px;color:#52c7a1">Above</td></tr></tbody></table>
+<p style="margin:12px 0 16px;color:#a9b5bd;font-size:13px">Scored by the Jev classifier. The overall score is the lowest of these.</p>
+<div style="display:flex;gap:10px;flex-wrap:wrap"><a href="#" style="background:#f2a93b;color:#1a1204;padding:12px 18px;font-weight:700;text-decoration:none;min-height:24px">Build</a><a href="#" style="border:1px solid #3b464e;color:#e8edf0;padding:12px 18px;text-decoration:none">Skip</a><a href="#" style="border:1px solid #3b464e;color:#e8edf0;padding:12px 18px;text-decoration:none">Run designer first</a></div>
+</section>
+<section style="background:#1b2126;border:1px solid #2d363d;padding:20px 24px;margin:0 0 20px">
+<h3 style="margin:0 0 6px;font-size:18px;font-weight:700">Needs a person: low confidence</h3>
+<p style="margin:0;color:#a9b5bd">The labels-only classifier is in use and the size label is missing (fixed confidence 0.40, threshold 0.75). Add a size label to this ticket, or choose below.</p>
+</section>
+<section style="background:#1b2126;border:1px solid #2d363d;padding:20px 24px;margin:0">
+<h3 style="margin:0 0 6px;font-size:18px;font-weight:700">Needs a person: low confidence</h3>
+<p style="margin:0;color:#a9b5bd">Decided before scores were recorded. The scores for this decision are not available.</p>
+</section>
+</div>
+</x-dc></body></html>
