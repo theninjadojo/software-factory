@@ -64,7 +64,7 @@ class Chain(unittest.TestCase):
         route = Route("claude-code", "opus", "high", fallbacks)
         fake = mock.Mock(side_effect=results)
         with mock.patch.object(m.runner, "run_task", fake), mock.patch.object(m, "alert") as alert, tempfile.TemporaryDirectory() as d:
-            out = m.run_chain(None, None, "build", "o/r", ISSUE, route)
+            out = m.run_chain(mock.Mock(design_links=mock.Mock(enabled=False)), None, "build", "o/r", ISSUE, route)
         return out, fake, alert
 
     def test_falls_back_in_order_until_success(self):

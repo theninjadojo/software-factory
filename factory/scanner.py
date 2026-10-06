@@ -107,6 +107,8 @@ def regex_problem(pattern: str) -> str:
                     return "inline flags other than (?i) are not allowed"
             stack.append([False, False])
             i += 1
+            if pattern.startswith("?", i):                   # the ? of (?:, (?P<n> and (?i) opens the group; it is not a quantifier
+                i += 2 if not pattern.startswith("?P<", i) else max(pattern.find(">", i), i) - i + 1
             continue
         if c == ")":
             if len(stack) > 1:
