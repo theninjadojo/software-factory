@@ -13,7 +13,7 @@ STATIC = Path(terrain.__file__).parent / "static"
 class TownTest(unittest.TestCase):
     def test_every_piece_is_a_park_piece_with_a_box_a_name_and_a_tool(self):
         tools = {t for _, ts in flooredit.TERRAIN_TOOLS for t, _ in ts}
-        self.assertEqual(len(ART), 55)
+        self.assertEqual(len(ART), 70)
         for kind, a in ART.items():
             self.assertIn(kind, terrain.KINDS)
             self.assertIn(kind, terrain.SOLID)

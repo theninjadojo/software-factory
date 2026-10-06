@@ -96,7 +96,7 @@ def _page(h, csrf: str, ctx, text: str, rev: str, status: int = 200, flash=None,
             'ponds and rivers (belts and track cannot cross water), ground tiles, walls (a belt goes under one with an underground belt), '
             'fences and gates (trains pass only at a gate), roads, hazard zones (nothing may be built in one), lamps, fog and shade; birds '
             'and ducks move in by themselves. Cars drive on every road, and where track crosses a road it goes over a bridge. Add a park: '
-            'fetch with a dog, a playground, a picnic, a bench whose old man walks to the nearest water to feed the ducks, and a dog walker. A town goes in the same way: zones, shops, civic, leisure and utility buildings, landmarks, nature, vehicles and small moments. '
+            'fetch with a dog, a playground, a picnic, a bench whose old man walks to the nearest water to feed the ducks, and a dog walker. A town goes in the same way: zones, shops, civic, leisure and utility buildings, landmarks, nature, animals and mythical creatures, snowmen, vehicles and small moments. '
             'Buildings, the park and the trees, bushes, rocks and ponds have hitboxes, so nothing is placed on top of another (Show '
             'hitboxes draws them); cars, birds and trains pass over and under. The harbor goes anywhere: its belt takes the ships\' '
             'tickets to Receiving. Notifiers are wireless: put them anywhere, nothing to connect. Workers are train stops outside the factory: '
