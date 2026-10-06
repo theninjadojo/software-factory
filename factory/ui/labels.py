@@ -360,6 +360,16 @@ def ticket_dialog(dom_id: str, label: str, sub: str, form: str, kind: str = "") 
             f'<div class="nd-form">{form}</div></dialog>')
 
 
+ATTACH_ACCEPT = ".png,.jpg,.jpeg,.gif,.pdf,.txt,.md,.log,.json,.csv"
+
+
+def attach_field(label: str, help_text: str, max_files: int = 0, max_mb: int = 0) -> str:
+    """The file picker of a create form. app.js adds paste, drop, the list and the client-side limits (data-attach); the server vets every file."""
+    return (f'<div class="at" data-attach data-max-files="{int(max_files)}" data-max-mb="{int(max_mb)}"><label>{esc(label)}'
+            f'<input type="file" name="file" multiple accept="{ATTACH_ACCEPT}"></label>'
+            f'<p class="muted">{esc(help_text)}</p></div>')
+
+
 def new_ticket_form(cfg, repo: str, csrf: str) -> str:
     from . import localtickets as LT
     if not csrf or not cfg.repos:
@@ -373,8 +383,7 @@ def new_ticket_form(cfg, repo: str, csrf: str) -> str:
                '<option value="github">GitHub issues</option></select></label>' if cfg.local_enabled else
                '<p class="muted ft-note">It becomes a GitHub issue. Local tickets, kept in the factory, are off. '
                '<a href="/tickets?ask=local#tk-settings">Turn them on</a></p>')
-            + (f'<label>Attachments (optional, local tickets only)<input type="file" name="file" multiple '
-               f'accept=".png,.jpg,.jpeg,.gif,.pdf,.txt,.md,.log,.json,.csv"></label><p class="muted">{esc(LT.attach_help(cfg))}</p>'
+            + (attach_field("Attachments (optional, local tickets only)", LT.attach_help(cfg), cfg.attach_max_files, cfg.attach_max_mb)
                if cfg.local_enabled else '')
             + f'{start_field([r.name for r in cfg.roles])}'
             '<button>Create ticket</button></form>')

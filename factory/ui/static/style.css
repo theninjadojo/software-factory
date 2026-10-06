@@ -1043,3 +1043,9 @@ html[data-snow="melting"] .gd-grass { animation:gd-melt 12s linear forwards; }
 .fm[data-shops="wait"] :is(.pk-t-coffee, .pk-t-fuel) .tw-lit { animation:none; fill:#8fa8ff; }
 .chat-turn { margin:0 0 14px; padding:10px 14px; border:1px solid var(--line); } .chat-turn p { margin:0 0 6px; } .chat-agent { background:var(--panel); border-left:3px solid var(--text); }
 .chat-text { white-space:pre-wrap; overflow-wrap:anywhere; } .chat-proposal { margin:0 0 14px; padding:10px 14px; border:1px dashed var(--line); }
+.at-zone { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem; padding:.75rem; border:1px dashed var(--line2); } .at-zone label { margin:0; } .at-zone.drag { border-style:solid; border-color:var(--blue); }
+.at-hint { font-size:.9rem; } .at-list { list-style:none; margin:.5rem 0 0; padding:0; display:grid; gap:.4rem; } .at-list:empty { display:none; }
+.at-row { display:flex; align-items:center; gap:.7rem; padding:.4rem; border:1px solid var(--line); background:var(--panel2); } .at-txt { display:grid; min-width:0; flex:1; } .at-txt .muted { font-size:.8rem; }
+.at-name { font-family:var(--mono); font-size:.85rem; overflow-wrap:anywhere; } .at-thumb { width:48px; height:48px; flex:none; background:var(--bg); border:1px solid var(--line); display:flex; } .at-thumb img { width:100%; height:100%; object-fit:cover; }
+.at-status { margin:.4rem 0 0; font-size:.85rem; } .at-status:empty { display:none; } .at-ok { color:var(--good); }
+@media (max-width:760px) { .at-hint { display:none; } .at-row button { min-height:44px; } }

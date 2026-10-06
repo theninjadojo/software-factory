@@ -372,4 +372,85 @@
     get(box.getAttribute("data-src")).then(function (html) { if (html !== null && box.isConnected) box.outerHTML = html; }).catch(function () {});
   }
   setInterval(chatTick, 3000);
+
+  // --- Create forms: paste or drop images next to the file picker. One list feeds the form's file input (DataTransfer), so the server gets
+  // the same multipart "file" parts as with the picker and vets each one. Limits here only save a failed submit.
+  var TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif" }, EXT = /\.(png|jpe?g|gif|pdf|txt|md|log|json|csv)$/i;
+  function size(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"; }
+  function setupAttach(box) {
+    var input = box.querySelector("input[type=file]");
+    if (!input || typeof DataTransfer === "undefined" || box.hasAttribute("data-ready")) return;
+    box.setAttribute("data-ready", "");
+    var maxFiles = +box.getAttribute("data-max-files") || 0, maxMb = +box.getAttribute("data-max-mb") || 0;
+    var files = [], pasted = 0, mac = /Mac|iPhone|iPad/.test(navigator.platform || "");
+    var label = input.parentNode, zone = document.createElement("div"), hint = document.createElement("span");
+    zone.className = "at-zone"; hint.className = "at-hint muted";
+    hint.textContent = "or paste a screenshot (" + (mac ? "Cmd+V" : "Ctrl+V") + ") or drop images here";
+    label.parentNode.insertBefore(zone, label.nextSibling); zone.appendChild(label); zone.appendChild(hint);
+    var list = document.createElement("ul"), status = document.createElement("p");
+    list.className = "at-list"; list.setAttribute("aria-label", "Attached files");
+    status.className = "at-status"; status.setAttribute("role", "status");
+    var help = box.querySelector("p.muted");
+    box.insertBefore(list, help); box.insertBefore(status, help);
+    function say(msg, bad) { status.textContent = msg; status.className = "at-status " + (bad ? "bad-text" : "at-ok"); status.setAttribute("role", bad ? "alert" : "status"); }
+    function count() { return files.length + " of " + (maxFiles || "\u221e") + " files attached."; }
+    function sync() {
+      var dt = new DataTransfer();
+      files.forEach(function (f) { dt.items.add(f); });
+      input.files = dt.files;
+      list.textContent = "";
+      files.forEach(function (f) {
+        var li = document.createElement("li"), th = document.createElement("span"), txt = document.createElement("span"),
+            nm = document.createElement("span"), meta = document.createElement("span"), rm = document.createElement("button");
+        li.className = "at-row"; th.className = "at-thumb"; txt.className = "at-txt"; nm.className = "at-name"; meta.className = "muted";
+        nm.textContent = f.name;
+        meta.textContent = (f.name.split(".").pop() || "").toUpperCase() + " \u00b7 " + size(f.size);
+        if (/^image\/(png|jpeg|gif)$/.test(f.type)) {
+          var r = new FileReader(), im = document.createElement("img");
+          im.alt = ""; r.onload = function () { im.src = r.result; th.appendChild(im); }; r.readAsDataURL(f);
+        }
+        rm.type = "button"; rm.className = "secondary"; rm.textContent = "Remove"; rm.setAttribute("aria-label", "Remove " + f.name);
+        rm.addEventListener("click", function () {
+          files.splice(files.indexOf(f), 1); sync(); say("Removed " + f.name + ". " + count());
+          var next = list.querySelectorAll("button")[0]; (next || input).focus();
+        });
+        txt.appendChild(nm); txt.appendChild(meta); li.appendChild(th); li.appendChild(txt); li.appendChild(rm); list.appendChild(li);
+      });
+    }
+    function add(incoming) {
+      var added = [];
+      incoming.forEach(function (f) {
+        var ext = TYPES[f.type], name = f.name;
+        if (f.type === "image/webp") return say("That image is WebP, which is not allowed. Take a screenshot instead, or save it as png or jpg.", true);
+        if (ext && !EXT.test(name)) { pasted++; name = "pasted-image-" + pasted + "." + ext; f = new File([f], name, { type: f.type }); }
+        else if (ext && /^(image\.png|image\.jpe?g|image\.gif|blob)$/i.test(name)) { pasted++; name = "pasted-image-" + pasted + "." + ext; f = new File([f], name, { type: f.type }); }
+        if (!EXT.test(name)) return say(name + " is a " + ((name.split(".").pop() || "").toUpperCase() || "this type of") + " file, which is not allowed. Use png, jpg or gif for images.", true);
+        if (maxFiles && files.length >= maxFiles) return say("You can attach up to " + maxFiles + " files. " + name + " was not added.", true);
+        if (maxMb && f.size > maxMb * 1048576) return say(name + " is " + (f.size / 1048576).toFixed(1) + " MB. The limit is " + maxMb + " MB per file.", true);
+        files.push(f); added.push(name);
+      });
+      if (added.length) { sync(); say("Added " + added.join(", ") + ". " + count()); }
+    }
+    input.addEventListener("change", function () { var picked = Array.prototype.slice.call(input.files); input.value = ""; add(picked); });
+    var form = box.closest("form");
+    form.addEventListener("paste", function (e) {
+      var items = (e.clipboardData && e.clipboardData.items) || [], imgs = [];
+      for (var i = 0; i < items.length; i++) if (items[i].kind === "file" && /^image\//.test(items[i].type)) imgs.push(items[i].getAsFile());
+      if (!imgs.length) return;
+      e.preventDefault(); add(imgs.filter(Boolean));
+    });
+    ["dragenter", "dragover"].forEach(function (t) {
+      form.addEventListener(t, function (e) {
+        if (!e.dataTransfer || Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") < 0) return;
+        e.preventDefault(); zone.classList.add("drag"); hint.textContent = "Drop images to attach them";
+      });
+    });
+    function undrag() { zone.classList.remove("drag"); hint.textContent = "or paste a screenshot (" + (mac ? "Cmd+V" : "Ctrl+V") + ") or drop images here"; }
+    form.addEventListener("dragleave", function (e) { if (!form.contains(e.relatedTarget)) undrag(); });
+    form.addEventListener("drop", function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+      e.preventDefault(); undrag(); add(Array.prototype.slice.call(e.dataTransfer.files));
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-attach]"), setupAttach);
 })();
