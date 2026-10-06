@@ -199,6 +199,30 @@ class Inline(UiCase):
         self.assertEqual(rows[0]["st"].stage, "architect")
         L._needs_cache.update(at=0.0, rows=None)
 
+    def test_github_off_still_reads_the_questions_of_local_tickets(self):
+        from factory import tracker
+        from factory.ui import labels as L
+        L._needs_cache.update(at=0.0, rows=None)
+        L._logins.clear()
+        local = tracker.LOCAL_BASE + 1
+        gh = mock.MagicMock()
+        gh.login.return_value = "bot"
+        gh.get_issue.side_effect = lambda repo, n: {"number": n, "title": "Mine", "state": "open", "labels": []}
+        h = mock.MagicMock()
+        h.app.cfg.return_value = mock.MagicMock(repos=[REPO], github_issues_enabled=False, local_enabled=True)
+        h.app.ro_db.return_value = self.app.ro_db()
+        with mock.patch("factory.ui.labels._gh", return_value=gh), \
+             mock.patch("factory.ui.labels.dbm.questions_waiting", return_value={19, local}), \
+             mock.patch("factory.ui.labels.actions_for", return_value=("", [])), \
+             mock.patch("factory.ui.labels.Q.from_comments", side_effect=lambda c, me: c), \
+             mock.patch("factory.ui.labels.Q.latest", side_effect=lambda c: Q.StageQuestions("architect", [_Q1])), \
+             mock.patch.object(gh, "issue_comments", side_effect=lambda repo, n: n):
+            rows = L.needs_you(h)
+        self.assertEqual([r["issue"] for r in rows], [local])                      # the GitHub issue is not read; the local ticket's questions are
+        gh.issues.assert_not_called()
+        self.assertEqual([c.args[1] for c in gh.get_issue.call_args_list], [local])
+        L._needs_cache.update(at=0.0, rows=None)
+
     def test_waiting_tickets_older_than_the_first_page_are_fetched_by_number(self):
         from factory.ui import labels as L
         L._needs_cache.update(at=0.0, rows=None)

@@ -444,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
         # ticket's detail (its questions come from GitHub) loads in place, behind a loader. A fragment always reads GitHub.
         fragment = path.startswith("/fragment/")
         gh_on = cfg.github_issues_enabled
-        needs = (L.needs_you(self) if fragment else L.needs_cached()) if gh_on else None
+        needs = L.needs_you(self) if fragment or not gh_on else L.needs_cached()      # GitHub off: only local tickets are read, no GitHub call
         cold = gh_on and needs is None and not fragment and L.has_token(self)
         try:
             all_rows = board.ticket_rows(db, needs, L.titles_cached(), now, cfg.github_issues_enabled)
@@ -504,7 +504,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
         self.app.refresh_update_notice()
-        cached = L.needs_cached() if self.app.cfg().github_issues_enabled else None                            # the nav count: never a GitHub call, only what the tray already read
+        cached = L.needs_cached()                            # the nav count: never a GitHub call, only what the tray already read
         badges = {"/tickets": len(cached)} if cached else None
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))
         flt = q.get("need", "") if q.get("need") in ("questions", "decisions") else ""
@@ -513,7 +513,7 @@ class Handler(BaseHTTPRequestHandler):
             d = self.app.overview()
             d["settings_strip"] = features.factory_strip(self.app.cfg(), d["paused"], csrf)
             gh_on = self.app.cfg().github_issues_enabled
-            needs = (L.needs_you(self) if path == "/fragment/overview" else L.needs_cached()) if gh_on else None
+            needs = L.needs_you(self) if path == "/fragment/overview" or not gh_on else L.needs_cached()
             if gh_on and needs is None and path == "/" and L.has_token(self):
                 d["needs_loading"] = True
             db = self.app.ro_db()
