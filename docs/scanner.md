@@ -13,7 +13,10 @@ A scan reads a configured repository on a timer, looks for smells, and opens one
    They are grouped per smell, at most `max_tickets` tickets are opened per run, and a smell whose last ticket is still open is skipped
    (its findings are considered again next run). Findings that are filed are not filed again, even after the ticket is closed.
 
-Presets: `todo-debt`, `long-files` (over `max_lines`, default 800), `missing-tests`. Custom smells are a regular expression per line plus file globs.
+Presets: `todo-debt`, `long-files` (over `max_lines`, default 800), `missing-tests`. Also, for Python and JS/TS and with a default fix each (opt-in per scan, never added to existing scans):
+security (`hardcoded-secret`, whose matched text is redacted to `[REDACTED]` by the recipe; `dynamic-eval`, `shell-injection`, `tls-verify-off`,
+`weak-hash`, `sql-concat`) and rough structure checks (`long-parameter-list`, `deep-nesting`). These are per-line patterns, so approximations: there is
+no real SOLID or design-pattern detection. Update the worker's copy of `smell-scan.py` too: an older recipe ignores the redacting rule. Custom smells are a regular expression per line plus file globs.
 Instruction (agent-evaluated) smells are not implemented yet.
 
 ## Behaviour and safety
@@ -30,8 +33,9 @@ Instruction (agent-evaluated) smells are not implemented yet.
 Settings → **Scans** lists the scans (status, next run, **Run now**) and has a form to add, edit or delete one. The **Smell library** tab lists the
 three presets and your own smells, with a form for a smell: a name (lower-case id, fixed once created), a regular expression matched per line, file
 globs, and an optional recommended fix. Anything saved goes to `config.overrides.toml` (the first save copies the hand-written `[[scanner.smells]]`
-and `[[scanner.scans]]` across, because a list in the overrides replaces the one in `config.toml`); the factory applies it when next idle. Turning the
-scanner on (`[scanner] enabled`) stays in `config.toml`. **Test on sample text** runs the real recipe on pasted lines in a throw-away folder: nothing
+and `[[scanner.scans]]` across, because a list in the overrides replaces the one in `config.toml`); the factory applies it when next idle. The Scans page
+turns the scanner on and off (`[scanner] enabled`, saved to the overrides, applied when next idle); it refuses while `[workers] enabled` is
+off and links to Workers instead. **Test on sample text** runs the real recipe on pasted lines in a throw-away folder: nothing
 is saved and no repository is read. Anyone who can sign in to the UI can change smells and scans.
 
 ## Recommended fix

@@ -58,6 +58,21 @@ def tabs(active: str) -> str:
     return f'<p class="muted">{link("/scans", "Scans", "scans")} · {link("/scans/edit", "New scan", "new")} · {link("/scans/smells", "Smell library", "smells")}</p>'
 
 
+def toggle_html(cfg, csrf: str) -> str:
+    """The master switch. Off: the banner says why nothing runs and offers to turn scans on (only when workers are on; else it links to Workers).
+    On: a one-line state with a button to turn them off."""
+    def form(want: str, label: str) -> str:
+        return (f'<form method="post" action="/scans/enable" class="inline">{csrf_field(csrf)}<input type="hidden" name="enabled" value="{want}">'
+                f'<button type="submit">{label}</button></form>')
+    if cfg.scanner.enabled:
+        return (f'<p class="muted" role="status">Scans are <strong>on</strong>. They need a worker with the <code>smell-scan</code> recipe. {form("0", "Turn scans off")}</p>')
+    if not cfg.workers.enabled:
+        return ('<p class="flash bad" role="status">Scans are switched off, and they need workers: <a href="/workers">turn on workers</a> first, '
+                'then come back here. Nothing below runs until then.</p>')
+    return ('<p class="flash bad" role="status">Scans are switched off. Nothing below runs until you turn them on; they also need a worker with the '
+            f'<code>smell-scan</code> recipe. A scan that has just been added waits for its first due time. {form("1", "Turn scans on")}</p>')
+
+
 def list_page(cfg, db, csrf: str, now: float | None = None) -> str:
     now = time.time() if now is None else now
     states, asked = read_state(db)
@@ -93,8 +108,7 @@ def list_page(cfg, db, csrf: str, now: float | None = None) -> str:
              f'<br><span class="muted">{"scans do not run" if cfg.dry_run else "scans open tickets"}</span></div></div>')
     head = ('<p class="muted">Look for code smells on a timer and open one ticket per smell, with a recommended fix. '
             '<a href="/scans/edit">New scan</a> · <a href="/scans/smells">Smell library</a></p>')
-    off = ('' if cfg.scanner.enabled else '<p class="flash bad" role="status">Scans are switched off: set <code>enabled = true</code> under <code>[scanner]</code> '
-           'in config.toml (it needs <code>[workers] enabled</code> and a worker with the <code>smell-scan</code> recipe). Nothing below runs until then.</p>')
+    off = toggle_html(cfg, csrf)
     if not scans:
         return head + off + ('<p>No scans yet. A scan reads a repository on a timer and opens one ticket per smell, each with a recommended fix. '
                              '<a href="/scans/edit">Add the first one</a>, or see <code>docs/scanner.md</code>.</p>')
@@ -111,13 +125,13 @@ def smells_page(cfg, csrf: str) -> str:
     rows = ""
     for sid, (name, desc, rule) in sn.smell_table(cfg.scanner).items():
         preset = sid in sn.PRESETS
-        what = f'<code>{esc(rule["pattern"])}</code>' if rule["type"] == "regex" else esc(desc)
-        files = esc(", ".join(rule.get("globs", []))) if rule["type"] == "regex" else '<span class="muted">—</span>'
+        what = f'<code>{esc(rule["pattern"])}</code>' if "pattern" in rule else esc(desc)
+        files = esc(", ".join(rule.get("globs", []))) if "pattern" in rule else '<span class="muted">—</span>'
         rows += (f'<tr><td data-l="Name"><a href="/scans/smells/edit?id={esc(sid)}">{esc(sid)}</a><br><span class="muted">{esc(name)}</span></td>'
                  f'<td data-l="Kind">{"preset" if preset else "yours"}</td><td data-l="Pattern or rule" class="wrap">{what}</td><td data-l="Files">{files}</td>'
                  f'<td data-l="Fix advice">{"yes" if sn.advice_for(cfg.scanner, sid) else "no"}</td>'
                  f'<td data-l=""><a href="/scans/smells/edit?id={esc(sid)}">Edit</a></td></tr>')
-    own = "" if cfg.scanner.smells else '<p class="muted">Only the three built-in smells so far. Add your own.</p>'
+    own = "" if cfg.scanner.smells else '<p class="muted">Only the built-in smells so far. Add your own.</p>'
     return (tabs("smells") + '<p><a href="/scans/smells/edit">New smell</a></p>'
             '<div class="scroll"><table class=stack><thead><tr><th>Name</th><th>Kind</th><th>Pattern or rule</th><th>Files</th><th>Fix advice</th><th></th></tr></thead>'
             f'<tbody>{rows}</tbody></table></div>{own}'
@@ -352,6 +366,19 @@ def store(cfg_path: str, state_dir: Path, key: str, name: str, entry: dict | Non
         table.pop(key, None)
     else:
         table[key] = out
+    if not table:
+        new_ov.pop("scanner")
+    S._commit(cfg_path, state_dir, new_ov)
+
+
+def set_enabled(cfg_path: str, state_dir: Path, on: bool) -> None:
+    """Write `[scanner] enabled` to the overrides (dropped when the hand-written file already says the same). _commit refuses it when workers are off."""
+    base, new_ov = S.base_raw(cfg_path), copy.deepcopy(S.overrides_raw(cfg_path))
+    table = new_ov.setdefault("scanner", {})
+    if on == bool(base.get("scanner", {}).get("enabled", False)):
+        table.pop("enabled", None)
+    else:
+        table["enabled"] = on
     if not table:
         new_ov.pop("scanner")
     S._commit(cfg_path, state_dir, new_ov)

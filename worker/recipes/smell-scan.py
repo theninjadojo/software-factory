@@ -25,6 +25,9 @@ TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e"}
 IGNORED_STEMS = {"__init__", "__main__", "conftest", "setup"}
 
 
+REGEX_KINDS = ("regex", "regex-redact")      # regex-redact: the matched text is replaced by [REDACTED] in the snippet (secrets)
+
+
 class Slow(Exception):
     pass
 
@@ -106,7 +109,7 @@ def scan(root: str, params: dict) -> list[dict]:
             out.append({"smell": smell, "path": path, "line": line, "snippet": snippet.strip()[:300]})
 
     rules = params.get("smells", [])
-    regexes = {r["id"]: (re.compile(r["pattern"]), [glob_re(g) for g in r.get("globs", ["**/*"])]) for r in rules if r["type"] == "regex"}
+    regexes = {r["id"]: (re.compile(r["pattern"]), [glob_re(g) for g in r.get("globs", ["**/*"])]) for r in rules if r["type"] in REGEX_KINDS}
     slow: dict[str, int] = {}
     test_names = {os.path.basename(rel).lower() for rel, _ in files if is_test(rel)}
     for rel, full in files:
@@ -114,7 +117,7 @@ def scan(root: str, params: dict) -> list[dict]:
         text = None
         for r in rules:
             sid, kind = r["id"], r["type"]
-            if kind == "regex":
+            if kind in REGEX_KINDS:
                 pattern, globs = regexes[sid]
                 if slow.get(sid, 0) < MAX_SLOW and any(g.fullmatch(rel) for g in globs):
                     text = lines_of(full) if text is None else text
@@ -122,7 +125,7 @@ def scan(root: str, params: dict) -> list[dict]:
                         with time_limit(FILE_SECONDS):
                             for n, line in enumerate(text, 1):
                                 if pattern.search(line[:MAX_LINE]):
-                                    add(sid, rel, n, line)
+                                    add(sid, rel, n, pattern.sub("[REDACTED]", line[:MAX_LINE]) if kind == "regex-redact" else line)
                     except Slow:
                         slow[sid] = slow.get(sid, 0) + 1
                         print(f"[smell-scan] smell {sid}: {rel} skipped, the pattern took more than {FILE_SECONDS:g}s", file=sys.stderr)

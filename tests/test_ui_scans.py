@@ -99,6 +99,33 @@ class Scans(AdminCase):
         self.assertEqual(self.post(self.cookie, self.csrf, "/scans/smells/delete", {"id": "hardcoded-url", "confirm": "1"})[0], 303)
         self.assertEqual(self.cfg().scanner.smells, ())
 
+    def test_enable_needs_csrf_a_boolean_and_workers(self):
+        self.assertEqual(self.req("POST", "/scans/enable", "enabled=1", cookie=self.cookie)[0], 403)
+        self.assertEqual(self.post(self.cookie, self.csrf, "/scans/enable", {"enabled": "yes"})[0], 400)
+        s, _, html = self.post(self.cookie, self.csrf, "/scans/enable", {"enabled": "1"})          # workers are off in the test config
+        self.assertEqual(s, 422)
+        self.assertIn("Workers", html)
+        self.assertEqual(self.overrides().get("scanner"), None)
+        self.assertFalse((self.state / "RESTART").exists())
+
+    def test_enable_writes_the_override_when_workers_are_on(self):
+        ov = self.root / "config.overrides.toml"
+        ov.write_text("[workers]\nenabled = true\n")
+        s, h, _ = self.post(self.cookie, self.csrf, "/scans/enable", {"enabled": "1"})
+        self.assertEqual((s, h["Location"]), (303, "/scans?ok=scan_enabled"))
+        self.assertIs(self.overrides()["scanner"]["enabled"], True)
+        self.assertTrue((self.state / "RESTART").exists())
+        self.assertIn("Turn scans off", self.req("GET", "/scans", cookie=self.cookie)[2])
+        self.assertEqual(self.post(self.cookie, self.csrf, "/scans/enable", {"enabled": "0"})[0], 303)
+        self.assertNotIn("scanner", self.overrides())
+
+    def test_new_presets_are_listed_with_advice_and_none_is_added_to_a_scan(self):
+        for sid in ("hardcoded-secret", "dynamic-eval", "deep-nesting"):
+            self.assertIn(sid, scanner.PRESETS)
+            self.assertIn(sid, self.req("GET", "/scans/smells", cookie=self.cookie)[2])
+        self.assertTrue(scanner.advice_for(self.cfg().scanner, "hardcoded-secret"))
+        self.assertEqual(scanner.advice_for(self.cfg().scanner, "long-files"), "")
+
     def test_run_now_queues_a_request_for_the_orchestrator(self):
         self.smell()
         self.post(self.cookie, self.csrf, "/scans/save", SCAN)

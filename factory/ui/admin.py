@@ -30,6 +30,8 @@ FLASH = {
     "sched_saved": "Schedule saved. The factory applies it at its next idle moment (never mid-task).",
     "sched_deleted": "Schedule deleted. Snapshots already on disk were kept.",
     "scan_saved": "Scan saved. The factory applies it at its next idle moment (never mid-task).",
+    "scan_enabled": "Scans turned on. The factory applies it at its next idle moment (never mid-task); scans never run in dry-run or while paused.",
+    "scan_disabled": "Scans turned off. The factory applies it at its next idle moment.",
     "scan_deleted": "Scan deleted. Tickets already opened were kept.",
     "scan_run": "Scan requested. It starts within a poll (up to a minute); tickets follow when the worker has finished. Nothing runs in dry-run or while paused.",
     "smell_saved": "Smell saved. The factory applies it at its next idle moment (never mid-task).",
@@ -535,6 +537,21 @@ def scans_run(h, form, csrf: str) -> None:
     h._redirect("/scans?ok=scan_run")
 
 
+def scans_enable(h, form, csrf: str) -> None:
+    """The master switch of the Scans page. Nothing is written when workers are off or the value is not 0 or 1."""
+    want = form.get("enabled", "")
+    if want not in ("0", "1"):
+        return h._send(400, "enabled must be 0 or 1", "text/plain")
+    if want == "1" and not h.app.cfg().workers.enabled:
+        return _scan_page(h, csrf, "Scans", '<p>Scans read the code on a worker. <a href="/workers">Turn on workers</a> first.</p>', 422,
+                          "Scans need [workers] enabled.", "bad")
+    try:
+        SN.set_enabled(h.app.config_path, h.app.state_dir(), want == "1")
+    except S.SettingsError as e:
+        return _scan_page(h, csrf, "Scans", "", 422, " · ".join(e.messages), "bad")
+    h._redirect("/scans?ok=scan_enabled" if want == "1" else "/scans?ok=scan_disabled")
+
+
 def scans_save(h, form, csrf: str) -> None:
     cfg, orig = h.app.cfg(), form.get("orig", "")
     existing = next((x for x in SN.raw_scanner(h.app.config_path).get("scans", []) if x.get("name") == orig), None) if orig else None
@@ -735,7 +752,7 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
 
 GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/tickets/review": TRV.review_get, "/fragment/chat": CH.fragment_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get}
-POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
+POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/tools/check": tools_check, "/tools/update": tools_update, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
