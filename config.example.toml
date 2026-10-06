@@ -310,7 +310,7 @@ bypass_label = "factory:skip-mockup"
 # metrics = ["path", "referrer", "browser", "device", "country"]
 
 # Code-smell scans (docs/scanner.md): on a timer a worker reads a repo for smells and the factory opens one ticket per smell.
-# Needs [workers] enabled and a worker with the smell-scan recipe (worker/recipes/smell-scan.py). Presets: todo-debt, long-files, missing-tests.
+# Needs [workers] enabled and a worker with the smell-scan recipe (worker/recipes/smell-scan.py). Presets: todo-debt, long-files, missing-tests, hardcoded-secret, dynamic-eval, shell-injection, tls-verify-off, weak-hash, sql-concat, long-parameter-list, deep-nesting.
 # [scanner]
 # enabled = false
 # max_tickets = 5                      # opened per scan run
