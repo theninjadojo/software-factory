@@ -196,8 +196,12 @@ def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -
     j = dbm.journey(db, t["repo"], int(t["issue"]), now)
     st = stations(j, prs)
     loc = LT.info(db, t["repo"], int(t["issue"])) if is_local(int(t["issue"])) else None
-    if need is None and (known or (loc and loc["state"] == "closed")):     # a closed local ticket waits for no one
-        st = {k: ("done" if v == "wait" else v) for k, v in st.items()}
+    if need is None:
+        closed = known or (loc and loc["state"] == "closed")     # a closed local ticket waits for no one
+        ids = [sid for sid, _ in STATIONS]
+        past = max((i for i, sid in enumerate(ids) if st[sid] in ("done", "run", "fail")), default=-1)
+        # a person's ask the ticket has moved past (a later stage ran, or a PR opened) is answered, whatever the database still holds
+        st = {k: ("done" if v == "wait" and (closed or ids.index(k) < past) else v) for k, v in st.items()}
     state = ticket_state(st, need is not None, prs)
     if loc and state == "done" and loc["state"] == "open" and not j["steps"] and not prs:
         state = "new"                           # an open local ticket nothing has run on yet
