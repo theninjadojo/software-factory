@@ -177,6 +177,18 @@ model = "sonnet"
 effort = "medium"
 harness = "claude-code"
 
+# Comment triage: a person with write access (or the admin UI) comments on a ticket the factory already worked on, and a read-only
+# agent reads that comment. It can only say: nothing to do, needs a person, send the ticket back to a stage (the redirect the
+# admin UI offers), or open a linked follow-up ticket (no labels, so nothing starts by itself). The last two wait for a person to
+# confirm in chat. At most max_per_day triage runs per ticket per 24 hours; a comment waits while the ticket has a job or the
+# factory is paused. Comments written before you turn it on are never triaged. Off by default (a triage is a run).
+[comments]
+enabled = false
+max_per_day = 3
+model = "sonnet"
+effort = "medium"
+harness = "claude-code"
+
 # What a build needs from the design stage. The designer's rendered mockup images are shown to the build and review agents to match.
 # mode "block": a ticket whose design stage should have produced mockups (it ran, and did not say there are no screens) is not built
 # without them. "warn" builds anyway and says so on the ticket. "off" never checks. A person puts bypass_label on one ticket to skip.

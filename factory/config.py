@@ -188,6 +188,18 @@ def _prompts(v) -> "PromptsCfg":
 
 
 @dataclass(frozen=True)
+class CommentsCfg:
+    """Comment triage: a read-only agent reads each new comment a person with write access (or the admin UI) adds to a ticket the
+    factory already worked on, and decides: nothing to do, needs a person, send the ticket back to a stage, or open a linked
+    follow-up ticket. The last two only happen after a person confirms. Off by default (a triage is a run)."""
+    enabled: bool = False
+    max_per_day: int = 3                  # triage runs per ticket per 24 hours; later comments wait
+    model: str = "sonnet"
+    effort: str = "medium"
+    harness: str = "claude-code"
+
+
+@dataclass(frozen=True)
 class PmCfg:
     """The project manager: a read-only agent that, on a periodic sweep, ranks a repository's factory tickets and says which
     are blocked by others. It may only add or remove the `priority: high` / `priority: low` labels it applied itself (a person's
@@ -422,6 +434,7 @@ class Config:
     design_links: DesignLinksCfg = field(default_factory=DesignLinksCfg)
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
+    comments: CommentsCfg = field(default_factory=CommentsCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
     workers: WorkersCfg = field(default_factory=WorkersCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
@@ -559,12 +572,15 @@ def _harnesses(raw: dict, rn: "RunnerCfg") -> dict:
     return out
 
 
-def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None, pm: "PmCfg | None" = None) -> None:
+def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None, pm: "PmCfg | None" = None,
+                  comments: "CommentsCfg | None" = None) -> None:
     models = [(f"routing.{k}.model", r.model) for k, r in routes.items()] + [(f"roles.{r.name}.model", r.model) for r in roles]
     if review is not None:
         models.append(("review.model", review.model))
     if pm is not None:
         models.append(("pm.model", pm.model))
+    if comments is not None:
+        models.append(("comments.model", comments.model))
     for where, m in models:
         if not isinstance(m, str) or not MODEL_RE.fullmatch(m):
             raise ValueError(f"{where} is not a valid model id (letters, digits and . _ : / @ + [ ] - only, up to 200 characters)")
@@ -597,12 +613,14 @@ def chain(route) -> list:
 
 
 def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "ReviewCfg | None" = None,
-                       pm: "PmCfg | None" = None) -> None:
+                       pm: "PmCfg | None" = None, comments: "CommentsCfg | None" = None) -> None:
     uses = [(f"routing.{k}", r.harness) for k, r in routes.items()] + [(f"roles.{r.name}", r.harness) for r in roles]
     if review is not None and review.enabled:
         uses.append(("review", review.harness))
     if pm is not None and pm.enabled:
         uses.append(("pm", pm.harness))
+    if comments is not None and comments.enabled:
+        uses.append(("comments", comments.harness))
     for where, harness in uses:
         if harness not in harnesses or not harnesses[harness].enabled:
             raise ValueError(f"{where} uses the harness {harness!r}, which does not exist or is not enabled")
@@ -975,11 +993,18 @@ def parse(raw: dict) -> Config:
             raise ValueError(f"pm.{name} must be a whole number from 1 to 100000")
     if not isinstance(pm.unblock_label, str) or not pm.unblock_label.strip():
         raise ValueError("pm.unblock_label must not be empty")
+    comments = CommentsCfg(**raw.get("comments", {}))
+    if comments.effort not in ("low", "medium", "high"):
+        raise ValueError("comments.effort must be low, medium or high")
+    if not isinstance(comments.enabled, bool):
+        raise ValueError("comments.enabled must be true or false")
+    if not isinstance(comments.max_per_day, int) or isinstance(comments.max_per_day, bool) or not 1 <= comments.max_per_day <= 100:
+        raise ValueError("comments.max_per_day must be a whole number from 1 to 100")
     screens = _screens(raw.get("screens", {}), repos)
     workers = _workers(raw.get("workers", {}), repos)
-    _check_models(routes, roles, review, pm)
+    _check_models(routes, roles, review, pm, comments)
     _check_fallbacks(routes, roles, review)
-    _check_harness_use(routes, roles, harnesses, review, pm)
+    _check_harness_use(routes, roles, harnesses, review, pm, comments)
     return Config(
         db_path=g["db_path"],
         poll_seconds=int(g["poll_seconds"]),
@@ -1010,6 +1035,7 @@ def parse(raw: dict) -> Config:
         design_links=design_links,
         updates=updates,
         pm=pm,
+        comments=comments,
         health=health,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         schedules=_schedules(raw.get("schedules", []), repos),
