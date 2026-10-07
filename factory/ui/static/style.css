@@ -1208,3 +1208,9 @@ button.s-reset { color:var(--link); text-decoration:underline; min-height:24px; 
 .bo-suggest .check { display:flex; gap:.5rem; align-items:flex-start; margin:.5rem 0; }
 .bo-hint { overflow-wrap:anywhere; }
 .bo-cmd { white-space:pre-wrap; overflow-wrap:anywhere; margin:.25rem 0 0; }
+
+/* ---- Tests: the scenario register (shares the Screens tab strip) ---- */
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin:0 0 1rem; } .pre-wrap { white-space:pre-wrap; overflow-wrap:anywhere; }
+.tabs a[aria-current=page] { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+@media (max-width:760px) { .grid2 { grid-template-columns:1fr; } p.actions .btn, .filters input, .filters select, .filters button { flex:1 1 30%; min-height:44px; } .filters label { flex:1 1 100%; } }

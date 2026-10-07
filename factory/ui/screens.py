@@ -15,6 +15,7 @@ from .. import reviewnotes as RN
 from .. import screenboard as SB
 from ..config import deep_merge
 from . import labels as L
+from . import scenarios as TS
 from . import settings as S
 from . import views
 from ..verify import ONLINE_SECONDS
@@ -360,6 +361,7 @@ def board_get(h, q: dict, csrf: str) -> None:
                 '<a href="/screens/edit">Add a screen</a>.</p>')
     live = f'<div id="live" data-src="/screens/captures">{runs}</div>' if cfg.screens.captures else ""
     body = (setup + live + body) if not cfg.screens.captures else (live + setup + body)
+    body = TS.tabs("Screens") + body
     shown = L.flash_pop(csrf)
     h._send(200, views.page("Screens", body, "/screens", csrf, wide=True,
                             flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
