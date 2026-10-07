@@ -99,6 +99,12 @@ class Csv(unittest.TestCase):
         got = {i["line"]: i["action"] for i in SC.plan(db, REPO, SC.parse_csv(csv_in.encode()))}
         self.assertEqual(got, {2: "update", 3: "conflict", 4: "create", 5: "error", 6: "error"})
 
+    def test_several_new_rows_without_an_id_are_all_created(self):
+        db = fresh()
+        rows = SC.parse_csv(b"title,feature\nOne,F\nTwo,F\nThree,\n")
+        self.assertEqual([i["action"] for i in SC.plan(db, REPO, rows)], ["create"] * 3)
+        self.assertEqual(SC.apply(db, REPO, rows, set())["created"], 3)
+
     def test_apply_writes_nothing_when_there_are_errors_and_honours_conflict_choices(self):
         db = fresh()
         SC.create(db, REPO, {"title": "A"})
