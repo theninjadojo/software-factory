@@ -118,6 +118,85 @@ class Queue(unittest.TestCase):
         self.assertFalse(jobs.is_screens({"params": json.dumps({"smells": []})}))
 
 
+class TicketGh(FakeGh):
+    """Records the tickets opened; `state` is what GitHub says of an existing one."""
+    def __init__(self, state="open"):
+        self.made, self.state = [], state
+
+    def create_scheduled_issue(self, repo, title, body, labels):
+        self.made.append((repo, title, body, labels))
+        return {"number": 40 + len(self.made)}
+
+    def get_issue(self, repo, issue):
+        return {"state": self.state}
+
+
+class FailTicket(unittest.TestCase):
+    def setUp(self):
+        self.db = dbm.connect(":memory:")
+        self.cfg = make_cfg()
+
+    def run_once(self, status="failed", log="2 failed, 5 passed"):
+        jid = jobs.enqueue(self.db, SHOP, 0, SHA, "", "playwright-screens", "any", 1.0, PARAMS)
+        jobs.claim(self.db, "w1", "linux", ["playwright-screens"], 100.0, 120, 900, 2)
+        code = {"passed": 0, "failed": 1}[status]
+        self.assertEqual(jobs.complete(self.db, jid, "w1", {"status": status, "exit_code": code, "log": log, "artifacts": []}, 200.0), "")
+        return jid
+
+    def test_failing_tests_open_one_unlabelled_ticket_with_the_log_fenced(self):
+        self.run_once(log="FAILED tests/e2e/test_home.py::test_title ```@someone``` ")
+        gh = TicketGh()
+        CP.tick(self.cfg, gh, self.db, 300.0)
+        CP.tick(self.cfg, gh, self.db, 301.0)                       # the same run never opens a second one
+        self.assertEqual(len(gh.made), 1)
+        repo, title, body, labels = gh.made[0]
+        self.assertEqual((repo, labels), (SHOP, []))
+        self.assertIn("Fix the failing Playwright tests", title)
+        self.assertIn("untrusted", body)
+        fence = body.split("```text\n", 1)[1]
+        self.assertIn("test_home.py::test_title", fence)
+        self.assertEqual(fence.count("```"), 1)                      # the log cannot close the fence
+
+    def test_a_long_log_is_cut_to_its_end(self):
+        self.run_once(log="x" * (CP.LOG_TAIL + 500) + "THE-END")
+        gh = TicketGh()
+        CP.tick(self.cfg, gh, self.db, 300.0)
+        self.assertIn("THE-END", gh.made[0][2])
+        self.assertIn("it is longer", gh.made[0][2])
+
+    def test_a_passing_run_opens_nothing(self):
+        self.run_once("passed")
+        gh = TicketGh()
+        CP.tick(self.cfg, gh, self.db, 300.0)
+        self.assertEqual(gh.made, [])
+
+    def test_while_the_ticket_is_open_a_new_failure_opens_no_other(self):
+        self.run_once()
+        gh = TicketGh("open")
+        CP.tick(self.cfg, gh, self.db, 300.0)
+        self.run_once()
+        CP.tick(self.cfg, gh, self.db, 400.0)
+        self.assertEqual(len(gh.made), 1)
+
+    def test_once_the_ticket_is_closed_a_new_failure_opens_another(self):
+        self.run_once()
+        gh = TicketGh("closed")
+        CP.tick(self.cfg, gh, self.db, 300.0)
+        self.run_once()
+        CP.tick(self.cfg, gh, self.db, 400.0)
+        self.assertEqual(len(gh.made), 2)
+
+    def test_a_github_failure_is_tried_again_at_the_next_poll(self):
+        self.run_once()
+        class Down(TicketGh):
+            def create_scheduled_issue(self, *a):
+                raise OSError("down")
+        CP.tick(self.cfg, Down(), self.db, 300.0)
+        gh = TicketGh()
+        CP.tick(self.cfg, gh, self.db, 301.0)
+        self.assertEqual(len(gh.made), 1)
+
+
 class Config(unittest.TestCase):
     def parse(self, extra):
         with tempfile.TemporaryDirectory() as d:

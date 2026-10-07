@@ -103,7 +103,7 @@ The worker must be able to **clone** the repos it verifies, with its own credent
 ## Playwright screens (the Screens board's Build screens button)
 
 A worker can also run a project's Playwright suite on request and send back what it screenshotted, so the **Screens** tab can show
-the real app, grouped by project. Nothing is gated: no patch, no ticket, and a failing suite is not an error.
+the real app, grouped by project. Nothing is gated: no patch, and a failing suite is not an error.
 
 - **Everything is set up in the UI.** The **Set up Playwright runs** box at the bottom of the Screens tab (open until everything is ready)
   shows what is still to do, in order: turn workers on (Settings → Workers), add a worker with the recipe `screens` (Workers → *Add a
@@ -129,6 +129,10 @@ the real app, grouped by project. Nothing is gated: no patch, no ticket, and a f
   that turns on a full-page screenshot at the end of every test, whatever the project's own config says. Every PNG is returned under a
   unique name from its test folder. Exit codes follow the web recipe: 0 passed, 1 install or tests failed (screenshots still kept),
   2 nothing to run.
+- **Failing tests open a ticket**: when a repo's newest run exits 1, the orchestrator opens one GitHub ticket on that repo, *Fix the failing
+  Playwright tests in ...*, quoting the last 6000 characters of the log inside a fence marked untrusted. It has no label, so nothing starts
+  until a person does. While that ticket is open, later failing runs open no other; once it is closed, the next failing run opens a new
+  one. If GitHub refuses, it is tried again at the next poll.
 - **Python suites**: a repo with no JavaScript Playwright config but a pytest suite in `tests/e2e/` (with a `requirements.txt`) runs as
   `pytest tests/e2e` in a throwaway virtualenv. A Python suite opts in by saving PNGs into the folder named by `E2E_SCREENS_DIR`, which the
   recipe sets (this repo's `tests/e2e/test_screens.py` does it for every page at three widths, at CSS pixels and at most 5900 px tall). Add
