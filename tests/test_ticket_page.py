@@ -45,6 +45,16 @@ class Stations(unittest.TestCase):
             st = board.stations(journey([run(1, "build", "done")]), [{"status": status, "number": 5}])
             self.assertEqual(st["ci"], ci, status)                                  # checks run only while the PR is watched
 
+    def test_a_merged_pull_request_outweighs_failures_before_it(self):
+        steps = [run(1, "build", "done", started=10), run(2, "ci", "failed", kind="ci", started=20), run(3, "build", "failed", started=30)]
+        merged = [{"status": "closed", "summary": "merged", "number": 5, "updated": 40}]
+        st = board.stations(journey(steps), merged)
+        self.assertEqual((st["build"], st["ci"], board.ticket_state(st, False, merged)), ("done", "done", "done"))
+        closed = [{"status": "closed", "summary": "closed", "number": 5, "updated": 40}]           # closed without merging: still failed
+        self.assertEqual(board.ticket_state(board.stations(journey(steps), closed), False, closed), "failed")
+        later = steps + [run(4, "build", "failed", started=50)]                                    # a failure after the merge still counts
+        self.assertEqual(board.stations(journey(later), merged)["build"], "fail")
+
     def test_an_interrupted_run_is_not_running(self):
         st = board.stations(journey([run(1, "build", "queued")]))
         self.assertEqual(st["build"], "none")
