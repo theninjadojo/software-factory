@@ -69,19 +69,63 @@ def python_tests(path: str, text: str) -> list[dict]:
     return out
 
 
+def _without_comments(text: str) -> str:
+    """The text with // and /* */ comments turned into spaces (newlines kept), so commented-out tests are not found and positions
+    stay the same. Strings are left alone, so a URL's // is not a comment."""
+    out, i, n = list(text), 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "'\"`":
+            i += 1
+            while i < n and text[i] != c:
+                i += 2 if text[i] == "\\" else 1
+        elif text.startswith("//", i) or text.startswith("/*", i):
+            close = "\n" if text[i + 1] == "/" else "*/"
+            end = text.find(close, i + 2)
+            end = n if end < 0 else end + (2 if close == "*/" else 0)       # a line comment keeps its newline
+            for j in range(i, end):
+                if out[j] != "\n":
+                    out[j] = " "
+            i = end
+            continue
+        i += 1
+    return "".join(out)
+
+
+def _call_end(text: str, i: int) -> int:
+    """The index just past the ) that closes the ( at text[i], skipping strings (comments are already blanked); the end of the text if it never closes."""
+    depth, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "'\"`":
+            i += 1
+            while i < n and text[i] != c:
+                i += 2 if text[i] == "\\" else 1
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
 def js_tests(path: str, text: str) -> list[dict]:
-    """Tests named with a literal string: test('...'), it('...'), with the innermost describe('...') before it as a prefix of the id
+    """Tests named with a literal string: test('...'), it('...'), with the innermost describe('...') around it as a prefix of the id
     (Playwright's `path › describe › title`). Template strings with ${...} are skipped: their name is only known at run time."""
+    text = _without_comments(text)
     out, seen = [], set()
-    marks = sorted([(m.start(), "d", m.group(2)) for m in JS_DESCRIBE.finditer(text)] + [(m.start(), "t", m.group(2)) for m in JS_TEST.finditer(text)])
-    group = ""
-    for _, kind, name in marks:
+    groups = []                                             # (start, end, name) of each describe(...) call
+    for m in JS_DESCRIBE.finditer(text):
+        if "${" not in m.group(2):
+            groups.append((m.start(), _call_end(text, text.rindex("(", m.start(), m.start(1))), re.sub(r"\\(.)", r"\1", m.group(2))))
+    for m in JS_TEST.finditer(text):
+        name = m.group(2)
         if "${" in name:
             continue
         name = re.sub(r"\\(.)", r"\1", name)
-        if kind == "d":
-            group = name
-            continue
+        group = max(((s, g) for s, e, g in groups if s < m.start() < e), default=(0, ""))[1]
         tid = " › ".join(x for x in (path, group, name) if x)
         if tid not in seen:
             seen.add(tid)
