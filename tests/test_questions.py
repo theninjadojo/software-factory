@@ -254,8 +254,9 @@ class TelegramAnswers(unittest.TestCase):
             conn.commit()
             with mock.patch.object(m.runner, "run_task") as rt, tempfile.TemporaryDirectory() as d:
                 m.process_approvals(replace(CFG, db_path=d + "/f.db"), gh, conn, FakeClf())
-            rt.assert_not_called()                                   # the next stage starts through the normal auto gate
-            self.assertEqual(("add", ("factory:auto",)) in gh.calls, done, action)
+            rt.assert_not_called()                                   # the asking stage re-runs at the next poll, through its own label
+            self.assertEqual(("add", ("factory:analyze",)) in gh.calls, done, action)
+            self.assertNotIn(("add", ("factory:auto",)), gh.calls)
             self.assertEqual(any(c[0] == "comment" for c in gh.calls), done, action)
 
 
