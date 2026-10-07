@@ -189,6 +189,25 @@ class GitHub:
     def default_branch(self, repo: str) -> str:
         return self._get(f"/repos/{repo}")["default_branch"]
 
+    def new_repo_state(self, repo: str) -> dict:
+        """What the New project step needs to know about a repository a person just created: {exists, push, commits, files}. commits
+        counts at most 2; files are the top-level names (only read when there is exactly one commit)."""
+        try:
+            info = self._get(f"/repos/{repo}")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return {"exists": False, "push": False, "commits": 0, "files": []}
+            raise
+        push = bool((info.get("permissions") or {}).get("push"))
+        try:
+            commits = len(self._get(f"/repos/{repo}/commits?per_page=2") or [])
+        except urllib.error.HTTPError as e:
+            if e.code != 409:                                  # 409: the repository is empty
+                raise
+            commits = 0
+        files = [x.get("name", "") for x in (self._get(f"/repos/{repo}/contents/") or [])] if commits == 1 else []
+        return {"exists": True, "push": push, "commits": commits, "files": files}
+
     def branch_sha(self, repo: str, branch: str) -> str:
         return self._get(f"/repos/{repo}/commits/{urllib.parse.quote(branch, safe='')}")["sha"]
 

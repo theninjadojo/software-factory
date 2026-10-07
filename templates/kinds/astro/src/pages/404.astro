@@ -1,0 +1,11 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { href } from '../lib/url';
+---
+
+<BaseLayout title="Page not found">
+  <div class="mx-auto max-w-4xl px-4 py-24 text-center">
+    <h1 class="text-4xl font-bold">Page not found</h1>
+    <p class="mt-4"><a href={href('/')} class="underline">Go to the home page</a></p>
+  </div>
+</BaseLayout>

@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+build/
+next-env.d.ts
+*.tsbuildinfo
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+.env
+.env*.local
+.vercel/
+npm-debug.log*
+.DS_Store

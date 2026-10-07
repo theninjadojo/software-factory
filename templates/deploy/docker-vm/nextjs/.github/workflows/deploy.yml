@@ -1,0 +1,113 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Check the server secrets are set
+        id: setup
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          missing=""
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice title=Deploy skipped::Secrets not set:$missing. Follow DEPLOY.md to set up your server."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+          # Registry paths must be lower case.
+          image="ghcr.io/shikumi-org/shikumi-app"
+          echo "IMAGE=${image,,}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          ref: ${{ env.SHA }}
+      - uses: docker/setup-buildx-action@v4
+        if: steps.setup.outputs.ready == 'true'
+      - uses: docker/login-action@v4
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the image
+        if: steps.setup.outputs.ready == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.SHA }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up SSH
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "$DEPLOY_HOST" > ~/.ssh/known_hosts
+          fi
+
+      - name: Deploy with docker compose
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dir="${DEPLOY_PATH:-shikumi-app}"
+          target="$DEPLOY_USER@$DEPLOY_HOST"
+          ssh_opts=(-i ~/.ssh/deploy_key -o BatchMode=yes)
+          ssh "${ssh_opts[@]}" "$target" mkdir -p -- "$dir"
+          scp "${ssh_opts[@]}" compose.yaml "$target:$dir/compose.yaml"
+          ssh "${ssh_opts[@]}" "$target" docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<< "$GHCR_TOKEN"
+          ssh "${ssh_opts[@]}" "$target" bash -s -- "$dir" "$IMAGE" "$SHA" <<'REMOTE'
+          set -euo pipefail
+          cd "$1"
+          touch .env
+          sed -i '/^IMAGE=/d; /^IMAGE_TAG=/d' .env
+          printf 'IMAGE=%s\nIMAGE_TAG=%s\n' "$2" "$3" >> .env
+          docker compose pull
+          docker compose up -d --remove-orphans
+          docker logout ghcr.io
+          docker image prune -f
+          REMOTE

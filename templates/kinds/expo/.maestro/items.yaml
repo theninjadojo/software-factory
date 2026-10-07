@@ -1,0 +1,15 @@
+# The key journey: open the app, add an item, see it in the list.
+# Needs a development or preview build on a simulator or device and the API running (see README.md).
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: Add item
+    timeout: 20000
+- tapOn: Add item
+- tapOn:
+    id: item-name-input
+- inputText: Maestro ${MAESTRO_RUN_ID}
+- tapOn: Save
+- assertVisible: Maestro ${MAESTRO_RUN_ID}

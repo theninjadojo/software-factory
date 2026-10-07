@@ -1,0 +1,46 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # After CI passed on a push to main, or when started by hand.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      RENDER_WORKER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_WORKER_DEPLOY_HOOK_URL }}
+    steps:
+      - name: Check the deploy hooks
+        id: setup
+        run: |
+          missing=""
+          for name in RENDER_DEPLOY_HOOK_URL RENDER_WORKER_DEPLOY_HOOK_URL; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice title=Deploy skipped::Missing secret(s):$missing. See DEPLOY.md to set up Render."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy the API and the worker
+        if: steps.setup.outputs.ready == 'true'
+        # Render builds the latest commit of main; the API's pre-deploy command runs the migrations.
+        run: |
+          curl --fail --silent --show-error -X POST "$RENDER_DEPLOY_HOOK_URL"
+          curl --fail --silent --show-error -X POST "$RENDER_WORKER_DEPLOY_HOOK_URL"

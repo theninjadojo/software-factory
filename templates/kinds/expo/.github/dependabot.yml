@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    # Expo SDK packages move together: upgrade the SDK with `npx expo install expo@latest --fix`, not one by one.
+    ignore:
+      - dependency-name: "expo*"
+        update-types: [version-update:semver-major]
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      - dependency-name: "react-native"
+      - dependency-name: "react-native-*"
+      - dependency-name: "@react-native*"
+      - dependency-name: "jest-expo"
+      - dependency-name: "eslint-config-expo"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]

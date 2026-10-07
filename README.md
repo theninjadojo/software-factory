@@ -93,8 +93,10 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 - **New projects.** Under Settings, New project, describe what you want to build. An interviewer agent (a read-only run with no
   repository and no GitHub token) asks a few rounds of questions, then recommends a pattern from a fixed catalogue: the architecture,
   a modern stack for the use case, the design patterns and tests set up from day one, and where it deploys (your choice among the
-  pattern's targets). You can change any part before accepting. Creating the repositories and the first commit from the accepted
-  plan comes next.
+  pattern's targets). You can change any part before accepting. You then create the empty repositories on GitHub (the page gives
+  you prefilled links) and the factory pushes their first commit from tested templates (`templates/`): the skeleton with an example
+  feature, unit and end-to-end tests, CI, Dependabot, a deploy workflow that waits until you add the hosting secrets, a `DEPLOY.md`
+  and a `CLAUDE.md` for its agents. One more click adds the project and opens its first ticket under `factory:auto`.
 - **Admin UI.** See what is happening and what happened (runs, decisions, PRs and CI, an event timeline), and change settings,
   credentials, Telegram and agent harnesses without editing files. Authenticated, loopback by default. See [docs/ui.md](docs/ui.md).
 - **Other agents.** A harness is `{image, credential, command, hosts}`. Claude Code is built in; Codex and Gemini ship as
@@ -107,7 +109,9 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 - A Linux host with **Docker and the compose plugin** (or Podman for the native install), plus `curl` and `python3`.
 - A **GitHub account for the factory** (a bot account is best, so PRs aren't authored as you) with write access to your
   repos, and a **fine-grained token** for it: Contents, Issues and Pull requests *read and write*, Metadata *read*; add
-  **Actions** *read* for the CI feedback (Commit statuses *read* is optional; the Checks permission is not needed). No Workflows, no Administration.
+  **Actions** *read* for the CI feedback (Commit statuses *read* is optional; the Checks permission is not needed). No Administration.
+  **Workflows** *read and write* only if you start new projects from the UI: the factory puts the CI and deploy workflows into a new
+  repository's first commit. Agents still can never change a workflow (see [SECURITY.md](SECURITY.md)).
 - **Model credentials** for the agent: `ANTHROPIC_API_KEY` (the supported route for unattended use) or a Claude
   subscription token from `claude setup-token` (see [caveats](#limits-and-honest-caveats)).
 - Optional: a **Telegram bot** (BotFather) and your numeric Telegram id, or a **Slack app** (below); an **OpenRouter key** for Jev.

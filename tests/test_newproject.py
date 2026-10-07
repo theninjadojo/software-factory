@@ -31,7 +31,7 @@ class Catalogue(unittest.TestCase):
         for p in N.CATALOGUE.values():
             self.assertTrue(p.deploys and all(d in N.DEPLOYS for d in p.deploys), p.id)
             self.assertTrue(p.repos, p.id)
-            self.assertEqual(len({s for s, _ in p.repos}), len(p.repos), p.id)
+            self.assertEqual(len({s for s, _, _ in p.repos}), len(p.repos), p.id)
         self.assertEqual(N.repo_names("spa-api", "rota"), ["rota-web", "rota-api"])
 
     def test_the_prompt_carries_the_catalogue_and_neutralises_the_conversation(self):

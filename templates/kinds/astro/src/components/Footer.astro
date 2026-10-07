@@ -1,0 +1,13 @@
+---
+import { SITE } from '../lib/site';
+import { href } from '../lib/url';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="mt-16 border-t border-slate-200">
+  <div class="mx-auto flex max-w-4xl flex-wrap justify-between gap-4 px-4 py-8 text-sm text-slate-600">
+    <p>&copy; {year} {SITE.title}</p>
+    <a href={href('/rss.xml')} class="underline hover:text-slate-900">RSS feed</a>
+  </div>
+</footer>

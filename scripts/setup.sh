@@ -124,6 +124,7 @@ The factory acts on GitHub as an account (a bot account is best, so PRs are not 
   https://github.com/settings/personal-access-tokens/new
   Repository access: only the repos you chose above.
   Permissions: Contents, Issues, Pull requests = Read and write; Metadata = Read; Actions = Read (for CI feedback).
+  Optional: Workflows = Read and write, to start new projects from the UI (it adds CI and deploy workflows to a new repository's first commit).
 GH
   T="${GITHUB_TOKEN:-}"; tries=0
   while :; do

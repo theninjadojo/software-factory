@@ -1,0 +1,28 @@
+---
+import '../styles/global.css';
+import { SITE } from '../lib/site';
+import { href } from '../lib/url';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const { title, description = SITE.description } = Astro.props;
+const fullTitle = title ? `${title} | ${SITE.title}` : SITE.title;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{fullTitle}</title>
+<meta name="description" content={description} />
+<link rel="canonical" href={canonical} />
+<link rel="icon" type="image/svg+xml" href={href('/favicon.svg')} />
+<link rel="sitemap" href={href('/sitemap-index.xml')} />
+<link rel="alternate" type="application/rss+xml" title={SITE.title} href={href('/rss.xml')} />
+<meta property="og:type" content="website" />
+<meta property="og:title" content={fullTitle} />
+<meta property="og:description" content={description} />
+<meta property="og:url" content={canonical} />
+<meta name="generator" content={Astro.generator} />

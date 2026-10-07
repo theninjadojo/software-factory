@@ -1,0 +1,33 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: shikumi-app
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    # Applies new migrations, then starts the server. (A preDeployCommand would do this on paid plans only.)
+    dockerCommand: sh -c "node scripts/migrate.mjs && node server.js"
+    healthCheckPath: /api/health
+    # Deploys come from the Deploy workflow's deploy hook, after CI passes on main.
+    autoDeployTrigger: "off"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shikumi-app-db
+          property: connectionString
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: BETTER_AUTH_URL
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+
+databases:
+  - name: shikumi-app-db
+    plan: free
+    region: frankfurt
+    databaseName: app
+    user: app

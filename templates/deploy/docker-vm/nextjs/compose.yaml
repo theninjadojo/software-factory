@@ -1,0 +1,47 @@
+# Runs on the server in the deploy directory, next to a .env file (see DEPLOY.md).
+# The Deploy workflow copies this file there and keeps IMAGE and IMAGE_TAG in .env up to date.
+name: shikumi-app
+
+x-app: &app
+  image: ${IMAGE:-ghcr.io/shikumi-org/shikumi-app}:${IMAGE_TAG:-latest}
+  environment:
+    DATABASE_URL: postgres://app:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/app
+    PORT: "3000"
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: app
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Applies new migrations, then exits; the web service starts only after it succeeds.
+  migrate:
+    <<: *app
+    command: ["node", "scripts/migrate.mjs"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${HTTP_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  db-data:

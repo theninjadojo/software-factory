@@ -1,0 +1,44 @@
+# The project templates a new project's first commit is rendered from (templates/README.md). Each kind must keep installing, linting,
+# type-checking, testing and building: a new project whose first CI run fails is a broken promise.
+name: templates
+on:
+  pull_request:
+    paths: ["templates/**", ".github/workflows/templates.yml"]
+  push:
+    branches: [main]
+    paths: ["templates/**", ".github/workflows/templates.yml"]
+  schedule:
+    - cron: "17 5 * * 1"          # weekly: the packages and actions they use move on
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kind:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [nextjs, vite-react, fastapi, astro, expo, python-package]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: shikumi_app
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        if: contains(fromJSON('["nextjs","vite-react","astro","expo"]'), matrix.kind)
+        with:
+          node-version: lts/*
+      - uses: astral-sh/setup-uv@v10.2.0
+        if: contains(fromJSON('["fastapi","python-package"]'), matrix.kind)
+      - name: Verify ${{ matrix.kind }}
+        env:
+          DATABASE_URL: ${{ matrix.kind == 'fastapi' && 'postgresql+psycopg://postgres:postgres@localhost:5432/shikumi_app' || 'postgres://postgres:postgres@localhost:5432/shikumi_app' }}
+        run: bash templates/verify/${{ matrix.kind }}.sh

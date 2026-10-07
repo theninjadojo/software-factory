@@ -1,0 +1,82 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # After a green CI run of a push to main, or when started by hand.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: read
+    outputs:
+      ready: ${{ steps.pages.outputs.ready }}
+    steps:
+      - name: Check that Pages publishes from GitHub Actions
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type 2>/dev/null || true)
+          if [ "$source" = "workflow" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Deploy skipped::GitHub Pages is not set to deploy from GitHub Actions (Settings > Pages > Source). See DEPLOY.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.pages.outputs.ready == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/configure-pages@v6
+        if: steps.pages.outputs.ready == 'true'
+        id: config
+      - uses: actions/setup-node@v7
+        if: steps.pages.outputs.ready == 'true'
+        with:
+          node-version: lts/*
+          cache: npm
+      - if: steps.pages.outputs.ready == 'true'
+        run: npm ci
+      - if: steps.pages.outputs.ready == 'true'
+        run: npm run build
+        env:
+          # https://shikumi-org.github.io and /shikumi-app for a project page; the domain and nothing with a custom domain.
+          SITE_URL: ${{ steps.config.outputs.origin }}
+          BASE_PATH: ${{ steps.config.outputs.base_path }}
+      - uses: actions/upload-pages-artifact@v5
+        if: steps.pages.outputs.ready == 'true'
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v5
+        id: deployment

@@ -1,0 +1,17 @@
+---
+import { getCollection } from 'astro:content';
+import PostCard from '../../components/PostCard.astro';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { publishedPosts } from '../../lib/posts';
+
+const posts = publishedPosts(await getCollection('blog'));
+---
+
+<BaseLayout title="Blog" description="Every post, newest first.">
+  <div class="mx-auto max-w-4xl px-4 py-12">
+    <h1 class="text-4xl font-bold tracking-tight">Blog</h1>
+    <div class="mt-8 grid gap-4">
+      {posts.map((post) => <PostCard id={post.id} {...post.data} />)}
+    </div>
+  </div>
+</BaseLayout>

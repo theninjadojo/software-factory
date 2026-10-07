@@ -1,0 +1,29 @@
+---
+import { getCollection } from 'astro:content';
+import heroImage from '../assets/hero.jpg';
+import Hero from '../components/Hero.astro';
+import PostCard from '../components/PostCard.astro';
+import Section from '../components/Section.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { publishedPosts } from '../lib/posts';
+import { SITE } from '../lib/site';
+import { href } from '../lib/url';
+
+const latest = publishedPosts(await getCollection('blog')).slice(0, 3);
+---
+
+<BaseLayout>
+  <Hero title={SITE.title} lead={SITE.description} image={heroImage} imageAlt="">
+    <a href={href('/blog/')} class="rounded-md bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-700">
+      Read the blog
+    </a>
+    <a href={href('/about/')} class="rounded-md border border-slate-300 px-4 py-2 font-medium hover:border-slate-500">
+      About us
+    </a>
+  </Hero>
+  <Section title="Latest posts">
+    <div class="grid gap-4 md:grid-cols-3">
+      {latest.map((post) => <PostCard id={post.id} {...post.data} />)}
+    </div>
+  </Section>
+</BaseLayout>

@@ -1,0 +1,109 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/shikumi-org/shikumi-app
+
+jobs:
+  deploy:
+    # After CI passed on a push to main, or when started by hand.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || 'shikumi-app' }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Check the server secrets
+        id: setup
+        run: |
+          missing=""
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice title=Deploy skipped::Missing secret(s):$missing. See DEPLOY.md to set up your server."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          ref: ${{ env.SHA }}
+      - uses: docker/setup-buildx-action@v4
+        if: steps.setup.outputs.ready == 'true'
+      - uses: docker/login-action@v4
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the image
+        if: steps.setup.outputs.ready == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ env.SHA }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set up SSH
+        if: steps.setup.outputs.ready == 'true'
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "$DEPLOY_HOST" > ~/.ssh/known_hosts
+          fi
+          printf 'Host deploy-target\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/deploy_key\n  IdentitiesOnly yes\n' \
+            "$DEPLOY_HOST" "$DEPLOY_USER" > ~/.ssh/config
+
+      - name: Deploy on the server
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # One script, written here and run on the server through SSH's stdin (so the token is never a command argument).
+        # The token is valid only while this job runs: long enough to pull the image, never stored on the server.
+        run: |
+          {
+            echo 'set -eu'
+            printf 'mkdir -p %q && cd %q\n' "$DEPLOY_PATH" "$DEPLOY_PATH"
+            echo "cat > compose.yaml <<'END_OF_COMPOSE'"
+            cat compose.yaml
+            echo 'END_OF_COMPOSE'
+            echo 'touch .env && sed -i "/^IMAGE=/d" .env'
+            printf 'echo %q >> .env\n' "IMAGE=$IMAGE:sha-$SHA"
+            printf 'echo %q | docker login ghcr.io -u %q --password-stdin\n' "$GITHUB_TOKEN" "$GITHUB_ACTOR"
+            echo 'docker compose pull --quiet api worker'
+            echo 'docker logout ghcr.io'
+            echo 'docker compose run --rm api alembic upgrade head'
+            echo 'docker compose up -d --remove-orphans --wait'
+            echo 'docker image prune -f'
+          } | ssh deploy-target bash -s

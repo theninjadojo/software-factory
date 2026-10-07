@@ -1,0 +1,6 @@
+# Cloudflare Pages: https://developers.cloudflare.com/pages/functions/wrangler-configuration/
+# With no 404.html in the build, Pages serves index.html for every path it has no file for: the SPA fallback
+# that client-side routes (TanStack Router) need.
+name = "shikumi-app"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-10-01"
