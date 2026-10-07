@@ -108,6 +108,8 @@ class ReviewCfg:
     effort: str = "high"
     harness: str = "claude-code"
     fallback_models: tuple[str, ...] = ()
+    follow_actions: bool = False         # the reviewer may propose labels or send-backs that a person approves on the ticket page
+    follow_labels: tuple[str, ...] = ("review:needs-changes", "review:blocking")
 
 
 @dataclass(frozen=True)
@@ -1064,6 +1066,12 @@ def parse(raw: dict) -> Config:
     review = ReviewCfg(**_tuples(raw.get("review", {})))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
+    from .reviewactions import valid_label
+    reserved = {gh["trigger_label"], review.label, review.done_label, *(r.label for r in roles)}
+    if (not isinstance(review.follow_actions, bool) or not 1 <= len(review.follow_labels) <= 10
+            or not all(valid_label(x, reserved) for x in review.follow_labels)):
+        raise ValueError("review.follow_actions must be true or false and review.follow_labels 1 to 10 plain labels that do not start "
+                         "with factory: or stage: and are not trigger labels")
     mockups = MockupsCfg(**raw.get("mockups", {}))
     if (mockups.mode not in ("block", "warn", "off") or not mockups.bypass_label.strip() or not mockups.approve_label.strip()
             or not mockups.request_label.strip()):

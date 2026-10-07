@@ -253,7 +253,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                  conflicts: dict | None = None, answers: str = "", backlog: list | None = None, operator: str = "",
                  mockups: list | None = None, built: list | None = None, screen_text: str = "", verify_text: str = "",
                  review: dict | None = None, attachments: list | None = None,
-                 design_imports: list | None = None, conversation: list | None = None, stages: tuple = (), released: str = "") -> str:
+                 design_imports: list | None = None, conversation: list | None = None, stages: tuple = (), released: str = "", follow: str = "") -> str:
     """conversation: (author, text) turns of the ticket chat (chat.prompt_turns), untrusted data; stages: the names the chat may propose.
     review: a person's notes on the screens (reviewnotes.for_designer), told to the designer only.
     backlog: the project manager's tickets ({number, title, labels, body}, untrusted text); it replaces the single ticket.
@@ -275,6 +275,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
             task += design_files_rules(design_dir)
         if role in STAGE_TO_ROLE.values():
             task += SUMMARY_RULES + QUESTIONS_RULES
+        if role == "reviewer":
+            task += follow
         if role == "designer" and review:
             task += reviewnotes.PROMPT
     else:
@@ -507,7 +509,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
              failures: str | None = None, sink: dict | None = None, merge_base: dict | None = None, answers: str = "",
              backlog: list | None = None, mockups: list | None = None, screen_retry: dict | None = None,
              verify_retry: dict | None = None, review: dict | None = None, design_imports: list | None = None,
-             conversation: list | None = None, only: tuple | None = None, released: str = "") -> RunResult:
+             conversation: list | None = None, only: tuple | None = None, released: str = "", follow: str = "") -> RunResult:
     """Implementation (role=None): edit the workspace, validate the patches, push branches, open PRs.
     Role (analyst/designer/architect, reviewer, pm): read-only; any edits are discarded and the agent's document is returned.
     backlog: the project manager's tickets (role pm); the issue is then a stand-in with number 0.
@@ -638,7 +640,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
                          (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown, built_names,
                          screen_retry["text"] if screen_retry else "", verify_retry["text"] if verify_retry else "", review, attached, imported,
-                         conversation, released=released))
+                         conversation, released=released, follow=follow))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"

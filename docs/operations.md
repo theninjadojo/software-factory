@@ -91,6 +91,7 @@ installs used). For the Docker install, `FACTORY_WORKERS=1 ./scripts/setup.sh` d
 - Fallback models: a route, role or `[review]` may list `fallback_models` (up to 3, same harness and effort). When the model hits a
   limit or a 5xx/overloaded API error, the next model is tried in a fresh run and a `fallback` alert is sent. Only the admin config
   sets the list; ticket text and the classifier cannot.
+- Review follow-ups: `[review] follow_actions = true` makes the code reviewer end with proposed actions: add a label from `follow_labels` (default `review:needs-changes`, `review:blocking`; never a `factory:` or `stage:` label or a trigger label) or send the ticket back to a stage. They show on the ticket page as "Review follow-ups" and nothing happens until a person applies them; the factory then labels the ticket (never its PRs) or queues the send-back at its next poll. Off by default.
 - Rate limits: when the agent hits a plan or API limit the ticket is requeued and the orchestrator pauses for
   `rate_limit_backoff_seconds`, once every fallback model is also limited. A chain that ends on a 5xx fails as before.
 - Restarts: on startup the orchestrator clears leftover work directories and sandbox containers and requeues any ticket

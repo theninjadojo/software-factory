@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import questions as Q
 from . import db as dbm
@@ -530,7 +530,7 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         if cfg.review.enabled and cfg.review.auto:
             prs = [(m.group(1), int(m.group(2))) for m in map(PR_URL.match, res.pr_url.split()) if m]
             try:
-                review_changes(cfg, gh, repo, issue, prs)
+                review_changes(cfg, gh, repo, issue, prs, conn=conn)
             except Exception:
                 log.exception("automatic review failed")           # a review problem must never undo a finished build
     elif res.status == "cancelled":                  # the ticket was closed: no failure label, no comment
@@ -730,7 +730,18 @@ def review_comment(route, text: str) -> str:
             + "\n\n---\n_A draft review by an agent. It never approves or requests changes: a person decides. Verify before relying on it._")
 
 
-def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, trigger_label: str | None = None) -> runner.RunResult | None:
+def store_follow_actions(cfg: Config, conn, repo: str, num: int, prs: list, output: str) -> None:
+    """Keep the reviewer's validated follow-action proposals for a person to approve. Never fails a review."""
+    if not cfg.review.follow_actions or conn is None:
+        return
+    try:
+        found = reviewactions.parse(output, cfg.review.follow_labels, [r.name for r in cfg.roles])
+        reviewactions.store(conn, repo, num, prs, found, time.time())
+    except Exception:
+        log.exception("could not store the review follow actions")
+
+
+def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, trigger_label: str | None = None, conn=None) -> runner.RunResult | None:
     """Independent review of the factory's PR branches for a ticket. Posts a comment on each PR; changes nothing else."""
     if not prs:
         return None
@@ -747,14 +758,16 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
                            comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num),
-                           conversation=chat_conversation(cfg, repo, num))
+                           conversation=chat_conversation(cfg, repo, num),
+                           follow=reviewactions.prompt(cfg))
     if res.status == "rate-limited":
         if trigger_label:
             requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
         else:
             alert(f"Review of {repo}#{num} hit a rate limit. Apply `{cfg.review.label}` to the ticket to retry.", event="rate_limit")
     elif res.status == "stage":
-        body = review_comment(route, res.output)
+        body = review_comment(route, reviewactions.strip(res.output) if cfg.review.follow_actions else res.output)
+        store_follow_actions(cfg, conn, repo, num, prs, res.output)
         links = []
         for r, n in prs:
             try:
@@ -1193,7 +1206,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
 
         def review_job(db):
             if prs:
-                res = review_changes(cfg, gh, repo, issue, prs, label)
+                res = review_changes(cfg, gh, repo, issue, prs, label, db)
                 outcome = res.status if res else "skipped"
             else:
                 gh.comment(repo, num, "No open factory pull requests were found for this ticket, so there is nothing to review.")
@@ -1494,6 +1507,11 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
             ticketreview.process(cfg, gh, conn, emit)             # what a person picked in the ticket review
         except Exception:
             log.exception("applying ticket review proposals failed")   # never stops the poll
+        try:
+            if not pause.paused(Path(cfg.db_path).parent):
+                reviewactions.process(cfg, gh, conn, emit)          # the review follow actions a person approved
+        except Exception:
+            log.exception("applying review follow actions failed")  # never stops the poll
     for repo in cfg.repos:
         handled: set[int] = set()
         todo = []
