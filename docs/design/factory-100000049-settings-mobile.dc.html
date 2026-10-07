@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+body{margin:0;background:#0b0e10;color:#e8edf0;font:15px/1.45 "Space Grotesk",system-ui,sans-serif}
+</style>
+</helmet>
+<div style="display:flex;gap:32px;padding:32px;align-items:flex-start;flex-wrap:wrap">
+
+<!-- Frame 1: Settings home -->
+<div style="width:390px;background:#12161a;border:1px solid #2d363d;position:relative;height:844px;overflow:hidden">
+ <div style="padding:10px 16px;background:#171c20;border-bottom:1px solid #2d363d;font-weight:700;font-size:18px">◇ Factory</div>
+ <div style="padding:16px">
+  <h1 style="font-size:28px;margin:0 0 12px;font-weight:700">Settings</h1>
+  <div style="min-height:44px;border:1px solid #3b464e;background:#12161a;padding:0 12px;display:flex;align-items:center;color:#a9b5bd;font-size:16px">Search settings</div>
+  <div style="display:flex;gap:8px;margin:10px 0 14px;overflow:hidden">
+   <span style="min-height:44px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid #f2a93b;background:#2a2112;border-radius:22px">All</span>
+   <span style="min-height:44px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid #3b464e;border-radius:22px;color:#a9b5bd">On</span>
+   <span style="min-height:44px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid #3b464e;border-radius:22px;color:#a9b5bd">Off</span>
+   <span style="min-height:44px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid #3b464e;border-radius:22px;color:#a9b5bd">Set up</span>
+  </div>
+  <div style="background:#2a2114;border:1px solid #6b4a17;padding:12px 14px;margin-bottom:14px"><strong>2 need set-up</strong><div style="color:#d9c9ad;font-size:14px">Slack and Credentials are not finished.</div></div>
+  <div style="font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#9aa7b0;margin:0 0 6px">General</div>
+  <div style="background:#1b2126;border:1px solid #2d363d;margin-bottom:14px">
+   <div style="min-height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #2d363d"><span style="width:8px;height:8px;border-radius:50%;background:#52c7a1"></span><span style="flex:1">General</span><span style="color:#a9b5bd">›</span></div>
+   <div style="min-height:56px;display:flex;align-items:center;gap:10px;padding:0 14px"><span style="width:8px;height:8px;border-radius:50%;background:#52c7a1"></span><span style="flex:1">Projects</span><span style="color:#a9b5bd">›</span></div>
+  </div>
+  <div style="font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#9aa7b0;margin:0 0 6px">How the work is done</div>
+  <div style="background:#1b2126;border:1px solid #2d363d">
+   <div style="min-height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #2d363d"><span style="width:8px;height:8px;border-radius:50%;background:#52c7a1"></span><span style="flex:1">Models by ticket size</span><span style="color:#a9b5bd">›</span></div>
+   <div style="min-height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #2d363d"><span style="width:9px;height:9px;background:#f2a93b;transform:rotate(45deg)"></span><span style="flex:1">Credentials</span><span style="color:#f2a93b;font-weight:600;font-size:13px">Set up</span><span style="color:#a9b5bd">›</span></div>
+   <div style="min-height:56px;display:flex;align-items:center;gap:10px;padding:0 14px"><span style="width:8px;height:8px;border-radius:50%;border:1.5px solid #6b7780;box-sizing:border-box"></span><span style="flex:1">Code review</span><span style="color:#8b979f;font-size:13px">Off</span><span style="color:#a9b5bd">›</span></div>
+  </div>
+ </div>
+ <div style="position:absolute;left:0;right:0;bottom:0;height:60px;background:#1b2126;border-top:1px solid #2d363d;display:flex;text-align:center;line-height:60px;color:#a9b5bd;font-size:13px"><span style="flex:1">Factory</span><span style="flex:1">Tickets</span><span style="flex:1">Events</span><span style="flex:1;color:#f2a93b">Settings</span></div>
+</div>
+
+<!-- Frame 2: one settings page, with an error -->
+<div style="width:390px;background:#12161a;border:1px solid #2d363d;position:relative;height:844px;overflow:hidden">
+ <div style="padding:10px 16px;background:#171c20;border-bottom:1px solid #2d363d;font-weight:700;font-size:18px">◇ Factory</div>
+ <div style="padding:16px">
+  <div style="min-height:44px;display:flex;align-items:center;color:#8fd3e6">‹ All settings</div>
+  <div style="color:#a9b5bd;font-size:14px">How the work is done</div>
+  <h1 style="font-size:28px;margin:0 0 4px;font-weight:700">Sandbox &amp; limits</h1>
+  <p style="margin:0 0 14px;color:#a9b5bd">How much each agent run may use.</p>
+  <div style="border:1px solid #ff6b5e;background:#1b2126;padding:10px 14px;margin-bottom:14px;border-radius:8px">Not saved. Agents at once must be between 1 and 8.</div>
+  <div style="background:#1b2126;border:1px solid #2d363d;padding:16px;margin-bottom:14px">
+   <div style="display:flex;align-items:center;gap:12px"><div style="flex:1"><strong style="font-size:17px">Agents at once</strong><div style="color:#a9b5bd;font-size:14px">Default: 2</div></div></div>
+   <div style="min-height:44px;border:1px solid #ff6b5e;background:#12161a;padding:0 12px;display:flex;align-items:center;margin-top:10px;font-size:16px">12</div>
+   <div style="color:#ff6b5e;font-size:14px;margin-top:4px">Enter a number from 1 to 8.</div>
+  </div>
+  <div style="background:#1b2126;border:1px solid #2d363d;padding:16px">
+   <div style="display:flex;align-items:center;gap:12px"><div style="flex:1"><strong style="font-size:17px">Run tests in sandbox</strong></div><span style="width:56px;height:32px;border-radius:16px;background:#52c7a1;position:relative;display:block"><span style="position:absolute;top:4px;left:28px;width:24px;height:24px;border-radius:50%;background:#fff"></span></span></div>
+  </div>
+ </div>
+ <div style="position:absolute;left:0;right:0;bottom:72px;background:#232a30;border-top:1px solid #3b464e;padding:12px 16px;display:flex;align-items:center;gap:12px"><span style="flex:1;font-weight:600">1 change not saved</span><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#8fa8ff;color:#0e1330;font-weight:700">Save</span></div>
+ <div style="position:absolute;left:0;right:0;bottom:0;height:60px;background:#1b2126;border-top:1px solid #2d363d;display:flex;text-align:center;line-height:60px;color:#a9b5bd;font-size:13px"><span style="flex:1">Factory</span><span style="flex:1">Tickets</span><span style="flex:1">Events</span><span style="flex:1;color:#f2a93b">Settings</span></div>
+</div>
+
+</div>
+</x-dc>
+</body>
+</html>
