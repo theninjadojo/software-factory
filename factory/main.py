@@ -1336,7 +1336,9 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         skipped = [n for n in names if n not in done and (role is None or names.index(n) < names.index(role.name))]
         if skipped:
             summary += f"; skipped={','.join(skipped)}"
-            emit("decision", f"auto: {role.name if role else 'build'} ({c.stage}, {c.confidence:.2f}, {c.source}); skipped {', '.join(skipped)}", repo, num)
+            why_skipped = f"the {c.source} classifier chose {c.stage} at {c.confidence:.2f}" + (
+                "" if "designer" in names else "; no designer role is configured")
+            emit("decision", f"auto: {role.name if role else 'build'}; skipped {', '.join(skipped)} ({why_skipped})", repo, num)
 
     if role:
         detail = f"{why}; {summary}; stage={role.name}"
