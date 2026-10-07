@@ -201,6 +201,20 @@ check_seconds = 2
 max_per_hour = 20
 context_turns = 20
 
+# New projects: an agent interviews you in the admin UI (Settings, Projects, Start a new project) about what you want to build and
+# recommends a pattern (architecture, stack, tests, where it deploys) from a fixed catalogue. Each reply is a read-only run with no
+# repository and no GitHub token; only you start an interview.
+[new_projects]
+enabled = true
+harness = "claude-code"
+model = "opus"
+effort = "medium"
+max_turns = 8
+timeout_seconds = 300
+max_rounds = 6
+max_parallel = 1
+check_seconds = 2
+
 # Comment triage: a person with write access (or the admin UI) comments on a ticket the factory already worked on, and a read-only
 # agent reads that comment. It can only say: nothing to do, needs a person, send the ticket back to a stage (the redirect the
 # admin UI offers), or open a linked follow-up ticket (no labels, so nothing starts by itself). The last two wait for a person to

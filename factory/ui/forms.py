@@ -39,12 +39,13 @@ def _fmt(f: S.Field, v) -> str:
 
 # The settings menu, grouped by what each page is for (the same groups as the Settings home). A row: (key, name, link).
 SIDE_GROUPS = [
-    ("Where work comes from", [("projects", "Projects", "/settings?section=projects"), ("schedules", "Schedules", "/schedules"), ("scans", "Scans", "/scans"),
+    ("Where work comes from", [("new_project", "New project", "/projects/new"), ("projects", "Projects", "/settings?section=projects"), ("schedules", "Schedules", "/schedules"), ("scans", "Scans", "/scans"),
                                ("scanner", "Scan limits", "/settings?section=scanner"), ("comments", "Comment triage", "/settings?section=comments"),
                                ("design_links", "Design links", "/settings?section=design_links"), ("ticket_review", "Ticket review", "/settings?section=ticket_review")]),
     ("How the work is done", [("routing", "Models by ticket size", "/settings?section=routing"), ("roles", "Stage agents", "/settings?section=roles"),
                               ("classifier", "Classifier", "/settings?section=classifier"), ("runner", "Sandbox & limits", "/settings?section=runner"),
-                              ("harnesses", "Harnesses", "/harnesses"), ("prompts", "Agent instructions", "/settings?section=prompts")]),
+                              ("harnesses", "Harnesses", "/harnesses"), ("prompts", "Agent instructions", "/settings?section=prompts"),
+                              ("new_projects", "New project interviews", "/settings?section=new_projects")]),
     ("Before a pull request is done", [("review", "Code review", "/settings?section=review"), ("ci", "CI feedback", "/settings?section=ci"),
                                        ("conflicts", "Merge conflicts", "/settings?section=conflicts"), ("mockups", "Design mockups", "/settings?section=mockups"),
                                        ("workers", "Workers", "/workers"), ("pm", "Project manager", "/settings?section=pm")]),
@@ -230,6 +231,7 @@ SECTION_INTRO = {
     "design_links": "Design exports linked in a ticket, fetched only from hosts you list.",
     "scanner": "Limits for code-smell scans. The scans themselves, and what they look for, are on the Scans page.",
     "chat": "Ask about a ticket and get a quick answer, outside the label-driven pipeline.",
+    "new_projects": "How the agent that interviews you about a new project runs. Start one under New project.",
     "health": "Alerts on Telegram when something that would stop the factory goes wrong: disk, memory, a hung poll, failing runs.",
     "update_check": "Whether the UI tells you when a newer release is out.",
 }
@@ -384,7 +386,9 @@ def projects_form(base: dict, eff: dict, csrf: str, submitted=None) -> str:
         out.append(f'<fieldset><legend>{esc(p["name"] or "New project")}</legend><div class="field"><label>Name</label><input name="p{i}_name" value="{esc(p["name"])}"></div>'
                    f'<div class="field"><label>Description</label><input name="p{i}_desc" value="{esc(p.get("description", ""))}" class="wide"></div>'
                    f'<table class="stack"><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table></fieldset>')
-    out.append('<button>Save projects</button></form><p class="muted">Leave a project\'s name and repositories empty to remove it.</p>')
+    out.append('<button>Save projects</button></form><p class="muted">Leave a project\'s name and repositories empty to remove it.</p>'
+               '<p class="muted">Starting from nothing? <a href="/projects/new">Start a new project</a>: an agent asks what you want to build '
+               'and recommends a pattern with tests, CI and deployment set up.</p>')
     return "".join(out)
 
 

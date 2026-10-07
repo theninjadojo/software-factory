@@ -454,14 +454,28 @@ def run_chat(cfg: Config, repo: str, issue: dict, route: Route, comments: list, 
     prompt (the ticket, its documents, answers, discussion and the conversation, all as untrusted data) and the same sealed
     sandbox as a role run (no network, model access only through the proxy). Anything it writes is thrown away with the
     workspace; only its text comes back (status "stage")."""
-    rn, ch, num = cfg.runner, cfg.chat, issue["number"]
+    num = issue["number"]
+    prompt = build_prompt(issue["title"], issue.get("body") or "", project_for(cfg, repo), repo, "chat", prior, comments, None, (repo, num),
+                          answers=answers, operator=operator_prompt(cfg.prompts, "chat"), conversation=conversation,
+                          stages=tuple(r.name for r in cfg.roles))
+    return _quick_run(cfg, route, f"chat-{num}", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
+
+
+def run_interview(cfg: Config, draft_id: int, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
+    """One reply of a new-project interview (factory.newproject), in the same sealed, repository-less sandbox as a chat reply."""
+    np = cfg.new_projects
+    return _quick_run(cfg, route, f"interview-{int(draft_id)}", prompt, np.max_turns, np.timeout_seconds, sink)
+
+
+def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: int, timeout: int, sink: dict | None) -> RunResult:
+    """A read-only run with no repository: an empty /work, the prompt, and only the agent's text back."""
+    rn = cfg.runner
     harness = harness_for(cfg, route.harness)
     if harness is None or not harness.enabled:
         return RunResult("failed", f"the harness {route.harness!r} is not available (enable it on the Harnesses page)")
     if not Path(harness.env_file).is_file():
         return RunResult("failed", f"no credential file for {harness.name} at {harness.env_file}")
-    project = project_for(cfg, repo)
-    d = Path(rn.work_dir) / f"chat-{num}-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
+    d = Path(rn.work_dir) / f"{label}-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     made = False
     try:
         Path(rn.work_dir).mkdir(parents=True, exist_ok=True)
@@ -469,20 +483,17 @@ def run_chat(cfg: Config, repo: str, issue: dict, route: Route, comments: list, 
         made = True
         for sub in ("task", "out", "work"):
             (d / sub).mkdir()
-        (d / "task" / "prompt.txt").write_text(
-            build_prompt(issue["title"], issue.get("body") or "", project, repo, "chat", prior, comments, None, (repo, num),
-                         answers=answers, operator=operator_prompt(cfg.prompts, "chat"), conversation=conversation,
-                         stages=tuple(r.name for r in cfg.roles)))
+        (d / "task" / "prompt.txt").write_text(prompt)
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
-        name = f"factory-chat-{num}-{secrets.token_hex(3)}"
-        quick = replace(rn, max_turns=ch.max_turns, timeout_seconds=ch.timeout_seconds)
+        name = f"factory-{label}-{secrets.token_hex(3)}"
+        quick = replace(rn, max_turns=max_turns, timeout_seconds=timeout)
         try:
-            proc = subprocess.run(sandbox_cmd(quick, route, name, d, harness), timeout=ch.timeout_seconds, check=False,
+            proc = subprocess.run(sandbox_cmd(quick, route, name, d, harness), timeout=timeout, check=False,
                                   capture_output=True, text=True)
         except subprocess.TimeoutExpired:
             subprocess.run([rn.engine, "kill", name], check=False, capture_output=True)
-            return RunResult("failed", f"the reply timed out after {ch.timeout_seconds}s")
+            return RunResult("failed", f"the reply timed out after {timeout}s")
         logf = d / "out" / "agent.log"
         text, usage = parse_usage(logf.read_text(errors="replace") if logf.exists() else "", harness.usage_format)
         if sink is not None:
@@ -495,9 +506,9 @@ def run_chat(cfg: Config, repo: str, issue: dict, route: Route, comments: list, 
             return RunResult("failed", f"sandbox did not start (exit {proc.returncode}): {proc.stderr[-400:]}")
         if code != "0" or not text.strip():
             return RunResult("failed", f"the reply failed (exit {code}). Log tail: {text[-300:]}", transient=looks_unavailable(text, code))
-        return RunResult("stage", "reply ready", output=text.strip())        # any diff in out/ is ignored: the chat never changes a repository
+        return RunResult("stage", "reply ready", output=text.strip())        # any diff in out/ is ignored: it never changes a repository
     except Exception as e:
-        log.exception("chat run failed")
+        log.exception("%s run failed", label)
         return RunResult("failed", f"{type(e).__name__}: {str(e)[:300]}")
     finally:
         if made:

@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, ChatCfg, CommentsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, ChatCfg, NewProjectsCfg, CommentsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -276,6 +276,18 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("chat.check_seconds", "Look for new messages every (seconds)", "int", lo=1, hi=1000, adv=True),
         Field("chat.context_turns", "Chat turns later stages read", "int", "The newest turns that stage prompts carry.", lo=1, hi=1000, adv=True),
     ]),
+    "new_projects": ("New project interviews", [
+        Field("new_projects.enabled", "Enable new-project interviews", "bool",
+              "An agent interviews you about a new project and recommends a pattern. Each reply is a read-only model run with no repository."),
+        Field("new_projects.model", "Interviewer model", "text"),
+        Field("new_projects.effort", "Interviewer effort", "select", choices=EFFORTS),
+        Field("new_projects.max_rounds", "Rounds before a plan", "int", "Your replies (the brief counts) before the interviewer must give its plan.", lo=1, hi=20),
+        Field("new_projects.max_parallel", "Interviews at once", "int", "Their own lane, on top of Agents at once.", lo=1, hi=20),
+        Field("new_projects.harness", "Interviewer agent harness", "select", choices=("claude-code",), adv=True),
+        Field("new_projects.max_turns", "Max turns per reply", "int", lo=1, hi=1000, adv=True),
+        Field("new_projects.timeout_seconds", "Reply timeout (seconds)", "int", lo=10, hi=10000, adv=True),
+        Field("new_projects.check_seconds", "Look for new messages every (seconds)", "int", lo=1, hi=1000, adv=True),
+    ]),
     "health": ("Health alerts", [
         Field("health.enabled", "Health alerts", "bool", "Alerts on Telegram when something that would stop the factory goes wrong."),
         Field("health.disk_warn_percent", "Warn when free disk is below (%)", "int", "Free space is checked in % and in GB; the lower threshold trips first.",
@@ -352,7 +364,7 @@ def del_in(d: dict, dotted: str) -> None:
             chain[i - 1].pop(parts[i - 1], None)
 
 
-DATACLASS_DEFAULTS = {"chat": ChatCfg, "comments": CommentsCfg, "ticket_review": TicketReviewCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
+DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "ticket_review": TicketReviewCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
                       "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg}
 
 
