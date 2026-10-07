@@ -201,7 +201,7 @@ class Install(InstallBase):
         calls = log.read_text()
         self.assertIn("pull ghcr.io/theninjadojo/shikumi-android:v0.2.0", calls)
         self.assertIn("build -t factory-android", calls)                          # no prebuilt image: it builds from sandbox/android
-        self.assertEqual(sorted(W.load_config(str(self.inst / "worker.toml")).recipes), ["android-test", "web-test"])
+        self.assertEqual(sorted(W.load_config(str(self.inst / "worker.toml")).recipes), ["android-screens", "android-test", "web-test"])
         log.unlink()
         shutil.rmtree(self.inst, ignore_errors=True)
         code, out = self.install(base, WORKER_RECIPES="android", HAVE_IMAGE="0", **env)

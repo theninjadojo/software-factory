@@ -82,6 +82,31 @@ class HostRecipe(unittest.TestCase):
         self.docker(125)
         self.assertIn("is the image", self.run_recipe()[1])
 
+    def test_screens_records_automatically_with_a_bigger_home(self):
+        code, out, call = self.run_recipe("--screens")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(call.endswith("factory-android:latest unit auto screens"), call)
+        self.assertIn("/home/builder:rw,size=2g", call)
+        self.assertNotIn("--device", call)
+        code, out, call = self.run_recipe("--screens", "--task", ":app:recordRoborazziDebug")
+        self.assertTrue(call.splitlines()[-1].endswith("unit :app:recordRoborazziDebug screens"), call)
+
+    def test_screens_on_the_emulator_runs_connected_tests(self):
+        kvm = self.tmp / "kvm"
+        kvm.write_text("")
+        code, out, call = self.run_recipe("--screens", "--emulator", "--kvm-device", str(kvm))
+        self.assertEqual(code, 0, out)
+        self.assertTrue(call.endswith("emulator connectedDebugAndroidTest screens"), call)
+
+    def test_screens_from_a_subfolder_end_up_at_the_checkout_top(self):
+        (self.proj / "android").mkdir()
+        (self.proj / "android" / "gradlew").write_text("")
+        out_dir = self.proj / "android" / "screens-out"
+        stub(self.bin / "docker", f'echo "$@" >> "{self.calls}"\nmkdir -p "{out_dir}" && printf PNG > "{out_dir}/home-1.png"\nexit 1\n')
+        code, out, _ = self.run_recipe("--screens", "--dir", "android")
+        self.assertEqual(code, 1)                                           # failing tests stay a failure, the screenshots are still kept
+        self.assertEqual([f.name for f in (self.proj / "screens-out").iterdir()], ["home-1.png"])
+
     def test_bad_arguments_never_reach_docker(self):
         for args in (["--dir", "../x"], ["--dir", "/etc"], ["--dir", ""], ["--task", "test; rm -rf /"], ["--task", "$(id)"], ["--task", ""],
                      ["--image", "evil image"], ["--image", "x;y"], ["--memory", "6g;x"], ["--cpus", "many"], ["--engine", "lxc"], ["--surprise"],
@@ -144,6 +169,11 @@ class InsideImage(unittest.TestCase):
         code, out, log = self.run_inner("unit", ":app:test")
         self.assertEqual((code, log), (0, ["gradlew --no-daemon --console=plain :app:test"]), out)
 
+    def test_java_gets_a_home_folder_although_the_uid_has_no_passwd_entry(self):
+        stub(self.proj / "gradlew", f'echo "$JAVA_TOOL_OPTIONS" >> "{self.log}"\n')       # Robolectric failed with "?/.robolectric-download-lock"
+        code, out, log = self.run_inner("unit", "test", HOME="/home/builder")
+        self.assertEqual((code, log), (0, ["-Duser.home=/home/builder"]), out)
+
     def test_failing_gradle_is_exit_1(self):
         self.gradle(3)
         code, out, _ = self.run_inner("unit", "test")
@@ -182,6 +212,70 @@ class InsideImage(unittest.TestCase):
         self.assertEqual(self.run_inner("emulator", "t", AVD_CODE="1")[0], 2)
         (self.bin / "emulator").unlink()
         self.assertEqual(self.run_inner("emulator", "t")[0], 2)
+
+
+    def write(self, rel: str, data: bytes = b"PNG") -> Path:
+        f = self.proj / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(data)
+        return f
+
+    def test_screens_auto_picks_roborazzi_and_keeps_one_png_per_test(self):
+        self.write("gradle/libs.versions.toml", b'roborazzi = "1.40.0"\n')
+        stub(self.proj / "gradlew", f'echo "gradlew $@" >> "{self.log}"\nmkdir -p app/build/outputs/roborazzi feature/home/build/outputs/roborazzi app/build/intermediates\n'
+             'printf A > app/build/outputs/roborazzi/com.example.LoginTest.login.png\nprintf B > feature/home/build/outputs/roborazzi/com.example.HomeScreenshotTest.homeWithAVeryLongNameIndeed.png\n'
+             'printf C > app/build/intermediates/icon.png\n')
+        code, out, log = self.run_inner("unit", "auto", "screens")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(log, ["gradlew --no-daemon --console=plain recordRoborazziDebug"])
+        shots = sorted(f.name for f in (self.proj / "screens-out").iterdir())
+        self.assertEqual(len(shots), 2, shots)                              # not the build's own drawables
+        self.assertTrue(shots[0].startswith("app-com-example-logintest-login-"), shots)
+        self.assertRegex(shots[1], r"^feature-home-com-examp-withaverylongnameindeed-\d+\.png$")
+        self.assertTrue(all(len(n) <= 61 for n in shots), shots)
+
+    def test_screens_auto_picks_paparazzi_and_drops_committed_images(self):
+        self.write("app/build.gradle.kts", b'plugins { id("app.cash.paparazzi") }\n')
+        self.write("app/src/test/snapshots/images/old_DeletedTest_gone.png")
+        stub(self.proj / "gradlew", f'echo "gradlew $@" >> "{self.log}"\nprintf N > app/src/test/snapshots/images/com.example_HomeTest_home.png\nexit 1\n')
+        code, out, log = self.run_inner("unit", "auto", "screens")
+        self.assertEqual(code, 1)                                           # a failing run still returns what it recorded
+        self.assertEqual(log, ["gradlew --no-daemon --console=plain recordPaparazziDebug"])
+        shots = [f.name for f in (self.proj / "screens-out").iterdir()]
+        self.assertEqual(len(shots), 1, shots)
+        self.assertTrue(shots[0].startswith("app-com-example-hometest-home-"), shots)
+
+    def test_screens_auto_without_a_screenshot_library_is_exit_2(self):
+        self.write("app/build.gradle", b"apply plugin: 'com.android.application'\n")
+        code, out, log = self.run_inner("unit", "auto", "screens")
+        self.assertEqual(code, 2)
+        self.assertIn("no Roborazzi or Paparazzi", out)
+        self.assertEqual(log, [])
+
+    def test_screens_on_the_emulator_keep_test_output_or_the_last_screen(self):
+        stub(self.proj / "gradlew", f'echo "gradlew $@" >> "{self.log}"\nd=app/build/outputs/connected_android_test_additional_output/debugAndroidTest/connected/Pixel\n'
+             'mkdir -p $d && printf S > $d/checkout.png\n')
+        code, out, _ = self.run_inner("emulator", "connectedDebugAndroidTest", "screens")
+        self.assertEqual(code, 0, out)
+        shots = [f.name for f in (self.proj / "screens-out").iterdir()]
+        self.assertEqual(len(shots), 1, shots)
+        self.assertIn("checkout", shots[0])
+        self.gradle(0)
+        import shutil
+        shutil.rmtree(self.proj / "screens-out"); shutil.rmtree(self.proj / "app")
+        code, out, _ = self.run_inner("emulator", "connectedDebugAndroidTest", "screens")
+        self.assertEqual([f.name for f in (self.proj / "screens-out").iterdir()], ["final.png"])
+
+    def test_screens_argument_is_checked(self):
+        self.assertEqual(self.run_inner("unit", "test", "rm")[0], 2)
+        self.assertFalse((self.proj / "screens-out").exists())
+
+    def test_screens_never_copies_symlinks(self):
+        (self.proj / "secret").write_bytes(b"SECRET")
+        self.write("app/build.gradle", b"roborazzi\n")
+        stub(self.proj / "gradlew", 'mkdir -p app/build/outputs/roborazzi && ln -s ../../../../secret app/build/outputs/roborazzi/x.png\n')
+        code, out, _ = self.run_inner("unit", "auto", "screens")
+        self.assertEqual(list((self.proj / "screens-out").iterdir()), [])
 
 
 class ImageDefinition(unittest.TestCase):
