@@ -139,7 +139,9 @@ QUESTIONS_RULES = (
     "may accept your recommendation without asking anyone. Use `needs-person` for anything about security, trust boundaries, "
     "credentials, permissions, deleting data, migrations, cost or product direction, and for anything you are unsure about. If "
     'there are no open questions, end with the block {"questions": []}. The block is machine-read: valid JSON, plain text, no '
-    "Markdown inside it."
+    "Markdown inside it. If the prompt carries answers to your own earlier open questions, you are revising your earlier document: "
+    "write the complete revised document with those answers applied, do not ask those questions again, and ask only about "
+    "what is genuinely new."
 )
 
 

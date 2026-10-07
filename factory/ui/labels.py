@@ -23,7 +23,7 @@ STATES = ("open", "closed", "all")
 STAGE_FILTERS = ("progress", "needs", "prs", "done")
 FLASH = {"skipped": "Skipped. The factory will leave this ticket alone until it is labelled again.", "started": "Started. The factory picks it up at its next poll (usually within a minute).", "added": "Label added.", "removed": "Label removed.", "replaced": "Label replaced.",
          "answered": "Answer recorded on the ticket. Other questions still need an answer.",
-         "continued": "Answers recorded on the ticket. The factory starts the next stage at its next poll."}
+         "continued": "Answers recorded on the ticket. The stage that asked runs again with them at the factory's next poll."}
 MAX_TITLE, MAX_BODY = 200, 5000
 DUP_SECONDS = 10
 CLOSE_COMMENT = "Closed from the factory admin UI. It can be reopened if this was a mistake."
@@ -1067,9 +1067,14 @@ def _record(gh, cfg, h, repo: str, n: int, stage, picks, accept_all: bool) -> bo
         raise Refused(f"Answers cannot be recorded now ({status}).")
     if status != "queued":
         _existing(gh, repo, cfg.auto_label)               # checked before anything is posted
-    _, done = Q.record(gh, repo, n, stage, picks, "factory UI", accept_all)
+    stage_name, done = Q.record(gh, repo, n, stage, picks, "factory UI", accept_all)
     if done and status != "queued":
-        gh.add_labels(repo, n, [cfg.auto_label])
+        role = next((r for r in cfg.roles if r.name == stage_name), None)
+        if role is None:
+            gh.add_labels(repo, n, [cfg.auto_label])
+        else:                                             # the stage that asked runs again with the answers
+            gh.remove_label(repo, n, role.done_label)
+            gh.add_labels(repo, n, [role.label])
     return done
 
 

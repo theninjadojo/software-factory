@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import questions as Q
 from . import db as dbm
@@ -530,7 +530,7 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         if cfg.review.enabled and cfg.review.auto:
             prs = [(m.group(1), int(m.group(2))) for m in map(PR_URL.match, res.pr_url.split()) if m]
             try:
-                review_changes(cfg, gh, repo, issue, prs)
+                review_changes(cfg, gh, repo, issue, prs, conn=conn)
             except Exception:
                 log.exception("automatic review failed")           # a review problem must never undo a finished build
     elif res.status == "cancelled":                  # the ticket was closed: no failure label, no comment
@@ -611,6 +611,8 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
     claim(gh, repo, num, trigger_label, role.name)
     comments = human_comments(gh, repo, num)
     before = question_state(gh, repo, num)
+    # This stage asked and has now been answered: it is revising its own document, and the chain goes on from the revision.
+    chain = chain or any(st.stage == role.name and st.answers and not st.pending() for st in before)
     review = None
     if role.name == "designer" and conn is not None:      # a person's notes on the screens go to the designer
         try:
@@ -744,6 +746,18 @@ def question_message(cfg: Config, repo: str, num: int, pending: list) -> tuple[s
     return text, [[b for b in row if b[1].startswith("url:") or len(b[1].encode()) <= 64] for row in rows]
 
 
+def resume_asking_stage(cfg: Config, gh: GitHub, repo: str, num: int, stage: str) -> None:
+    """All answers are in: the stage that asked runs again with them (its own label, picked up at the next poll). For a stage that is
+    not configured the auto label continues the ticket. The new document replaces the old questions, and an answers comment older
+    than it is ignored, so the same answers never trigger a second run."""
+    role = next((r for r in cfg.roles if r.name == stage), None)
+    if role is None:
+        gh.add_labels(repo, num, [cfg.auto_label])
+        return
+    gh.remove_label(repo, num, role.done_label)
+    gh.add_labels(repo, num, [role.label])
+
+
 def answer_from_chat(cfg: Config, gh: GitHub, conn, repo: str, num: int, action: str) -> None:
     """Accept recommendations, or one option of one question, chosen by the allowlisted Telegram or Slack user. Recorded like an
     answer from the UI; when nothing needing a person is left, the auto label continues the ticket through the normal gates."""
@@ -758,9 +772,9 @@ def answer_from_chat(cfg: Config, gh: GitHub, conn, repo: str, num: int, action:
         return
     if done:
         dbm.set_questions(conn, repo, num, stage, 0)
-        gh.add_labels(repo, num, [cfg.auto_label])
+        resume_asking_stage(cfg, gh, repo, num, stage)
     emit("answers", f"answers to the {stage}'s questions recorded from chat", repo, num)
-    alert(f"Answers recorded for {repo}#{num}." + (" Continuing with the next stage." if done else " Other questions still need you."),
+    alert(f"Answers recorded for {repo}#{num}." + (f" The {stage} stage continues with them." if done else " Other questions still need you."),
           event="needs_human")
 
 
@@ -770,7 +784,18 @@ def review_comment(route, text: str) -> str:
             + "\n\n---\n_A draft review by an agent. It never approves or requests changes: a person decides. Verify before relying on it._")
 
 
-def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, trigger_label: str | None = None) -> runner.RunResult | None:
+def store_follow_actions(cfg: Config, conn, repo: str, num: int, prs: list, output: str) -> None:
+    """Keep the reviewer's validated follow-action proposals for a person to approve. Never fails a review."""
+    if not cfg.review.follow_actions or conn is None:
+        return
+    try:
+        found = reviewactions.parse(output, cfg.review.follow_labels, [r.name for r in cfg.roles])
+        reviewactions.store(conn, repo, num, prs, found, time.time())
+    except Exception:
+        log.exception("could not store the review follow actions")
+
+
+def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, trigger_label: str | None = None, conn=None) -> runner.RunResult | None:
     """Independent review of the factory's PR branches for a ticket. Posts a comment on each PR; changes nothing else."""
     if not prs:
         return None
@@ -787,14 +812,16 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
                            comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num),
-                           conversation=chat_conversation(cfg, repo, num))
+                           conversation=chat_conversation(cfg, repo, num),
+                           follow=reviewactions.prompt(cfg))
     if res.status == "rate-limited":
         if trigger_label:
             requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
         else:
             alert(f"Review of {repo}#{num} hit a rate limit. Apply `{cfg.review.label}` to the ticket to retry.", event="rate_limit")
     elif res.status == "stage":
-        body = review_comment(route, res.output)
+        body = review_comment(route, reviewactions.strip(res.output) if cfg.review.follow_actions else res.output)
+        store_follow_actions(cfg, conn, repo, num, prs, res.output)
         links = []
         for r, n in prs:
             try:
@@ -1236,7 +1263,7 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
 
         def review_job(db):
             if prs:
-                res = review_changes(cfg, gh, repo, issue, prs, label)
+                res = review_changes(cfg, gh, repo, issue, prs, label, db)
                 outcome = res.status if res else "skipped"
             else:
                 gh.comment(repo, num, "No open factory pull requests were found for this ticket, so there is nothing to review.")
@@ -1542,6 +1569,11 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
             split.sweep(gh, conn, emit, github_due)                                                      # umbrellas whose children are closed
         except Exception:
             log.exception("splitting tickets failed")                  # never stops the poll
+        try:
+            if not pause.paused(Path(cfg.db_path).parent):
+                reviewactions.process(cfg, gh, conn, emit)          # the review follow actions a person approved
+        except Exception:
+            log.exception("applying review follow actions failed")  # never stops the poll
     for repo in cfg.repos:
         handled: set[int] = set()
         todo = []

@@ -27,6 +27,7 @@ from ..tracker import display, is_local
 from . import admin, board, features, floor, floorplan, views
 from . import chat as CH
 from . import splitcard as SPC
+from . import reviewactions as RA
 from . import workers as WK
 from . import labels as L
 from . import localtickets as LT
@@ -543,6 +544,7 @@ class Handler(BaseHTTPRequestHandler):
                         local = LT.card(cfg, issue, sel["repo"], csrf, back, L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])),
                                         (sel["repo"], sel["issue"]) in L._approved(self))
                     local += SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back) + CH.card(cfg, db, sel["repo"], sel["issue"], csrf, back)
+                    local += RA.card(db, sel["repo"], sel["issue"], csrf, back)
                     decided = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])) or {}
                     close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
                                                                           sel["state"] in ("working", "needs"))

@@ -15,7 +15,7 @@ from ..router import decide
 import time
 
 from .. import schedules as sched
-from . import chat as CH, features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, machinepages as MP, release as REL, review as RV, schedules as SC, scans as SN, scenarios as TS, screens as SB, settings as S, ticketreview as TRV, splitcard as SPC, updatespage as UP, views, workers as WK
+from . import chat as CH, features as FT, flooredit as FE, forms, integrations as I, labels as L, localtickets as LT, machinepages as MP, release as REL, review as RV, reviewactions as RA, schedules as SC, scans as SN, scenarios as TS, screens as SB, settings as S, ticketreview as TRV, splitcard as SPC, updatespage as UP, views, workers as WK
 from .views import esc
 
 log = logging.getLogger("factory.ui")
@@ -850,5 +850,5 @@ POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merg
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/tools/check": tools_check, "/tools/update": tools_update, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
         "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/local/comment": LT.comment, "/tickets/local/edit": LT.edit, "/tickets/local/state": LT.set_state, "/tickets/local/attachment/delete": LT.attachment_delete, "/tickets/import": L.import_issues, "/tickets/split": SPC.post, "/tickets/review/run": TRV.run_post, "/tickets/review/apply": TRV.apply_post, "/tickets/review/reject": TRV.reject_post, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
-        "/tickets/chat/send": CH.send, "/tickets/chat/confirm": CH.confirm, "/tickets/chat/dismiss": CH.dismiss, "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/capture": SB.capture, "/screens/captures/save": SB.captures_save, "/screens/save": SB.save, "/screens/delete": SB.delete, "/screens/issue": RV.board_issue, **TS.POST}
+        "/ticket/review-actions/apply": RA.apply_post, "/ticket/review-actions/reject": RA.reject_post, "/tickets/chat/send": CH.send, "/tickets/chat/confirm": CH.confirm, "/tickets/chat/dismiss": CH.dismiss, "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/capture": SB.capture, "/screens/captures/save": SB.captures_save, "/screens/save": SB.save, "/screens/delete": SB.delete, "/screens/issue": RV.board_issue, **TS.POST}
 POST_UPLOAD = {"/tickets/create": L.create, "/tickets/local/attach": LT.attach, **TS.POST_UPLOAD}      # multipart forms: handlers also get the files
