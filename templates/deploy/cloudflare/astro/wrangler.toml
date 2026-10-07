@@ -1,0 +1,4 @@
+# Cloudflare Pages project for the static site. `wrangler pages deploy` reads the name and output directory here.
+name = "shikumi-app"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-10-01"

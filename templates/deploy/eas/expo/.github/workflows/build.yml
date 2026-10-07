@@ -1,0 +1,68 @@
+name: Build
+
+# Store builds on EAS Build, started by hand: Actions > Build > Run workflow. Needed for a first release and
+# whenever native code or the app version changes; JavaScript-only changes ship through Deploy (EAS Update).
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform
+        type: choice
+        options: [all, ios, android]
+        default: all
+      profile:
+        description: Build profile (eas.json)
+        type: choice
+        options: [production, preview]
+        default: production
+      submit:
+        description: Submit to TestFlight / Play internal testing when the build finishes (production only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check secrets
+        id: secrets
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::notice title=Build skipped::Missing secret EXPO_TOKEN. Set up EAS as described in DEPLOY.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.secrets.outputs.ready == 'true'
+      - uses: actions/setup-node@v7
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: lts/*
+          cache: npm
+      - if: steps.secrets.outputs.ready == 'true'
+        run: npm ci
+      - uses: expo/expo-github-action@v9
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          eas-version: latest
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Start the build on EAS
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          PROFILE: ${{ inputs.profile }}
+          SUBMIT: ${{ inputs.submit }}
+        run: |
+          args=(--platform "$PLATFORM" --profile "$PROFILE" --non-interactive --no-wait)
+          if [ "$SUBMIT" = "true" ] && [ "$PROFILE" = "production" ]; then args+=(--auto-submit); fi
+          eas build "${args[@]}"
+          echo "Build started on EAS: follow it at https://expo.dev (Projects > shikumi-app > Builds)." >> "$GITHUB_STEP_SUMMARY"

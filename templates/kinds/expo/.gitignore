@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# generated native folders (Continuous Native Generation: configure them in app.config.ts)
+/ios
+/android
+
+# native signing material: never commit it
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# Metro
+.metro-health-check*
+
+# test output
+coverage/
+
+# environment: .env.example is the template
+.env
+.env*.local
+
+# misc
+npm-debug.*
+*.tsbuildinfo
+.DS_Store

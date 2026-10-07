@@ -1233,3 +1233,6 @@ p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .np-draft > .card { margin:0 0 16px; } .np-draft > .card > h2:first-child { margin-top:0; } .np-plan h3 { margin:16px 0 6px; font-size:1rem; } .np-plan ul, .np-plan ol { margin:0 0 0 1.2rem; padding:0; }
 .np-q { margin:0 0 12px; } .np-q .check { display:flex; margin:0 0 6px; } .np-q input[name^="o_"] { width:100%; max-width:520px; margin-top:4px; box-sizing:border-box; }
 .np-q p.muted { margin:6px 0 0; } .np-reply + form.inline { display:block; margin-top:10px; }
+.np-plan > summary, .np-chat > summary { cursor:pointer; } .np-plan > summary h2, .np-chat > summary h2 { display:inline; margin:0; }
+.np-step ol.np-steps { margin:.6rem 0 0 1.2rem; padding:0; } .np-step ol.np-steps > li { margin:0 0 1rem; } .np-links { list-style:none; margin:.4rem 0 0; padding:0; }
+.np-links li { margin:0 0 .5rem; } .np-owner { display:flex; flex-wrap:wrap; gap:.6rem 1rem; align-items:flex-end; } .np-owner .field { margin:0; }

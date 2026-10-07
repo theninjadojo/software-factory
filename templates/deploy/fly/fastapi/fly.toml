@@ -1,0 +1,38 @@
+# Fly.io configuration. See DEPLOY.md. Commands run in the image built from the Dockerfile.
+app = "shikumi-app"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Runs once per deploy, in a temporary machine, before the new version starts. A failure stops the deploy.
+  release_command = "alembic upgrade head"
+  strategy = "rolling"
+
+[env]
+  LOG_LEVEL = "INFO"
+
+[processes]
+  app = "uvicorn shikumi_app.main:app --host 0.0.0.0 --port 8000 --no-access-log --proxy-headers --forwarded-allow-ips *"
+  worker = "python -m shikumi_app.worker"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/ready"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  processes = ["app", "worker"]

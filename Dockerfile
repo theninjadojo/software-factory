@@ -12,6 +12,7 @@ COPY worker ./worker
 COPY scripts ./scripts
 COPY deploy ./deploy
 COPY sandbox ./sandbox
+COPY templates ./templates
 COPY .github/workflows ./.github/workflows
 COPY config.example.toml .env.example VERSION ./
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOME=/tmp

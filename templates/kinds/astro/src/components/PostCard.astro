@@ -1,0 +1,21 @@
+---
+import { href } from '../lib/url';
+import FormattedDate from './FormattedDate.astro';
+
+interface Props {
+  id: string;
+  title: string;
+  description: string;
+  pubDate: Date;
+}
+
+const { id, title, description, pubDate } = Astro.props;
+---
+
+<article class="rounded-lg border border-slate-200 p-5 hover:border-slate-400">
+  <h3 class="text-lg font-semibold text-slate-900">
+    <a href={href(`/blog/${id}/`)} class="hover:underline">{title}</a>
+  </h3>
+  <p class="mt-1 text-sm text-slate-600"><FormattedDate date={pubDate} /></p>
+  <p class="mt-2 text-slate-700">{description}</p>
+</article>

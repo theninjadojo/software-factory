@@ -5,3 +5,7 @@ config.toml
 .env
 secrets
 docs
+templates/**/node_modules
+templates/**/.venv
+templates/**/.next
+templates/**/dist

@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, pm, reviewactions, reviewnotes, runner, scaffold, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import questions as Q
 from . import db as dbm
@@ -444,6 +444,41 @@ def interview_lane(cfg: Config) -> None:
     _lane("interview", lambda: np.enabled, newproject.claim, lambda db, turn: interview_answer(cfg, db, turn),
           lambda db, turn: newproject.settle(db, turn["id"], "failed", "The reply could not be written. Try again."),
           cfg.db_path, np.max_parallel, np.check_seconds)
+
+
+def scaffold_project(cfg: Config, db, d: dict) -> None:
+    """Push the first commit of each repository of an accepted plan (factory.scaffold). Each repository's state is saved as it goes, so
+    a retry or a restart carries on with the ones still to do."""
+    token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else ""
+    if not token:
+        return newproject.scaffold_done(db, d["id"], False, "The factory has no GitHub token. Add it under Credentials.")
+    if cfg.dry_run:
+        return newproject.scaffold_done(db, d["id"], False, "The factory is in dry-run, so nothing was pushed. Go live first.")
+    plan, repos = d["chosen"], d["repos"]
+    for i, r in enumerate(repos):
+        if r.get("state") == "done":
+            continue
+        try:
+            files = scaffold.files_for(plan, d["title"], repos, i)
+            sha = scaffold.push(cfg.runner.work_dir, token, r["repo"], files,
+                                f"Scaffold {plan['name']} from Shikumi\n\n{newproject.CATALOGUE[plan['pattern']].title}, deployed to "
+                                f"{newproject.DEPLOYS[plan['deploy']].title}: the skeleton, tests, CI and the deploy workflow.")
+        except scaffold.ScaffoldError as e:
+            repos[i] = {**r, "state": "failed", "detail": str(e)}
+            newproject.save_repos(db, d["id"], repos)
+            emit("scaffold", f"first commit to {r['repo']} failed: {e}")
+            return newproject.scaffold_done(db, d["id"], False, f"{r['repo']}: {e}")
+        repos[i] = {**r, "state": "done", "sha": sha or r.get("sha", ""), "detail": ""}
+        newproject.save_repos(db, d["id"], repos)
+        emit("scaffold", f"pushed the first commit to {r['repo']}")
+    newproject.scaffold_done(db, d["id"], True)
+
+
+def scaffold_lane(cfg: Config) -> None:
+    """First commits of new projects, one at a time, in their own lane."""
+    _lane("scaffold", lambda: True, newproject.claim_scaffold, lambda db, d: scaffold_project(cfg, db, d),
+          lambda db, d: newproject.scaffold_done(db, d["id"], False, "The first commit could not be pushed. Try again."),
+          cfg.db_path, 1, max(2, cfg.new_projects.check_seconds))
 
 
 def _lane(name: str, enabled, claim, answer, fail, db_path: str, max_parallel: int, check_seconds: int) -> None:
@@ -1803,6 +1838,8 @@ def main() -> None:
         threading.Thread(target=chat_lane, args=(cfg, gh), daemon=True, name="chat-lane").start()
     if not args.once and cfg.new_projects.enabled:
         threading.Thread(target=interview_lane, args=(cfg,), daemon=True, name="interview-lane").start()
+    if not args.once:
+        threading.Thread(target=scaffold_lane, args=(cfg,), daemon=True, name="scaffold-lane").start()
     if not args.once and not cfg.dry_run:
         recover(cfg, gh)
     while True:

@@ -1,0 +1,10 @@
+# Runs on the server in the deploy directory, next to a .env file (see DEPLOY.md).
+# The Deploy workflow copies this file there and keeps IMAGE and IMAGE_TAG in .env up to date.
+name: shikumi-app
+
+services:
+  web:
+    image: ${IMAGE:-ghcr.io/shikumi-org/shikumi-app}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"

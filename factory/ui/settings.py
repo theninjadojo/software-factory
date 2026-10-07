@@ -720,6 +720,17 @@ def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
     _commit(cfg_path, state_dir, new_ov)
 
 
+def add_project(cfg_path: str, state_dir: Path, project: dict) -> None:
+    """Append one project (from the New project step) to the projects, validated like the Projects form, and request a restart."""
+    base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
+    projects = list(deep_merge(base, new_ov).get("projects", []))
+    taken = {r["repo"] for p in projects for r in p.get("repos", []) if isinstance(r, dict)}
+    if any(r["repo"] in taken for r in project["repos"]):
+        raise SettingsError(["A repository of this project already belongs to another project."])
+    new_ov["projects"] = projects + [project]
+    _commit(cfg_path, state_dir, new_ov)
+
+
 def save_telegram(cfg_path: str, state_dir: Path, form: Form) -> None:
     base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
     try:

@@ -1,0 +1,47 @@
+# Runs on your server. The Deploy workflow copies this file to DEPLOY_PATH and sets IMAGE in the .env file next to it.
+# The .env file (made once by hand, see DEPLOY.md) holds POSTGRES_PASSWORD and the other settings.
+name: shikumi-app
+
+x-app: &app
+  image: ${IMAGE:-ghcr.io/shikumi-org/shikumi-app:latest}
+  restart: unless-stopped
+  environment:
+    DATABASE_URL: postgresql+psycopg://app:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/shikumi_app
+    CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  api:
+    <<: *app
+    ports:
+      - "${API_BIND:-127.0.0.1:8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "shikumi_app.worker"]
+
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: shikumi_app
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d shikumi_app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:

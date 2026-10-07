@@ -1,0 +1,74 @@
+name: Deploy
+
+# Publishes the JavaScript on main as an EAS Update to the production channel: installed production builds with
+# the same runtime version (the app version) pick it up on their next launch. Store builds: see build.yml.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  update:
+    # After a green CI run of a push to main, or when started by hand.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check secrets
+        id: secrets
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::notice title=Deploy skipped::Missing secret EXPO_TOKEN. Set up EAS as described in DEPLOY.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v7
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: lts/*
+          cache: npm
+      - if: steps.secrets.outputs.ready == 'true'
+        run: npm ci
+
+      - name: Check the EAS project is linked
+        id: project
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          id=$(npx expo config --type public --json | node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => console.log(JSON.parse(s).extra?.eas?.projectId ?? ""))')
+          if [ -z "$id" ]; then
+            echo "::notice title=Deploy skipped::No EAS project ID in app.config.ts. Run eas init and set easProjectId as described in DEPLOY.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: expo/expo-github-action@v9
+        if: steps.project.outputs.ready == 'true'
+        with:
+          eas-version: latest
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Publish the update
+        if: steps.project.outputs.ready == 'true'
+        run: |
+          eas update --channel production --environment production \
+            --message "$(git log -1 --pretty=%s)" --non-interactive

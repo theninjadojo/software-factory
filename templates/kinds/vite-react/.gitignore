@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tsbuildinfo
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+.env
+.env.*
+!.env.example
+.wrangler/
+.vercel/
+npm-debug.log*
+.DS_Store

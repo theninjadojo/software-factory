@@ -25,7 +25,8 @@ PLAN = re.compile(r"^```factory-plan[ \t]*\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 NAME = re.compile(r"[a-z][a-z0-9-]{1,38}[a-z0-9]")
 PLAN_KEYS = {"pattern", "deploy", "name", "summary", "reasons", "first_features", "notes"}
 MAX_SUMMARY, MAX_NOTES, MAX_ITEM, MAX_REASONS, MAX_FEATURES = 1200, 2000, 300, 6, 12
-STATUSES = ("interviewing", "planned", "accepted", "abandoned")
+# interviewing -> planned -> accepted -> queued -> scaffolding -> scaffolded -> done; failed goes back to queued on a retry.
+STATUSES = ("interviewing", "planned", "accepted", "queued", "scaffolding", "scaffolded", "failed", "done", "abandoned")
 
 
 @dataclass(frozen=True)
@@ -44,17 +45,17 @@ class Pattern:
     stack: tuple                      # ((layer, choice), ...)
     practices: tuple                  # design patterns and conventions the scaffold sets up
     tests: str
-    repos: tuple                      # ((name suffix, role), ...): "" is the project's name itself
+    repos: tuple                      # ((name suffix, role, template kind), ...): "" is the project's name itself
     deploys: tuple                    # Deploy ids, the first is the usual pick
 
 
 DEPLOYS = {d.id: d for d in (
     Deploy("docker-vm", "Your own server (Docker Compose)",
-           "CI builds images and pushes them to GitHub's container registry; a deploy workflow runs docker compose on your server over SSH."),
-    Deploy("fly", "Fly.io", "Containers on Fly.io, deployed by flyctl from CI on every merge to main, with Fly Postgres or any managed Postgres."),
-    Deploy("render", "Render", "Services from a render.yaml blueprint, deployed by Render on every merge to main, with Render Postgres."),
-    Deploy("vercel", "Vercel", "A preview deployment for every pull request and production on merge to main, with a managed Postgres (Neon)."),
-    Deploy("cloudflare", "Cloudflare Pages", "Static pages and edge functions on Cloudflare, with a preview for every pull request."),
+           "After CI passes on main, a deploy workflow builds the image, pushes it to GitHub's container registry and runs docker compose on your server over SSH."),
+    Deploy("fly", "Fly.io", "Containers on Fly.io, deployed by flyctl after CI passes on main, with Fly Managed Postgres or any Postgres."),
+    Deploy("render", "Render", "Services from a render.yaml blueprint, deployed through Render deploy hooks after CI passes on main, with Render Postgres where needed."),
+    Deploy("vercel", "Vercel", "Production deployed from CI after it passes on main; a preview for every pull request once the repository is connected in Vercel. A web app adds a managed Postgres (such as Neon)."),
+    Deploy("cloudflare", "Cloudflare Pages", "Static pages on Cloudflare Pages, uploaded by CI after every green merge to main."),
     Deploy("github-pages", "GitHub Pages", "A static build published by a workflow on every merge to main. Free, static only."),
     Deploy("cloudflare-fly", "Cloudflare Pages + Fly.io", "The front end on Cloudflare Pages, the API and its database on Fly.io."),
     Deploy("eas-fly", "Expo EAS + Fly.io", "App builds and over-the-air updates with Expo EAS (TestFlight and Play internal testing), the API on Fly.io."),
@@ -68,25 +69,24 @@ CATALOGUE = {p.id: p for p in (
         "A product with accounts, a database and screens, built by one team: SaaS, dashboards, internal tools, marketplaces.",
         "Other clients (a mobile app, partners) need the same API from day one, or the heavy lifting is data or AI work in Python.",
         (("App", "Next.js (App Router), TypeScript, React Server Components"), ("UI", "Tailwind CSS and shadcn/ui"),
-         ("Data", "PostgreSQL with Drizzle ORM and versioned migrations"), ("Auth", "Auth.js (email and OAuth)"),
+         ("Data", "PostgreSQL with Drizzle ORM and versioned migrations"), ("Auth", "Better Auth (GitHub sign-in; more providers or email sign-in by configuration)"),
          ("Validation", "Zod at every boundary")),
         ("Feature folders (each feature owns its UI, server actions and queries)", "A service layer between server actions and the database",
          "Typed environment configuration that fails at start-up", "Error boundaries and a shared error type"),
         "Vitest for units, Playwright end to end against a real Postgres in CI",
-        (("", "The web app: UI, server code and database migrations"),),
+        (("", "The web app: UI, server code and database migrations", "nextjs"),),
         ("vercel", "fly", "docker-vm", "render")),
     Pattern(
         "spa-api", "Web front end with a separate API",
         "The API is a product of its own (a mobile app or partners will use it too), or the backend does data, AI or long-running work.",
         "A small app one team ships as one thing: two repositories and a client to keep in sync are overhead.",
         (("Front end", "Vite, React, TypeScript, TanStack Router and Query"), ("API", "FastAPI on Python 3.13, managed with uv"),
-         ("Data", "PostgreSQL with SQLAlchemy 2 and Alembic migrations"), ("Contract", "OpenAPI, with a generated TypeScript client"),
-         ("Auth", "OAuth 2 / OIDC with short-lived tokens")),
+         ("Data", "PostgreSQL with SQLAlchemy 2 and Alembic migrations"), ("Contract", "OpenAPI, with a generated TypeScript client (openapi-typescript)")),
         ("Hexagonal API: routes, services and repositories, with the domain free of framework code",
-         "A generated, typed API client: the contract is checked in CI", "Structured JSON logging with request ids",
+         "A generated, typed API client from the API's OpenAPI schema, type-checked in CI", "Structured JSON logging with request ids",
          "Typed configuration from the environment"),
-        "Vitest and Playwright for the front end; pytest with a real Postgres for the API; a contract check between them",
-        (("-web", "The browser front end"), ("-api", "The HTTP API, its database and migrations")),
+        "Vitest and Playwright for the front end (the API faked in the browser); pytest with a real Postgres for the API",
+        (("-web", "The browser front end", "vite-react"), ("-api", "The HTTP API, its database and migrations", "fastapi")),
         ("cloudflare-fly", "docker-vm", "render")),
     Pattern(
         "api-service", "API or backend service",
@@ -97,17 +97,17 @@ CATALOGUE = {p.id: p for p in (
         ("Hexagonal layout: routes, services and repositories, with the domain free of framework code",
          "Idempotent job handlers with retries", "Structured JSON logging with request ids", "Health and readiness endpoints"),
         "pytest with a real Postgres in CI, and API tests against the OpenAPI schema",
-        (("", "The service: API, workers, database and migrations"),),
+        (("", "The service: API, workers, database and migrations", "fastapi"),),
         ("fly", "docker-vm", "render")),
     Pattern(
         "content-site", "Website or content site",
         "Mostly content: a marketing site, landing pages, documentation, a blog. Fast, cheap to host, little or no backend.",
         "Accounts, per-user data or a lot of interactivity: pick the full-stack web app.",
-        (("Site", "Astro with TypeScript and MDX content collections"), ("UI", "Tailwind CSS"), ("Forms", "Edge functions where needed")),
+        (("Site", "Astro with TypeScript and MDX content collections"), ("UI", "Tailwind CSS"), ("Extras", "MDX, RSS and a sitemap; add an edge function or a form service when the site needs one")),
         ("Typed content collections (the build fails on bad front matter)", "A small set of layout and section components",
          "Image optimisation and a performance budget"),
-        "Vitest for components, Playwright for key pages, a link check and an accessibility check in CI",
-        (("", "The website and its content"),),
+        "Vitest for components, Playwright for key pages with an accessibility check (axe), a link check and a size budget in CI",
+        (("", "The website and its content", "astro"),),
         ("cloudflare", "vercel", "github-pages")),
     Pattern(
         "mobile-app", "Mobile app with an API",
@@ -118,17 +118,17 @@ CATALOGUE = {p.id: p for p in (
          ("Releases", "Expo EAS Build and over-the-air updates")),
         ("Feature folders in the app, with screens kept thin", "A generated, typed API client", "Offline-friendly data fetching with TanStack Query",
          "Hexagonal API: routes, services and repositories"),
-        "Jest and React Native Testing Library, Maestro flows for key journeys; pytest with a real Postgres for the API",
-        (("-app", "The iOS and Android app"), ("-api", "The HTTP API, its database and migrations")),
+        "Jest and React Native Testing Library in CI, Maestro flows for key journeys (run locally or on EAS); pytest with a real Postgres for the API",
+        (("-app", "The iOS and Android app", "expo"), ("-api", "The HTTP API, its database and migrations", "fastapi")),
         ("eas-fly", "eas-docker-vm")),
     Pattern(
         "python-package", "Python library or command-line tool",
         "Something other people install and run or import: a CLI, an SDK, a shared library.",
         "It runs as a service people reach over the network: pick the API or backend service.",
-        (("Package", "Python 3.13, managed with uv, src layout"), ("CLI", "Typer"), ("Quality", "Ruff and mypy (strict)")),
+        (("Package", "Python 3.12 and newer (developed on 3.13), managed with uv, src layout"), ("CLI", "Typer"), ("Quality", "Ruff and mypy (strict)")),
         ("A small public API with everything else private", "Semantic versioning with a changelog", "Typed configuration"),
         "pytest with coverage on every supported Python version in CI",
-        (("", "The package and its command-line tool"),),
+        (("", "The package and its command-line tool", "python-package"),),
         ("pypi",)),
 )}
 
@@ -141,13 +141,29 @@ def catalogue_text() -> str:
             f"- id `{p.id}`: {p.title}. Choose when: {p.fits} Avoid when: {p.avoid}\n"
             f"  Stack: {'; '.join(f'{k}: {v}' for k, v in p.stack)}.\n"
             f"  Set up from the start: {'; '.join(p.practices)}. Tests: {p.tests}.\n"
-            f"  Repositories: {'; '.join(f'<name>{s}: {r}' for s, r in p.repos)}.\n"
+            f"  Repositories: {'; '.join(f'<name>{s}: {r}' for s, r, _ in p.repos)}.\n"
             f"  Deploy targets: {'; '.join(f'`{d}` ({DEPLOYS[d].title}: {DEPLOYS[d].how})' for d in p.deploys)}.")
     return "\n".join(out)
 
 
+# A deploy target that puts each repository somewhere different names the overlay per template kind; any other target is
+# the overlay of the same name (templates/deploy/<overlay>/<kind>/).
+SPLIT_DEPLOYS = {"cloudflare-fly": {"vite-react": "cloudflare", "fastapi": "fly"}, "eas-fly": {"expo": "eas", "fastapi": "fly"},
+                 "eas-docker-vm": {"expo": "eas", "fastapi": "docker-vm"}}
+
+
+def overlay(deploy: str, kind: str) -> str:
+    return SPLIT_DEPLOYS.get(deploy, {}).get(kind, deploy)
+
+
 def repo_names(pattern: str, name: str) -> list[str]:
-    return [name + s for s, _ in CATALOGUE[pattern].repos]
+    return [name + s for s, _, _ in CATALOGUE[pattern].repos]
+
+
+def repo_plan(plan: dict, owner: str) -> list[dict]:
+    """The repositories an accepted plan creates: [{repo, role, kind, overlay}], in the pattern's order."""
+    return [{"repo": f"{owner}/{plan['name']}{s}", "role": role, "kind": kind, "overlay": overlay(plan["deploy"], kind)}
+            for s, role, kind in CATALOGUE[plan["pattern"]].repos]
 
 
 # ---- the plan an interviewer proposes ----
@@ -239,6 +255,10 @@ def ensure_tables(db) -> None:
             questions TEXT,                             -- an agent turn's validated questions (JSON list)
             plan TEXT)                                  -- an agent turn's validated plan (JSON)"""
     )
+    have = {r[1] for r in db.execute("PRAGMA table_info(project_drafts)")}
+    for col in ("owner", "repos", "detail", "ticket"):         # the scaffold step's columns, added to an older table
+        if col not in have:
+            db.execute(f"ALTER TABLE project_drafts ADD COLUMN {col} TEXT")
     db.execute("CREATE INDEX IF NOT EXISTS project_turns_draft ON project_turns(draft, id)")
     db.execute("CREATE INDEX IF NOT EXISTS project_turns_pending ON project_turns(status, id)")
 
@@ -250,7 +270,7 @@ def _load(raw):
         return None
 
 
-DRAFT_KEYS = ("id", "title", "status", "plan", "chosen", "created", "updated")
+DRAFT_KEYS = ("id", "title", "status", "plan", "chosen", "created", "updated", "owner", "repos", "detail", "ticket")
 
 
 def drafts(db) -> list[dict]:
@@ -271,7 +291,7 @@ def draft(db, draft_id: int) -> dict | None:
 
 def _draft(row) -> dict:
     d = dict(zip(DRAFT_KEYS, row))
-    d["plan"], d["chosen"] = _load(d["plan"]), _load(d["chosen"])
+    d["plan"], d["chosen"], d["repos"] = _load(d["plan"]), _load(d["chosen"]), _load(d["repos"]) or []
     return d
 
 
@@ -335,8 +355,10 @@ def settle(db, turn_id: int, status: str, detail: str = "") -> None:
 
 
 def mark_interrupted(db) -> int:
-    """Start-up: a message that was being answered when the orchestrator stopped will not be."""
+    """Start-up: a message that was being answered when the orchestrator stopped will not be. A first commit that was being pushed
+    is queued again: a repository it already finished is recognised and skipped."""
     cur = db.execute("UPDATE project_turns SET status='failed', detail='interrupted by a restart' WHERE status='running'")
+    db.execute("UPDATE project_drafts SET status='queued' WHERE status='scaffolding'")
     db.commit()
     return cur.rowcount
 
@@ -371,6 +393,74 @@ def abandon(db, draft_id: int) -> bool:
     db.execute("UPDATE project_turns SET status='refused', detail='The draft was abandoned.' WHERE draft=? AND status='pending'", (int(draft_id),))
     db.commit()
     return cur.rowcount == 1
+
+
+# ---- the first commit (factory.scaffold) ----
+
+def set_owner(db, draft_id: int, owner: str) -> bool:
+    cur = db.execute("UPDATE project_drafts SET owner=?, updated=? WHERE id=? AND status IN ('accepted','failed')", (owner, time.time(), int(draft_id)))
+    db.commit()
+    return cur.rowcount == 1
+
+
+def queue_scaffold(db, draft_id: int, owner: str, repos: list[dict]) -> bool:
+    """A person created the repositories: the orchestrator pushes the first commit. Repositories already done keep their state."""
+    old = {r["repo"]: r for r in (draft(db, draft_id) or {}).get("repos") or []}
+    repos = [{**r, "state": old.get(r["repo"], {}).get("state", "pending"), "sha": old.get(r["repo"], {}).get("sha", "")} for r in repos]
+    cur = db.execute("UPDATE project_drafts SET owner=?, repos=?, detail='', status='queued', updated=? WHERE id=? AND status IN ('accepted','failed')",
+                     (owner, json.dumps(repos), time.time(), int(draft_id)))
+    db.commit()
+    return cur.rowcount == 1
+
+
+def claim_scaffold(db) -> dict | None:
+    row = db.execute("SELECT id FROM project_drafts WHERE status='queued' ORDER BY updated LIMIT 1").fetchone()
+    if row is None:
+        return None
+    cur = db.execute("UPDATE project_drafts SET status='scaffolding', updated=? WHERE id=? AND status='queued'", (time.time(), row[0]))
+    db.commit()
+    return draft(db, row[0]) if cur.rowcount == 1 else None
+
+
+def save_repos(db, draft_id: int, repos: list[dict]) -> None:
+    db.execute("UPDATE project_drafts SET repos=?, updated=? WHERE id=?", (json.dumps(repos), time.time(), int(draft_id)))
+    db.commit()
+
+
+def scaffold_done(db, draft_id: int, ok: bool, detail: str = "") -> None:
+    db.execute("UPDATE project_drafts SET status=?, detail=?, updated=? WHERE id=? AND status='scaffolding'",
+               ("scaffolded" if ok else "failed", detail[:500], time.time(), int(draft_id)))
+    db.commit()
+
+
+def finish(db, draft_id: int, ticket: str) -> bool:
+    """The project is registered and its first ticket opened."""
+    cur = db.execute("UPDATE project_drafts SET status='done', ticket=?, updated=? WHERE id=? AND status='scaffolded'",
+                     (ticket, time.time(), int(draft_id)))
+    db.commit()
+    return cur.rowcount == 1
+
+
+def project_name(title: str, name: str, taken: set) -> str:
+    """A project name the config accepts (letters, digits, spaces, dot, dash; 60 characters), unique among `taken`."""
+    base = " ".join(re.sub(r"[^\w .-]", " ", title).split())[:50] or name
+    out, n = base, 2
+    while out.lower() in {t.lower() for t in taken}:
+        out, n = f"{base} {n}", n + 1
+    return out
+
+
+def first_ticket(plan: dict, title: str) -> tuple[str, str]:
+    """The title and body of the ticket that starts the work: the plan's first features, built on the scaffold."""
+    p = CATALOGUE[plan["pattern"]]
+    body = [plan["summary"], "", f"The repositories were scaffolded as **{p.title}** ({DEPLOYS[plan['deploy']].title}): the skeleton, tests, "
+            "CI and the deploy workflow are in place. Read CLAUDE.md in each repository first, and build on the example feature's layout.", ""]
+    if plan.get("first_features"):
+        body += ["## First features", ""] + [f"{i}. {f}" for i, f in enumerate(plan["first_features"], 1)] + [""]
+    if plan.get("notes"):
+        body += ["## Notes from planning", "", plan["notes"], ""]
+    body += ["Start with the first feature. Split the rest into their own tickets if they are large."]
+    return f"Build the first features of {title}"[:200], "\n".join(body)
 
 
 # ---- the interviewer's prompt ----
