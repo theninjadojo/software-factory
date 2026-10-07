@@ -89,7 +89,7 @@ def factory_labels(cfg) -> dict[str, tuple[str, str]]:
         out[r.label] = ("warn", "starts work")
         out[r.done_label] = ("good", "stage done")
     out[cfg.review.done_label] = ("good", "stage done")
-    for name in ("factory:working", "factory:pr-open", "factory:failed"):
+    for name in ("factory:working", "factory:pr-open", "factory:failed", "factory:waiting-release"):
         out[name] = ("", "managed by the factory")
     return out
 

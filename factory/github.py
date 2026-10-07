@@ -228,6 +228,23 @@ class GitHub:
             raise ValueError("unknown merge method")
         return (self._req("PUT", f"/repos/{repo}/pulls/{number}/merge", {"sha": sha, "merge_method": method}) or {}).get("sha", "")
 
+    def releases(self, repo: str, per_page: int = 10) -> list[dict]:
+        """The newest releases (drafts are listed only to a token that may see them; callers skip them)."""
+        return self._get(f"/repos/{repo}/releases?per_page={int(per_page)}")
+
+    def tags(self, repo: str, per_page: int = 10) -> list[dict]:
+        return self._get(f"/repos/{repo}/tags?per_page={int(per_page)}")
+
+    def workflow_runs(self, repo: str, workflow: str, branch: str, per_page: int = 10) -> list[dict]:
+        """The newest runs of one workflow file on a branch (needs Actions: read)."""
+        q = urllib.parse.urlencode({"branch": branch, "per_page": int(per_page)})
+        return self._get(f"/repos/{repo}/actions/workflows/{urllib.parse.quote(workflow, safe='')}/runs?{q}").get("workflow_runs", [])
+
+    def contains(self, repo: str, ref: str, sha: str) -> bool:
+        """Whether `ref` (a tag or a commit) includes commit `sha`: comparing sha...ref, ref is the same or ahead."""
+        out = self._get(f"/repos/{repo}/compare/{urllib.parse.quote(sha, safe='')}...{urllib.parse.quote(ref, safe='')}")
+        return out.get("status") in ("identical", "ahead")
+
     def open_pulls(self, repo: str, prefix: str = "") -> list[dict]:
         """Open pull requests (newest first), optionally only those whose branch starts with `prefix`."""
         out = self._get(f"/repos/{repo}/pulls?state=open&per_page=50")

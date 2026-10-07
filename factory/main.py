@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, ticketreview, tools, tracker, triage, usage, verify
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -304,7 +304,7 @@ def trusted(cfg: Config, gh: GitHub, repo: str, num: int, label: str | None = No
 
 def claim(gh: GitHub, repo: str, num: int, trigger_label: str, kind: str) -> None:
     gh.remove_label(repo, num, trigger_label)       # prevents re-dispatch
-    for stale in (DONE, FAILED, Q.NEEDS_ANSWERS):                    # clear state left by an earlier attempt
+    for stale in (DONE, FAILED, Q.NEEDS_ANSWERS, waves.WAITING):     # clear state left by an earlier attempt
         gh.remove_label(repo, num, stale)
     gh.add_labels(repo, num, [working_label(kind)])
 
@@ -453,9 +453,15 @@ def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route,
 
 
 def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
-             trigger_label: str | None = None, conn=None) -> runner.RunResult:
-    """Build it: edit the repos in the sandbox and open PRs."""
+             trigger_label: str | None = None, conn=None, wave: list | None = None) -> runner.RunResult:
+    """Build it: edit the repos in the sandbox and open PRs. wave: the waves rows of a second build, which changes only the repos
+    that waited for those rows' packages to be published (see waves.py). A build label on a ticket whose second build failed
+    runs that second build again."""
     num, trigger_label = issue["number"], trigger_label or cfg.trigger_label
+    if wave is None and conn is not None:
+        wave = waves.rows(conn, repo, num, ("failed", "building")) or None      # building: interrupted (a ticket never runs twice at once)
+        if wave is None:
+            waves.close_open(conn, repo, num)
     prior = stage_outputs(gh, repo, num)
     shown = ticket_mockups(repo, num)
     names = [lb["name"] for lb in issue.get("labels", [])]
@@ -474,6 +480,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     claim(gh, repo, num, trigger_label, "implement")
     kw = dict(prior=prior, mockups=shown, comments=human_comments(gh, repo, num), answers=Q.summary(question_state(gh, repo, num)),
               conversation=chat_conversation(cfg, repo, num))
+    if wave:
+        kw.update(only=tuple(waves.held(wave)), released=waves.context(cfg, repo, wave))
     res, route = run_chain(cfg, gh, "build", repo, issue, route, c, **kw)
     if res.status == "failed" and getattr(res, "screen_failure", None):      # one fix round with the diffs, then it stays failed
         emit("screens:retry", "the screens did not match the baselines: one fix round with the diffs", repo, num)
@@ -482,13 +490,33 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         vf = res.verify_failure
         emit("verify:retry", f"a worker check failed: fix round {vf['round']} of {cfg.workers.fix_rounds}", repo, num)
         res, route = run_chain(cfg, gh, "build", repo, issue, route, c, verify_retry=vf, **kw)
-    if res.status == "rate-limited":                 # the working label comes off once the outcome is on the ticket (see dispatch_stage)
+    if wave and conn is not None:                    # rate limited: back to released, so the waves poll starts it again after the pause
+        for w in wave:
+            waves.set_state(conn, repo, num, {"pr": "done", "cancelled": "closed", "rate-limited": "released"}.get(res.status, "failed"), w["repo"])
+    if res.status == "rate-limited" and wave:
+        if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+            alert(f"Rate limited on {repo}#{num}. Its second build starts again after a {cfg.runner.rate_limit_backoff_seconds // 60} min pause.", event="rate_limit")
+        gh.add_labels(repo, num, [waves.WAITING])
+        gh.remove_label(repo, num, WORKING)
+    elif res.status == "rate-limited":               # the working label comes off once the outcome is on the ticket (see dispatch_stage)
         requeue_rate_limited(cfg, gh, repo, num, trigger_label, "implement")
         gh.remove_label(repo, num, WORKING)
     elif res.status == "pr":
         gh.add_labels(repo, num, [DONE])
         draft = cfg.review.enabled and cfg.review.auto
-        gh.comment(repo, num, f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else ""))
+        waiting = ""
+        if res.held and conn is not None:
+            project = project_for(cfg, repo)
+            opened = [(m.group(1), int(m.group(2))) for m in map(PR_URL.match, res.pr_url.split()) if m]
+            ups = [(r, n) for r, n in opened if r in waves.upstream(project, [r for r, _ in opened], res.held)]
+            waves.record(conn, repo, num, ups, res.held, route)
+            gh.add_labels(repo, num, [waves.WAITING])
+            later = ", ".join(waves.short(h) for h in res.held)
+            waiting = (f"\n\n{later} uses the packages changed here, so it is built afterwards: once "
+                       + " and ".join(f"{r}#{n}" for r, n in ups) + " is merged and published ("
+                       + "; ".join(waves.how(project.repo(r).publish) for r, _ in ups) + f"), the factory builds {later} against the published version.")
+            emit("waves:waiting", f"opened {', '.join(waves.short(r) for r, _ in ups)}; {later} waits for the publish", repo, num)
+        gh.comment(repo, num, f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else "") + waiting)
         gh.remove_label(repo, num, WORKING)
         if conn is not None:
             for u in res.pr_url.split():                  # watch each PR's CI; skip anything that is not a PR URL
@@ -1274,6 +1302,22 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
     return None
 
 
+def wave_submit(cfg: Config, gh: GitHub, conn):
+    """How the waves poll starts a second build: only when not paused and the ticket can take a job, else it waits a pass."""
+    def submit(repo: str, num: int, ws: list, route) -> bool:
+        if pause.paused(Path(cfg.db_path).parent) or not pool.can_take(jobkey(repo, num)):
+            return False
+
+        def job(db):
+            issue = gh.get_issue(repo, num)
+            res = dispatch(cfg, gh, repo, issue, route, None, None, db, wave=ws)
+            dbm.record(db, repo, num, issue["updated_at"], f"run:{res.status}",
+                       f"second build after {', '.join(w['released'] or w['repo'] for w in ws)}; {res.detail}; {res.pr_url or ''}")
+        start(cfg, conn, repo, num, "build", job, gh)
+        return True
+    return submit
+
+
 def ci_submit(cfg: Config, conn):
     """How the CI watcher starts a fix round: only when not paused and the ticket can take a job, else it waits a pass."""
     def submit(issue_repo: str, issue_num: int, job) -> bool:
@@ -1514,6 +1558,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         ci.watch_ci(cfg, gh, conn, lambda text, event="ci_result": alert(text, event=event),
                     lambda *a: run_fix(cfg, gh, *a), ci_submit(cfg, conn))
         conflicts.watch(cfg, gh, conn, lambda text, event="conflict": alert(text, event=event))
+        waves.tick(cfg, gh, conn, lambda text, event="release": alert(text, event=event), emit, wave_submit(cfg, gh, conn))
 
 
 def check_usage(cfg: Config, conn) -> None:

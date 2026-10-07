@@ -672,6 +672,10 @@ def set_parallel(cfg_path: str, state_dir: Path, value: int) -> None:
 
 
 def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
+    """The form edits names, descriptions, repos and roles. A repo's other keys (depends_on, publish: set in config.toml) are kept."""
+    base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
+    extra = {r["repo"]: {k: v for k, v in r.items() if k not in ("repo", "role")}
+             for p in deep_merge(base, new_ov).get("projects", []) for r in p.get("repos", []) if isinstance(r, dict)}
     projects = []
     for i in range(20):
         name = (form.get(f"p{i}_name") or "").strip()
@@ -680,7 +684,7 @@ def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
             repo = (form.get(f"p{i}_r{j}_repo") or "").strip()
             role = (form.get(f"p{i}_r{j}_role") or "").strip()
             if repo:
-                repos.append({"repo": repo, "role": role})
+                repos.append({"repo": repo, "role": role, **extra.get(repo, {})})
         if not name and not repos:
             continue
         if not name or len(name) > 60 or not re.fullmatch(r"[\w .-]+", name):
@@ -690,8 +694,13 @@ def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
             raise SettingsError([f"Project {name}: invalid repository or role too long: {', '.join(bad[:3])}"])
         if not repos:
             raise SettingsError([f"Project {name}: add at least one repository."])
+        kept = {x for r in repos for x in (r["repo"], r["repo"].split("/")[-1])}
+        for r in repos:                                 # a dependency on a repo removed here goes with it
+            if "depends_on" in r:
+                r["depends_on"] = [d for d in r["depends_on"] if d in kept]
+                if not r["depends_on"]:
+                    del r["depends_on"]
         projects.append({"name": name, "description": (form.get(f"p{i}_desc") or "").strip()[:500], "repos": repos})
-    base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
     if projects == base.get("projects", []):
         new_ov.pop("projects", None)
     else:

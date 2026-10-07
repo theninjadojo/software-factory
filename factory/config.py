@@ -352,10 +352,26 @@ class ScannerCfg:
     advice: dict = field(default_factory=dict)      # preset id -> recommended fix; overrides the preset's (none) and is merged key by key from the overrides file
 
 
+PUBLISH_DETECT = ("release", "tag", "workflow")
+
+
+@dataclass(frozen=True)
+class PublishCfg:
+    """How the factory tells that a repo's merged change has been published (a package other repos install), so the repos that
+    depend on it can be built against it. Every way is read from GitHub: a published release, a tag, or a successful run of a
+    workflow on the default branch, each containing the merge commit."""
+    detect: str = "release"          # "release" | "tag" | "workflow"
+    workflow: str = ""               # detect = "workflow": the workflow file, for example "publish.yml"
+    packages: tuple[str, ...] = ()   # what it publishes, told to the agents (for example "@acme/ui")
+    timeout_hours: int = 48          # waiting longer than this for the publish after the merge: alert once (it keeps waiting)
+
+
 @dataclass(frozen=True)
 class ProjectRepo:
     repo: str            # owner/name
     role: str = ""       # one line telling the agent and the classifier what this repo is for
+    depends_on: tuple[str, ...] = ()       # repos of the same project (owner/name) whose PUBLISHED packages this repo uses
+    publish: PublishCfg | None = None      # set: this repo publishes packages; its change ships before the repos depending on it
 
 
 @dataclass(frozen=True)
@@ -364,6 +380,43 @@ class Project:
     name: str
     repos: tuple[ProjectRepo, ...]
     description: str = ""
+
+    def repo(self, name: str) -> "ProjectRepo | None":
+        return next((r for r in self.repos if r.repo == name), None)
+
+
+def _project_repo(r, project: str) -> ProjectRepo:
+    if not isinstance(r, dict):
+        return ProjectRepo(r)
+    pub = r.get("publish")
+    if pub is not None:
+        if not isinstance(pub, dict):
+            raise ValueError(f"projects.{project}: publish of {r.get('repo')} must be a table")
+        pub = PublishCfg(**{**pub, "packages": tuple(pub.get("packages", ()))})
+        if pub.detect not in PUBLISH_DETECT:
+            raise ValueError(f"projects.{project}: publish.detect of {r.get('repo')} must be one of {', '.join(PUBLISH_DETECT)}")
+        if pub.detect == "workflow" and not re.fullmatch(r"[\w.-]+\.ya?ml", pub.workflow):
+            raise ValueError(f"projects.{project}: publish.workflow of {r.get('repo')} must be a workflow file name, like publish.yml")
+        if not 1 <= int(pub.timeout_hours) <= 24 * 30:
+            raise ValueError(f"projects.{project}: publish.timeout_hours of {r.get('repo')} must be from 1 to 720")
+    return ProjectRepo(r["repo"], r.get("role", ""), tuple(r.get("depends_on", ())), pub)
+
+
+def _check_depends(p: "Project") -> "Project":
+    """depends_on may name a repo of the project by owner/name or by its short name; it is stored as owner/name, and it must
+    name a repo that publishes (a dependency on one that does not would never be waited for)."""
+    out = []
+    for r in p.repos:
+        full = []
+        for dep in r.depends_on:
+            hit = [x for x in p.repos if dep in (x.repo, x.repo.split("/")[1])]
+            if len(hit) != 1 or hit[0].repo == r.repo:
+                raise ValueError(f"projects.{p.name}: {r.repo} depends_on {dep!r}, which is not another repo of the project")
+            if hit[0].publish is None:
+                raise ValueError(f"projects.{p.name}: {r.repo} depends_on {hit[0].repo}, which has no publish table")
+            full.append(hit[0].repo)
+        out.append(dataclasses.replace(r, depends_on=tuple(dict.fromkeys(full))))
+    return dataclasses.replace(p, repos=tuple(out))
 
 
 @dataclass(frozen=True)
@@ -968,8 +1021,8 @@ def parse(raw: dict) -> Config:
     if isinstance(rn.get("thinking_tokens"), dict):              # one effort level set alone keeps the built-in budget of the others
         rn["thinking_tokens"] = {**RunnerCfg().thinking_tokens, **rn["thinking_tokens"]}
     projects = tuple(
-        Project(name=p["name"], description=p.get("description", ""),
-                repos=tuple(ProjectRepo(**r) if isinstance(r, dict) else ProjectRepo(r) for r in p["repos"]))
+        _check_depends(Project(name=p["name"], description=p.get("description", ""),
+                               repos=tuple(_project_repo(r, p["name"]) for r in p["repos"])))
         for p in raw.get("projects", []))
     repos = list(gh["repos"])
     seen: dict[str, str] = {}

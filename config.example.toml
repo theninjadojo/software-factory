@@ -90,13 +90,18 @@ model = "typesafe/jev-1.13"
 
 # Repos that work together are ONE project: agents get all of them checked out side by side and may change several
 # in one task (one PR per changed repo, cross-linked). Each role line tells the agents what the repo is for.
+# A repo that PUBLISHES packages other repos install gets `publish`; a repo that installs them names it in `depends_on`. A build
+# that changes both then ships in two waves: only the publishing repo's PR is opened; once a person merges it and it is published
+# (detect = "release": a GitHub release containing the merge; "tag": a tag; "workflow": a successful run of `workflow` on the
+# default branch), the factory builds the depending repos against the published version. The ticket carries
+# factory:waiting-release meanwhile. timeout_hours (default 48): alert once if nothing is published that long after the merge.
 [[projects]]
 name = "shop"
 description = "An online shop: a web app with a database backend, native mobile apps and shared UI packages."
 repos = [
-  { repo = "your-org/shop-web", role = "Web app and database backend (migrations, functions, schema)." },
+  { repo = "your-org/shop-web", role = "Web app and database backend (migrations, functions, schema).", depends_on = ["shop-packages"] },
   { repo = "your-org/shop-mobile", role = "Native iOS and Android apps. Models are generated in shop-web and synced here." },
-  { repo = "your-org/shop-packages", role = "Shared UI packages used by the web app." },
+  { repo = "your-org/shop-packages", role = "Shared UI packages, published to GitHub Packages.", publish = { detect = "release", packages = ["@your-org/ui"] } },
 ]
 
 # Watch the repos' own CI on factory PRs and report it. Needs the GitHub token to have Actions: read
