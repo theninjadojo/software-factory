@@ -74,14 +74,13 @@ if [ "$EMULATOR" = 1 ]; then
   DEVICE="--device $KVM"
 fi
 
-HOMESIZE=256m
-[ -n "$SCREENS" ] && HOMESIZE=2g                # Robolectric (under Roborazzi and Paparazzi) downloads the Android framework into ~/.m2
+# /home/builder holds what Robolectric (Roborazzi, Paparazzi, many unit tests) downloads: the Android framework, a few hundred MB.
 echo "[android-test] == $ENGINE run $IMAGE ($MODE: gradlew $TASK${SCREENS:+, keeping screenshots})"
 # shellcheck disable=SC2086   # $DEVICE is either empty or one fixed "--device PATH" pair
 "$ENGINE" run --rm --pull=never \
   --user "$(id -u):$(id -g)" \
   --read-only --cap-drop=all --security-opt=no-new-privileges --pids-limit=2048 --memory="$MEMORY" --cpus="$CPUS" \
-  --tmpfs /tmp:rw,exec,size=4g --tmpfs /home/builder:rw,size="$HOMESIZE" \
+  --tmpfs /tmp:rw,exec,size=4g --tmpfs /home/builder:rw,size=2g \
   -e HOME=/home/builder -e GRADLE_USER_HOME=/gradle-cache -e CI=true \
   -v "$WORK:/work:rw" -v "$CACHE:/gradle-cache:rw" $DEVICE \
   "$IMAGE" "$MODE" "$TASK" $SCREENS

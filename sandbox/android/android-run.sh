@@ -8,6 +8,9 @@ MODE="${1:-}"; TASK="${2:-test}"; SCREENS="${3:-}"
 SDK="${ANDROID_HOME:-/opt/android-sdk}"
 export ANDROID_HOME="$SDK" ANDROID_SDK_ROOT="$SDK"
 export PATH="$PATH:$SDK/platform-tools:$SDK/emulator:$SDK/cmdline-tools/latest/bin"
+# The container runs as the worker's uid, which has no passwd entry here, so Java would take "?" as the home folder and Robolectric
+# (Roborazzi, many unit tests) could not create its download lock there. Every JVM Gradle starts, test workers too, reads this.
+export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Duser.home=${HOME:-/home/builder}"
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-300}"
 case "$TASK" in ""|*[!A-Za-z0-9:_-]*) echo "[android] bad gradle task name" >&2; exit 2 ;; esac
 [ -f ./gradlew ] || { echo "[android] no gradlew in the project: this recipe needs the Gradle wrapper" >&2; exit 2; }

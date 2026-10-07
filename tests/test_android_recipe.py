@@ -169,6 +169,11 @@ class InsideImage(unittest.TestCase):
         code, out, log = self.run_inner("unit", ":app:test")
         self.assertEqual((code, log), (0, ["gradlew --no-daemon --console=plain :app:test"]), out)
 
+    def test_java_gets_a_home_folder_although_the_uid_has_no_passwd_entry(self):
+        stub(self.proj / "gradlew", f'echo "$JAVA_TOOL_OPTIONS" >> "{self.log}"\n')       # Robolectric failed with "?/.robolectric-download-lock"
+        code, out, log = self.run_inner("unit", "test", HOME="/home/builder")
+        self.assertEqual((code, log), (0, ["-Duser.home=/home/builder"]), out)
+
     def test_failing_gradle_is_exit_1(self):
         self.gradle(3)
         code, out, _ = self.run_inner("unit", "test")
