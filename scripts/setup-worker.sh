@@ -3,7 +3,8 @@
 #   ./scripts/setup-worker.sh                       # asks for what it needs
 #   FACTORY_URL=https://factory.example:8788 WORKER_TOKEN=... ./scripts/setup-worker.sh     # non-interactive (no prompts)
 # Get the token on the factory host:  python3 -m factory.ctl workers add <name>   (or FACTORY_WORKERS=1 ./scripts/setup.sh)
-# Optional environment: WORKER_RECIPES ("web", "screens", "android", "ios" or a list; default web), WORKER_PLATFORM (default: macos or linux),
+# Optional environment: WORKER_RECIPES ("web", "screens", "android", "ios", "lockfile" or a list; default web), WORKER_PLATFORM (default: macos or linux),
+#   for lockfile: WORKER_NPM_TOKEN, a READ-ONLY packages token (GitHub Packages: read:packages), kept in secrets/npm_token,
 #   for ios (a Mac with Tart): WORKER_IOS_SCHEME and WORKER_IOS_PROJECT (or WORKER_IOS_WORKSPACE), WORKER_IOS_DESTINATION,
 #   WORKER_IOS_PULL=1 to download the Xcode image (about 30 GB) as VM "shikumi-ios",
 #   WORKER_GIT_URL (default https://github.com/{repo}.git; use git@github.com:{repo}.git for SSH keys), SHIKUMI_REPO (image owner),
@@ -23,7 +24,10 @@ OS="$(uname -s)"
 PLATFORM="${WORKER_PLATFORM:-$([ "$OS" = Darwin ] && echo macos || echo linux)}"
 [[ "$PLATFORM" =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || die "WORKER_PLATFORM must be lowercase letters, digits and dashes"
 RECIPES="${WORKER_RECIPES:-web}"
-for r in $RECIPES; do [[ "$r" == web || "$r" == screens || "$r" == android || "$r" == ios ]] || die "unknown recipe '$r' (this release ships: web, screens, android, ios)"; done
+for r in $RECIPES; do [[ "$r" == web || "$r" == screens || "$r" == android || "$r" == ios || "$r" == lockfile ]] || die "unknown recipe '$r' (this release ships: web, screens, android, ios, lockfile)"; done
+if [[ " $RECIPES " == *" lockfile "* && -n "${WORKER_NPM_TOKEN:-}" ]]; then
+  mkdir -p secrets && (umask 077 && printf '%s\n' "$WORKER_NPM_TOKEN" > secrets/npm_token) && echo "saved the packages token in secrets/npm_token"
+fi
 ENGINE="$(command -v docker >/dev/null 2>&1 && echo docker || { command -v podman >/dev/null 2>&1 && echo podman; } || true)"
 case " $RECIPES " in *" android "*) [ -n "$ENGINE" ] || die "the android recipe needs Docker (or Podman): it builds inside a container";; esac
 
@@ -82,6 +86,13 @@ command = [{q(d + '/worker/recipes/playwright-screens.sh')}]
 timeout_seconds = 3600
 artifacts = ["screens-out/*.png"]
 """
+if "lockfile" in r:
+    tok = [q("--token-file"), q(d + "/secrets/npm_token")] if os.path.exists("secrets/npm_token") else []
+    out += f"""
+[recipes.lockfile-update]
+command = [{", ".join([q(d + '/worker/recipes/lockfile-update.sh'), *tok])}]
+timeout_seconds = 900
+"""
 if "android" in r:
     out += f"""
 [recipes.android-test]
@@ -103,8 +114,8 @@ PY
   chmod 600 worker.toml; echo "wrote worker.toml (platform: $PLATFORM, recipes: $RECIPES)"
 fi
 
-if [[ " $RECIPES " == *" web "* || " $RECIPES " == *" screens "* ]] && [ -z "${SKIP_NODE:-}" ]; then
-  say "Node.js (the web and screens recipes)"
+if [[ " $RECIPES " == *" web "* || " $RECIPES " == *" screens "* || " $RECIPES " == *" lockfile "* ]] && [ -z "${SKIP_NODE:-}" ]; then
+  say "Node.js (the web, screens and lockfile recipes)"
   if [ -x tools/node/bin/node ]; then echo "tools/node exists ($(tools/node/bin/node --version)): keeping it"
   elif command -v node >/dev/null && command -v npm >/dev/null && node -e 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)' 2>/dev/null \
        && { command -v corepack >/dev/null || command -v pnpm >/dev/null; }; then

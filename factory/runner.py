@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
-from . import designfiles, pool, screens, tracker, verify, waves
+from . import designfiles, lockfiles, pool, screens, tracker, verify, waves
 from . import mockups as mockups_mod
 from . import reviewnotes
 from .render import render as preview_render
@@ -732,6 +732,27 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                         except designfiles.DesignFileRejected as e:
                             return RunResult("rejected", f"{r}: {p}: {e}")
             return finish_merge(f"an agent resolved {sum(len(fs) for fs in todo.values())} conflicted file(s)")
+        # a second build: refresh the lockfiles on a worker, which has the network the agent lacks (advisory: see lockfiles.py)
+        locked: dict[str, str] = {}
+        if released and not fix_branch:
+            for r in patches:
+                if not lockfiles.job_for(cfg, r):
+                    continue
+                base = d / "base" / names[r]
+                diff, locked[r] = lockfiles.request(cfg, r, num, git(["rev-parse", "HEAD"], base, env).stdout.strip(),
+                                                    patches[r].read_text(), lockfiles.packages_for(project, r))
+                if not diff:
+                    continue
+                try:
+                    if (bad := [p for p in check_patch_text(diff, rn) if not lockfiles.allowed(p)]):
+                        raise PatchRejected(f"it changed {bad[0]}, not only package manifests and lockfiles")
+                    (d / "out" / "lockfile.diff").write_text(diff)
+                    git(["apply", "--index", "--whitespace=nowarn", str(d / "out" / "lockfile.diff")], base, env)
+                except (PatchRejected, subprocess.CalledProcessError) as e:
+                    why = e.stderr[:200] if isinstance(e, subprocess.CalledProcessError) else str(e)
+                    locked[r] = f"the worker's lockfile change was refused: {why}"
+                    continue
+                patches[r].write_text(git(["diff", "--cached", "--binary", "HEAD"], base, env).stdout)   # gates and the PR see both
         # screen gate: every configured screen of a changed repo must still match its committed baseline (fails closed)
         touched: list[str] = []
         built_images: list[dict] = []
@@ -797,8 +818,9 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                    "the screen check compared the new screens with the new baselines.\n\n" if r in touched else "")
                 + (f"**The changes in {', '.join(h.split('/')[1] for h in held)} that use this are built after it is merged and published.** "
                    "The agent's summary below may describe them too.\n\n" if held and r in waves.upstream(project, list(patches), held) else "")
-                + ("**Built after the packages it uses were merged and published** (see the ticket). Check that the lockfile matches the "
-                   "new version: the agent has no network to refresh it.\n\n" if released else "")
+                + ("**Built after the packages it uses were merged and published** (see the ticket). "
+                   + (f"Lockfile: {locked[r]}.\n\n" if r in locked else "Check that the lockfile matches the new version: the agent has no "
+                      "network to refresh it.\n\n") if released else "")
                 + ("**Worker verification did not pass (an advisory check, or the factory is set to warn only):**\n\n" + FENCE + "\n" + warned[r][-1500:].replace(FENCE, "'" * 3) + "\n" + FENCE + "\n\n" if r in warned else "")
                 + f"Refs {tracker.ref(repo, num)}\n\n"
                 f"<details><summary>Agent's summary (unverified)</summary>\n\n{FENCE}\n{summary}\n{FENCE}\n</details>",

@@ -52,8 +52,8 @@ if [ -z "${SKIP_IMAGE:-}" ] && command -v docker >/dev/null 2>&1 && docker image
   if docker pull "ghcr.io/$OWNER/shikumi-android:$TAG"; then docker tag "ghcr.io/$OWNER/shikumi-android:$TAG" factory-android:latest
   else echo "(no prebuilt android image for $TAG: keeping the one you have; rebuild with docker build -t factory-android sandbox/android)"; fi
 fi
-if [ -z "${SKIP_NODE:-}" ] && grep -qE 'web-test\.sh|playwright-screens\.sh' worker.toml 2>/dev/null; then       # a JavaScript recipe on a machine with no Node of its own
-  for r in web-test playwright-screens; do
+if [ -z "${SKIP_NODE:-}" ] && grep -qE 'web-test\.sh|playwright-screens\.sh|lockfile-update\.sh' worker.toml 2>/dev/null; then       # a JavaScript recipe on a machine with no Node of its own
+  for r in web-test playwright-screens lockfile-update; do
     if grep -q "$r\.sh" worker.toml && [ -f "worker/recipes/$r.sh" ] && ! sh "worker/recipes/$r.sh" --preflight >/dev/null 2>&1; then
       echo "The $r recipe cannot run on this machine yet: installing a Node of the worker's own (worker/install-node.sh)"
       ./worker/install-node.sh || echo "(could not install it: that recipe stays switched off; the Workers page says why)"; break

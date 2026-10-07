@@ -19,6 +19,8 @@ NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 MAX_LOG = 200_000
 MAX_ARTIFACTS = 8
 SCREENS_PURPOSE = "screens"                 # params {"purpose": "screens"}: a Playwright run for the Screens board (factory/captures.py)
+LOCKFILE_PURPOSE = "lockfile"               # params {"purpose": "lockfile"}: refresh lockfiles for published packages (factory/lockfiles.py)
+MAX_RESULT_PATCH = 4_000_000                # such a job returns the diff it made
 MAX_SCREEN_ARTIFACTS = 300                  # such a run returns every screenshot its suite took, not a handful
 MAX_FINDINGS, MAX_SNIPPET = 1000, 300
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -38,7 +40,8 @@ def ensure_tables(db: sqlite3.Connection) -> None:
     for col in ("params", "findings"):                    # added for code-smell scans; older databases get them here
         if col not in have:
             db.execute(f"ALTER TABLE verify_jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
-    for col, decl in (("progress", "TEXT NOT NULL DEFAULT ''"), ("progress_at", "REAL")):       # the worker's latest step
+    for col, decl in (("progress", "TEXT NOT NULL DEFAULT ''"), ("progress_at", "REAL"),       # the worker's latest step
+                      ("result_patch", "TEXT NOT NULL DEFAULT ''")):                          # a lockfile job's diff (validated again by lockfiles.py)
         if col not in have:
             db.execute(f"ALTER TABLE verify_jobs ADD COLUMN {col} {decl}")
     db.execute(
@@ -198,6 +201,13 @@ def is_screens(job: dict) -> bool:
         return False
 
 
+def purpose(job: dict) -> str:
+    try:
+        return str(json.loads(job["params"]).get("purpose", "")) if job.get("params") else ""
+    except (ValueError, AttributeError):
+        return ""
+
+
 def validate_result(body, max_artifacts: int = MAX_ARTIFACTS) -> tuple[dict | None, str]:
     """(clean result, '') or (None, why). Strict: a fixed status set, a whole-number exit code, a capped log, validated PNGs."""
     if not isinstance(body, dict):
@@ -225,7 +235,10 @@ def validate_result(body, max_artifacts: int = MAX_ARTIFACTS) -> tuple[dict | No
     found, why = validate_findings(body.get("findings", []))
     if found is None:
         return None, why
-    return {"status": status, "exit_code": code, "log": clean_log(body.get("log")), "artifacts": out, "findings": found}, ""
+    patch = body.get("patch", "")
+    if not isinstance(patch, str) or len(patch) > MAX_RESULT_PATCH or "\0" in patch:
+        return None, f"patch must be text of at most {MAX_RESULT_PATCH} characters"
+    return {"status": status, "exit_code": code, "log": clean_log(body.get("log")), "artifacts": out, "findings": found, "patch": patch}, ""
 
 
 def validate_findings(items) -> tuple[list[dict] | None, str]:
@@ -259,8 +272,9 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
         db.commit()
         return why
     findings = json.dumps(res["findings"]) if job["params"] and res["status"] == "passed" else ""    # only a scan job keeps findings
-    db.execute("UPDATE verify_jobs SET status=?, exit_code=?, log=?, finished=?, findings=? WHERE id=?",
-               (res["status"], res["exit_code"], res["log"], now, findings, job_id))
+    patch = res["patch"] if purpose(job) == LOCKFILE_PURPOSE and res["status"] == "passed" else ""    # only a lockfile job keeps a diff
+    db.execute("UPDATE verify_jobs SET status=?, exit_code=?, log=?, finished=?, findings=?, result_patch=? WHERE id=?",
+               (res["status"], res["exit_code"], res["log"], now, findings, patch, job_id))
     for n, png in res["artifacts"].items():
         db.execute("INSERT OR REPLACE INTO verify_artifacts VALUES (?,?,?)", (job_id, n, png))
     db.commit()
