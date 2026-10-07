@@ -14,7 +14,7 @@ from ..tracker import display, is_local
 GH_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+/(pull|issues)/\d+$")
 REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
-NAV = [("/", "Factory"), ("/tickets", "Tickets"), ("/events", "Events"), ("/screens", "Screens"), ("/settings", "Settings")]
+NAV = [("/", "Factory"), ("/tickets", "Tickets"), ("/events", "Events"), ("/screens", "Screens"), ("/scenarios", "Tests"), ("/settings", "Settings")]
 # Needs you, Runs and PRs & CI are part of Tickets: those pages light up the Tickets tab, and the needs count sits on it.
 TICKET_PAGES = {"/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/ticket/review", "/labels", "/labels/issue"}
 ICON = '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 16 16\'%3E%3Ccircle cx=\'8\' cy=\'8\' r=\'6\' fill=\'%23e0a030\'/%3E%3C/svg%3E">'
