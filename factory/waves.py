@@ -121,6 +121,10 @@ def short(repo: str) -> str:
     return repo.split("/")[1]
 
 
+def run_link(repo: str, pub: PublishCfg) -> str:
+    return f"https://github.com/{repo}/actions/workflows/{pub.workflow}" if pub.detect == "workflow" else ""
+
+
 def how(pub: PublishCfg) -> str:
     return {"release": "a GitHub release", "tag": "a tag",
             "workflow": f"a successful run of the {pub.workflow} workflow"}[pub.detect] + " that contains the merge"
@@ -141,7 +145,7 @@ def detect(gh, repo: str, pub: PublishCfg, sha: str, merged_at: float) -> dict |
             if t.get("commit", {}).get("sha") == sha or gh.contains(repo, t["name"], sha):
                 return {"ok": True, "what": f"tag {clean(t['name'])}", "url": f"https://github.com/{repo}/releases/tag/{clean(t['name'], 200)}"}
     else:
-        for run in gh.workflow_runs(repo, pub.workflow, gh.default_branch(repo)):
+        for run in gh.workflow_runs(repo, pub.workflow):           # any branch or tag: a run on a release tag counts if it holds the merge
             if run.get("status") != "completed" or _epoch(run.get("created_at")) < after:
                 continue
             if run.get("head_sha") == sha or gh.contains(repo, run["head_sha"], sha):
@@ -205,7 +209,8 @@ def _advance(cfg: Config, gh, db, issue_repo: str, num: int, w: dict, notify, em
             w = {**w, "merge_sha": pr.get("merge_commit_sha") or "", "merged_at": _epoch(pr.get("merged_at")) or time.time()}
             set_state(db, issue_repo, num, "publish", repo, merge_sha=w["merge_sha"], merged_at=w["merged_at"])
             emit("waves:merged", f"{short(repo)}#{pr_num} merged; waiting for it to be published", issue_repo, num)
-            notify(f"Merged {repo}#{pr_num} for {issue_repo}#{num}. Waiting for {how(pub) if pub else 'the publish'}, then building {waiting}.")
+            notify(f"Merged {repo}#{pr_num} for {issue_repo}#{num}. Waiting for {how(pub) if pub else 'the publish'}, then building {waiting}."
+                   + (f"\nIf {pub.workflow} does not run on its own, start it: {run_link(repo, pub)}" if pub and pub.detect == "workflow" else ""))
         elif pr.get("state") == "closed":
             set_state(db, issue_repo, num, "closed")
             gh.remove_label(issue_repo, num, WAITING)

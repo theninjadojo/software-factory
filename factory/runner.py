@@ -238,7 +238,8 @@ def _dependency_note(r) -> str:
     """Tells the agent how the repos of a project reach each other's published packages (factory config, trusted)."""
     if r.publish:
         pk = f" ({', '.join(r.publish.packages)})" if r.publish.packages else ""
-        return f" [publishes packages{pk}]"
+        return (f" [publishes packages{pk}: when you change a package here, raise its version in its package.json, or the new code is "
+                "not published]")
     if r.depends_on:
         return (f" [installs the published packages of {', '.join(d.split('/')[1] for d in r.depends_on)}: a change there reaches this "
                 "repo only after it is merged and published, so in the same run as such a change, changes here are discarded and made "

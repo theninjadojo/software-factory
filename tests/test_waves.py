@@ -50,7 +50,7 @@ class Split(unittest.TestCase):
 
     def test_prompt_tells_the_agent_how_the_repos_relate(self):
         p = build_prompt("t", "b", PROJ, "o/r", released="pkg was published as release v1.4.0")
-        self.assertIn("pkg/ : packages [publishes packages (@o/ui)]", p)
+        self.assertIn("pkg/ : packages [publishes packages (@o/ui): when you change a package here, raise its version", p)
         self.assertIn("installs the published packages of pkg", p)
         self.assertIn("<published_dependencies>\npkg was published as release v1.4.0", p)
 
@@ -112,7 +112,7 @@ class WaveGH(FakeGH):
     def releases(self, repo): return self.rels
     def tags(self, repo): return []
     def default_branch(self, repo): return "main"
-    def workflow_runs(self, repo, wf, branch): return self.runs
+    def workflow_runs(self, repo, wf, branch=""): return self.runs
     def contains(self, repo, ref, sha): return ref in ("v1.4.0", "c2")
 
 

@@ -1,4 +1,4 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|screens baseline <owner/repo> <checkout>|workers add <name>|schedules [list|run <name>]|scans [list|run <name>]|health]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|deps [--apply]|screens baseline <owner/repo> <checkout>|workers add <name>|schedules [list|run <name>]|scans [list|run <name>]|health]"""
 import os
 import secrets
 import sqlite3
@@ -194,6 +194,40 @@ def scans_cmd(cfg, args: list[str]) -> int:
     return 0
 
 
+def deps_cmd(cfg, gh, cfg_path: str, args: list[str], out=print) -> int:
+    """`deps [--apply]`: find which repo of each project publishes packages another installs (depdetect.py), print it, and with
+    --apply write it (and a lockfile job per repo that uses them) to config.overrides.toml, as the Projects page's Apply does."""
+    from . import depdetect
+    from .ui import settings as S
+    apply, bad = "--apply" in args, 0
+    if not cfg.projects:
+        out("no projects configured: group repos that work together into a project first (Settings -> Projects)")
+        return 0
+    for p in cfg.projects:
+        sug, problems = depdetect.detect(gh, p)
+        for why in problems:
+            out(f"{p.name}: {why}")
+            bad = 1
+        if not sug:
+            out(f"{p.name}: no repo installs packages another one publishes")
+        for s in sug:
+            done = depdetect.is_applied(p, s)
+            uses = "; ".join(f"{c} uses {', '.join(ns)}" for c, ns in s.consumers.items())
+            out(f"{p.name}: {s.publisher} publishes ({s.detect}{' ' + s.workflow if s.workflow else ''}). {s.note}. {uses}."
+                + (" Already set." if done else ""))
+            if apply and not done:
+                try:
+                    S.apply_dependency(cfg_path, Path(cfg.db_path).parent, p.name, s.publisher, s.detect, s.workflow, s.packages,
+                                       list(s.consumers), True)
+                    out("  applied (the factory picks it up when it is next idle)")
+                except S.SettingsError as e:
+                    out("  not applied: " + " · ".join(e.messages))
+                    bad = 1
+    if not apply:
+        out("\nRun with --apply to use these.")
+    return bad
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     cfg = load(os.environ.get("FACTORY_CONFIG", "/srv/factory/config.toml"))
@@ -217,6 +251,12 @@ def main():
             print("no GitHub token: put it in", cfg.token_file)
             sys.exit(1)
         sys.exit(create_labels(cfg, GitHub(token), sys.argv[2:] or list(cfg.repos)))
+    if cmd == "deps":
+        token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else None
+        if not token:
+            print("no GitHub token: put it in", cfg.token_file)
+            sys.exit(1)
+        sys.exit(deps_cmd(cfg, GitHub(token), os.environ.get("FACTORY_CONFIG", "/srv/factory/config.toml"), sys.argv[2:]))
     if cmd == "workers" and sys.argv[2:3] == ["add"] and len(sys.argv) == 4:
         sys.exit(workers_add(cfg, sys.argv[3]))
     if cmd == "health":
