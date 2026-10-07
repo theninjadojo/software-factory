@@ -194,7 +194,8 @@ def home(cfg, csrf: str, show: str = "", q: str = "", slack_conn=None) -> str:
         body = (f'<section class="ft-group" aria-labelledby="g-fields"><h2 id="g-fields">Settings inside the pages</h2><ul class="ft-hits">'
                 + "".join(f'<li><a href="{esc(href)}"><strong>{esc(label)}</strong><span class="muted">{esc(where)}</span></a></li>' for label, where, href in hits)
                 + "</ul></section>") + body
-    return head + (body or '<p class="muted">No setting matches. <a href="/settings">Show them all</a></p>')
+    from . import forms
+    return head + forms.page_list(cfg, show, q) + (body or '<p class="muted">No setting matches. <a href="/settings">Show them all</a></p>')
 
 
 def _field_hits(q: str) -> list[tuple[str, str, str]]:

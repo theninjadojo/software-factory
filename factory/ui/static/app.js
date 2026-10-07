@@ -465,10 +465,17 @@
     for (var i = 0; i < els.length; i++) if (els[i].name && els[i].type !== "hidden" && els[i].name.indexOf("confirm__") !== 0 && changed(els[i])) n++;
     if (!note) return;
     if (!note.dataset.idle) note.dataset.idle = note.textContent;
-    note.textContent = n ? (n === 1 ? "1 unsaved change" : n + " unsaved changes") : note.dataset.idle;
+    note.textContent = n ? (n === 1 ? "1 change not saved" : n + " changes not saved") : note.dataset.idle;
     note.classList.toggle("on", n > 0);
+    var save = form.querySelector(".s-save button");
+    if (save && !save.dataset.saving) save.disabled = n === 0;
   }
   function onEdit(e) { var f = e.target.closest("form[data-dirty]"); if (f) dirty(f); }
+  Array.prototype.forEach.call(document.querySelectorAll("form[data-dirty]"), dirty);
+  document.addEventListener("submit", function (e) {
+    var b = e.target.matches && e.target.matches("form[data-dirty]") && e.target.querySelector(".s-save button");
+    if (b) { b.dataset.saving = "1"; setTimeout(function () { b.disabled = true; b.textContent = "Saving…"; }, 0); }
+  });
   document.addEventListener("input", onEdit);
   document.addEventListener("change", onEdit);
   Array.prototype.forEach.call(document.querySelectorAll(".s-reset"), function (b) { b.hidden = false; });

@@ -60,7 +60,7 @@ def _send_page(h, status: int, title: str, body: str, active: str, csrf: str, fl
         group = forms.section_group(key)
         crumb = (f'<nav class="crumb" aria-label="Breadcrumb"><a href="/settings">Settings</a>'
                  + (f' <span aria-hidden="true">›</span> {views.esc(group)}' if group else "") + "</nav>")
-        body, title, bare = f"{crumb}<h1>{views.esc(name)}</h1>{body}", name, True
+        body, title, bare = f"{crumb}<h1>{views.esc(name)}</h1>{body}{forms.related(key)}", name, True
     h._send(status, views.page(title, body, "/settings", csrf, nav=views.NAV, flash=flash, flash_kind=kind, badges={"/tickets": len(cached)} if cached else None,
                                side=side, bare=bare))
 
