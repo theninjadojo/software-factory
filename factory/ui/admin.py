@@ -82,10 +82,34 @@ def _status_json(h, key: str, default: str = "[]"):
 
 
 # ------------------------------------------------------------------ settings
-def render_settings(h, section: str, csrf: str, submitted=None, tester: str = "") -> str:
+LOCK_SETUP = 'WORKER_RECIPES="lockfile" WORKER_NPM_TOKEN=<a read:packages token> ./scripts/setup-worker.sh'
+
+
+def lockfile_state(h, eff: dict) -> str:
+    """For the Build order card: '' when no repo asks for lockfile refreshes, 'ok' when a worker can do them, else what is missing."""
+    want = [x.get("repo", "") for x in eff.get("workers", {}).get("lockfiles", []) if isinstance(x, dict)]
+    if not want:
+        return ""
+    names = ", ".join(r.split("/")[-1] for r in want)
+    if not eff.get("workers", {}).get("enabled"):
+        return f"asked for {names}, but verification workers are off. Turn them on (Workers)."
+    db = h.app.ro_db()
+    if db is None:
+        return ""
+    try:
+        from .. import jobs
+        seen = [w for w in jobs.online_workers(db, time.time(), 7 * 86400) if "lockfile-update" in (w.get("recipes") or "").split(",")]
+    except sqlite3.Error:
+        seen = []
+    finally:
+        db.close()
+    return "ok" if seen else f"asked for {names}, but no worker with the lockfile-update recipe has been seen."
+
+
+def render_settings(h, section: str, csrf: str, submitted=None, tester: str = "", found: dict | None = None) -> str:
     base, eff = _files(h)
     if section == "projects":
-        return forms.projects_form(base, eff, csrf, submitted)
+        return forms.projects_form(base, eff, csrf, submitted) + forms.build_order(eff, csrf, found, lockfile_state(h, eff), LOCK_SETUP)
     body = forms.settings_form(section, eff, base, csrf, submitted)
     if section == "classifier":
         body += forms.classifier_tester(csrf, tester)
@@ -164,6 +188,37 @@ def projects_save(h, form, csrf: str) -> None:
         S.save_projects(h.app.config_path, h.app.state_dir(), form)
     except S.SettingsError as e:
         return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf, submitted=form), "/settings", csrf, " · ".join(e.messages), "bad", section="projects")
+    h._redirect("/settings?section=projects&ok=saved")
+
+
+def projects_detect(h, form, csrf: str) -> None:
+    """Find which repos of a project publish packages the others install (reads GitHub; a few seconds), and show it to apply."""
+    from .. import depdetect
+    from ..github import GitHub
+    cfg, name = h.app.cfg(), form.get("project", "")
+    project = next((p for p in cfg.projects if p.name == name), None)
+    token = I.read_secret(cfg, "github")
+    if project is None or not token:
+        msg = "Save the project first." if project is None else "Set the GitHub token first (Credentials)."
+        return _send_page(h, 400, "Settings", render_settings(h, "projects", csrf), "/settings", csrf, msg, "bad", section="projects")
+    found = {name: depdetect.detect(GitHub(token), project)}
+    n = len(found[name][0])
+    msg = f"Found {n} package link{'s' if n != 1 else ''} in {name}." if n else f"No package links found in {name}."
+    _send_page(h, 200, "Settings", render_settings(h, "projects", csrf, found=found), "/settings", csrf, msg, section="projects")
+
+
+def projects_deps(h, form, csrf: str) -> None:
+    try:
+        if form.get("action") == "apply":
+            S.apply_dependency(h.app.config_path, h.app.state_dir(), form.get("project", ""), form.get("publisher", ""), form.get("detect", ""),
+                               form.get("workflow", ""), (form.get("packages") or "").split(","), (form.get("consumers") or "").split(","),
+                               form.get("lockfiles") == "1")
+        elif form.get("action") == "remove":
+            S.remove_dependency(h.app.config_path, h.app.state_dir(), form.get("project", ""), form.get("publisher", ""))
+        else:
+            return h._send(400, "unknown action", "text/plain")
+    except S.SettingsError as e:
+        return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf), "/settings", csrf, " · ".join(e.messages), "bad", section="projects")
     h._redirect("/settings?section=projects&ok=saved")
 
 
@@ -791,7 +846,7 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
 GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/machines/server": server_machine_get, "/workers/machine": worker_machine_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/tickets/review": TRV.review_get, "/fragment/chat": CH.fragment_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get}
 POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
-        "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/classify/test": classify_test,
+        "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/settings/projects/detect": projects_detect, "/settings/projects/deps": projects_deps, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/tools/check": tools_check, "/tools/update": tools_update, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
         "/tickets/start": L.start, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/local/comment": LT.comment, "/tickets/local/edit": LT.edit, "/tickets/local/state": LT.set_state, "/tickets/local/attachment/delete": LT.attachment_delete, "/tickets/import": L.import_issues, "/tickets/review/run": TRV.run_post, "/tickets/review/apply": TRV.apply_post, "/tickets/review/reject": TRV.reject_post, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,

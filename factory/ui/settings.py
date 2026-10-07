@@ -829,3 +829,70 @@ def save_harness(cfg_path: str, state_dir: Path, name: str, form: Form) -> None:
     for field, value in (("enabled", enabled), ("image", image), ("command", command), ("allow_hosts", hosts)):
         _store(new_ov, base, f"harnesses.{name}.{field}", value)
     _commit(cfg_path, state_dir, new_ov)
+
+
+PACKAGE_RE = re.compile(r"^(@[\w.-]+/)?[\w.-]+$")
+WORKFLOW_RE = re.compile(r"^[\w.-]+\.ya?ml$")
+
+
+def _project_entry(cfg_path: str, name: str) -> tuple[dict, dict, list, dict]:
+    """(base, new overrides, the effective projects list (a copy), the named project in it, its repos as dicts)."""
+    base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
+    projects = copy.deepcopy(deep_merge(base, new_ov).get("projects", []))
+    p = next((x for x in projects if x.get("name") == name), None)
+    if p is None:
+        raise SettingsError([f"There is no project called {name!r}."])
+    p["repos"] = [r if isinstance(r, dict) else {"repo": r} for r in p.get("repos", [])]
+    return base, new_ov, projects, p
+
+
+def _save_projects_list(cfg_path: str, state_dir: Path, base: dict, new_ov: dict, projects: list) -> None:
+    if projects == base.get("projects", []):
+        new_ov.pop("projects", None)
+    else:
+        new_ov["projects"] = projects
+    _commit(cfg_path, state_dir, new_ov)
+
+
+def apply_dependency(cfg_path: str, state_dir: Path, project: str, publisher: str, detect: str, workflow: str, packages: list,
+                     consumers: list, lockfiles: bool) -> None:
+    """Write a suggested build order (depdetect.Suggestion): the publisher's `publish` table, `depends_on` on each consumer and, if
+    asked, a [[workers.lockfiles]] entry per consumer. Everything is checked again here: the form fields came back from a browser."""
+    from ..config import PUBLISH_DETECT
+    base, new_ov, projects, p = _project_entry(cfg_path, project)
+    names = {r["repo"] for r in p["repos"]}
+    packages = [x.strip() for x in packages if x.strip()]
+    consumers = [c for c in dict.fromkeys(consumers) if c]
+    problems = ([] if publisher in names else [f"{publisher} is not in {project}."]) \
+        + ([] if consumers and set(consumers) <= names - {publisher} else ["Each repo that uses the packages must be another repo of the project."]) \
+        + ([] if detect in PUBLISH_DETECT else ["Unknown way to detect the publish."]) \
+        + ([] if detect != "workflow" or WORKFLOW_RE.match(workflow) else ["The workflow must be a file name like publish.yml."]) \
+        + ([] if 0 < len(packages) <= 100 and all(PACKAGE_RE.match(x) for x in packages) else ["The package names are not valid."])
+    if problems:
+        raise SettingsError(problems)
+    short = publisher.split("/")[1]
+    for r in p["repos"]:
+        if r["repo"] == publisher:
+            r["publish"] = {"detect": detect, "packages": packages, **({"workflow": workflow} if detect == "workflow" else {})}
+        elif r["repo"] in consumers and not {publisher, short} & set(r.get("depends_on", [])):
+            r["depends_on"] = list(r.get("depends_on", [])) + [short]
+    if lockfiles:
+        have = list(deep_merge(base, new_ov).get("workers", {}).get("lockfiles", []))
+        add = [{"repo": c} for c in consumers if c not in {x.get("repo") for x in have}]
+        if add:
+            new_ov.setdefault("workers", {})["lockfiles"] = have + add
+    _save_projects_list(cfg_path, state_dir, base, new_ov, projects)
+
+
+def remove_dependency(cfg_path: str, state_dir: Path, project: str, publisher: str) -> None:
+    """Undo apply_dependency for one publisher: its `publish` table and every `depends_on` naming it (lockfile entries stay: harmless)."""
+    base, new_ov, projects, p = _project_entry(cfg_path, project)
+    short = publisher.split("/")[-1]
+    for r in p["repos"]:
+        if r["repo"] == publisher:
+            r.pop("publish", None)
+        if "depends_on" in r:
+            r["depends_on"] = [d for d in r["depends_on"] if d not in (publisher, short)]
+            if not r["depends_on"]:
+                del r["depends_on"]
+    _save_projects_list(cfg_path, state_dir, base, new_ov, projects)

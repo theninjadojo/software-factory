@@ -1195,3 +1195,16 @@ button.s-reset { color:var(--link); text-decoration:underline; min-height:24px; 
 .mt-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:.7rem; margin:.8rem 0 1.2rem; }
 .mt-tile.warn { border-color:var(--accent); } .mt-tile.crit { border-color:var(--bad); } .mt-v { font:600 1.7rem var(--sans); margin:.1rem 0; }
 .mt { display:block; width:100%; height:8px; min-width:90px; } .mt-bg { fill:var(--line); } .mt-fg { fill:var(--good); } .mt.warn .mt-fg { fill:var(--accent); } .mt.crit .mt-fg { fill:var(--bad); }
+
+/* Projects page: build order (packages first, then the repos that install them) */
+.build-order { margin-top:1.5rem; }
+.build-order h2 { margin-top:0; }
+.bo-project { border-top:1px solid var(--line); padding-top:.75rem; margin-top:.75rem; }
+.bo-project h3 { margin:0 0 .5rem; }
+.bo-row { display:flex; gap:.75rem; align-items:center; justify-content:space-between; flex-wrap:wrap; margin:.25rem 0; }
+.bo-row p { margin:0; flex:1 1 16rem; }
+.bo-suggest { border:1px solid var(--line2); padding:.75rem; margin:.5rem 0; background:var(--panel2); }
+.bo-suggest p { margin:.25rem 0; }
+.bo-suggest .check { display:flex; gap:.5rem; align-items:flex-start; margin:.5rem 0; }
+.bo-hint { overflow-wrap:anywhere; }
+.bo-cmd { white-space:pre-wrap; overflow-wrap:anywhere; margin:.25rem 0 0; }

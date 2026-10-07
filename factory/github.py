@@ -235,9 +235,14 @@ class GitHub:
     def tags(self, repo: str, per_page: int = 10) -> list[dict]:
         return self._get(f"/repos/{repo}/tags?per_page={int(per_page)}")
 
-    def workflow_runs(self, repo: str, workflow: str, branch: str, per_page: int = 10) -> list[dict]:
-        """The newest runs of one workflow file on a branch (needs Actions: read)."""
-        q = urllib.parse.urlencode({"branch": branch, "per_page": int(per_page)})
+    def tree(self, repo: str, ref: str) -> list[str]:
+        """Every file path of a repository at a ref (one call; GitHub truncates very large trees)."""
+        out = self._get(f"/repos/{repo}/git/trees/{urllib.parse.quote(ref, safe='')}?recursive=1")
+        return [t["path"] for t in out.get("tree", []) if t.get("type") == "blob"]
+
+    def workflow_runs(self, repo: str, workflow: str, branch: str = "", per_page: int = 10) -> list[dict]:
+        """The newest runs of one workflow file, on one branch if given (needs Actions: read)."""
+        q = urllib.parse.urlencode({**({"branch": branch} if branch else {}), "per_page": int(per_page)})
         return self._get(f"/repos/{repo}/actions/workflows/{urllib.parse.quote(workflow, safe='')}/runs?{q}").get("workflow_runs", [])
 
     def contains(self, repo: str, ref: str, sha: str) -> bool:

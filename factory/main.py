@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import why as W
 from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import depdetect
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -1559,6 +1560,38 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
                     lambda *a: run_fix(cfg, gh, *a), ci_submit(cfg, conn))
         conflicts.watch(cfg, gh, conn, lambda text, event="conflict": alert(text, event=event))
         waves.tick(cfg, gh, conn, lambda text, event="release": alert(text, event=event), emit, wave_submit(cfg, gh, conn))
+    if github_due and cfg.github_issues_enabled:            # reads only, so it runs in dry-run too
+        try:
+            suggest_build_order(cfg, gh, conn)
+        except Exception:
+            log.exception("build order suggestion failed")       # never stops the poll
+
+
+DEPDETECT_EVERY = 86400
+
+
+def suggest_build_order(cfg: Config, gh: GitHub, conn, now: float | None = None) -> None:
+    """Once a day, look for repos of a project that publish packages another installs (depdetect.py) without a build order set, and
+    say so once per finding, pointing at the Projects page. Never changes the config itself."""
+    now = time.time() if now is None else now
+    st = dbm.get_status(conn)
+    if not cfg.projects or now - float((st.get("depdetect_at") or {}).get("value") or 0) < DEPDETECT_EVERY:
+        return
+    dbm.set_status(conn, "depdetect_at", str(now))
+    told = set(json.loads((st.get("depdetect_told") or {}).get("value") or "[]"))
+    for p in cfg.projects:
+        sug, _ = depdetect.detect(gh, p)
+        for s in sug:
+            key = f"{p.name}|{s.publisher}|{','.join(sorted(s.consumers))}"
+            if depdetect.is_applied(p, s) or key in told:
+                continue
+            told.add(key)
+            users = ", ".join(c.split("/")[1] for c in s.consumers)
+            emit("depdetect", f"{s.publisher.split('/')[1]} publishes packages {users} installs; no build order set", s.publisher)
+            alert(f"In project {p.name}, {users} installs packages that {s.publisher.split('/')[1]} publishes. {s.note}. The factory can build "
+                  f"the packages first and {users} after they are published: Settings -> Projects -> Build order -> Apply"
+                  + (f" ({cfg.telegram_ui_url.rstrip('/')}/settings?section=projects)" if getattr(cfg, "telegram_ui_url", "") else "") + ".", event="release")
+    dbm.set_status(conn, "depdetect_told", json.dumps(sorted(told)))
 
 
 def check_usage(cfg: Config, conn) -> None:
