@@ -201,6 +201,32 @@ platform = "macos"        # a worker only claims a job whose platform it declare
 ```
 `fix_rounds = 1` (in `[workers]`) gives the agent that many extra attempts, with the log, when a required check fails.
 
+## Lockfiles for published packages
+
+When a repo is built after the packages it installs were published (a second build, see `publish` and `depends_on` under
+`[[projects]]` in the README), the agent can raise the version in `package.json` but cannot write the lockfile entry: that needs the
+registry, and the sandbox has no network. A worker can do it:
+
+```toml
+[[workers.lockfiles]]
+repo = "your-org/shop-web"
+recipe = "lockfile-update"   # default
+platform = "any"             # default
+```
+
+On the worker: `WORKER_RECIPES="lockfile" WORKER_NPM_TOKEN=... ./scripts/setup-worker.sh` (or add the recipe to an existing
+worker.toml: `command = [".../worker/recipes/lockfile-update.sh", "--token-file", ".../secrets/npm_token"]`). The token is a
+**read-only** packages token (GitHub Packages: a classic token with `read:packages` only). The recipe gives it only to the registry
+host (`--registry`, default `npm.pkg.github.com`) in a temporary npmrc outside the checkout.
+
+What happens: after the agent's patch passes the usual checks, the orchestrator sends the worker only its `package.json` and lockfile
+changes, with the published package names. The worker checks out the default branch, applies them, and runs
+`pnpm install --lockfile-only` then `pnpm update --lockfile-only <packages>` (npm: `--package-lock-only`) in each folder whose
+lockfile covers a package.json using those packages. Nothing is installed and no package or repository script runs. It returns
+the diff of `package.json` and lockfiles only. The orchestrator refuses a diff touching any other file, applies it with the same
+patch checks as the agent's, and commits it with the agent's change. It is advisory: if no worker answers or the registry fails,
+the PR is opened anyway and says the lockfile still needs refreshing. yarn is not handled.
+
 Worker (`worker.toml` on the Mac, see `worker/worker.example.toml`): the server URL, a token file, the git URL template, and
 `[recipes.<name>]` with a fixed `command` (argv, no shell), `timeout_seconds`, `artifacts` globs (PNGs, relative to the
 checkout) and `env_passthrough` (the only environment variables the recipe sees).
@@ -214,6 +240,8 @@ Controls that exist:
 - The patch is validated before it is queued, and re-applied on the worker with plain `git apply` into a fresh directory, git hooks
   disabled, environment scrubbed down to `env_passthrough`, a timeout and a process-group kill.
 - Results are validated as above; screenshots are stored in `run_images` and shown only by the UI behind its login.
+- A lockfile job gets only manifest and lockfile changes on top of the default branch (never `.npmrc` or code), runs no scripts, and its
+  diff may touch only those files. Its packages token reaches only the registry host the recipe was given.
 
 What it cannot protect (read this): a recipe runs **agent-written code on a networked machine**. A malicious patch can use the
 worker's network, read anything the worker's account can read, and abuse any signing identity in its keychain. So:

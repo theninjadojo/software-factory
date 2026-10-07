@@ -137,6 +137,33 @@ def prepare(cfg: Config, job: dict, dest: Path) -> str:
     return ""
 
 
+LOCKFILE_PATHS = [f":(glob)**/{n}" for n in ("package.json", "pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json")]
+
+
+def is_lockfile(job: dict) -> bool:
+    return isinstance(job.get("params"), dict) and job["params"].get("purpose") == "lockfile"
+
+
+def snapshot(dest: Path) -> str:
+    """The checkout's whole tree as git sees it now (a tree id), so the recipe's own changes can be diffed afterwards."""
+    for args in (["add", "-A"], ["write-tree"]):
+        r = _git(args, dest)
+        if r.returncode:
+            raise RuntimeError(f"git {args[0]} failed: {r.stderr[-300:]}")
+    return r.stdout.strip()
+
+
+def lockfile_diff(dest: Path, before: str) -> str:
+    """What a lockfile recipe changed, limited to package manifests and lockfiles (the orchestrator checks that again)."""
+    after = snapshot(dest)
+    r = _git(["diff", "--binary", before, after, "--", *LOCKFILE_PATHS], dest)
+    if r.returncode:
+        raise RuntimeError(f"git diff failed: {r.stderr[-300:]}")
+    if len(r.stdout) > MAX_PATCH:
+        raise RuntimeError("the lockfile change is too large to send")
+    return r.stdout
+
+
 def png_fits(data: bytes) -> bool:
     """The same size limits the orchestrator applies. One oversize full-page screenshot must not turn a passing run into an invalid result."""
     if len(data) < 33 or data[12:16] != b"IHDR":
@@ -295,6 +322,7 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
         if problem:
             return {"status": "error", "exit_code": None, "log": problem}
         extra, findings_file = scan_files(job, tmp)
+        before = snapshot(checkout) if is_lockfile(job) else ""
         say(f"running recipe {job['recipe']}")
         code, note = run_recipe(recipe, checkout, logfile, cancelled, extra)
         if cancelled.is_set():
@@ -304,7 +332,9 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
         result = {"status": "passed" if code == 0 else "failed", "exit_code": code, "log": text,
                   "artifacts": (collect_artifacts(recipe, checkout, MAX_SCREEN_ARTIFACTS, MAX_SCREEN_BYTES) if is_screens(job)
                                                          else collect_artifacts(recipe, checkout))}
-        if findings_file and code == 0:
+        if is_lockfile(job) and code == 0:
+            result["patch"] = lockfile_diff(checkout, before)
+        elif findings_file and code == 0:
             result["findings"] = read_findings(findings_file)
         return result
     except Exception as e:                                   # a worker bug is an error, never a verdict on the patch
@@ -317,7 +347,7 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
 
 
 PREFLIGHT_EVERY = 60
-JS_RECIPES = ("web-test.sh", "playwright-screens.sh")      # the shipped recipes that need Node (worker/install-node.sh gives them one)
+JS_RECIPES = ("web-test.sh", "playwright-screens.sh", "lockfile-update.sh")     # the shipped recipes that need Node (worker/install-node.sh gives them one)
 
 
 def install_node(root: Path = ROOT) -> str:

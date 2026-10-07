@@ -475,6 +475,15 @@ class WorkerCheck:
 
 
 @dataclass(frozen=True)
+class LockfileJob:
+    """Refresh a repo's package lockfiles on a worker (which has a network) when a second build bumps packages another repo
+    published (waves.py, lockfiles.py). Trusted config only. Advisory: if it does not work, the PR says so and is opened anyway."""
+    repo: str
+    recipe: str = "lockfile-update"      # a recipe defined on the worker (worker/recipes/lockfile-update.sh)
+    platform: str = "any"
+
+
+@dataclass(frozen=True)
 class WorkersCfg:
     """Verification workers (factory/jobs.py, workerapi.py, verify.py; docs/workers.md). Off by default."""
     enabled: bool = False
@@ -487,6 +496,7 @@ class WorkersCfg:
     max_attempts: int = 2                # claims per job (a lost lease puts it back in the queue)
     fix_rounds: int = 1                  # extra agent attempts, with the failing log, when a required check FAILS (0 = report only)
     checks: tuple[WorkerCheck, ...] = ()
+    lockfiles: tuple[LockfileJob, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -864,7 +874,8 @@ WORKER_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,40}")
 def _workers(raw: dict, repos: list[str]) -> WorkersCfg:
     raw = dict(raw)
     checks = tuple(WorkerCheck(**c) for c in raw.pop("checks", []))
-    c = WorkersCfg(**{**raw, "checks": checks})
+    lockfiles = tuple(LockfileJob(**c) for c in raw.pop("lockfiles", []))
+    c = WorkersCfg(**{**raw, "checks": checks, "lockfiles": lockfiles})
     if c.mode not in ("block", "warn"):
         raise ValueError("workers.mode must be block or warn")
     host, _, port = c.listen.rpartition(":")
@@ -887,6 +898,13 @@ def _workers(raw: dict, repos: list[str]) -> WorkersCfg:
         if (k.repo, k.recipe) in seen:
             raise ValueError(f"workers.checks: {k.repo} lists recipe {k.recipe!r} twice")
         seen.add((k.repo, k.recipe))
+    for k in c.lockfiles:
+        if k.repo not in repos:
+            raise ValueError(f"workers.lockfiles: {k.repo} is not a configured repo")
+        if not WORKER_NAME.fullmatch(str(k.recipe)) or not WORKER_NAME.fullmatch(str(k.platform)):
+            raise ValueError("workers.lockfiles: recipe and platform must match [a-z0-9-]")
+    if len({k.repo for k in c.lockfiles}) != len(c.lockfiles):
+        raise ValueError("workers.lockfiles: a repo is listed twice")
     return c
 
 

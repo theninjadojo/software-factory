@@ -295,6 +295,8 @@ bypass_label = "factory:skip-mockup"
 # recipe = "ios-test"                                 # a recipe name on the worker
 # platform = "macos"                                  # "any" matches every worker
 # required = true                                     # false: advisory, a failure is noted on the PR but never blocks
+# [[workers.lockfiles]]                               # a second build (after a package was published): refresh this repo's lockfiles on a
+# repo = "your-org/shop-web"                          # worker with the lockfile-update recipe, so CI installs the new version (docs/workers.md)
 
 # Scheduled jobs (docs/schedules.md): on a timer, fetch data, keep a snapshot, open a ticket carrying it. With the default
 # labels the ticket gets the auto label: the analyst proposes changes and the classifier decides whether to build them.

@@ -61,6 +61,8 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   the config). A change to both is built in two waves: the packages PR first; after a person merges it and it is published (a
   GitHub release, a tag, or a publish workflow run that contains the merge), the factory builds the depending repo against the
   published version. The ticket shows `factory:waiting-release` meanwhile, and Telegram/Slack say when it was merged and published.
+  A [worker](docs/workers.md#lockfiles-for-published-packages) can refresh the depending repo's lockfile for the new version, which
+  the sandboxed agent cannot do.
 - **Role agents.** Analyst, designer, architect: their output lands on the ticket, and later stages build on it.
 - **Classification.** [Jev](https://openrouter.ai/) (a typed "decision model" via OpenRouter) reads the whole ticket and
   picks tier, effort and stage as *typed answers*, never free text. Falls back to your labels if it errors.
