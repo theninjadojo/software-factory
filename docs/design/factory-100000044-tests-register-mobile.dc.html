@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Tests register - mobile</title><script src="./support.js"></script></head>
+<body><x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>body{margin:0;background:#0b0e11;color:#e8edf0;font:15px/1.45 'Space Grotesk',sans-serif}</style></helmet>
+<div style="display:flex;gap:40px;padding:32px;background:#0b0e11;align-items:flex-start">
+
+<div style="width:390px;background:#12161a;border:1px solid #2d363d;padding:16px;box-sizing:border-box">
+ <div style="display:flex;gap:8px;margin-bottom:10px"><span style="flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;border:1px solid #3b464e;background:#232a30;color:#a9b5bd">Screens</span><span style="flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;border:1px solid #f2a93b;color:#f2a93b;font-weight:500">Tests</span></div>
+ <h1 style="font-size:26px;margin:.2rem 0 .8rem">Tests</h1>
+ <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"><span style="padding:8px 14px;border:1px solid #e8edf0;border-radius:999px;background:#1b2126;font-weight:600">All 31</span><span style="padding:8px 14px;border:1px solid #2d363d;border-radius:999px;background:#1b2126">Login 8</span><span style="padding:8px 14px;border:1px solid #2d363d;border-radius:999px;background:#1b2126">Checkout 14</span><span style="padding:8px 14px;border:1px solid #2d363d;border-radius:999px;background:#1b2126">Search 6</span></div>
+ <div style="min-height:44px;display:flex;align-items:center;border:1px solid #3b464e;padding:0 12px;color:#a9b5bd;margin-bottom:8px">Search title or steps</div>
+ <div style="min-height:44px;display:flex;align-items:center;justify-content:space-between;border:1px solid #3b464e;padding:0 12px;color:#a9b5bd;margin-bottom:12px"><span>Filters: Result, Status, Linked</span><span>+</span></div>
+ <div style="min-height:44px;display:flex;align-items:center;justify-content:center;background:#8fa8ff;color:#0e1330;font-weight:700;margin-bottom:12px">Run 14 in this filter</div>
+ <div style="background:#1b2126;border:1px solid #2d363d;padding:12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><span style="font-family:'JetBrains Mono';font-size:13px">TS-2 · Checkout</span><span style="color:#ff6b5e;border:1px solid #ff6b5e;border-radius:999px;padding:1px 8px;font-size:12px">Failed</span></div><p style="margin:6px 0">Pay with an expired card shows an error</p><p style="margin:0;color:#a9b5bd;font-size:13px">2 h ago, run · ticket #412</p></div>
+ <div style="background:#1b2126;border:1px solid #2d363d;padding:12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><span style="font-family:'JetBrains Mono';font-size:13px">TS-1 · Login</span><span style="color:#52c7a1;border:1px solid #52c7a1;border-radius:999px;padding:1px 8px;font-size:12px">Passed</span></div><p style="margin:6px 0">Sign in with a valid password</p><p style="margin:0;color:#a9b5bd;font-size:13px">2 h ago, run</p></div>
+ <div style="background:#1b2126;border:1px solid #2d363d;padding:12px"><div style="display:flex;justify-content:space-between"><span style="font-family:'JetBrains Mono';font-size:13px">TS-4 · Login</span><span style="border:1px solid #2d363d;border-radius:999px;padding:1px 8px;font-size:12px;color:#a9b5bd">Not run</span></div><p style="margin:6px 0 0">Reset a password by email</p></div>
+ <div style="display:flex;gap:8px;margin-top:12px"><span style="flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;background:#232a30;border:1px solid #3b464e">Add</span><span style="flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;background:#232a30;border:1px solid #3b464e">Import</span><span style="flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;background:#232a30;border:1px solid #3b464e">Export</span></div>
+</div>
+
+<div style="width:390px;background:#12161a;border:1px solid #2d363d;padding:16px;box-sizing:border-box">
+ <p style="margin:0 0 6px;color:#8fd3e6"><u>Tests</u> / TS-2</p>
+ <h1 style="font-size:24px;margin:.2rem 0 .8rem">Pay with an expired card shows an error</h1>
+ <div style="background:#1b2126;border:1px solid #2d363d;padding:12px;margin-bottom:10px"><p style="margin:0 0 6px"><b>Steps</b><br>Add an item, pay with an expired card.</p><p style="margin:0 0 10px"><b>Expected</b><br>The page says the card has expired.</p><div style="min-height:44px;display:flex;align-items:center;justify-content:center;background:#8fa8ff;color:#0e1330;font-weight:700">Run this scenario</div></div>
+ <div style="display:flex;gap:8px;margin-bottom:8px"><span style="flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;border:1px solid #52c7a1;color:#52c7a1">Pass</span><span style="flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;border:1px solid #ff6b5e;color:#ff6b5e;background:#232a30">Fail</span><span style="flex:1;min-height:44px;display:flex;align-items:center;justify-content:center;border:1px solid #f2a93b;color:#f2a93b">Blocked</span></div>
+ <div style="height:70px;border:1px solid #3b464e;padding:6px 10px;color:#a9b5bd;margin-bottom:8px">Comment (what you saw)</div>
+ <div style="min-height:44px;display:flex;align-items:center;justify-content:center;background:#8fa8ff;color:#0e1330;font-weight:700;margin-bottom:14px">Save result</div>
+ <h2 style="font-size:16px;margin:0 0 6px">Latest run output</h2>
+ <pre style="background:#1b2126;border:1px solid #2d363d;border-radius:8px;padding:10px;font:12px/1.45 'JetBrains Mono',monospace;margin:0 0 12px;white-space:pre-wrap">Expected: "Card expired"
+Received: "Payment failed"</pre>
+ <div style="min-height:44px;display:flex;align-items:center;justify-content:center;background:#232a30;border:1px solid #3b464e;margin-bottom:8px">Create ticket: correct this scenario</div>
+ <div style="min-height:44px;display:flex;align-items:center;justify-content:center;background:#232a30;border:1px solid #3b464e">Create ticket: add a scenario</div>
+</div>
+</div>
+</x-dc></body></html>

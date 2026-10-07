@@ -1,0 +1,76 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Tests register - desktop</title><script src="./support.js"></script></head>
+<body><x-dc>
+<helmet><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>body{margin:0;background:#0b0e11;color:#e8edf0;font:15px/1.45 'Space Grotesk',sans-serif}</style></helmet>
+<div style="display:flex;flex-direction:column;gap:48px;padding:32px;background:#0b0e11">
+
+<!-- Frame 1: register -->
+<div style="width:1440px;background:#12161a;border:1px solid #2d363d">
+ <div style="display:flex;align-items:center;gap:32px;padding:0 40px;min-height:64px;background:#171c20;border-bottom:1px solid #2d363d">
+  <b style="font-size:18px">Software factory</b>
+  <span style="display:flex;gap:4px;color:#a9b5bd"><span style="padding:22px 14px">Needs you</span><span style="padding:22px 14px">Tickets</span><span style="padding:22px 14px">Workers</span><span style="padding:22px 14px;color:#f2a93b;border-bottom:3px solid #f2a93b;font-weight:500">More</span></span>
+ </div>
+ <div style="max-width:1180px;margin:0 auto;padding:32px 40px 56px">
+  <div style="display:flex;gap:8px;margin-bottom:12px"><span style="padding:0 14px;min-height:44px;display:inline-flex;align-items:center;border:1px solid #3b464e;background:#232a30;color:#a9b5bd">Screens</span><span style="padding:0 14px;min-height:44px;display:inline-flex;align-items:center;border:1px solid #f2a93b;background:#1b2126;color:#f2a93b;font-weight:500">Tests</span></div>
+  <div style="display:flex;justify-content:space-between;align-items:center"><h1 style="font-size:32px;margin:.2rem 0 1rem">Tests</h1>
+   <div style="display:flex;gap:8px"><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#232a30;border:1px solid #3b464e">Import CSV</span><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#232a30;border:1px solid #3b464e">Export CSV</span><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#232a30;border:1px solid #3b464e">Add scenario</span><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#8fa8ff;color:#0e1330;font-weight:700">Run 14 in this filter</span></div></div>
+  <div style="padding:10px 14px;border:1px solid #f2a93b;margin-bottom:14px;color:#f2a93b">Run in progress on worker mac-1: 14 tests. Started 2 minutes ago. <u style="color:#8fd3e6">View log</u></div>
+  <p style="margin:0 0 6px;color:#a9b5bd;font-size:13px">FEATURE</p>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+   <span style="padding:4px 14px;border:1px solid #e8edf0;border-radius:999px;background:#1b2126;font-weight:600">All 31</span>
+   <span style="padding:4px 14px;border:1px solid #2d363d;border-radius:999px;background:#1b2126">Login 8</span>
+   <span style="padding:4px 14px;border:1px solid #2d363d;border-radius:999px;background:#1b2126">Checkout 14</span>
+   <span style="padding:4px 14px;border:1px solid #2d363d;border-radius:999px;background:#1b2126">Search 6</span>
+   <span style="padding:4px 14px;border:1px solid #2d363d;border-radius:999px;background:#1b2126">No feature 3</span></div>
+  <div style="display:flex;gap:10px;margin-bottom:14px;color:#a9b5bd">
+   <span style="padding:6px 12px;border:1px solid #3b464e;background:#12161a;min-width:240px">Search title or steps</span>
+   <span style="padding:6px 12px;border:1px solid #3b464e">Result: Any</span><span style="padding:6px 12px;border:1px solid #3b464e">Status: Active</span><span style="padding:6px 12px;border:1px solid #3b464e">Linked to a test: Any</span></div>
+  <div style="background:#1b2126;border:1px solid #2d363d;border-radius:10px;overflow:hidden">
+   <div style="display:grid;grid-template-columns:70px 110px 1fr 190px 120px 130px 90px;padding:8px 12px;border-bottom:1px solid #2d363d;font-size:12px;letter-spacing:.05em;color:#a9b5bd;text-transform:uppercase"><span>ID</span><span>Feature</span><span>Title</span><span>Playwright test</span><span>Last result</span><span>Last tested</span><span>Tickets</span></div>
+   <div style="display:grid;grid-template-columns:70px 110px 1fr 190px 120px 130px 90px;padding:10px 12px;border-bottom:1px solid #2d363d"><span style="font-family:'JetBrains Mono';font-size:13px">TS-1</span><span>Login</span><span>Sign in with a valid password</span><span style="font-family:'JetBrains Mono';font-size:13px">login valid</span><span><span style="color:#52c7a1;border:1px solid #52c7a1;border-radius:999px;padding:1px 8px;font-size:12px">Passed</span></span><span class="m" style="color:#a9b5bd">2 h ago, run</span><span>-</span></div>
+   <div style="display:grid;grid-template-columns:70px 110px 1fr 190px 120px 130px 90px;padding:10px 12px;border-bottom:1px solid #2d363d;background:#232a30"><span style="font-family:'JetBrains Mono';font-size:13px">TS-2</span><span>Checkout</span><span>Pay with an expired card shows an error</span><span style="font-family:'JetBrains Mono';font-size:13px">checkout expired</span><span><span style="color:#ff6b5e;border:1px solid #ff6b5e;border-radius:999px;padding:1px 8px;font-size:12px">Failed</span></span><span style="color:#a9b5bd">2 h ago, run</span><span style="color:#8fd3e6">#412</span></div>
+   <div style="display:grid;grid-template-columns:70px 110px 1fr 190px 120px 130px 90px;padding:10px 12px;border-bottom:1px solid #2d363d"><span style="font-family:'JetBrains Mono';font-size:13px">TS-3</span><span>Search</span><span>Empty search shows suggestions</span><span style="color:#a9b5bd">Not linked</span><span><span style="color:#f2a93b;border:1px solid #f2a93b;border-radius:999px;padding:1px 8px;font-size:12px">Blocked</span></span><span style="color:#a9b5bd">yesterday, Sam</span><span>-</span></div>
+   <div style="display:grid;grid-template-columns:70px 110px 1fr 190px 120px 130px 90px;padding:10px 12px"><span style="font-family:'JetBrains Mono';font-size:13px">TS-4</span><span>Login</span><span>Reset a password by email</span><span style="color:#a9b5bd">Not linked</span><span><span style="border:1px solid #2d363d;border-radius:999px;padding:1px 8px;font-size:12px;color:#a9b5bd">Not run</span></span><span style="color:#a9b5bd">never</span><span>-</span></div>
+  </div>
+  <p style="color:#a9b5bd;margin:14px 0 0">5 Playwright tests are not linked to a scenario. <u style="color:#8fd3e6">Review them</u></p>
+ </div>
+</div>
+
+<!-- Frame 2: scenario detail -->
+<div style="width:1440px;background:#12161a;border:1px solid #2d363d;padding:32px 40px 48px;box-sizing:border-box">
+ <p style="margin:0 0 6px;color:#8fd3e6"><u>Tests</u> / TS-2</p>
+ <h1 style="font-size:32px;margin:.2rem 0 1rem">Pay with an expired card shows an error</h1>
+ <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+  <div style="background:#1b2126;border:1px solid #2d363d;padding:14px 16px"><p style="margin:0 0 8px;font-size:13px;letter-spacing:.06em;color:#a9b5bd">SCENARIO</p>
+   <p style="margin:0 0 6px"><b>Feature</b> Checkout &nbsp; <b>Status</b> Active &nbsp; <b>Test</b> <span style="font-family:'JetBrains Mono';font-size:13px">checkout expired</span></p>
+   <p style="margin:0 0 6px"><b>Steps</b><br>1. Add an item. 2. Enter card 4000 0000 0000 0069. 3. Pay.</p>
+   <p style="margin:0 0 12px"><b>Expected</b><br>The page says the card has expired.</p>
+   <div style="display:flex;gap:8px"><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#232a30;border:1px solid #3b464e">Edit</span><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#8fa8ff;color:#0e1330;font-weight:700">Run this scenario</span></div></div>
+  <div style="background:#1b2126;border:1px solid #2d363d;padding:14px 16px"><p style="margin:0 0 8px;font-size:13px;letter-spacing:.06em;color:#a9b5bd">RECORD A MANUAL RESULT</p>
+   <div style="display:flex;gap:8px;margin-bottom:8px"><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;border:1px solid #52c7a1;color:#52c7a1">Pass</span><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;border:1px solid #ff6b5e;color:#ff6b5e;background:#232a30">Fail</span><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;border:1px solid #f2a93b;color:#f2a93b">Blocked</span></div>
+   <div style="height:70px;border:1px solid #3b464e;background:#12161a;padding:6px 10px;color:#a9b5bd">Comment (what you saw)</div>
+   <div style="margin-top:10px;min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#8fa8ff;color:#0e1330;font-weight:700">Save result</div></div>
+ </div>
+ <h2 style="font-size:17px;margin:24px 0 8px">Latest run output</h2>
+ <p style="margin:0 0 8px"><span style="color:#ff6b5e;border:1px solid #ff6b5e;border-radius:999px;padding:1px 8px;font-size:12px">Failed</span> &nbsp;Worker mac-1, 2 h ago, 4.2 s. <u style="color:#8fd3e6">Full log</u> · <u style="color:#8fd3e6">Screens run</u></p>
+ <pre style="background:#1b2126;border:1px solid #2d363d;border-radius:8px;padding:12px;font:13px/1.45 'JetBrains Mono',monospace;margin:0;white-space:pre-wrap">Expected: "Card expired"
+Received: "Payment failed"
+at checkout.spec.ts:41</pre>
+ <p style="color:#a9b5bd;font-size:13px;margin:6px 0 0">Output comes from a test run. It is shown as plain text, shortened to 20,000 characters.</p>
+ <h2 style="font-size:17px;margin:24px 0 8px">History and comments</h2>
+ <div style="background:#1b2126;border:1px solid #2d363d">
+  <div style="display:grid;grid-template-columns:36px 110px 1fr 130px;gap:10px;padding:10px 12px;border-bottom:1px solid #2d363d"><span style="padding-top:2px"><span style="display:inline-block;width:16px;height:16px;border:1px solid #ff6b5e"></span></span><span style="color:#ff6b5e">Failed, run</span><span>Test output differs from expected text.</span><span style="color:#a9b5bd">2 h ago</span></div>
+  <div style="display:grid;grid-template-columns:36px 110px 1fr 130px;gap:10px;padding:10px 12px"><span style="padding-top:2px"><span style="display:inline-block;width:16px;height:16px;border:1px solid #8fd3e6;background:#8fd3e6"></span></span><span style="color:#ff6b5e">Failed, manual</span><span>Message wording is wrong, should be clearer.</span><span style="color:#a9b5bd">Sam, yesterday</span></div></div>
+ <div style="display:flex;gap:8px;margin-top:12px"><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#8fa8ff;color:#0e1330;font-weight:700">Create ticket: correct this scenario</span><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#232a30;border:1px solid #3b464e">Create ticket: add a scenario</span></div>
+ <p style="color:#a9b5bd;font-size:13px">Ticks choose which comments go in. Nothing starts until you pick a start label. Open ticket #412 already exists: new comments are added to it.</p>
+</div>
+
+<!-- Frame 3: states -->
+<div style="width:1440px;background:#12161a;border:1px solid #2d363d;padding:32px 40px 48px;box-sizing:border-box;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+ <div style="background:#1b2126;border:1px solid #2d363d;padding:16px"><h3 style="margin:0 0 8px;font-size:13px;letter-spacing:.06em;color:#a9b5bd">EMPTY REGISTER</h3><p style="margin:0 0 10px">No scenarios yet for this repository.</p><p style="margin:0 0 12px;color:#a9b5bd">Add one, or import a CSV file from your spreadsheet.</p><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#8fa8ff;color:#0e1330;font-weight:700">Add scenario</span></div>
+ <div style="background:#1b2126;border:1px solid #f2a93b;padding:16px"><h3 style="margin:0 0 8px;font-size:13px;letter-spacing:.06em;color:#a9b5bd">NO PLAYWRIGHT SETUP</h3><p style="margin:0 0 10px">Runs need Playwright set up for this repository.</p><p style="margin:0;color:#a9b5bd">Run is disabled. Manual results still work. <u style="color:#8fd3e6">Set up on Screens</u></p></div>
+ <div style="background:#1b2126;border:1px solid #ff6b5e;padding:16px"><h3 style="margin:0 0 8px;font-size:13px;letter-spacing:.06em;color:#a9b5bd">IMPORT PREVIEW WITH ERRORS</h3><p style="margin:0 0 6px">12 rows: 3 new, 7 changed, 1 conflict, 1 error.</p><p style="margin:0 0 6px;color:#ff6b5e">Row 9: the title is empty.</p><p style="margin:0 0 10px;color:#a9b5bd">Nothing is saved until you confirm.</p><span style="min-height:44px;padding:0 18px;display:inline-flex;align-items:center;background:#232a30;border:1px solid #3b464e">Confirm import of 10 rows</span></div>
+</div>
+</div>
+</x-dc></body></html>
