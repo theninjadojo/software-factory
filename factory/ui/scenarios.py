@@ -102,10 +102,12 @@ def register_get(h, q: dict, csrf: str) -> None:
                + '<button>Filter</button>' + (f' <a href="{esc(url(repo))}">Clear filters</a>' if feature or result or status or text else "") + '</form>')
     actions = (f'<p class="actions"><a class="btn" href="/scenarios/import?{esc(urlencode({"repo": repo}))}">Import CSV</a> '
                f'<a class="btn" href="/scenarios/export?{esc(urlencode({"repo": repo}))}">Export CSV</a> '
-               f'<a class="btn" href="/scenarios/edit?{esc(urlencode({"repo": repo}))}">Add scenario</a></p>')
+               f'<a class="btn" href="/scenarios/edit?{esc(urlencode({"repo": repo}))}">Add scenario</a></p>'
+               f'<form method="post" action="/scenarios/discover" class="actions">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}">'
+               '<button>Add from the repository\'s tests</button> <span class="muted">Reads the test files on GitHub; you see the list before anything is saved.</span></form>')
     if not rows:
         table = ('<div class="card"><h3>Empty register</h3><p>No scenarios yet for this repository.</p>'
-                 '<p class="muted">Add one, or import a CSV file from your spreadsheet.</p></div>')
+                 '<p class="muted">Add one, import a CSV file from your spreadsheet, or add the tests the repository already has.</p></div>')
     elif not shown:
         table = f'<p class="muted">No scenarios match these filters. <a href="{esc(url(repo))}">Clear filters</a></p>'
     else:
@@ -354,6 +356,11 @@ def preview_post(h, form, csrf: str, files=()) -> None:
         rows = SC.parse_csv(files[0][1])
     except ValueError as e:
         return _page(h, "Import CSV · Tests", _upload_form(repo, csrf), csrf, 422, str(e), "bad")
+    _preview(h, csrf, repo, rows, "Import preview")
+
+
+def _preview(h, csrf: str, repo: str, rows: list[dict], heading: str, note: str = "") -> None:
+    """What importing `rows` would do, staged until the confirm button (which writes it through apply_post)."""
     db = _db(h)
     try:
         items = SC.plan(db, repo, rows)
@@ -378,10 +385,49 @@ def preview_post(h, form, csrf: str, files=()) -> None:
     confirm = ('<p class="muted">Nothing is saved until you confirm.</p>' if not errors else '<p class="muted">Fix the errors and upload the file again. Nothing was saved.</p>')
     if not errors:
         confirm += (f'<button>Confirm import of {todo} row{"" if todo == 1 else "s"}</button>' if todo else '<p>Nothing to import: the file matches the register.</p>')
-    body = (f'<h1>Import preview</h1><form method="post" action="/scenarios/import/apply" class="card">{csrf_field(csrf)}'
-            f'<input type="hidden" name="token" value="{esc(token)}">{summary}{problems}{confl}{confirm}'
+    body = (f'<h1>{esc(heading)}</h1><form method="post" action="/scenarios/import/apply" class="card">{csrf_field(csrf)}'
+            f'<input type="hidden" name="token" value="{esc(token)}">{note}{summary}{problems}{confl}{confirm}'
             f' <a href="{esc(url(repo))}">Cancel</a></form>')
-    _page(h, "Import preview · Tests", body, csrf)
+    _page(h, f"{heading} · Tests", body, csrf)
+
+
+def discover_post(h, form, csrf: str) -> None:
+    """Read the repository's test files on GitHub (a few seconds) and preview a scenario for each test not linked to one yet."""
+    from .. import testfind as TF
+    from ..github import GitHub
+    from . import integrations as I
+    cfg = h.app.cfg()
+    try:
+        repo = _repo(cfg, form.get("repo", ""))
+    except L.Refused as e:
+        return _back(h, csrf, "/scenarios", str(e), "bad")
+    token = I.read_secret(cfg, "github")
+    if not token:
+        return _back(h, csrf, url(repo), "Set the GitHub token first (Settings → Credentials): the tests are read from GitHub.", "bad")
+    try:
+        found, info = TF.discover(GitHub(token), repo)
+    except Exception as e:
+        log.warning("scenarios: reading the tests of %s failed: %s", repo, type(e).__name__)
+        return _back(h, csrf, url(repo), f"Could not read {repo} on GitHub ({type(e).__name__}). Check the token can read it.", "bad")
+    db = _db(h)
+    try:
+        rows, linked = TF.new_only(found, SC.listing(db, repo))
+    finally:
+        db.close()
+    capped = len(rows) > SC.MAX_ROWS
+    rows = rows[:SC.MAX_ROWS]
+    n = lambda k, one, many: f"{k:,} {one if k == 1 else many}"
+    note = (f'<p>Read {n(info["files"], "test file", "test files")} on <code>{esc(info["ref"])}</code> and found {n(len(found), "test", "tests")}'
+            + (f', {n(linked, "already linked to a scenario", "already linked to scenarios")}' if linked else "") + '.</p>'
+            + (f'<p class="muted">{n(info["skipped"], "file", "files")} could not be read.</p>' if info["skipped"] else "")
+            + (f'<p class="muted">Only the first {TF.MAX_FILES} test files were read.</p>' if info["capped"] else "")
+            + (f'<p class="muted">Only the first {SC.MAX_ROWS:,} new tests are shown; import them, then run this again for the rest.</p>' if capped else "")
+            + '<p class="muted">Each new test becomes an active scenario: its feature is the file it is in, its title the test\'s name (or the first '
+              'line of its docstring), and it is linked to the test. Steps and expected result are left for you to fill in.</p>')
+    if not rows:
+        return _back(h, csrf, url(repo), f"No new tests: {n(len(found), 'test', 'tests')} found in {n(info['files'], 'file', 'files')}, "
+                     + ("all already linked to scenarios." if found else "nothing to add."))
+    _preview(h, csrf, repo, rows, "Tests found", note)
 
 
 def apply_post(h, form, csrf: str) -> None:
@@ -403,5 +449,5 @@ def apply_post(h, form, csrf: str) -> None:
 
 
 GET = {"/scenarios": register_get, "/scenarios/view": view_get, "/scenarios/edit": edit_get, "/scenarios/export": export_get, "/scenarios/import": import_get}
-POST = {"/scenarios/save": save_post, "/scenarios/result": result_post, "/scenarios/ticket": ticket_post, "/scenarios/import/apply": apply_post}
+POST = {"/scenarios/save": save_post, "/scenarios/result": result_post, "/scenarios/ticket": ticket_post, "/scenarios/import/apply": apply_post, "/scenarios/discover": discover_post}
 POST_UPLOAD = {"/scenarios/import/preview": preview_post}

@@ -254,7 +254,7 @@ def plan(db: sqlite3.Connection, repo: str, rows: list[dict]) -> list[dict]:
         try:
             if ref and ref not in have:
                 raise ValueError(f"unknown id {ref[:20]}")
-            if ref in seen:
+            if ref and ref in seen:
                 raise ValueError(f"id {ref} appears twice")
             seen.add(ref)
             f = _fields({**{k: row.get(k, "") for k in ("feature", "title", "steps", "expected", "status")}, "pw_test": row.get("playwright_test", "")})
