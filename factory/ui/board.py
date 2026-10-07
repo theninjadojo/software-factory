@@ -65,6 +65,9 @@ def stations(j: dict, prs: list[dict] = ()) -> dict:
     if not steps and not prs:
         return st
     st["poll"] = st["classify"] = "done"
+    # Once the work is merged, a failure before the merge (a red CI run, a fix that changed nothing) no longer holds the ticket back.
+    merged = max((p.get("updated") or 0 for p in prs if p.get("summary") == "merged"), default=0) \
+        if prs and all(p.get("status") == "closed" for p in prs) else 0
     for s in steps:
         if s["kind"] == "person" and s["state"] == "waiting":
             at = s.get("stage") if s.get("stage") in LABEL else "route"
@@ -79,7 +82,7 @@ def stations(j: dict, prs: list[dict] = ()) -> dict:
         if at is None:
             continue
         st["route"] = "done" if st["route"] == "none" else st["route"]
-        st[at] = _STEP.get(s["state"], "done")
+        st[at] = "done" if s["state"] == "failed" and (s.get("started") or 0) < merged else _STEP.get(s["state"], "done")
     if any(s["kind"] in ("run", "ci") for s in steps) and st["route"] == "none":
         st["route"] = "done"
     for p in prs:
