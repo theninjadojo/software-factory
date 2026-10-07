@@ -68,10 +68,26 @@ def at(pg, px, py):
 
 
 def tool(pg, name):
-    b = pg.locator(f'[data-tool="{name}"]')
-    if not b.is_visible():                                       # the terrain categories start collapsed in the build panel
+    """Pick a tool in the build tray: Move and Erase sit in its quick row, the rest in tabs that start collapsed."""
+    if not pg.locator(f'[data-tool="{name}"]:visible').count():
         pg.locator(f'.fe-cat:has([data-tool="{name}"]) .fe-cat-toggle').click()
-    b.click()
+    pg.locator(f'[data-tool="{name}"]:visible').first.click()
+
+
+def more(pg, fn):
+    """Do fn with the toolbar's More menu open (it holds the belt picker, Start from scratch, Show hitboxes, the legend), then close it:
+    left open, it lies over the floor."""
+    pg.click(".fe-more > summary")
+    try:
+        return fn()
+    finally:
+        pg.evaluate("document.querySelector('.fe-more').open = false")
+
+
+def act(pg, name):
+    """Press a toolbar button, from the More menu if it is not on the bar."""
+    b = pg.locator(f'[data-act="{name}"]')
+    return b.click() if b.is_visible() else more(pg, b.click)
 
 
 def into_view(pg, px, py):
@@ -350,7 +366,7 @@ def test_the_park_goes_where_there_is_room_and_hitboxes_show_on_request(wide, se
     assert kinds(pg).count("bench") == 1
     # every hitbox, on request
     assert pg.locator(".fe-svg .fe-hitbox").count() == 0
-    pg.click('[data-act="hitboxes"]')
+    act(pg, "hitboxes")
     assert pg.get_attribute('[data-act="hitboxes"]', "aria-pressed") == "true"
     assert pg.locator(".fe-svg .fe-hitbox.park").count() == 1 and pg.locator(".fe-svg .fe-hitbox").count() > 5
     # Erase takes the bench away again

@@ -47,6 +47,16 @@ def test_sign_out_ends_the_session(page, server, viewport):
     expect(page).to_have_url(re.compile(r"/login$"))
 
 
+def settings_link(page, name):
+    """A settings page's link, by the name it starts with (a menu link ends in its state, "Off" or "Set up"). On a phone the side menu
+    shows only the current page's group, and the settings home none (it lists the pages itself): take whichever link is on screen,
+    going back to All settings for one in another group."""
+    link = page.get_by_role("link", name=re.compile(rf"^{re.escape(name)}")).locator("visible=true")
+    if not link.count():
+        page.get_by_role("link", name="‹ All settings").click()
+    return link.first
+
+
 def test_navigating_every_primary_and_secondary_destination(page, server, viewport):
     go(page, viewport, "Tickets")
     expect(page.get_by_role("heading", name="Tickets", exact=True)).to_be_visible()
@@ -61,7 +71,7 @@ def test_navigating_every_primary_and_secondary_destination(page, server, viewpo
     # Harnesses, Credentials, Telegram and Labels live inside Settings, behind its side list
     side = page.get_by_role("navigation", name="Settings")
     for name in ("Harnesses", "Credentials", "Telegram", "Labels"):
-        side.get_by_role("link", name=name, exact=True).click()
+        settings_link(page, name).click()
         expect(page.get_by_role("heading", level=1)).to_be_visible()
         expect(side.locator("a.active", has_text=name)).to_be_visible()
     go(page, viewport, "Factory")
@@ -206,7 +216,7 @@ def test_settings_opens_on_every_feature_and_switches_one(page, server, viewport
 def test_slack_is_set_up_entirely_from_its_page(page, server, viewport, monkeypatch):
     from factory.ui import integrations as I
     page.goto(server.url + "/settings")
-    page.get_by_role("navigation", name="Settings").get_by_role("link", name="Slack").click()
+    settings_link(page, "Slack").click()
     expect(page.get_by_role("link", name="Create the app in Slack")).to_have_attribute("href", re.compile(r"^https://api\.slack\.com/apps\?new_app=1&manifest_json="))
     bot, app = "xoxb-" + "1234567890-abcdefABCDEF", "xapp-" + "1-A0123456789-abcdef0123456789"
     for label, value in (("Bot token", bot), ("App-level token", app)):

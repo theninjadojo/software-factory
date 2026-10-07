@@ -85,9 +85,9 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
                 f'<tr><th>Waits</th><td>claimed within {w.claim_wait_seconds}s, finished within {w.max_wait_seconds}s, heartbeat every {w.lease_seconds}s</td></tr></table>')
     checks = ""
     if w.checks:
-        checks = ("<h2>Checks</h2><table class=stack><thead><tr><th>Repository</th><th>Recipe</th><th>Platform</th></tr></thead><tbody>"
+        checks = ("<h2>Checks</h2><div class=\"scroll\"><table class=stack><thead><tr><th>Repository</th><th>Recipe</th><th>Platform</th></tr></thead><tbody>"
                   + "".join(f'<tr><td data-l="Repository">{esc(c.repo)}</td><td data-l="Recipe"><code>{esc(c.recipe)}</code></td><td data-l="Platform">{esc(c.platform)}</td></tr>' for c in w.checks)
-                  + "</tbody></table>")
+                  + "</tbody></table></div>")
     online = ""
     if w.enabled:
         if known:
@@ -120,8 +120,8 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
                 f'<td data-l="Recipes">{esc(k["recipes"].replace(",", ", ") or "—")}{unready_note(k)}</td><td data-l="Last seen">{esc(ago(k["last_seen"], now))}</td>'
                 f'<td data-l="State">{badge("online", "good") if now - k["last_seen"] <= ONLINE_SECONDS else badge("offline", "bad")}</td></tr>' for k in known)
             auto = workerupdate.auto(Path(cfg.db_path).parent)
-            online = ("<h2>Workers</h2><table class=stack><thead><tr><th>Worker</th><th>Platform</th><th>Version</th><th>Recipes</th><th>Last seen</th><th>State</th></tr></thead>"
-                      f"<tbody>{rows}</tbody></table>"
+            online = ("<h2>Workers</h2><div class=\"scroll\"><table class=stack><thead><tr><th>Worker</th><th>Platform</th><th>Version</th><th>Recipes</th><th>Last seen</th><th>State</th></tr></thead>"
+                      f"<tbody>{rows}</tbody></table></div>"
                       f'<form method="post" action="/workers/auto-update" class="card">{csrf_field(csrf)}'
                       f'<label class="check"><input type="checkbox" name="on" value="1"{" checked" if auto else ""}> Update workers by themselves when they are behind the factory</label>'
                       '<div class="muted">A worker follows the release the factory runs. When it is idle it asks, downloads the files through the factory (it needs no GitHub '
@@ -137,8 +137,8 @@ def workers_page(cfg, db, now: float | None = None, csrf: str = "") -> str:
             f'<td data-l="Recipe"><code>{esc(j["recipe"])}</code></td><td data-l="Status">{badge(j["status"], JOB_BADGE.get(j["status"], ""))}{progress_note(j, now)}</td>'
             f'<td data-l="Worker">{esc(j["worker"] or "—")}</td><td data-l="Queued">{esc(ago(j["created"], now))}</td>'
             f'<td data-l="Took">{esc(dur(j["claimed"], j["finished"]) if j["claimed"] else "—")}</td></tr>' for j in recent)
-        jobs_html = ("<h2>Recent jobs</h2><table class=stack><thead><tr><th>Job</th><th>Ticket</th><th>Recipe</th><th>Status</th><th>Worker</th><th>Queued</th><th>Took</th></tr></thead>"
-                     f"<tbody>{rows}</tbody></table>")
+        jobs_html = ("<h2>Recent jobs</h2><div class=\"scroll\"><table class=stack><thead><tr><th>Job</th><th>Ticket</th><th>Recipe</th><th>Status</th><th>Worker</th><th>Queued</th><th>Took</th></tr></thead>"
+                     f"<tbody>{rows}</tbody></table></div>")
     elif w.enabled and ready:
         jobs_html = '<h2>Recent jobs</h2><p class="muted">No verification job has run yet.</p>'
     edit = '<p><a href="/settings?section=workers">Edit these settings</a></p>'
