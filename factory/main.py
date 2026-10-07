@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import questions as Q
 from . import db as dbm
@@ -634,7 +634,11 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                 if pm:
                     dbm.track_pr(conn, pm.group(1), int(pm.group(2)), repo, num)
         labels = [lb["name"] for lb in gh.get_issue(repo, num).get("labels", []) if lb["name"] != working] + [role.done_label]
-        doc, qs = Q.extract(res.output)                 # qs None: no block or a malformed one, so the classifier alone decides
+        output, proposal = res.output, None
+        if role.name == "analyst" and conn is not None:      # a split is only a proposal; the block never reaches the ticket
+            allowed = [r.repo for r in project_for(cfg, repo).repos if r.repo in cfg.repos] or [repo]
+            output, proposal = split.extract(output, set(allowed) | {repo})
+        doc, qs = Q.extract(output)                     # qs None: no block or a malformed one, so the classifier alone decides
         pending = [q for q in qs or [] if not q.safe]
         earlier = [q for st in before if st.stage != role.name for q in st.pending()]    # still unanswered from another stage
         settled = (f"(every open question was a safe default; the recommendations were auto-accepted)\n"
@@ -656,6 +660,9 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                          and not behind(cfg, STAGE_TO_ROLE.get(nxt.stage or ""), stages_done(cfg, labels)))
         except Exception:
             log.exception("next-stage suggestion failed")
+        if proposal:
+            go_on, hint = False, "a person's decision on the proposed split"
+            doc += split.section(proposal)
         if pending or earlier:
             hint = "a person's answer to the open questions " + ", ".join(q.id for q in pending + earlier)
         url = gh.comment(repo, num, stage_comment(role, route, doc, hint, res.files, res.notes, qs, role.design_files))
@@ -679,6 +686,8 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             assumed = "".join(f"\n{q.id}. {Q.describe(q, None)}" for q in qs or [])
             alert(done + ("\nContinuing automatically: " + (hint or "next stage") + assumed if go_on else (f"\nWaiting for you: {hint}" if hint else "")),
                   event="stage_done")
+        if proposal:
+            propose_split(cfg, gh, conn, repo, num, proposal)
     elif res.status == "cancelled":
         gh.remove_label(repo, num, working)
     else:
@@ -687,6 +696,37 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         gh.remove_label(repo, num, working)
         alert(f"{role.name.title()} failed: {repo}#{num} ({res.status})\n{res.detail[:300]}", event="failure")
     return res
+
+
+def propose_split(cfg: Config, gh: GitHub, conn, repo: str, num: int, proposal) -> None:
+    """Keep the analyst's validated split proposal and ask a person. Nothing is created until they approve it."""
+    try:
+        pid = split.store(conn, repo, gh.get_issue(repo, num), proposal)
+        try:
+            gh.create_label(repo, split.PROPOSED_LABEL, "fbca04", "A proposed split into smaller tickets is waiting for a person")
+        except Exception:
+            log.warning("could not create the label %s in %s", split.PROPOSED_LABEL, repo)
+        gh.add_labels(repo, num, [split.PROPOSED_LABEL])
+        buttons = [("Approve split", f"split:{pid}|{repo}|{num}"), ("Dismiss", f"split-no:{pid}|{repo}|{num}")]
+        alert(f"Proposed split: {repo} {tracker.display(num)} into {len(proposal.items)} tickets.\n{proposal.reason}",
+              [b for b in buttons if len(b[1].encode()) <= 64], event="needs_human")
+    except Exception:
+        log.exception("could not store the split proposal of %s#%s", repo, num)
+
+
+def start_labels(cfg: Config) -> list[str]:
+    """What an approver may start the children with: the read-only stages and auto, never a build."""
+    return [cfg.auto_label] + [r.label for r in cfg.roles]
+
+
+def confirm_split(conn, cfg: Config, gh: GitHub, repo: str, num: int, action: str) -> None:
+    """A person's Approve or Dismiss from the chat. The proposal is read back from the database and must be this ticket's; the
+    children are created by split.process."""
+    found = re.fullmatch(r"(split|split-no):(\d{1,9})", action)
+    if found and split.decide(conn, int(found.group(2)), repo, num, found.group(1) == "split"):
+        if found.group(1) == "split-no":
+            gh.remove_label(repo, num, split.PROPOSED_LABEL)
+        emit("decision", "split " + ("approved" if found.group(1) == "split" else "dismissed"), repo, num)
 
 
 def question_message(cfg: Config, repo: str, num: int, pending: list) -> tuple[str, list]:
@@ -929,6 +969,9 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
                 continue
             issue = gh.get_issue(repo, num)
             if issue["state"] != "open" or "pull_request" in issue:
+                continue
+            if action.startswith("split"):
+                confirm_split(conn, cfg, gh, repo, num, action)
                 continue
             if action.startswith("triage"):
                 confirm_triage(cfg, gh, conn, classifier, repo, issue, action)
@@ -1494,6 +1537,11 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
             ticketreview.process(cfg, gh, conn, emit)             # what a person picked in the ticket review
         except Exception:
             log.exception("applying ticket review proposals failed")   # never stops the poll
+        try:
+            split.process(cfg, gh, conn, emit, start_labels(cfg), [label for _, label in triggers(cfg)])    # what a person approved
+            split.sweep(gh, conn, emit, github_due)                                                      # umbrellas whose children are closed
+        except Exception:
+            log.exception("splitting tickets failed")                  # never stops the poll
     for repo in cfg.repos:
         handled: set[int] = set()
         todo = []
@@ -1509,6 +1557,14 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
             num = issue["number"]
             # A build waits for its open blockers (only while the PM is on). Like a ticket waiting for a slot, it is left untouched,
             # so a later poll starts it once they are closed. Checked only before a start: a running job is never stopped.
+            if kind in pm.BUILD_KINDS and not dbm.seen(conn, repo, num, issue["updated_at"]) and not pool.busy(jobkey(repo, num)):
+                # A child of a split waits for the items it comes after, whether or not the PM is on; the unblock label overrides it.
+                names = {lb.get("name", "") for lb in issue.get("labels", [])}
+                if not (cfg.pm.unblock_label in names and trusted(cfg, gh, repo, num, cfg.pm.unblock_label)[0]) \
+                        and (after := split.blockers(conn, gh, repo, num, pm.is_open, cache)):
+                    queued.append({"repo": repo, "issue": num, "kind": kind, "title": issue.get("title", "")[:120],
+                                   "reason": "waiting for " + ", ".join(after)})
+                    continue
             if (kind in pm.BUILD_KINDS and cfg.pm.enabled and not dbm.seen(conn, repo, num, issue["updated_at"])
                     and not pool.busy(jobkey(repo, num)) and (b := pm.blockers(cfg, gh, conn, repo, issue, cache, trusted))):
                 now_held[num] = b

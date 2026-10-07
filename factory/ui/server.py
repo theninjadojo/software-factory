@@ -26,6 +26,7 @@ from .. import tracker
 from ..tracker import display, is_local
 from . import admin, board, features, floor, floorplan, views
 from . import chat as CH
+from . import splitcard as SPC
 from . import workers as WK
 from . import labels as L
 from . import localtickets as LT
@@ -136,6 +137,19 @@ class App:
             ticketreview.ensure_tables(db)
             ok = [r[0] for r in db.execute(f"SELECT id FROM review_proposals WHERE repo=? AND id IN ({','.join('?' * len(ids))})", (repo, *ids))]
             return ticketreview.decide(db, ok, accept, time.time())
+        finally:
+            db.close()
+
+    def decide_split(self, pid: int, repo: str, issue: int, accept: bool, start_action: str) -> bool:
+        """Queue (accept) or reject a split proposal for the orchestrator, which creates the tickets at its next poll. The caller has
+        checked repo, issue and that start_action comes from the start options; the proposal must be this ticket's and still waiting."""
+        from .. import split
+        from . import labels
+        cfg = self.cfg()
+        db = sqlite3.connect(cfg.db_path, timeout=10)
+        try:
+            split.ensure_tables(db)
+            return split.decide(db, pid, repo, issue, accept, start_action, [o[2] for o in labels.start_options(cfg) if o[2]])
         finally:
             db.close()
 
@@ -528,7 +542,7 @@ class Handler(BaseHTTPRequestHandler):
                     if is_local(sel["issue"]) and (issue := LT.ticket(db, sel["repo"], sel["issue"])) is not None:
                         local = LT.card(cfg, issue, sel["repo"], csrf, back, L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])),
                                         (sel["repo"], sel["issue"]) in L._approved(self))
-                    local += CH.card(cfg, db, sel["repo"], sel["issue"], csrf, back)
+                    local += SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back) + CH.card(cfg, db, sel["repo"], sel["issue"], csrf, back)
                     decided = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])) or {}
                     close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
                                                                           sel["state"] in ("working", "needs"))

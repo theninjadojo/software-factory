@@ -149,6 +149,24 @@ SUMMARY_RULES = (
 )
 
 
+SPLIT_RULES = (
+    "\n\nSPLITTING A LARGE TICKET (optional). Only if the ticket is too large for one pull request or one agent run and falls apart "
+    "into parts that can be built and reviewed separately, put one fenced code block whose info string is `factory-split` right "
+    "before the `factory-questions` block, holding JSON like "
+    '{"reason": "Touches three apps.", "items": [{"title": "Add the API field", "body": "What to build and how to tell it is done.", '
+    '"repo": "api", "after": []}, {"title": "Show the field in the app", "body": "...", "repo": "app", "after": [0]}]}. '
+    "2 to 10 items in the order they should be built; `repo` is the directory name of the repository the item changes (one of the "
+    "repositories listed above); `after` lists the positions (counting from 0) of EARLIER items this one must wait for. Each body "
+    "stands alone: a person approves the split before anything is created. Leave the block out when the ticket is small enough. "
+    "The block is machine-read: valid JSON, plain text."
+)
+
+
+def stage_rules(agent: str) -> str:
+    """The required blocks at the end of a stage document; only the analyst may propose splitting the ticket."""
+    return SUMMARY_RULES + (SPLIT_RULES if agent == "analyst" else "") + QUESTIONS_RULES
+
+
 SCREENS_REQUESTED = (
     "\n\nSCREENS REQUESTED. A person asked to see screen designs for this ticket before it is built, and will review them. You MUST "
     "create the static mockups described below for the screens this ticket adds or changes, even if no repository contains a "
@@ -250,5 +268,5 @@ def builtin_prompt(agent: str) -> str:
     """What the factory itself tells an agent, shown read-only next to the operator's field (without the per-ticket
     context, and without the designer's design-file rules)."""
     if agent in ROLE_PROMPTS:
-        return ROLE_PROMPTS[agent] + "\n" + ROLE_COMMON + (SUMMARY_RULES + QUESTIONS_RULES if agent in STAGE_TO_ROLE.values() else "")
+        return ROLE_PROMPTS[agent] + "\n" + ROLE_COMMON + (stage_rules(agent) if agent in STAGE_TO_ROLE.values() else "")
     return IMPLEMENTER_PROMPT + {"ci_fix": CI_FIX_PROMPT, "conflicts": CONFLICTS_PROMPT}.get(agent, "")
