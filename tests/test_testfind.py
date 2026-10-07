@@ -35,9 +35,16 @@ JS = '''
 import { test, expect } from '@playwright/test';
 test('loads the home page', async ({ page }) => {});
 test.describe('Checkout', () => {
-  test("pays with a card", async () => {});
+  test("pays with a card", async () => { expect(')').toBe("}"); });  // a ) in a comment
   test.skip('it\\'s skipped but listed', async () => {});
   test(`total for ${n} items`, async () => {});
+  /* test('commented out') ) */
+  // test('also commented out')
+  test('see http://x.test/a', async () => {});
+  test.describe('Refunds', () => {
+    test('refunds in full', async () => {});
+  });
+  test('after the nested group', async () => {});
 });
 it('also counts', () => {});
 latest('not a test');
@@ -81,14 +88,16 @@ class TestFind(unittest.TestCase):
     def test_js_tests_take_their_describe_and_skip_runtime_names(self):
         got = TF.js_tests("e2e/shop.spec.ts", JS)
         self.assertEqual([t["id"] for t in got], ["e2e/shop.spec.ts › loads the home page", "e2e/shop.spec.ts › Checkout › pays with a card",
-                                                   "e2e/shop.spec.ts › Checkout › it's skipped but listed", "e2e/shop.spec.ts › Checkout › also counts"])
+                                                   "e2e/shop.spec.ts › Checkout › it's skipped but listed",
+                                                   "e2e/shop.spec.ts › Checkout › see http://x.test/a", "e2e/shop.spec.ts › Refunds › refunds in full",
+                                                   "e2e/shop.spec.ts › Checkout › after the nested group", "e2e/shop.spec.ts › also counts"])
         self.assertEqual(got[0]["title"], "Loads the home page")
 
     def test_discover_reads_the_default_branch_and_counts_unreadable_files(self):
         gh = FakeGH({"tests/test_x.py": PY, "e2e/shop.spec.ts": JS, "tests/test_gone.py": None})
         rows, info = TF.discover(gh, "o/r")
         self.assertEqual((info["ref"], info["files"], info["skipped"], info["capped"]), ("main", 3, 1, False))
-        self.assertEqual(len(rows), 7)
+        self.assertEqual(len(rows), 10)
         self.assertEqual(rows[0], {"feature": "x", "title": "Top level", "steps": "", "expected": "", "status": "active",
                                    "playwright_test": "tests/test_x.py::test_top_level"})
 
