@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, pause, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import questions as Q
 from . import db as dbm
@@ -406,32 +406,75 @@ def chat_answer(cfg: Config, gh: GitHub, db, turn: dict) -> None:
 def chat_lane(cfg: Config, gh: GitHub) -> None:
     """The chat's own lane, next to the job pool: every chat.check_seconds it takes the oldest waiting message, up to
     chat.max_parallel at once. A reply never waits for a stage run, and it changes nothing a stage run reads or writes."""
-    slots = threading.Semaphore(cfg.chat.max_parallel)
+    _lane("chat", lambda: cfg.chat.enabled, chat.claim, lambda db, turn: chat_answer(cfg, gh, db, turn),
+          lambda db, turn: chat.settle(db, turn["id"], "failed", "The reply could not be written. Try again."),
+          cfg.db_path, cfg.chat.max_parallel, cfg.chat.check_seconds)
+
+
+def interview_answer(cfg: Config, db, turn: dict) -> None:
+    """Answer one claimed message of a new-project interview with a read-only run (no repository, no GitHub token). The reply and a
+    validated plan are only stored: nothing is created until a person accepts the plan."""
+    if cfg.dry_run:
+        return newproject.settle(db, turn["id"], "refused", "The factory is in dry-run, so no reply was written.")
+    d = newproject.draft(db, turn["draft"])
+    if d is None:
+        return newproject.settle(db, turn["id"], "failed", "The draft is gone.")
+    np = cfg.new_projects
+    route = Route(np.harness, np.model, np.effort)
+    last = newproject.rounds(db, d["id"]) >= np.max_rounds
+    prompt = newproject.build_prompt(d["title"], newproject.prompt_turns(db, d["id"], turn["id"]), last)
+    run_id, sink = begin_run("interview", "new-project", {"number": d["id"], "title": d["title"]}, route), {}
+    res = runner.run_interview(cfg, d["id"], route, prompt, sink)
+    end_run(run_id, res, sink)
+    if res.status == "stage":
+        newproject.add_reply(db, turn, res.output, run_id)
+        emit("interview", f"replied in the new-project interview '{d['title']}'", None, None, run_id)
+    elif res.status == "rate-limited":
+        newproject.settle(db, turn["id"], "failed", "The model is rate limited. Try again later.")
+        if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+            alert(f"Rate limited during a new-project interview ('{d['title']}'); pausing.", event="rate_limit")
+    else:
+        log.warning("interview: draft %s: %s %s", d["id"], res.status, res.detail[:300])
+        newproject.settle(db, turn["id"], "failed", "The reply could not be written. Try again.")
+
+
+def interview_lane(cfg: Config) -> None:
+    """New-project interviews get their own lane too, so a reply never waits behind ticket work."""
+    np = cfg.new_projects
+    _lane("interview", lambda: np.enabled, newproject.claim, lambda db, turn: interview_answer(cfg, db, turn),
+          lambda db, turn: newproject.settle(db, turn["id"], "failed", "The reply could not be written. Try again."),
+          cfg.db_path, np.max_parallel, np.check_seconds)
+
+
+def _lane(name: str, enabled, claim, answer, fail, db_path: str, max_parallel: int, check_seconds: int) -> None:
+    """Every check_seconds take the oldest waiting message with claim(db) and answer it on a thread, up to max_parallel at once;
+    fail(db, turn) settles a message whose answer raised."""
+    slots = threading.Semaphore(max_parallel)
 
     def work(turn: dict) -> None:
         try:
-            chat_answer(cfg, gh, dbm.local(cfg.db_path), turn)
+            answer(dbm.local(db_path), turn)
         except Exception:
-            log.exception("chat reply failed")
+            log.exception("%s reply failed", name)
             try:
-                chat.settle(dbm.local(cfg.db_path), turn["id"], "failed", "The reply could not be written. Try again.")
+                fail(dbm.local(db_path), turn)
             except Exception:
                 pass
         finally:
             slots.release()
 
-    db = dbm.local(cfg.db_path)
+    db = dbm.local(db_path)
     while True:
         try:
-            if cfg.chat.enabled and not pause.paused(Path(cfg.db_path).parent) and slots.acquire(blocking=False):
-                turn = chat.claim(db)
+            if enabled() and not pause.paused(Path(db_path).parent) and slots.acquire(blocking=False):
+                turn = claim(db)
                 if turn is None:
                     slots.release()
                 else:
-                    threading.Thread(target=work, args=(turn,), daemon=True, name="chat-reply").start()
+                    threading.Thread(target=work, args=(turn,), daemon=True, name=f"{name}-reply").start()
         except Exception:
-            log.exception("chat lane failed")
-        time.sleep(cfg.chat.check_seconds)
+            log.exception("%s lane failed", name)
+        time.sleep(check_seconds)
 
 
 def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route, c=None, stage: str | None = None, **kw):
@@ -1731,6 +1774,7 @@ def main() -> None:
     if not args.once:
         stranded = dbm.mark_interrupted(conn)
         chat.mark_interrupted(conn)
+        newproject.mark_interrupted(conn)
         emit("startup", f"orchestrator started ({'dry-run' if cfg.dry_run else 'LIVE'}), {len(cfg.repos)} repo(s)"
                         + (f"; {stranded} run(s) were interrupted by the restart" if stranded else ""))
         if restored:
@@ -1757,6 +1801,8 @@ def main() -> None:
         alert(warning, event="startup")
     if not args.once and cfg.chat.enabled:
         threading.Thread(target=chat_lane, args=(cfg, gh), daemon=True, name="chat-lane").start()
+    if not args.once and cfg.new_projects.enabled:
+        threading.Thread(target=interview_lane, args=(cfg,), daemon=True, name="interview-lane").start()
     if not args.once and not cfg.dry_run:
         recover(cfg, gh)
     while True:

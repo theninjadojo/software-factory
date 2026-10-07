@@ -90,6 +90,11 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 - **Slack.** The same, instead of or alongside Telegram: alerts, Run/Skip/answer buttons, and `/factory status|usage|pause|resume`.
   Socket Mode, so no public URL is needed. Only your Slack member id is obeyed.
 - **Recovery.** If the orchestrator restarts mid-task, leftovers are cleared and the ticket is requeued. A run that crashes (for example GitHub timing out after the agent finished) marks the ticket `factory:failed` with a comment and an alert, and reads and label changes are retried when GitHub times out.
+- **New projects.** Under Settings, New project, describe what you want to build. An interviewer agent (a read-only run with no
+  repository and no GitHub token) asks a few rounds of questions, then recommends a pattern from a fixed catalogue: the architecture,
+  a modern stack for the use case, the design patterns and tests set up from day one, and where it deploys (your choice among the
+  pattern's targets). You can change any part before accepting. Creating the repositories and the first commit from the accepted
+  plan comes next.
 - **Admin UI.** See what is happening and what happened (runs, decisions, PRs and CI, an event timeline), and change settings,
   credentials, Telegram and agent harnesses without editing files. Authenticated, loopback by default. See [docs/ui.md](docs/ui.md).
 - **Other agents.** A harness is `{image, credential, command, hosts}`. Claude Code is built in; Codex and Gemini ship as
