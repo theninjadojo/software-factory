@@ -2,13 +2,14 @@
 
 Everything a person types (scenarios, comments, imported rows) is untrusted: it reaches tickets that agents read, so the ticket
 body is built here from stored fields only, quoted, and cleaned with sanitize_markdown. CSV cells that a spreadsheet could run as
-a formula are neutralised on export. Import is two steps (plan, then apply) and nothing is written by the first."""
+a formula are neutralised on export (an Excel export holds text cells only). Import (CSV or .xlsx) is two steps (plan, then apply) and nothing is written by the first."""
 import csv
 import io
 import re
 import sqlite3
 import time
 
+from . import xlsx
 from .sanitize import sanitize_markdown
 
 STATUSES = ("proposed", "active", "retired")
@@ -206,15 +207,27 @@ def unsafe_cell(s: str) -> str:
     return s[1:] if s.startswith("'") and s[1:].startswith(FORMULA) else s
 
 
+def _export_rows(rows: list[dict]) -> list[list]:
+    out = []
+    for r in rows:
+        tested = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["last_tested"])) if r["last_tested"] else ""
+        out.append([r["ref"], r["feature"], r["title"], r["steps"], r["expected"], r["status"], r["pw_test"],
+                    r["revision"], r["last_result"], tested, r["last_comment"] or ""])
+    return out
+
+
 def export_csv(rows: list[dict]) -> str:
     out = io.StringIO()
     w = csv.writer(out, lineterminator="\r\n")
     w.writerow(COLUMNS)
-    for r in rows:
-        tested = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(r["last_tested"])) if r["last_tested"] else ""
-        w.writerow([safe_cell(v) for v in (r["ref"], r["feature"], r["title"], r["steps"], r["expected"], r["status"], r["pw_test"],
-                                           r["revision"], r["last_result"], tested, r["last_comment"] or "")])
+    for row in _export_rows(rows):
+        w.writerow([safe_cell(v) for v in row])
     return out.getvalue()
+
+
+def export_xlsx(rows: list[dict]) -> bytes:
+    """The same columns as the CSV, as an Excel workbook. Cells are text, never formulas, so nothing needs the leading '."""
+    return xlsx.write([COLUMNS] + _export_rows(rows), "Scenarios")
 
 
 def parse_csv(data: bytes) -> list[dict]:
@@ -226,18 +239,33 @@ def parse_csv(data: bytes) -> list[dict]:
     except UnicodeDecodeError:
         raise ValueError("File is not a CSV or is larger than 1 MB.") from None
     try:
-        reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
-        names = [(h or "").strip().lower() for h in (reader.fieldnames or [])]
-        if "title" not in names:
-            raise ValueError("The file needs a title column.")
-        reader.fieldnames = names
-        rows = []
-        for row in reader:
-            if len(rows) >= MAX_ROWS:
-                raise ValueError(f"More than {MAX_ROWS:,} rows.")
-            rows.append({k: unsafe_cell(v if isinstance(v, str) else "") for k, v in row.items() if k})
+        return _table(list(csv.reader(io.StringIO(text, newline=""), strict=True)))
     except csv.Error:
         raise ValueError("File is not a CSV or is larger than 1 MB.") from None
+
+
+def parse_xlsx(data: bytes) -> list[dict]:
+    """The rows of the first sheet of an uploaded Excel workbook, like parse_csv. Raises ValueError with a message safe to show."""
+    if len(data) > MAX_CSV:
+        raise ValueError("File is not an Excel workbook or is larger than 1 MB.")
+    return _table(xlsx.read(data, MAX_ROWS + 2))
+
+
+def parse_upload(data: bytes) -> list[dict]:
+    """A CSV file or an Excel workbook, told apart by its first bytes (not its name)."""
+    return parse_xlsx(data) if xlsx.is_xlsx(data) else parse_csv(data)
+
+
+def _table(table: list[list[str]]) -> list[dict]:
+    """Rows of cells, the first a header, as dicts keyed by lower-case column name (columns without a name are dropped)."""
+    names = [(h or "").strip().lower() for h in (table[0] if table else [])]
+    if "title" not in names:
+        raise ValueError("The file needs a title column.")
+    rows = []
+    for row in table[1:]:
+        if len(rows) >= MAX_ROWS:
+            raise ValueError(f"More than {MAX_ROWS:,} rows.")
+        rows.append({k: unsafe_cell(row[i] if i < len(row) else "") for i, k in enumerate(names) if k})
     return rows
 
 
