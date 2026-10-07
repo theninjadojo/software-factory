@@ -99,6 +99,11 @@ if "android" in r:
 command = [{q(d + '/worker/recipes/android-test.sh')}]
 timeout_seconds = 3600
 artifacts = ["build/screens/*.png"]
+
+[recipes.android-screens]
+command = [{q(d + '/worker/recipes/android-test.sh')}, "--screens"]
+timeout_seconds = 3600
+artifacts = ["screens-out/*.png"]
 """
 if "ios" in r:
     target = ["--workspace", os.environ["IOS_WORKSPACE"]] if os.environ["IOS_WORKSPACE"] else ["--project", os.environ["IOS_PROJECT"]]
@@ -178,5 +183,5 @@ Done. This machine now polls the factory for verification jobs.
   Config: $DIR/worker.toml   Token: $DIR/secrets/token   Update: ./scripts/update-worker.sh
   The worker must be able to CLONE the repos it verifies: set up git credentials (a read-only token, or an SSH key with WORKER_GIT_URL).
   On the factory, add checks (Settings -> Workers, or [[workers.checks]] in config.toml) that name a recipe here:
-    web-test (web) / android-test (android) / ios-test (ios). The Settings -> Workers page shows this worker as online within seconds.
+    web-test (web) / android-test (android) / ios-test (ios); the Screens board's runs use playwright-screens (screens) or android-screens (android). The Settings -> Workers page shows this worker as online within seconds.
 MSG

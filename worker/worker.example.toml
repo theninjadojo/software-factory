@@ -28,6 +28,13 @@ command = ["/home/factory/recipes/android-test.sh"]
 timeout_seconds = 3600
 artifacts = ["build/screens/*.png"]                # the emulator's final screenshot
 
+[recipes.android-screens]
+# The Screens board's Build screens for an Android project: records the project's Roborazzi or Paparazzi screenshots (JVM tests, no
+# emulator) in the same container and returns one per test. Add "--emulator" to run connectedDebugAndroidTest instead.
+command = ["/home/factory/recipes/android-test.sh", "--screens"]
+timeout_seconds = 3600
+artifacts = ["screens-out/*.png"]
+
 [recipes.ios-test]
 # A Mac with Tart (brew install cirruslabs/cli/tart) and a golden Xcode VM named shikumi-ios (docs/workers.md, "iOS golden image").
 # Builds and tests in a throwaway macOS VM, simulator only, code signing off. One recipe per project: the arguments are fixed here.

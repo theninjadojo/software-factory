@@ -155,7 +155,8 @@ def setup_body(cfg, db, csrf: str) -> str:
     form = (f'<form method="post" action="/screens/captures/save" class="settings">{csrf_field(csrf)}'
             '<table class="stack"><thead><tr><th>Run Playwright in</th><th>Worker recipe</th><th>Worker platform</th></tr></thead>'
             f'<tbody>{rows}</tbody></table>'
-            '<p class="muted">The recipe is a name defined on the worker (the <code>screens</code> option installs <code>playwright-screens</code>). '
+            '<p class="muted">The recipe is a name defined on the worker (the <code>screens</code> option installs <code>playwright-screens</code>; '
+            'the <code>android</code> option installs <code>android-screens</code>, for an Android project\'s Roborazzi or Paparazzi screenshots). '
             'The platform is the one the worker declares; <code>any</code> matches every worker.</p><button>Save</button></form>')
     return (f'<details class="cp-setup"{"" if on and cfg.workers.enabled and able else " open"}><summary>Set up Playwright runs</summary>'
             f'<ul class="cp-steps">{ticks}</ul>{form}</details>')
