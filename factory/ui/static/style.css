@@ -90,7 +90,7 @@ table.tickets .steps { flex-wrap:nowrap; } table.tickets td:first-child { min-wi
   table.tickets .steps { flex-wrap:wrap; }
   .evlist li { flex-wrap:wrap; row-gap:.15rem; } .evlist li > :last-child { order:1; min-width:0; white-space:normal; overflow-wrap:anywhere; } .evlist li .wrap { order:2; flex:1 1 100%; }
   table.stack td.actions { white-space:normal; display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; } table.stack td.actions form { margin-right:0; }
-  table.stack td.nowrap, table.stack td.wrap { white-space:normal; } table.tickets td:first-child { min-width:0; }
+  table.stack td.nowrap, table.stack td.wrap { white-space:normal; } table.stack td.pre-wrap { white-space:pre-wrap; } table.tickets td:first-child { min-width:0; }
 }
 @media (prefers-reduced-motion:reduce) { *, *:before, *:after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
 
