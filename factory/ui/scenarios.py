@@ -1,4 +1,4 @@
-"""The Tests page: the register of test scenarios, one scenario with its manual results, and the CSV round trip.
+"""The Tests page: the register of test scenarios, one scenario with its manual results, and the CSV and Excel round trip.
 
 Every write goes through factory/scenarios.py, which cleans what a person typed. A ticket is made only when someone clicks, from stored
 fields (never from the browser's text), with the start action looked up in labels.start_options."""
@@ -100,14 +100,15 @@ def register_get(h, q: dict, csrf: str) -> None:
                + sel("Result", result, [("", "Any")] + [("none", "Not run")] + [(r, SC.RESULT_LABEL[r]) for r in SC.RESULTS])
                + sel("Status", status, [("", "Any")] + [(s, s.capitalize()) for s in SC.STATUSES])
                + '<button>Filter</button>' + (f' <a href="{esc(url(repo))}">Clear filters</a>' if feature or result or status or text else "") + '</form>')
-    actions = (f'<p class="actions"><a class="btn" href="/scenarios/import?{esc(urlencode({"repo": repo}))}">Import CSV</a> '
+    actions = (f'<p class="actions"><a class="btn" href="/scenarios/import?{esc(urlencode({"repo": repo}))}">Import CSV or Excel</a> '
                f'<a class="btn" href="/scenarios/export?{esc(urlencode({"repo": repo}))}">Export CSV</a> '
+               f'<a class="btn" href="/scenarios/export?{esc(urlencode({"repo": repo, "format": "xlsx"}))}">Export Excel</a> '
                f'<a class="btn" href="/scenarios/edit?{esc(urlencode({"repo": repo}))}">Add scenario</a></p>'
                f'<form method="post" action="/scenarios/discover" class="actions">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}">'
                '<button>Add from the repository\'s tests</button> <span class="muted">Reads the test files on GitHub; you see the list before anything is saved.</span></form>')
     if not rows:
         table = ('<div class="card"><h3>Empty register</h3><p>No scenarios yet for this repository.</p>'
-                 '<p class="muted">Add one, import a CSV file from your spreadsheet, or add the tests the repository already has.</p></div>')
+                 '<p class="muted">Add one, import a CSV or Excel file from your spreadsheet, or add the tests the repository already has.</p></div>')
     elif not shown:
         table = f'<p class="muted">No scenarios match these filters. <a href="{esc(url(repo))}">Clear filters</a></p>'
     else:
@@ -320,11 +321,14 @@ def export_get(h, q: dict, csrf: str) -> None:
         return h._send(400, "unknown repository", "text/plain")
     db = _db(h)
     try:
-        data = SC.export_csv(SC.listing(db, repo))
+        rows = SC.listing(db, repo)
     finally:
         db.close()
     name = "".join(c if c.isalnum() else "-" for c in repo)
-    h._send(200, data.encode("utf-8"), "text/csv; charset=utf-8", {"Content-Disposition": f'attachment; filename="scenarios-{name}.csv"'})
+    if q.get("format") == "xlsx":
+        return h._send(200, SC.export_xlsx(rows), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       {"Content-Disposition": f'attachment; filename="scenarios-{name}.xlsx"'})
+    h._send(200, SC.export_csv(rows).encode("utf-8"), "text/csv; charset=utf-8", {"Content-Disposition": f'attachment; filename="scenarios-{name}.csv"'})
 
 
 def import_get(h, q: dict, csrf: str) -> None:
@@ -332,14 +336,15 @@ def import_get(h, q: dict, csrf: str) -> None:
         repo = _repo(h.app.cfg(), q.get("repo", ""))
     except L.Refused as e:
         return _page(h, "Tests", f'<p class="muted">{esc(e)}</p>', csrf, 400)
-    _page(h, "Import CSV · Tests", _upload_form(repo, csrf), csrf)
+    _page(h, "Import · Tests", _upload_form(repo, csrf), csrf)
 
 
 def _upload_form(repo: str, csrf: str) -> str:
-    return (f'<h1>Import CSV</h1><form method="post" action="/scenarios/import/preview" enctype="multipart/form-data" class="card">{csrf_field(csrf)}'
-            f'<input type="hidden" name="repo" value="{esc(repo)}"><div class="field"><input type="file" name="file" accept=".csv,text/csv" required></div>'
+    return (f'<h1>Import CSV or Excel</h1><form method="post" action="/scenarios/import/preview" enctype="multipart/form-data" class="card">{csrf_field(csrf)}'
+            f'<input type="hidden" name="repo" value="{esc(repo)}"><div class="field"><input type="file" name="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></div>'
             '<p class="muted">Use a file exported from here, or a sheet with a title column (and optionally id, feature, steps, expected, status, playwright_test). '
-            'You see what would change before anything is written. Cells that start with = + - or @ are saved with a leading apostrophe on export.</p>'
+            'For an Excel workbook (.xlsx, up to 1 MB) the first sheet is read. '
+            'You see what would change before anything is written. Cells that start with = + - or @ get a leading apostrophe in a CSV export.</p>'
             '<button>Preview</button></form>')
 
 
@@ -351,11 +356,11 @@ def preview_post(h, form, csrf: str, files=()) -> None:
     except L.Refused as e:
         return _page(h, "Tests", f'<p class="muted">{esc(e)}</p>', csrf, 400)
     if not files or files[0][1] is None:
-        return _page(h, "Import CSV · Tests", _upload_form(repo, csrf), csrf, 400, "Choose a CSV file of up to 1 MB (a larger one is refused).", "bad")
+        return _page(h, "Import · Tests", _upload_form(repo, csrf), csrf, 400, "Choose a CSV or Excel file of up to 1 MB (a larger one is refused).", "bad")
     try:
-        rows = SC.parse_csv(files[0][1])
+        rows = SC.parse_upload(files[0][1])
     except ValueError as e:
-        return _page(h, "Import CSV · Tests", _upload_form(repo, csrf), csrf, 422, str(e), "bad")
+        return _page(h, "Import · Tests", _upload_form(repo, csrf), csrf, 422, str(e), "bad")
     _preview(h, csrf, repo, rows, "Import preview")
 
 
