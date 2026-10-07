@@ -74,21 +74,65 @@ def _states(cfg) -> dict:
         return {}
 
 
+def _row(k: str, name: str, href: str, st: str, active: str = "", word: bool = False) -> str:
+    """One page link with its state dot and word. word: also show "On" (the menu leaves it to screen readers)."""
+    mark = f'<span class="sdot {st}" aria-hidden="true"></span>'
+    shown = (f'<span class="sstate {st}">{STATE_WORD[st]}</span>' if st in STATE_WORD else
+             '<span class="sstate on">On</span>' if st == "on" and word else
+             '<span class="vh"> (on)</span>' if st == "on" else "")
+    return f'<a href="{href}"{" class=active aria-current=page" if k == active else ""}>{mark}{esc(name)}{shown}</a>'
+
+
+def page_list(cfg, show: str = "", q: str = "") -> str:
+    """The phone's Settings home: General and every page in SIDE_GROUPS as a grouped list, each with its state (shown at 700px and below)."""
+    from .features import features
+    states = _states(cfg)
+    try:
+        text = {f.key: f.text for f in features(cfg)}
+    except Exception:  # noqa: BLE001 - the list matters more than the extra search text
+        text = {}
+    ql = q.lower()
+
+    def rows(items):
+        return "".join(_row(k, n, href, states.get(k, ""), word=True) for k, n, href in items
+                       if (not show or states.get(k) == show) and (not ql or ql in (n + " " + text.get(k, "")).lower()))
+
+    out = ""
+    general = rows([("general", "General", "/settings?section=general")])
+    if general:
+        out += f'<h2 class="side-h">General</h2><div class="sl-group">{general}</div>'
+    for g, items in SIDE_GROUPS:
+        r = rows(items)
+        if r:
+            out += f'<h2 class="side-h">{esc(g)}</h2><div class="sl-group">{r}</div>'
+    if not out:
+        clear = f' <a href="/settings{"?show=" + esc(show) if show else ""}">Clear search</a>' if q else ""
+        msg = (f"Nothing matches “{esc(q)}”. Try a shorter word." if q else
+               {"setup": "Nothing is set up yet.", "off": "Nothing is off."}.get(show, "Nothing to show."))
+        out = f'<p class="muted">{msg}{clear}</p>'
+    return f'<div class="sl-list">{out}</div>'
+
+
+def related(key: str) -> str:
+    """The other pages in this page's group, as a disclosure at the foot of a phone page ("" outside the groups)."""
+    for _, items in SIDE_GROUPS:
+        if any(k == key for k, _, _ in items):
+            links = "".join(f'<a href="{href}">{esc(n)}</a>' for k, n, href in items if k != key)
+            return f'<details class="s-related"><summary>Related pages</summary><div>{links}</div></details>'
+    return ""
+
+
 def side_list(active: str, cfg=None) -> str:
     states = _states(cfg)
 
     def link(k, t, href):
-        st = states.get(k, "")
-        mark = f'<span class="sdot {st}" aria-hidden="true"></span>' if st else '<span class="sdot" aria-hidden="true"></span>'
-        word = (f'<span class="sstate {st}">{STATE_WORD[st]}</span>' if st in STATE_WORD else
-                '<span class="vh"> (on)</span>' if st == "on" else "")
-        return f'<a href="{href}"{" class=active aria-current=page" if k == active else ""}>{mark}{esc(t)}{word}</a>'
+        return _row(k, t, href, states.get(k, ""), active)
 
     top = "".join(f'<a href="{href}"{" class=active aria-current=page" if k == active else ""}>{esc(t)}</a>' for k, t, href in SIDE_TOP)
     groups = "".join(f'<div class="side-g{" cur" if any(k == active for k, _, _ in rows) else ""}"><span class="side-h">{esc(g)}</span>'
                      + "".join(link(*x) for x in rows) + "</div>" for g, rows in SIDE_GROUPS)
     cls = "side on-home" if active == "home" else "side"            # on a phone the home lists everything itself, so the menu steps aside
-    return (f'<nav class="{cls}" aria-label="Settings"><a class="side-back" href="/settings">‹ All settings</a>'
+    return (f'<nav class="{cls}" aria-label="Settings"><a class="side-back" href="/settings" aria-label="Back to all settings">‹ All settings</a>'
             f'<div class="side-top">{top}</div>{groups}</nav>')
 
 
@@ -261,8 +305,8 @@ def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None
         body = _rows(fields, eff, base, submitted)
     return (f'{intro}<form method="post" action="/settings/save" class="settings rows" data-dirty>{csrf_field(csrf)}'
             f'<input type="hidden" name="section" value="{esc(section)}">{head}{body}'
-            f'<div class="s-save card"><span class="s-dirty" aria-live="polite">{APPLY_NOTE}</span><button>Save changes</button></div></form>'
-            '<p class="muted s-foot">Saving writes <code>config.overrides.toml</code>; your <code>config.toml</code> is never touched.</p>')
+            f'<div class="s-save card"><span class="s-dirty" aria-live="polite">No changes</span><button>Save changes</button></div></form>'
+            f'<p class="muted s-foot">{APPLY_NOTE} Saving writes <code>config.overrides.toml</code>; your <code>config.toml</code> is never touched.</p>')
 
 
 def _repo_name(repo: str) -> str:
