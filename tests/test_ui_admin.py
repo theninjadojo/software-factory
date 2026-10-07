@@ -690,7 +690,8 @@ class Labels(AdminCase):
             s, h, _ = self.post(cookie, csrf, "/tickets/answer", {**self.fields(), "accept": "1", "back": "/?station=architect"})
         self.assertEqual((s, h["Location"]), (303, "/?station=architect"))
         self.assertIsNone(rec.call_args.args[3])                           # no stage given: the latest stage's questions
-        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:auto"])
+        self.gh.remove_label.assert_called_once_with(self.REPO, 7, "stage:architected")   # the stage that asked runs again
+        self.gh.add_labels.assert_called_once_with(self.REPO, 7, ["factory:architect"])
         with mock.patch("factory.ui.labels.Q.record") as rec:               # a single answer still must name its stage
             s, h, _ = self.post(cookie, csrf, "/tickets/answer", {**self.fields(), "q": "q1", "o": "a", "back": "/"})
         self.assertEqual(s, 303)
