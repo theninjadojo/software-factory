@@ -16,6 +16,10 @@
 # suite through a wrapper config WRITTEN HERE that turns on a full-page screenshot at the end of every test, whatever the project's own
 # config says. Every PNG is copied to screens-out/ under a unique, readable name. The screenshots are returned even when tests fail, so a
 # red suite still shows what the screens looked like. Exit 0: the suite passed. Exit 1: install or tests failed. Exit 2: nothing to run.
+#
+# When the worker sets FACTORY_RESULTS_DIR (a folder outside the checkout), the suite also writes its results there, failing or not:
+# Playwright's JSON report (pw-<folder>.json) and HTML report (report-<folder>/), or pytest's JUnit XML (junit.xml). The worker turns them
+# into per-test results for the Tests register and sends each HTML report's index.html for the Screens board.
 set -u
 . "$(dirname "$0")/lib.sh"
 ONLY=""
@@ -46,7 +50,9 @@ if [ -z "$DIRS" ] && [ -z "$ONLY" ] && [ -f tests/e2e/requirements.txt ]; then
   python3 -m venv "$VENV" && "$VENV/bin/pip" install -q -r tests/e2e/requirements.txt || { echo "[playwright-screens] FAILED: installing the Python suite" >&2; exit 1; }
   if [ -z "$BROWSER" ]; then "$VENV/bin/playwright" install chromium || { echo "[playwright-screens] FAILED: playwright install" >&2; exit 1; }; fi
   status=0
-  E2E_SCREENS_DIR="$OUT" E2E_BROWSER="$BROWSER" "$VENV/bin/python" -m pytest tests/e2e -q -p no:cacheprovider || { echo "[playwright-screens] some tests failed (their screenshots are kept)" >&2; status=1; }
+  set --
+  [ -n "${FACTORY_RESULTS_DIR:-}" ] && set -- --junitxml "$FACTORY_RESULTS_DIR/junit.xml" -o junit_family=xunit1     # xunit1 names each test's file
+  E2E_SCREENS_DIR="$OUT" E2E_BROWSER="$BROWSER" "$VENV/bin/python" -m pytest tests/e2e -q -p no:cacheprovider "$@" || { echo "[playwright-screens] some tests failed (their screenshots are kept)" >&2; status=1; }
   count=$(find "$OUT" -name '*.png' | wc -l)
   echo "[playwright-screens] $count screenshot(s) kept"
   exit "$status"
@@ -69,6 +75,7 @@ for D in $DIRS; do
   fi || { echo "[playwright-screens] FAILED: install in $D" >&2; status=1; continue; }
   npx --no-install playwright install chromium || { echo "[playwright-screens] FAILED: playwright install in $D" >&2; status=1; continue; }
 
+  NAME=$(slug "$D"); [ -n "$NAME" ] || NAME=root
   BASE="${CFG%.*}"; EXT="${CFG##*.}"
   SHOT="{ mode: 'on', fullPage: true }"
   case "$EXT" in
@@ -80,12 +87,13 @@ for D in $DIRS; do
 $IMPORT
 const shot = $SHOT;
 const b = base;
+const results = process.env.FACTORY_RESULTS_DIR;
 $EXPORT {
   ...b,
   use: { ...(b.use || {}), screenshot: shot },
   projects: (b.projects || []).map((p) => ({ ...p, use: { ...(p.use || {}), screenshot: shot } })),
   outputDir: 'test-results-screens',
-  reporter: 'line',
+  reporter: results ? [['line'], ['json', { outputFile: results + '/pw-$NAME.json' }], ['html', { outputFolder: results + '/report-$NAME', open: 'never' }]] : 'line',
 };
 JS
   echo "[playwright-screens] playwright test --config $W"

@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from .. import captures as CP
 from .. import jobs
 from .. import reviewnotes as RN
+from .. import scenarios
 from .. import screenboard as SB
 from ..config import deep_merge
 from . import labels as L
@@ -80,7 +81,68 @@ def _run_line(run: dict | None, live: dict | None) -> str:
     n = len(run["shots"])
     return (f'{badge(word, kind)} {n} screen{"" if n == 1 else "s"} · <code>{esc(run["base_sha"][:7])}</code> · {esc(ago(run["finished"] or run["created"]))}'
             f' · took {esc(dur(run["claimed"], run["finished"]) if run["claimed"] else "—")} on {esc(run["worker"] or "—")} · '
-            f'<a href="/workers/job?id={int(run["id"])}">log</a>')
+            f'<a href="/workers/job?id={int(run["id"])}">log</a>' + _result_links(run))
+
+
+def _result_links(run: dict) -> str:
+    """Links to the run's per-test results and to each Playwright HTML report it sent (one per suite folder)."""
+    ran = jobs.tests(run)
+    out = ""
+    if ran:
+        bad = sum(1 for t in ran if t["outcome"] == "fail")
+        out += f' · <a href="{esc(results_url(run["id"]))}">results</a> ({len(ran) - bad} passed, {bad} failed)'
+    names = run.get("reports") or []
+    for n in names:
+        out += f' · <a href="{esc(report_url(run["id"], n))}" target="_blank" rel="noopener">{"report" if len(names) == 1 else esc("report " + n)}</a>'
+    return out
+
+
+def results_url(job_id: int) -> str:
+    return "/screens/results?" + urlencode({"job": int(job_id)})
+
+
+def report_url(job_id: int, name: str) -> str:
+    return "/workerreport?" + urlencode({"job": int(job_id), "name": name})
+
+
+def results_body(db, job: dict) -> str:
+    """Every test the run reported, failures first, each with its message and the scenario it is linked to in the Tests register."""
+    repo, ran = job["repo"], jobs.tests(job)
+    try:
+        linked = {s["pw_test"]: s["ref"] for s in scenarios.listing(db, repo) if s["pw_test"]}
+    except sqlite3.OperationalError:
+        linked = {}
+    bad = sum(1 for t in ran if t["outcome"] == "fail")
+    heads = ["Result", "Test", "Scenario", "Message"]
+    rows = "".join(views.trow(heads, [
+        badge("Passed", "good") if t["outcome"] == "pass" else badge("Failed", "bad"),
+        (f'<code>{esc(t["id"])}</code>', 'class="wrap"'),
+        f'<a href="{esc(TS.view_url(repo, linked[t["id"]]))}">{esc(linked[t["id"]])}</a>' if t["id"] in linked else '<span class="muted">—</span>',
+        (f'<span class="pre-wrap">{esc(t["message"])}</span>' if t["message"] else '<span class="muted">—</span>', 'class="wrap"')])
+        for t in sorted(ran, key=lambda t: (t["outcome"] != "fail", t["id"])))
+    reports = "".join(f' · <a href="{esc(report_url(job["id"], n))}" target="_blank" rel="noopener">Playwright report{"" if n == "root" else " " + esc(n)}</a>'
+                      for n in (job.get("reports") or []))
+    head = (f'<p><a href="/screens">Screens</a> / Playwright run {int(job["id"])}</p>'
+            f'<p>{esc(repo)} at <code>{esc(job["base_sha"][:7])}</code> · {len(ran) - bad} passed, {bad} failed · '
+            f'<a href="/workers/job?id={int(job["id"])}">log</a>{reports}</p>'
+            f'<p class="muted">Skipped tests are not listed. A test linked to a scenario (its Playwright test) gives that scenario this run\'s result.</p>')
+    return head + (views.cards_table(heads, rows) if ran else '<p class="muted">This run sent no per-test results.</p>')
+
+
+def results_get(h, q: dict, csrf: str) -> None:
+    jid = q.get("job", "")
+    db = h.app.ro_db()
+    job = None
+    if db is not None and jid.isdigit() and len(jid) < 10:
+        try:
+            job = jobs.get(db, int(jid))
+            if job and jobs.is_screens(job):
+                body = results_body(db, dict(job, reports=jobs.report_names(db, job["id"])))
+        finally:
+            db.close()
+    if not job or not jobs.is_screens(job):
+        return h._send(404, "no such run", "text/plain")
+    h._send(200, views.page("Test results", body, "/screens", csrf, wide=True))
 
 
 def captures_body(cfg, db, csrf: str) -> str:

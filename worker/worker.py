@@ -41,6 +41,11 @@ PROGRESS_MARK = "##progress "             # a recipe prints this at the start of
 MAX_SCREEN_ARTIFACTS, MAX_SCREEN_BYTES = 300, 40_000_000      # a Playwright run for the Screens board (params purpose "screens")
 MIN_SIDE, MAX_W, MAX_H = 16, 1600, 6000          # the orchestrator rejects the WHOLE result for one PNG outside these (factory/render.py)
 MAX_PATCH = 4_000_000
+MAX_TESTS, MAX_TEST_ID, MAX_TEST_MESSAGE = 5000, 300, 2000      # per-test results of a Playwright run (the orchestrator checks them again)
+MAX_REPORTS, MAX_REPORT = 6, 10_000_000           # its HTML reports (Playwright's index.html), one per suite folder
+MAX_RESULTS_FILE = 50_000_000                     # a reporter file bigger than this is not read
+MAX_RESULT_BODY = 60_000_000                      # the orchestrator refuses a result over 64 MB: reports, then messages, go first
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 ROOT = Path(__file__).resolve().parent.parent          # the install folder: worker/, scripts/, VERSION, worker.toml
@@ -267,6 +272,142 @@ def read_findings(path: Path) -> list:
     return data
 
 
+def results_env(job: dict, tmp: Path) -> tuple[dict, Path | None]:
+    """For a Playwright run: an empty folder outside the checkout where the recipe leaves its reporter files (FACTORY_RESULTS_DIR)."""
+    if not is_screens(job):
+        return {}, None
+    d = tmp / "results"
+    d.mkdir()
+    return {"FACTORY_RESULTS_DIR": str(d)}, d
+
+
+def _message(text) -> str:
+    return ANSI.sub("", text if isinstance(text, str) else "")[:MAX_TEST_MESSAGE]
+
+
+def _inside(path: Path, root: Path) -> str | None:
+    """`path` relative to the checkout, or None when it is outside it."""
+    try:
+        rel = path.resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+    return rel if rel and rel != "." else None
+
+
+def playwright_tests(data, root: Path) -> list[tuple[str, str, str]]:
+    """(id, outcome, message) per test of a Playwright JSON report. The id is `path › describe › title`: the file relative to the checkout,
+    the innermost describe() around the test (if any), and its title; the same test in several projects (browsers) appears once per
+    project here and is merged later. expected and flaky are a pass, unexpected a fail, skipped is left out."""
+    if not isinstance(data, dict):
+        return []
+    base = Path((data.get("config") or {}).get("rootDir") or root)
+    out = []
+
+    def walk(suite: dict, path: str | None, group: str) -> None:
+        for spec in suite.get("specs") or []:
+            if not isinstance(spec, dict) or not path:
+                continue
+            for t in spec.get("tests") or []:
+                outcome = {"expected": "pass", "flaky": "pass", "unexpected": "fail"}.get((t or {}).get("status"))
+                if not outcome:
+                    continue
+                msg = ""
+                for r in reversed(t.get("results") or []):
+                    err = (r or {}).get("error") or {}
+                    msg = (err.get("message") or err.get("value") or "") if isinstance(err, dict) else ""
+                    if msg:
+                        break
+                tid = " › ".join(x for x in (path, group, str(spec.get("title") or "")) if x)
+                out.append((tid, outcome, _message(msg)))
+        for child in suite.get("suites") or []:
+            if isinstance(child, dict):
+                walk(child, path, str(child.get("title") or group))
+
+    for top in data.get("suites") or []:
+        if isinstance(top, dict):
+            path = _inside(base / str(top.get("file") or top.get("title") or ""), root)
+            walk(top, path, "")
+    return out
+
+
+def junit_tests(text: str, root: Path) -> list[tuple[str, str, str]]:
+    """(id, outcome, message) per testcase of a pytest JUnit XML file. The id is pytest's node id without parameters (path::Class::name):
+    the path comes from the file attribute, else from the dotted classname matched against the checkout's files. Skipped is left out."""
+    import xml.etree.ElementTree as ET
+    try:
+        tree = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+    out = []
+    for case in tree.iter("testcase"):
+        name = re.sub(r"\[.*\]$", "", case.get("name") or "")
+        parts = [p for p in (case.get("classname") or "").split(".") if p]
+        path, classes = None, []
+        if case.get("file"):
+            path = _inside(root / case.get("file"), root)
+            stem = Path(case.get("file")).with_suffix("").as_posix().replace("/", ".")
+            classes = parts[len(stem.split(".")):] if ".".join(parts).startswith(stem) else []
+        else:
+            for i in range(len(parts), 0, -1):
+                cand = root / ("/".join(parts[:i]) + ".py")
+                if cand.is_file():
+                    path, classes = _inside(cand, root), parts[i:]
+                    break
+        if not path or not name:
+            continue
+        if case.find("skipped") is not None:
+            continue
+        bad = case.find("failure") if case.find("failure") is not None else case.find("error")
+        msg = "" if bad is None else ((bad.get("message") or "") + ("\n" + bad.text if bad.text else "")).strip()
+        out.append(("::".join([path, *classes, name]), "fail" if bad is not None else "pass", _message(msg)))
+    return out
+
+
+def merge_tests(items: list[tuple[str, str, str]]) -> list[dict]:
+    """One entry per id: a fail if any run of it failed (another browser, another parameter), with the first failure's message."""
+    by: dict[str, dict] = {}
+    for tid, outcome, msg in items:
+        if len(tid) > MAX_TEST_ID or "\n" in tid:
+            continue
+        cur = by.setdefault(tid, {"id": tid, "outcome": outcome, "message": msg if outcome == "fail" else ""})
+        if outcome == "fail" and cur["outcome"] != "fail":
+            cur.update(outcome="fail", message=msg)
+    return list(by.values())[:MAX_TESTS]
+
+
+def collect_results(folder: Path, root: Path) -> tuple[list[dict], list[dict]]:
+    """(tests, reports) from what the recipe left in FACTORY_RESULTS_DIR: pw-*.json (Playwright's JSON reporter), junit*.xml (pytest) and
+    report-*/index.html (Playwright's HTML reporter; its other files, such as traces, are not sent)."""
+    found: list[tuple[str, str, str]] = []
+    for f in sorted(folder.glob("pw-*.json")) + sorted(folder.glob("junit*.xml")):
+        if f.is_symlink() or not f.is_file() or f.stat().st_size > MAX_RESULTS_FILE:
+            continue
+        try:
+            text = f.read_text(errors="replace")
+            found += playwright_tests(json.loads(text), root) if f.suffix == ".json" else junit_tests(text, root)
+        except (OSError, ValueError, RecursionError):
+            log.warning("could not read the test results in %s", f.name)
+    reports = []
+    for d in sorted(folder.glob("report-*")):
+        index, name = d / "index.html", d.name[len("report-"):]
+        if (len(reports) >= MAX_REPORTS or not NAME.fullmatch(name) or index.is_symlink() or not index.is_file()
+                or index.stat().st_size > MAX_REPORT):
+            continue
+        reports.append({"name": name, "html_b64": base64.b64encode(index.read_bytes()).decode()})
+    return merge_tests(found), reports
+
+
+def fit_result(result: dict) -> dict:
+    """Drop the HTML reports, then the test messages, while the result is too big for the orchestrator to take."""
+    size = lambda: len(json.dumps(result))
+    if size() > MAX_RESULT_BODY and result.get("reports"):
+        result["reports"] = []
+        result["log"] = (result.get("log") or "") + "\n[worker] the HTML report was left out: the result was too big"
+    if size() > MAX_RESULT_BODY and result.get("tests"):
+        result["tests"] = [dict(t, message="") for t in result["tests"]]
+    return result
+
+
 def recipe_progress(logfile) -> str:
     """The text of the last `##progress ` line in the recipe output (empty if none)."""
     last = ""
@@ -322,6 +463,8 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
         if problem:
             return {"status": "error", "exit_code": None, "log": problem}
         extra, findings_file = scan_files(job, tmp)
+        more, results_dir = results_env(job, tmp)
+        extra = {**extra, **more}
         before = snapshot(checkout) if is_lockfile(job) else ""
         say(f"running recipe {job['recipe']}")
         code, note = run_recipe(recipe, checkout, logfile, cancelled, extra)
@@ -336,6 +479,9 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
             result["patch"] = lockfile_diff(checkout, before)
         elif findings_file and code == 0:
             result["findings"] = read_findings(findings_file)
+        if results_dir:                                      # a Playwright run: per-test results and its HTML reports, failing or not
+            result["tests"], result["reports"] = collect_results(results_dir, checkout)
+            result = fit_result(result)
         return result
     except Exception as e:                                   # a worker bug is an error, never a verdict on the patch
         log.exception("job failed")

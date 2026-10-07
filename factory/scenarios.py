@@ -41,6 +41,8 @@ def ensure_tables(db: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT, scenario_id INTEGER NOT NULL,
             result TEXT NOT NULL CHECK (result IN ('pass','fail','blocked')), comment TEXT NOT NULL DEFAULT '',
             author TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'manual', ts REAL NOT NULL)""")
+    if "run_job" not in {r[1] for r in db.execute("PRAGMA table_info(scenario_results)")}:     # the Playwright run a "run" result came from
+        db.execute("ALTER TABLE scenario_results ADD COLUMN run_job INTEGER NOT NULL DEFAULT 0")
     db.execute("CREATE INDEX IF NOT EXISTS scenario_results_s ON scenario_results(scenario_id, id)")
     db.execute(
         """CREATE TABLE IF NOT EXISTS scenario_tickets (
@@ -90,9 +92,9 @@ def get(db: sqlite3.Connection, repo: str, ref: str) -> dict | None:
 
 
 def history(db: sqlite3.Connection, scenario_id: int, limit: int = 100) -> list[dict]:
-    cur = db.execute("SELECT id, result, comment, author, source, ts FROM scenario_results WHERE scenario_id = ? ORDER BY id DESC LIMIT ?",
+    cur = db.execute("SELECT id, result, comment, author, source, ts, run_job FROM scenario_results WHERE scenario_id = ? ORDER BY id DESC LIMIT ?",
                      (scenario_id, limit))
-    return [dict(zip(("id", "result", "comment", "author", "source", "ts"), r)) for r in cur.fetchall()]
+    return [dict(zip(("id", "result", "comment", "author", "source", "ts", "run_job"), r)) for r in cur.fetchall()]
 
 
 def ticket_links(db: sqlite3.Connection, scenario_id: int) -> list[tuple[str, int]]:
@@ -157,6 +159,24 @@ def add_result(db: sqlite3.Connection, scenario_id: int, result: str, comment: s
     db.execute("INSERT INTO scenario_results (scenario_id, result, comment, author, source, ts) VALUES (?,?,?,?,?,?)",
                (scenario_id, result, clean(comment, MAX_COMMENT), clean(author, 60), source, time.time()))
     db.commit()
+
+
+def record_run(db: sqlite3.Connection, repo: str, job_id: int, worker: str, tests: list[dict]) -> int:
+    """A Playwright run's results on the scenarios linked to its tests (by pw_test), as "run" results with the failure message as the
+    comment. Once per run and scenario, so a repeated call adds nothing. Retired scenarios are left alone. Tests that were skipped are
+    not in `tests` at all: a skip says nothing about the scenario. Returns how many results were recorded."""
+    ensure_tables(db)
+    by_id = {t["id"]: t for t in tests}
+    now, n = time.time(), 0
+    for s in listing(db, repo):
+        t = by_id.get(s["pw_test"]) if s["pw_test"] and s["status"] != "retired" else None
+        if not t or db.execute("SELECT 1 FROM scenario_results WHERE scenario_id=? AND run_job=?", (s["id"], int(job_id))).fetchone():
+            continue
+        db.execute("INSERT INTO scenario_results (scenario_id, result, comment, author, source, ts, run_job) VALUES (?,?,?,?,?,?,?)",
+                   (s["id"], t["outcome"], clean(t.get("message", ""), MAX_COMMENT), clean(worker, 60), "run", now, int(job_id)))
+        n += 1
+    db.commit()
+    return n
 
 
 def link_ticket(db: sqlite3.Connection, scenario_id: int, kind: str, issue: int) -> None:
