@@ -14,6 +14,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 | `roles.py` | Prompts for the analyst, designer and architect, and the stage names. |
 | `pm.py` | The project manager: validates its `factory-priorities` block, applies only the priority labels it owns, records blockers (`pm_assessments`), and answers "which open tickets hold this one back" for the poll loop. |
 | `ticketreview.py` | The ticket review: validates the `factory-ticket-review` block into proposals (built / duplicate), stores them (`ticket_reviews`, `review_proposals`), and applies the ones a person picked in the UI, one resumable step at a time. |
+| `split.py` | Splitting a large ticket: validates the analyst's `factory-split` block into a proposal, stores it (`split_proposals`, `split_items`), creates the children once a person approves (one recorded step each), keeps a later child's build waiting for the items it comes after, and closes the umbrella parent when every child is closed. |
 | `ci.py` | Watches CI on factory PRs; reports; drives the optional fix round. |
 | `verify.py` / `jobs.py` / `workerapi.py` | Verification workers ([workers.md](workers.md)): `verify.gate` enqueues one job per configured check after the patch is applied and waits; `jobs.py` is the SQLite queue and the strict validation of results; `workerapi.py` is the separate process workers poll. `worker/worker.py` is the reference worker. |
 | `proxy.py` | The egress proxy: a CONNECT-only tunnel on a unix socket that allows only listed host names on port 443. |
