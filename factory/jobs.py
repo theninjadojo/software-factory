@@ -23,6 +23,9 @@ LOCKFILE_PURPOSE = "lockfile"               # params {"purpose": "lockfile"}: re
 MAX_RESULT_PATCH = 4_000_000                # such a job returns the diff it made
 MAX_SCREEN_ARTIFACTS = 300                  # such a run returns every screenshot its suite took, not a handful
 MAX_FINDINGS, MAX_SNIPPET = 1000, 300
+MAX_TESTS, MAX_TEST_ID, MAX_TEST_MESSAGE = 5000, 300, 2000      # a Playwright run's per-test results (the Tests register reads them)
+MAX_REPORTS, MAX_REPORT = 6, 10_000_000     # and its HTML reports: Playwright's index.html, one per suite folder
+OUTCOMES = ("pass", "fail")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 MAX_PROGRESS = 200                          # one short line a worker says it is doing
 PROGRESS_GAP = 5                            # seconds: a change sooner than this after the last one is dropped (the heartbeat still counts)
@@ -41,13 +44,16 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         if col not in have:
             db.execute(f"ALTER TABLE verify_jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
     for col, decl in (("progress", "TEXT NOT NULL DEFAULT ''"), ("progress_at", "REAL"),       # the worker's latest step
-                      ("result_patch", "TEXT NOT NULL DEFAULT ''")):                          # a lockfile job's diff (validated again by lockfiles.py)
+                      ("result_patch", "TEXT NOT NULL DEFAULT ''"),                           # a lockfile job's diff (validated again by lockfiles.py)
+                      ("tests", "TEXT NOT NULL DEFAULT ''")):                                 # a Playwright run's per-test results, as JSON
         if col not in have:
             db.execute(f"ALTER TABLE verify_jobs ADD COLUMN {col} {decl}")
     db.execute(
         """CREATE TABLE IF NOT EXISTS verify_artifacts (
             job_id INTEGER NOT NULL, name TEXT NOT NULL, png BLOB NOT NULL, PRIMARY KEY (job_id, name))"""
     )
+    db.execute(       # untrusted HTML from a worker: only ever served sandboxed (ui/server.py, /workers/report)
+        "CREATE TABLE IF NOT EXISTS verify_reports (job_id INTEGER NOT NULL, name TEXT NOT NULL, html BLOB NOT NULL, PRIMARY KEY (job_id, name))")
     db.execute(
         """CREATE TABLE IF NOT EXISTS workers (
             name TEXT PRIMARY KEY, platform TEXT NOT NULL DEFAULT '', recipes TEXT NOT NULL DEFAULT '', last_seen REAL NOT NULL,
@@ -74,6 +80,32 @@ def get(db, job_id: int) -> dict | None:
 
 def artifacts(db, job_id: int) -> dict[str, bytes]:
     return {n: bytes(b) for n, b in db.execute("SELECT name, png FROM verify_artifacts WHERE job_id=? ORDER BY name", (job_id,))}
+
+
+def tests(job: dict) -> list[dict]:
+    """The stored per-test results of a job ({id, outcome, message}); [] when it has none."""
+    try:
+        out = json.loads(job.get("tests") or "[]")
+        return out if isinstance(out, list) else []
+    except ValueError:
+        return []
+
+
+def report_names(db, job_id: int) -> list[str]:
+    try:
+        return [r[0] for r in db.execute("SELECT name FROM verify_reports WHERE job_id=? ORDER BY name", (job_id,))]
+    except sqlite3.OperationalError:
+        return []
+
+
+def report(db, job_id: int, name: str) -> bytes | None:
+    if not NAME.fullmatch(name or ""):
+        return None
+    try:
+        row = db.execute("SELECT html FROM verify_reports WHERE job_id=? AND name=?", (job_id, name)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return bytes(row[0]) if row else None
 
 
 def enqueue(db, repo: str, issue: int, base_sha: str, patch: str, recipe: str, platform: str = "any", now: float | None = None,
@@ -238,7 +270,49 @@ def validate_result(body, max_artifacts: int = MAX_ARTIFACTS) -> tuple[dict | No
     patch = body.get("patch", "")
     if not isinstance(patch, str) or len(patch) > MAX_RESULT_PATCH or "\0" in patch:
         return None, f"patch must be text of at most {MAX_RESULT_PATCH} characters"
-    return {"status": status, "exit_code": code, "log": clean_log(body.get("log")), "artifacts": out, "findings": found, "patch": patch}, ""
+    ran, why = validate_tests(body.get("tests", []))
+    if ran is None:
+        return None, why
+    reports, why = validate_reports(body.get("reports", []))
+    if reports is None:
+        return None, why
+    return {"status": status, "exit_code": code, "log": clean_log(body.get("log")), "artifacts": out, "findings": found, "patch": patch,
+            "tests": ran, "reports": reports}, ""
+
+
+def validate_tests(items) -> tuple[list[dict] | None, str]:
+    """Per-test results of a Playwright run: a bounded list of a test id (a path in the repo, then names), pass or fail, and a short message."""
+    if not isinstance(items, list) or len(items) > MAX_TESTS:
+        return None, f"tests must be a list of at most {MAX_TESTS}"
+    out, seen = [], set()
+    for t in items:
+        if not isinstance(t, dict) or not isinstance(t.get("id"), str) or t.get("outcome") not in OUTCOMES or not isinstance(t.get("message", ""), str):
+            return None, "each test needs an id, an outcome (pass or fail) and a message"
+        tid = t["id"]
+        path = re.split(r"::| › ", tid, maxsplit=1)[0]
+        if not tid or len(tid) > MAX_TEST_ID or path.startswith("/") or ".." in path.split("/") or _CONTROL.search(tid) or "\n" in tid or tid in seen:
+            return None, f"a test id must be unique, relative and at most {MAX_TEST_ID} characters"
+        seen.add(tid)
+        out.append({"id": tid, "outcome": t["outcome"], "message": _CONTROL.sub("", t.get("message", ""))[:MAX_TEST_MESSAGE]})
+    return out, ""
+
+
+def validate_reports(items) -> tuple[dict[str, bytes] | None, str]:
+    """HTML reports: a few, named like artifacts, each at most MAX_REPORT bytes. The HTML itself is untrusted and never parsed here."""
+    if not isinstance(items, list) or len(items) > MAX_REPORTS:
+        return None, f"at most {MAX_REPORTS} reports"
+    out: dict[str, bytes] = {}
+    for r in items:
+        if not isinstance(r, dict) or not isinstance(r.get("name"), str) or not NAME.fullmatch(r["name"]) or r["name"] in out:
+            return None, "report names must be unique and match [a-z0-9-]"
+        try:
+            html = base64.b64decode(r.get("html_b64", ""), validate=True)
+        except (binascii.Error, ValueError, TypeError):
+            return None, f"report {r['name']}: not valid base64"
+        if not html or len(html) > MAX_REPORT:
+            return None, f"report {r['name']}: empty or larger than {MAX_REPORT} bytes"
+        out[r["name"]] = html
+    return out, ""
 
 
 def validate_findings(items) -> tuple[list[dict] | None, str]:
@@ -273,11 +347,21 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
         return why
     findings = json.dumps(res["findings"]) if job["params"] and res["status"] == "passed" else ""    # only a scan job keeps findings
     patch = res["patch"] if purpose(job) == LOCKFILE_PURPOSE and res["status"] == "passed" else ""    # only a lockfile job keeps a diff
-    db.execute("UPDATE verify_jobs SET status=?, exit_code=?, log=?, finished=?, findings=?, result_patch=? WHERE id=?",
-               (res["status"], res["exit_code"], res["log"], now, findings, patch, job_id))
+    screens = is_screens(job)
+    ran = json.dumps(res["tests"]) if screens and res["tests"] else ""                              # only a Playwright run keeps test results
+    db.execute("UPDATE verify_jobs SET status=?, exit_code=?, log=?, finished=?, findings=?, result_patch=?, tests=? WHERE id=?",
+               (res["status"], res["exit_code"], res["log"], now, findings, patch, ran, job_id))
     for n, png in res["artifacts"].items():
         db.execute("INSERT OR REPLACE INTO verify_artifacts VALUES (?,?,?)", (job_id, n, png))
+    for n, html in (res["reports"].items() if screens else ()):
+        db.execute("INSERT OR REPLACE INTO verify_reports VALUES (?,?,?)", (job_id, n, html))
     db.commit()
+    if screens and res["tests"]:                              # each test linked to a scenario gets this run's result in the Tests register
+        try:
+            from . import scenarios
+            scenarios.record_run(db, job["repo"], job_id, worker, res["tests"])
+        except Exception:
+            logging.getLogger("factory.jobs").exception("could not record the test results of job %s in the Tests register", job_id)
     if is_screens(job) and res["artifacts"]:                  # a Playwright run for the Screens board: its screens become board images
         try:
             from . import captures

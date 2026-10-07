@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from .. import backup, machines
 from .. import db as dbm
 from .. import designfiles
-from .. import pause, screenboard, updates, version
+from .. import jobs, pause, screenboard, updates, version
 from .. import questions as Q
 from ..config import HealthCfg, load
 from .. import tracker
@@ -41,6 +41,27 @@ STATIC = {"style.css": "text/css; charset=utf-8", "app.js": "application/javascr
 MAX_BODY = 64 * 1024
 MAX_LAYOUT_BODY = 256 * 1024             # saving the floor layout, terrain and all (signed in, CSRF-checked like every form)
 PAGE = 50
+# A Playwright report is a page of scripts from a worker. It runs in an opaque origin (sandbox without allow-same-origin), so it cannot
+# read this site's cookies or pages, and the session cookie (SameSite=Strict) is not sent with anything it requests. It may run its own
+# inline scripts and read the data it embeds, but loads nothing from the network, submits no form and cannot be framed.
+REPORT_HEADERS = {
+    "Content-Security-Policy": "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob: data:; "
+                               "style-src 'unsafe-inline' data: blob:; img-src data: blob:; font-src data:; media-src data: blob:; "
+                               "connect-src data: blob:; worker-src blob: data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Resource-Policy": "same-origin",
+}
+# The opaque origin has no localStorage (reading it throws), and Playwright's report stops on that. This script, ours and fixed, goes in
+# before the report's own and gives it a storage that lives in memory for the page.
+STORAGE_SHIM = (b"<script>(function(){function S(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},"
+                b"setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},"
+                b"get length(){return Object.keys(d).length}}}['localStorage','sessionStorage'].forEach(function(n){try{window[n].length}catch(e){"
+                b"Object.defineProperty(window,n,{value:S(),configurable:true})}})})();</script>")
+
+
+def sandboxed_report(html: bytes) -> bytes:
+    """A worker's HTML report with STORAGE_SHIM first in its <head> (or first of all, when it has none)."""
+    i = html[:4096].lower().find(b"<head>")
+    return html[:i + 6] + STORAGE_SHIM + html[i + 6:] if i >= 0 else STORAGE_SHIM + html
 HEADERS = {
     "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; "
                                "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -616,6 +637,10 @@ class Handler(BaseHTTPRequestHandler):
                 job, name = q.get("job", ""), q.get("name", "")
                 png = WK.artifact_png(db, int(job), name) if job.isdigit() and len(job) < 10 else None
                 return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")
+            if path == "/workerreport":                     # a Playwright HTML report a worker sent: untrusted HTML that needs its scripts
+                job, name = q.get("job", ""), q.get("name", "")
+                html = jobs.report(db, int(job), name) if job.isdigit() and len(job) < 10 else None
+                return self._send(200, sandboxed_report(html), "text/html; charset=utf-8", REPORT_HEADERS) if html else self._send(404, "no such report", "text/plain")
             if path == "/screenimg":
                 png = screenboard.image(db, q.get("key", ""))
                 return self._send(200, png, "image/png") if png else self._send(404, "no such image", "text/plain")

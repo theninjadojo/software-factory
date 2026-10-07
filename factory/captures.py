@@ -89,7 +89,7 @@ def latest(db, repo: str) -> dict | None:
     """The newest Playwright job of `repo` that finished with screenshots or an answer, with its screenshot names; else the active one."""
     for j in _screens_jobs(db, repo, 20):
         if j["status"] in jobs.FINAL and j["status"] != "cancelled":
-            return dict(j, shots=sorted(jobs.artifacts(db, j["id"])))
+            return dict(j, shots=sorted(jobs.artifacts(db, j["id"])), reports=jobs.report_names(db, j["id"]))
     return None
 
 
@@ -152,6 +152,7 @@ def tick(cfg, gh, db, now: float) -> int:
         finished = [j["id"] for j in _screens_jobs(db, repo, 200) if j["status"] in jobs.FINAL]
         for jid in finished[KEEP_RUNS:]:
             db.execute("DELETE FROM verify_artifacts WHERE job_id=?", (jid,))
+            db.execute("DELETE FROM verify_reports WHERE job_id=?", (jid,))
             db.execute("DELETE FROM verify_jobs WHERE id=?", (jid,))
     db.commit()
     return queued

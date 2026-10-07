@@ -16,6 +16,7 @@ from .views import ago, badge, csrf_field, cards_table, esc, trow
 
 log = logging.getLogger("factory.ui")
 HEADS = ["ID", "Feature", "Title", "Playwright test", "Last result", "Last tested", "Tickets"]
+HIST_HEADS = ["Include", "Result", "Comment", "By"]
 SORTS = {"id": "ID", "feature": "Feature", "title": "Title", "result": "Last result", "tested": "Last tested"}
 BADGE = {"pass": "good", "fail": "bad", "blocked": "warn", "": ""}
 _staged: dict = {}                      # token -> (csrf, repo, rows): an uploaded file waiting for its confirmation
@@ -140,6 +141,13 @@ def _find(h, q: dict):
     return cfg, repo, db, s
 
 
+def _source(c: dict) -> str:
+    """Where a result came from: a person, or a Playwright run (linked to that run's results)."""
+    if c["run_job"]:
+        return f'<a class="muted" href="/screens/results?job={int(c["run_job"])}">run #{int(c["run_job"])}</a>'
+    return f'<span class="muted">{esc(c["source"])}</span>'
+
+
 def view_get(h, q: dict, csrf: str) -> None:
     try:
         cfg, repo, db, s = _find(h, q)
@@ -166,11 +174,12 @@ def view_get(h, q: dict, csrf: str) -> None:
               f'<label>Comment (what you saw)<textarea name="comment" rows="4" maxlength="{SC.MAX_COMMENT}"></textarea></label>'
               '<button>Save result</button></form>')
     if hist:
-        rows = "".join(
-            f'<tr><td><input type="checkbox" name="c" value="{c["id"]}" aria-label="Include comment from {esc(c["author"] or "a person")}, {esc(ago(c["ts"]))}"></td>'
-            f'<td>{badge(SC.RESULT_LABEL[c["result"]], BADGE[c["result"]])} <span class="muted">{esc(c["source"])}</span></td>'
-            f'<td class="wrap">{esc(c["comment"] or "—")}</td><td class="nowrap muted">{esc(c["author"])} {esc(ago(c["ts"]))}</td></tr>' for c in hist)
-        listing = f'<div class="scroll"><table><tbody>{rows}</tbody></table></div>'
+        rows = "".join(trow(HIST_HEADS, [
+            f'<input type="checkbox" name="c" value="{c["id"]}" aria-label="Include comment from {esc(c["author"] or "a person")}, {esc(ago(c["ts"]))}">',
+            f'{badge(SC.RESULT_LABEL[c["result"]], BADGE[c["result"]])} {_source(c)}',
+            (esc(c["comment"] or "—"), f' class="wrap{" pre-wrap" if c["run_job"] else ""}"'),
+            (f'{esc(c["author"])} {esc(ago(c["ts"]))}', ' class="nowrap muted"')]) for c in hist)
+        listing = cards_table(HIST_HEADS, rows)
     else:
         listing = '<p class="muted">Not run yet.</p>'
     starts = "".join(f'<option value="{esc(k)}">{esc(t)}</option>' for k, t, _ in L.start_options(cfg))
