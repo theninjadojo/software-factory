@@ -26,4 +26,13 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t software-factory:ci .
       - run: docker run --rm --entrypoint python3 -w /app software-factory:ci -m unittest discover -s tests
+      # The self-hosted runner image has buildx but not the Compose plugin: fetch it (pinned, checksum checked) when it is missing.
+      - run: |
+          if ! docker compose version >/dev/null 2>&1; then
+            mkdir -p ~/.docker/cli-plugins
+            curl -fsSL -o ~/.docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-x86_64
+            echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576  $HOME/.docker/cli-plugins/docker-compose" | sha256sum -c -
+            chmod +x ~/.docker/cli-plugins/docker-compose
+          fi
+          docker compose version
       - run: FACTORY_HOME=/tmp/fh DOCKER_GID=0 docker compose config -q

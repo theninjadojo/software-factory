@@ -40,19 +40,44 @@ def cell(pg) -> float:
     return pg.locator(".fe-svg").bounding_box()["width"] / F.W
 
 
-def drag(pg, selector, dx, dy, at=(0.5, 0.5)):
-    """Press on the element (at a fraction of its box), move by dx, dy pixels in steps, release."""
+def drag(pg, selector, dx, dy, at=(0.5, 0.5), snap=True):
+    """Press on the element (at a fraction of its box), move by dx, dy pixels in steps, release. `snap` presses on the nearest grid
+    point instead, so a move rounds to whole cells; a small handle needs snap=False, or the press lands beside it."""
     el = pg.locator(selector).first
     el.evaluate("e => e.scrollIntoView({block: 'center', inline: 'center'})")    # room to drag every way, on screen
     b = el.bounding_box()
     x, y = b["x"] + b["width"] * at[0], b["y"] + b["height"] * at[1]
     o, c = pg.locator(".fe-svg").bounding_box(), cell(pg)              # press on a grid point, so the move rounds to whole cells
-    x, y = o["x"] + round((x - o["x"]) / c) * c, o["y"] + round((y - o["y"]) / c) * c
+    if snap:
+        x, y = o["x"] + round((x - o["x"]) / c) * c, o["y"] + round((y - o["y"]) / c) * c
     pg.mouse.move(x, y)
     pg.mouse.down()
     pg.mouse.move(x + dx / 2, y + dy / 2, steps=4)
     pg.mouse.move(x + dx, y + dy, steps=4)
     pg.mouse.up()
+
+
+def tool(pg, name):
+    """Pick a tool in the build tray: Move and Erase sit in its quick row, the rest in tabs that start collapsed."""
+    if not pg.locator(f'[data-tool="{name}"]:visible').count():
+        pg.locator(f'.fe-cat:has([data-tool="{name}"]) .fe-cat-toggle').click()
+    pg.locator(f'[data-tool="{name}"]:visible').first.click()
+
+
+def more(pg, fn):
+    """Do fn with the toolbar's More menu open (it holds the belt picker, Start from scratch, Show hitboxes, the legend), then close it:
+    left open, it lies over the floor."""
+    pg.click(".fe-more > summary")
+    try:
+        return fn()
+    finally:
+        pg.evaluate("document.querySelector('.fe-more').open = false")
+
+
+def act(pg, name):
+    """Press a toolbar button, from the More menu if it is not on the bar."""
+    b = pg.locator(f'[data-act="{name}"]')
+    return b.click() if b.is_visible() else more(pg, b.click)
 
 
 def open_editor(pg, server):
@@ -92,7 +117,7 @@ def test_arrange_save_and_reset_the_floor(wide, server):
 
     # and resized by its corner
     w0 = moved["districts"]["SHIPPING"]["w"]
-    drag(pg, '[data-resize="SHIPPING"]', 3 * cell(pg), 0)
+    drag(pg, '[data-resize="SHIPPING"]', 3 * cell(pg), 0, snap=False)
     assert plan(pg)["districts"]["SHIPPING"]["w"] == w0 + 3
 
     # save: the floor is drawn from the layout
@@ -126,9 +151,9 @@ def test_arrange_save_and_reset_the_floor(wide, server):
 def test_a_broken_route_is_shown_and_refused_on_save(wide, server):
     pg = wide
     open_editor(pg, server)
-    pg.click('[data-tool="belt"]')
+    tool(pg, "belt")
     hop = pg.eval_on_selector(".fe-hop", "s => [...s.options].map(o => o.value).find(v => v.startsWith('station:build>'))")
-    pg.select_option(".fe-hop", hop)
+    more(pg, lambda: pg.select_option(".fe-hop", hop))
     svg = pg.locator(".fe-svg")
     svg.scroll_into_view_if_needed()
     for x, y in ((2, 2), (2, 6), (2, 6)):                                 # a belt far from both stations; the repeated point finishes it
@@ -139,7 +164,7 @@ def test_a_broken_route_is_shown_and_refused_on_save(wide, server):
     assert "The layout was not saved" in pg.inner_text(".flash")
     assert not (server.root / "state" / F.FILE).exists()
     assert "must start beside Build" in problems(pg)                      # the page comes back with the layout as it was sent
-    pg.click('[data-act="default"]')
+    act(pg, "default")
     assert "Every station is reachable" in problems(pg), problems(pg)
     assert [e for e in pg.errors if "status of 422" not in e] == []          # the refused save itself is a 422
 
@@ -178,7 +203,7 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
     open_editor(pg, server)
 
     # an empty floor: every building waits in the parts tray
-    pg.click('[data-act="scratch"]')
+    act(pg, "scratch")
     assert plan(pg)["nodes"] == {} and plan(pg)["belts"] == {}
     assert "Missing" in problems(pg)
     meta = json.loads(pg.get_attribute(".fe", "data-meta"))
@@ -196,7 +221,7 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
     # the harbor, clicked in, then dragged off somewhere else entirely: it can stand anywhere
     pg.click('.fe-part[data-part="harbor"]')
     assert "harbor" in plan(pg)["nodes"]
-    pg.click('[data-tool="move"]')
+    tool(pg, "move")
     h0 = plan(pg)["nodes"]["harbor"]
     sx, sy = centre(pg, '[data-node="harbor"]')
     hx, hy = grid_to_client(pg, 40, 30)
@@ -205,7 +230,7 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
     assert h1 != h0
 
     # Draw belt: drag from the harbor onto Receiving and the belt for that hop is laid, beside both, through nothing
-    pg.click('[data-tool="belt"]')
+    tool(pg, "belt")
     drag_between(pg, '[data-node="harbor"]', '[data-node="receiving"]')
     belt = plan(pg)["belts"].get("harbor>receiving")
     assert belt and len(belt) >= 2, plan(pg)["belts"]
@@ -218,7 +243,7 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
     assert list(plan(pg)["belts"]) == ["harbor>receiving"]
 
     # Move: a belt dragged sideways slides; its ends stay beside the buildings
-    pg.click('[data-tool="move"]')
+    tool(pg, "move")
     pts = plan(pg)["belts"]["harbor>receiving"]
     i = max(range(len(pts) - 1), key=lambda k: abs(pts[k + 1][0] - pts[k][0]) + abs(pts[k + 1][1] - pts[k][1]))
     (ax, ay), (bx, by) = pts[i], pts[i + 1]
@@ -235,13 +260,13 @@ def test_start_from_scratch_with_the_parts_tray_and_lay_belts_by_dragging(wide, 
     assert plan(pg)["belts"]["harbor>receiving"] == pts
 
     # Erase: the harbor goes back to the tray and takes its belt with it
-    pg.click('[data-tool="erase"]')
+    tool(pg, "erase")
     pg.locator('[data-node="harbor"] > rect.fe-hit').click(force=True)
     assert "harbor" not in plan(pg)["nodes"] and "harbor>receiving" not in plan(pg)["belts"]
     assert pg.locator('.fe-part[data-part="harbor"]:not(.placed)').count() == 1
 
     # the default has everything; saved, the floor draws the harbor and the notifiers where they stand
-    pg.click('[data-act="default"]')
+    act(pg, "default")
     assert "Every station is reachable" in problems(pg), problems(pg)
     assert pg.locator(".fe-part[data-part]:not(.placed)").count() == pg.locator(".fe-part[data-part]:not(.placed) .opt").count()    # all but the optional junctions and area
     pg.click(".fe-save button")
@@ -267,7 +292,7 @@ def test_workers_by_rail_lay_track_to_a_worker_and_back(wide, server):
     assert '"junction:a>worker:my-mac"' in pg.input_value("textarea[name=plan]")
 
     # Erase the branch to my-mac: its loop is broken and the checklist says so
-    pg.click('[data-tool="erase"]')
+    tool(pg, "erase")
     pts = plan(pg)["tracks"]["junction:a>worker:my-mac"]
     (ax, ay), (bx, by) = max(zip(pts, pts[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
     pg.locator('[data-track="junction:a>worker:my-mac"]').scroll_into_view_if_needed()
@@ -277,7 +302,7 @@ def test_workers_by_rail_lay_track_to_a_worker_and_back(wide, server):
     assert "✗ Train loop: the yard → my-mac" in pg.inner_text(".fe-check")
 
     # Draw track: drag from junction A onto my-mac and the loop is whole again
-    pg.click('[data-tool="rail"]')
+    tool(pg, "rail")
     drag_between(pg, '[data-node="junction:a"]', '[data-node="worker:my-mac"]')
     assert "junction:a>worker:my-mac" in plan(pg)["tracks"], plan(pg)["tracks"]
     assert "No track loop" not in problems(pg), problems(pg)
@@ -286,7 +311,7 @@ def test_workers_by_rail_lay_track_to_a_worker_and_back(wide, server):
     assert "Track cannot run from my-mac to The Verify yard" in problems(pg)
 
     # Move: a track dragged sideways slides, its ends stay put
-    pg.click('[data-tool="move"]')
+    tool(pg, "move")
     before = plan(pg)["tracks"]["depot>yard"]
     (ax, ay), (bx, by) = max(zip(before, before[1:]), key=lambda s: abs(s[1][0] - s[0][0]) + abs(s[1][1] - s[0][1]))
     pg.locator('[data-track="depot>yard"]').scroll_into_view_if_needed()
@@ -321,7 +346,8 @@ def test_the_editor_says_what_is_selected_and_shows_the_sea_the_trains_and_the_l
     assert pg.locator(".fe-belt.in").count() == 2
     assert pg.locator(".fe-train .fm-loco").count() == 2                  # a locomotive per worker, its wagons behind it
     assert pg.locator(".fe-trains .fm-sig").count() >= 3
-    assert [t.strip() for t in pg.locator(".fe-legend li").all_inner_texts()] == ["Belt", "Deliveries in", "Rail", "Notifier, wireless"]
+    legend = more(pg, lambda: pg.locator(".fe-legend li").all_inner_texts())
+    assert [t.strip() for t in legend] == ["Belt", "Deliveries in", "Rail", "Notifier, wireless"]
     assert pg.inner_text(".fe-msg").startswith("Move:")
     assert not pg.locator(".fe-remove").is_visible()
     # a belt clicked: named, orange, with its handle and a Remove belt button that removes it (and undo brings it back)
@@ -336,6 +362,6 @@ def test_the_editor_says_what_is_selected_and_shows_the_sea_the_trains_and_the_l
     pg.keyboard.press("Control+z")
     assert "harbor>receiving" in plan(pg)["belts"]
     # a tool says what it does; a refused belt says why in the status line
-    pg.click('[data-tool="rail"]')
+    tool(pg, "rail")
     assert pg.inner_text(".fe-msg").startswith("Draw track:")
     assert pg.errors == []
