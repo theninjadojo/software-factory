@@ -15,6 +15,7 @@ EVENT_HELP = {
     "ci_result": "CI passed, or finished without a fix", "ci_fix": "CI failed and an agent fix round is starting", "recovery": "An interrupted run was requeued",
     "conflict": "A factory pull request conflicts with its base branch, or a conflict was resolved",
     "worker_offline": "Verification jobs are waiting and no worker has been seen (or a worker is back)",
+    "release": "A packages pull request was merged or published, so the repos that use it are built next",
     "fallback": "A model was unavailable (limit or API error) and the next fallback model was tried", "started": "A run started (which model, what the classifier decided)", "startup": "The orchestrator started", "skipped": "A ticket was skipped from chat",
     "info": "Anything else",
 }

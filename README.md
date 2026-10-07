@@ -50,13 +50,17 @@ document), and the orchestrator validates that data before it touches GitHub.
 | `factory:unblocked` | The factory ignores the **project manager's** blockers on this ticket (see below). |
 | `factory:auto` | The classifier picks the next stage from the ticket and which stages are already done (`stage:*` labels) and runs it. It then **continues to the next stage by itself while nothing needs a person**, reading the document it just wrote (open questions make it stop and ask you on Telegram). Read-only stages never wait for approval. Stages are skipped when not needed: a small, clear ticket goes straight to a build. A high-complexity ticket (or a medium one spanning several repositories) gets the architect first, and a classification with no stage runs the analyst first (only on a ticket no stage has run on yet: auto never goes back to an earlier stage than one already done). An explicit stage or `factory:ready` label is always obeyed. The skipped stages are recorded in the admin UI. When the classifier is unsure (low confidence, or it says a person is needed) and no stage has run yet, it runs the analyst first instead of asking; a person is asked only after that, or before a build it is still unsure about. |
 
-Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `factory:failed`, `factory:needs-answers` (open questions wait for a person; cleared when they are answered or a later job starts), `stage:analysed`,
+Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `factory:failed`, `factory:needs-answers` (open questions wait for a person; cleared when they are answered or a later job starts), `factory:waiting-release` (a packages PR must be merged and published before the repos that use it are built), `stage:analysed`,
 `stage:designed`, `stage:architected`.
 
 ### Features
 
 - **Multi-repo projects.** Repos that work together (web, mobile, shared packages) are one workspace; one task can change
   several, producing cross-linked PRs that are all-or-nothing (if any repo's patch is rejected, nothing is pushed).
+- **Packages before the apps that use them.** A repo can `publish` packages that another repo `depends_on` (`[[projects]]` in
+  the config). A change to both is built in two waves: the packages PR first; after a person merges it and it is published (a
+  GitHub release, a tag, or a publish workflow run that contains the merge), the factory builds the depending repo against the
+  published version. The ticket shows `factory:waiting-release` meanwhile, and Telegram/Slack say when it was merged and published.
 - **Role agents.** Analyst, designer, architect: their output lands on the ticket, and later stages build on it.
 - **Classification.** [Jev](https://openrouter.ai/) (a typed "decision model" via OpenRouter) reads the whole ticket and
   picks tier, effort and stage as *typed answers*, never free text. Falls back to your labels if it errors.

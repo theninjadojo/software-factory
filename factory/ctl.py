@@ -26,7 +26,8 @@ def factory_labels(cfg) -> list[tuple[str, str, str]]:
             (cfg.mockups.request_label, "fbca04", "A person asked for screens to review before the build"),
             (cfg.screens.label, "fbca04", "Screen baselines changed: review the images"),
             (tracker.MOVED_LABEL, "ededed", "Moved to the factory's local tracker"), ("factory:working", "fef2c0", "An agent is working on this"), ("factory:pr-open", "c5def5", "The factory opened a PR"),
-            ("factory:failed", "d93f0b", "The last factory run failed"), ("factory:needs-answers", "fbca04", "Open questions wait for a person"),
+            ("factory:failed", "d93f0b", "The last factory run failed"),
+            ("factory:waiting-release", "fef2c0", "Waiting for a packages PR to be merged and published"), ("factory:needs-answers", "fbca04", "Open questions wait for a person"),
             ("priority: high", "b60205", "Picked up first"), ("priority: low", "c2e0c6", "Picked up last")]
     out += [(f"factory:working-{k}", "fef2c0", f"A {k} agent is working on this") for k in ("analyze", "design", "architect", "review", "conflicts")]
     seen, uniq = set(), []

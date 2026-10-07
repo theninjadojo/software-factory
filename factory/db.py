@@ -3,6 +3,7 @@ import sqlite3
 import threading
 import time
 
+from . import waves
 from . import captures, chat, designfiles, jobs, reviewnotes, scanner, schedules, screenboard, ticketreview, tracker, triage
 from .render import png_ok
 
@@ -114,6 +115,7 @@ def connect(path: str) -> sqlite3.Connection:
     tracker.ensure_tables(db)
     triage.ensure_tables(db)
     ticketreview.ensure_tables(db)
+    waves.ensure_tables(db)
     return db
 
 

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
-from . import designfiles, pool, screens, tracker, verify
+from . import designfiles, pool, screens, tracker, verify, waves
 from . import mockups as mockups_mod
 from . import reviewnotes
 from .render import render as preview_render
@@ -65,6 +65,7 @@ class RunResult:
     screen_failure: dict | None = None          # a failed screen check: {text, diffs: {id: png}, built: {id: png}}, for one fix round
     verify_failure: dict | None = None          # a failed worker check: {text, round}, for a fix round
     transient: bool = False   # failed on a model-side API error (5xx/overloaded): worth trying a fallback model
+    held: list = field(default_factory=list)    # repos changed but not pushed: they wait for a package this run changed to be published
 
 
 def bad_path(p: str, rn: RunnerCfg) -> str | None:
@@ -233,19 +234,31 @@ def parse_usage(text: str, fmt: str) -> tuple[str, dict | None]:
 CHAT_TURN_CHARS = 1500             # of each conversation turn in a prompt (chat.prompt_turns applies the same cut and a total cap)
 
 
+def _dependency_note(r) -> str:
+    """Tells the agent how the repos of a project reach each other's published packages (factory config, trusted)."""
+    if r.publish:
+        pk = f" ({', '.join(r.publish.packages)})" if r.publish.packages else ""
+        return f" [publishes packages{pk}]"
+    if r.depends_on:
+        return (f" [installs the published packages of {', '.join(d.split('/')[1] for d in r.depends_on)}: a change there reaches this "
+                "repo only after it is merged and published, so in the same run as such a change, changes here are discarded and made "
+                "again in a later run against the published version]")
+    return ""
+
+
 def build_prompt(title: str, body: str, project: Project, issue_repo: str, role: str | None = None,
                  prior: dict | None = None, comments: list | None = None, failures: str | None = None,
                  ticket: tuple | None = None, design_files: bool = False, design_dir: str = designfiles.DEFAULT_DIR,
                  conflicts: dict | None = None, answers: str = "", backlog: list | None = None, operator: str = "",
                  mockups: list | None = None, built: list | None = None, screen_text: str = "", verify_text: str = "",
                  review: dict | None = None, attachments: list | None = None,
-                 design_imports: list | None = None, conversation: list | None = None, stages: tuple = ()) -> str:
+                 design_imports: list | None = None, conversation: list | None = None, stages: tuple = (), released: str = "") -> str:
     """conversation: (author, text) turns of the ticket chat (chat.prompt_turns), untrusted data; stages: the names the chat may propose.
     review: a person's notes on the screens (reviewnotes.for_designer), told to the designer only.
     backlog: the project manager's tickets ({number, title, labels, body}, untrusted text); it replaces the single ticket.
     operator: standing instructions from the operator's config (trusted), put before everything else and subordinate to the
     built-in rules that follow; empty leaves the prompt exactly as it was."""
-    repos = "\n".join(f"- {r.repo.split('/')[1]}/ : {r.role or 'part of the project'}" for r in project.repos)
+    repos = "\n".join(f"- {r.repo.split('/')[1]}/ : {r.role or 'part of the project'}" + _dependency_note(r) for r in project.repos)
     head = (
         f"You are working in a multi-repository workspace for the project '{project.name}'. {project.description}\n"
         f"Each directory under the current directory is a separate git repository:\n{repos}\n\n"
@@ -276,6 +289,8 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
     if conflicts and not role:
         task += CONFLICTS_PROMPT
     ctx = ""
+    if released and not role:
+        ctx += "<published_dependencies>\n" + _neutral(released[:4000]) + "\n</published_dependencies>\n\n"
     if screen_text and not role:
         ctx += "<screen_check>\nResult of the screen check on your first attempt (untrusted tool output):\n" + _neutral(screen_text[:4000]) + "\n</screen_check>\n\n"
     if verify_text and not role:
@@ -491,12 +506,14 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
              failures: str | None = None, sink: dict | None = None, merge_base: dict | None = None, answers: str = "",
              backlog: list | None = None, mockups: list | None = None, screen_retry: dict | None = None,
              verify_retry: dict | None = None, review: dict | None = None, design_imports: list | None = None,
-             conversation: list | None = None) -> RunResult:
+             conversation: list | None = None, only: tuple | None = None, released: str = "") -> RunResult:
     """Implementation (role=None): edit the workspace, validate the patches, push branches, open PRs.
     Role (analyst/designer/architect, reviewer, pm): read-only; any edits are discarded and the agent's document is returned.
     backlog: the project manager's tickets (role pm); the issue is then a stand-in with number 0.
     merge_base {repo: base branch}: merge each base into fix_branch; the agent runs only if git leaves conflicts, may edit
-    only the repos with conflicts, and the merge commit is pushed (never a rebase or a force-push)."""
+    only the repos with conflicts, and the merge commit is pushed (never a rebase or a force-push).
+    A build that changes a repo that publishes packages and a repo depending on it pushes only the first; the second is reported
+    in RunResult.held (see waves.py). only: the repos a later wave may change (released: what was published, for the prompt)."""
     if fix_branch and not fix_branch.startswith(BRANCH_PREFIX):
         return RunResult("failed", "refusing to modify a non-factory branch")
     if merge_base and (role or not fix_branch):
@@ -620,7 +637,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
                          (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown, built_names,
                          screen_retry["text"] if screen_retry else "", verify_retry["text"] if verify_retry else "", review, attached, imported,
-                         conversation))
+                         conversation, released=released))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
@@ -686,6 +703,14 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
         summary = text[-3000:].replace(FENCE, "'" * 3)
         if merge_base and (stray := [r for r in patches if not todo.get(r)]):
             return RunResult("rejected", f"the agent changed repos without merge conflicts: {', '.join(stray)}")
+        if only is not None and (stray := [r for r in patches if r not in only]):
+            return RunResult("rejected", f"the agent changed repos this build may not change: {', '.join(stray)}")
+        held: list[str] = []
+        if not merge_base and not fix_branch:          # what depends on a package changed here waits for it to be published
+            ship, held = waves.split(project, patches)
+            if held and not ship:
+                held = []
+            patches = {r: p for r, p in patches.items() if r in ship or not held}
         # validate and apply EVERY patch before pushing anything: all-or-nothing across repos
         for r, patch in patches.items():
             try:
@@ -770,6 +795,10 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 "Generated by an agent in a sandbox. **Review carefully before merging.**\n\n"
                 + ("**This change updates screen baseline images** (`" + cfg.screens.baseline_dir + "`). Review them before merging: "
                    "the screen check compared the new screens with the new baselines.\n\n" if r in touched else "")
+                + (f"**The changes in {', '.join(h.split('/')[1] for h in held)} that use this are built after it is merged and published.** "
+                   "The agent's summary below may describe them too.\n\n" if held and r in waves.upstream(project, list(patches), held) else "")
+                + ("**Built after the packages it uses were merged and published** (see the ticket). Check that the lockfile matches the "
+                   "new version: the agent has no network to refresh it.\n\n" if released else "")
                 + ("**Worker verification did not pass (an advisory check, or the factory is set to warn only):**\n\n" + FENCE + "\n" + warned[r][-1500:].replace(FENCE, "'" * 3) + "\n" + FENCE + "\n\n" if r in warned else "")
                 + f"Refs {tracker.ref(repo, num)}\n\n"
                 f"<details><summary>Agent's summary (unverified)</summary>\n\n{FENCE}\n{summary}\n{FENCE}\n</details>",
@@ -787,7 +816,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                                "Part of one change across repositories. Review and merge together:\n" + "\n".join(f"- {x}" for x in urls))
                 except Exception:
                     log.exception("cross-link comment failed")
-        return RunResult("pr", f"{len(urls)} pull request(s) opened", " ".join(urls), images=built_images)
+        held_note = f"; {', '.join(h.split('/')[1] for h in held)} held until it is published" if held else ""
+        return RunResult("pr", f"{len(urls)} pull request(s) opened{held_note}", " ".join(urls), images=built_images, held=held)
     except NeedsPerson as e:
         return RunResult("needs-person", str(e))
     except Exception as e:
