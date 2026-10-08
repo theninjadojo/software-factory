@@ -36,3 +36,6 @@ jobs:
           fi
           docker compose version
       - run: FACTORY_HOME=/tmp/fh DOCKER_GID=0 docker compose config -q
+      # Keep the self-hosted runner's disk from filling up (see release.yml), but keep a day of build cache so CI stays quick.
+      - if: always()
+        run: docker image prune -af --filter until=24h && docker builder prune -af --filter until=24h
