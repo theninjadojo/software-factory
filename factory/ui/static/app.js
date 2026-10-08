@@ -106,6 +106,43 @@
       .catch(function () { fail("Couldn’t reach the factory. Nothing was changed that we know of. Try again."); });
   });
 
+  // --- Board: dropping a card on a column opens the card's Move to menu at that column. The button in the menu is the confirmation
+  // (the ordinary form post), so a drop never changes anything by itself, and a column with no action explains why.
+  (function () {
+    var drag = null;
+    function alertBox() { return document.querySelector("[data-kb-alert]"); }
+    document.addEventListener("dragstart", function (e) {
+      var c = e.target.closest && e.target.closest("[data-card]");
+      if (!c) return;
+      drag = c; if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); }
+    });
+    document.addEventListener("dragend", function () {
+      drag = null;
+      Array.prototype.forEach.call(document.querySelectorAll(".kb-col.over"), function (x) { x.classList.remove("over"); });
+    });
+    document.addEventListener("dragover", function (e) {
+      var col = drag && e.target.closest && e.target.closest(".kb-col");
+      if (!col || col.getAttribute("data-col") === drag.getAttribute("data-col")) return;
+      e.preventDefault();
+      Array.prototype.forEach.call(document.querySelectorAll(".kb-col.over"), function (x) { if (x !== col) x.classList.remove("over"); });
+      col.classList.add("over");
+    });
+    document.addEventListener("drop", function (e) {
+      var col = drag && e.target.closest && e.target.closest(".kb-col");
+      if (!col) return;
+      e.preventDefault();
+      var card = drag, to = col.getAttribute("data-col"), box = alertBox();
+      drag = null; col.classList.remove("over");
+      if (to === card.getAttribute("data-col")) return;
+      var menu = card.querySelector(".kb-menu"), opt = card.querySelector('.kb-opt[data-to="' + to + '"]');
+      if (!menu || !opt) return;
+      var why = opt.classList.contains("off") ? opt.querySelector(".muted").textContent : "";
+      if (box) { box.hidden = !why; box.textContent = why; }
+      menu.open = true;
+      var go = opt.querySelector("button"); if (go) go.focus(); else if (menu.querySelector("summary")) menu.querySelector("summary").focus();
+    });
+  })();
+
   // --- Parts that load by themselves (GitHub is slow): fetch, then put the answer where the loader was.
   function calm(root) {
     if (!window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;

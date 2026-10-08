@@ -225,6 +225,15 @@ def _gh(h):
     return gh
 
 
+def _gh_for(h, cfg, n: int):
+    """_gh for one ticket: with no token a local ticket is still handled (the local tracker needs none, and the Hub never calls
+    GitHub for a local number); a GitHub number without a token is None, as _gh."""
+    gh = _gh(h)
+    if gh is None and cfg.local_enabled and tracker.is_local(n):
+        gh = tracker.Hub(None, cfg.db_path, actor=tracker.UI_ACTOR)
+    return gh
+
+
 def _page(h, status: int, title: str, body: str, csrf: str, flash=None, kind="ok") -> None:
     h._send(status, views.page(title, body, "/tickets", csrf, flash=flash, flash_kind=kind, wide=True))
 
@@ -801,7 +810,7 @@ def start(h, form, csrf: str) -> None:
         repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
     except Refused as e:
         return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
-    gh = _gh(h)
+    gh = _gh_for(h, cfg, n)
     if gh is None:
         return _done(h, form, csrf, NO_TOKEN, "bad")
     try:
@@ -817,7 +826,11 @@ def start(h, form, csrf: str) -> None:
             h.app.add_approval(repo, n, decision)
         else:
             if chosen:
-                _existing(gh, repo, chosen)
+                if tracker.is_local(n):                      # a local ticket has no GitHub labels: only the configured triggers apply
+                    if chosen not in trigger_labels(cfg):
+                        raise Refused("That label is not a factory trigger label.")
+                else:
+                    _existing(gh, repo, chosen)
                 gh.add_labels(repo, n, [chosen])             # add first: if it fails nothing has changed
             if status == NEEDS_PERSON:                       # skipping covers the whole ticket: clear every trigger label
                 held = set(_names(issue))
@@ -975,7 +988,7 @@ def close(h, form, csrf: str) -> None:
         repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
     except Refused as e:
         return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
-    gh = _gh(h)
+    gh = _gh_for(h, cfg, n)
     if gh is None:
         return _done(h, form, csrf, NO_TOKEN, "bad")
     try:

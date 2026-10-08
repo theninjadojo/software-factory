@@ -1274,3 +1274,30 @@ p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
   .sc-repo, .sc-repo select { width:100%; min-width:0; } .sc-feats > div { max-height:240px; }
   .sc-table td:nth-child(n+3) { white-space:normal; } table.sc-table tr { border-radius:0; } .sc-test { white-space:normal; overflow-wrap:anywhere; }
 }
+
+/* Tickets: the Board view */
+.kb-board { display:grid; grid-template-columns:repeat(6,minmax(190px,1fr)); gap:12px; align-items:start; overflow-x:auto; }
+.kb-col { background:var(--panel); border:1px solid var(--line); padding:12px; min-width:0; }
+.kb-col.over { outline:2px dashed var(--accent); outline-offset:-2px; }
+.kb-col h2 { display:flex; align-items:center; gap:8px; margin:0 0 10px; font-size:14px; } .kb-col h2 b { font-weight:500; color:var(--muted); }
+.kb-cards { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.kb-card { position:relative; background:var(--panel2); border:1px solid var(--line); }
+.kb-card[draggable=true] { cursor:grab; }
+.kb-link { display:block; padding:12px 52px 12px 12px; color:var(--text); text-decoration:none; overflow-wrap:anywhere; }
+.kb-link .sd-title { display:block; margin:4px 0; font-size:15px; line-height:1.3; } .kb-link .sd-word { display:inline-flex; align-items:center; gap:6px; }
+.kb-menu { position:absolute; top:4px; right:4px; z-index:1; }
+.kb-menu summary { display:flex; align-items:center; justify-content:center; width:44px; height:44px; cursor:pointer; border:1px solid var(--line2); background:var(--panel); list-style:none; }
+.kb-menu summary::-webkit-details-marker { display:none; }
+.kb-menu[open] { position:static; } .kb-menu[open] summary { position:absolute; top:4px; right:4px; }
+.kb-opts { padding:56px 12px 12px; display:flex; flex-direction:column; gap:10px; }
+.kb-opth { margin:0; font-weight:700; }
+.kb-opt { display:flex; flex-direction:column; gap:6px; padding:10px; border:1px solid var(--line2); background:var(--panel); }
+.kb-opt.off { opacity:.7; } .kb-opt .muted { font-size:13px; }
+.kb-form { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0; } .kb-form button { min-height:44px; }
+.kb-none, .kb-more { margin:0; font-size:13px; }
+.kb-alert { margin:0 0 12px; padding:10px 14px; border:1px solid var(--bad); }
+.kb-alert[hidden] { display:none; }
+@media (max-width:760px) {
+  .kb-board { grid-template-columns:1fr; }
+  .kb-card[draggable=true] { cursor:default; }
+}

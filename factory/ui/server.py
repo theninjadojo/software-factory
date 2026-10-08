@@ -24,7 +24,7 @@ from .. import questions as Q
 from ..config import HealthCfg, load
 from .. import tracker
 from ..tracker import display, is_local
-from . import admin, board, features, floor, floorplan, views
+from . import admin, board, features, floor, floorplan, kanban, views
 from . import chat as CH
 from . import splitcard as SPC
 from . import reviewactions as RA
@@ -531,8 +531,13 @@ class Handler(BaseHTTPRequestHandler):
             asked = q.get("project") or ""
             project = asked if asked in {v for v, _ in projects} else ""      # only a configured name (or Standalone) is ever used
             rows = board.in_project(all_rows, cfg, project)
+            if path == "/tickets" and q.get("view") == "board":          # any other value of view is the list
+                shown = L.flash_pop(csrf)
+                return self._send(200, views.page("Board · Tickets", kanban.board_page(rows, cfg, csrf, project, projects, L.has_token(self), now, gh_on),
+                                                  path, csrf, wide=True, badges=badges, bare=True,
+                                                  flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             c = board.counts(rows)
-            keys = {k for k, _, _ in board.FILTERS}
+            keys ={k for k, _, _ in board.FILTERS}
             flt = q.get("stage") if q.get("stage") in keys else ("needs" if c["needs"] else "all")
             at = q.get("at") if q.get("at") in board.LABEL else ""
             text, order = (q.get("q") or "").strip()[:100], "oldest" if q.get("sort") == "oldest" else "latest"
