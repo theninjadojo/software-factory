@@ -250,3 +250,55 @@ class GithubIssuesOff(LocalTickets):
                 def cfg():
                     return replace(load(str(self.root / "config.toml")), github_issues_enabled=False)
         self.assertIsNone(L.needs_you(H()))
+
+
+class Board(LocalTickets):
+    """The Board view: cards in state columns, moves offered from the existing routes, and local Start/Close without a token."""
+
+    def board(self):
+        return self.req("GET", "/tickets?view=board", cookie=self.cookie)
+
+    def test_a_card_sits_in_its_state_column_with_a_move_menu(self):
+        self.create()
+        s, _, html = self.board()
+        self.assertEqual(s, 200)
+        self.assertIn('class="kb-col" data-col="new"', html)
+        self.assertIn('action="/tickets/start"', html)
+        self.assertIn('action="/tickets/close"', html)
+        self.assertIn("The factory has no action that does this", html)            # PR and CI, Needs you and Failed are not offered
+
+    def test_the_board_escapes_titles_and_unknown_views_fall_back_to_the_list(self):
+        self.create(title="<script>alert(1)</script>")
+        self.assertNotIn("<script>alert(1)</script>", self.board()[2])
+        self.assertNotIn("kb-board", self.req("GET", "/tickets?view=x", cookie=self.cookie)[2])
+
+    def test_a_local_ticket_starts_and_closes_without_a_github_token(self):
+        self.create()
+        n = tracker.LOCAL_BASE + 1
+        f = {"repo": REPO, "n": str(n), "back": "/tickets?view=board"}
+        s, h, _ = self.post(self.cookie, self.csrf, "/tickets/start", {**f, "action": "auto"})
+        self.assertEqual((s, h["Location"]), (303, "/tickets?view=board"))
+        self.assertEqual([x["name"] for x in self.store().issue(REPO, n)["labels"]], [self.cfg().auto_label])
+        self.assertIn(self.store().label_actor(REPO, n, self.cfg().auto_label), tracker.TRUSTED_ACTORS)
+        self.post(self.cookie, self.csrf, "/tickets/close", f)
+        self.assertEqual(self.store().issue(REPO, n)["state"], "closed")
+
+    def test_build_is_never_started_from_the_board_and_github_numbers_still_need_a_token(self):
+        self.create()
+        n = tracker.LOCAL_BASE + 1
+        self.assertNotIn('<option value="build"', self.board()[2])
+        self.post(self.cookie, self.csrf, "/tickets/start", {"repo": REPO, "n": str(n), "action": "bogus"})
+        self.assertEqual(self.store().issue(REPO, n)["labels"], [])
+        self.post(self.cookie, self.csrf, "/tickets/close", {"repo": REPO, "n": "12"})          # a GitHub number, no token: nothing happens
+        self.assertEqual(self.store().issue(REPO, n)["state"], "open")
+
+    def test_moves_are_decided_from_the_state(self):
+        from factory.ui import kanban
+        row = {"state": "new", "issue": tracker.LOCAL_BASE + 1, "closed": False, "prs": [], "journey": {"steps": []}}
+        m = kanban.moves_for(row, False)
+        self.assertEqual((m["working"][0], m["done"][0], m["failed"][0]), ("start", "close", ""))
+        gh = {**row, "issue": 12, "state": "working"}
+        self.assertEqual(kanban.moves_for(gh, False)["done"], ("", kanban.NEEDS_TOKEN))
+        self.assertEqual(kanban.moves_for(gh, True)["done"][0], "close")
+        ran = {**row, "state": "done", "closed": True, "journey": {"steps": [1]}}
+        self.assertEqual((kanban.moves_for(ran, False)["new"][0], kanban.moves_for(ran, False)["done"][0]), ("", "reopen"))

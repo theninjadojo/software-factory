@@ -213,7 +213,7 @@ def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -
     last = max([s["finished"] or s["started"] for s in j["steps"]] + [p.get("updated") or 0 for p in prs] + [t.get("decided_at") or 0])
     return {"repo": t["repo"], "issue": int(t["issue"]), "title": (loc or {}).get("title") or title or (need or {}).get("title") or t.get("title")
             or f"Ticket {display(int(t['issue']))}",
-            "state": state, "stations": st, "at": at, "when": last, "why": _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need}
+            "state": state, "closed": bool(loc and loc["state"] == "closed"), "stations": st, "at": at, "when": last, "why": _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need}
 
 
 def row_for(db, repo: str, issue: int, needs_rows=None, titles: dict | None = None, now: float | None = None) -> dict:
@@ -706,6 +706,11 @@ def phone_needs(rows: list[dict], csrf: str) -> str:
             f'<p class="muted sd-fine">{esc(what)}</p>{bulk}</section>')
 
 
+def _switch(project: str) -> str:
+    from . import kanban                      # kanban builds on this module
+    return kanban.switch("list", project)
+
+
 def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: str, q: str, at: str, order: str, detail: str, new_ticket: str, now: float,
                  csrf: str = "", settings: str = "", project: str = "", projects=(), unknown: bool = False, github: bool = True) -> str:
     """settings: the strip of settings that shape this page (features.tickets_strip). rows are already narrowed to project
@@ -728,7 +733,7 @@ def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: st
                 '<a href="/settings">Turn on Work from GitHub issues</a></p>') + note
     return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead">{crumb}<div class="sd-h1row"><h1>Tickets</h1>{new_ticket}</div>'
             '<p class="muted sd-lede">Everything about a ticket in one place: what it needs from you, where it is on the floor, every run, and its pull requests and checks.</p></div>'
-            + settings + phone_needs(rows, csrf) + filters_html(counts(rows), flt, q, at, order, project=project, projects=projects) + note
+            + settings + phone_needs(rows, csrf) + _switch(project) + filters_html(counts(rows), flt, q, at, order, project=project, projects=projects) + note
             + f'<div class="sd-split"><section class="sd-list" aria-label="Ticket list">{list_html(shown, sel, flt, q, at, now, csrf, project)}</section>'
             + (detail or '<div class="sd-detail sd-none"><p class="muted">Pick a ticket to see its journey.</p></div>') + "</div>"
             + f'<template id="ld-detail"><div class="sd-detail sd-loading">{loader("Loading the ticket from GitHub")}</div></template></div>')
