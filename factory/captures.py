@@ -65,14 +65,30 @@ def import_run(db, job: dict, shots: dict[str, bytes], tests: dict[str, str] | N
 
 def ensure_tables(db: sqlite3.Connection) -> None:
     db.execute("CREATE TABLE IF NOT EXISTS capture_requests (repo TEXT PRIMARY KEY, created REAL NOT NULL)")
+    if "files" not in {r[1] for r in db.execute("PRAGMA table_info(capture_requests)")}:     # a run limited to some test files: JSON list
+        db.execute("ALTER TABLE capture_requests ADD COLUMN files TEXT NOT NULL DEFAULT ''")
     db.execute("CREATE TABLE IF NOT EXISTS capture_tickets (repo TEXT PRIMARY KEY, job_id INTEGER NOT NULL, issue INTEGER, opened REAL NOT NULL)")
 
 
-def request(db, repos: list[str], now: float | None = None) -> None:
+def request(db, repos: list[str], now: float | None = None, files: list[str] | None = None) -> None:
+    """Ask for a run of each repo's whole suite, or of only `files` (test files, as jobs.test_file allows). A newer request replaces a
+    waiting one, so asking for everything after asking for one feature runs everything."""
     ensure_tables(db)
+    files = [f for f in (files or []) if jobs.clean_test_file(f)][:jobs.MAX_TEST_FILES]
     for r in repos:
-        db.execute("INSERT OR REPLACE INTO capture_requests (repo, created) VALUES (?,?)", (r, now if now is not None else time.time()))
+        db.execute("INSERT OR REPLACE INTO capture_requests (repo, created, files) VALUES (?,?,?)",
+                   (r, now if now is not None else time.time(), json.dumps(files) if files else ""))
     db.commit()
+
+
+def requested_files(db, repo: str) -> list[str]:
+    """The test files a waiting request of `repo` is limited to; [] for the whole suite."""
+    try:
+        row = db.execute("SELECT files FROM capture_requests WHERE repo=?", (repo,)).fetchone()
+        files = json.loads(row[0]) if row and row[0] else []
+    except (sqlite3.OperationalError, ValueError):
+        return []
+    return [f for f in files if jobs.clean_test_file(f)] if isinstance(files, list) else []
 
 
 def requested(db) -> set[str]:
@@ -143,6 +159,7 @@ def tick(cfg, gh, db, now: float) -> int:
     caps = {c.repo: c for c in cfg.screens.captures}
     queued = 0
     for repo in sorted(requested(db)):
+        files = requested_files(db, repo)
         db.execute("DELETE FROM capture_requests WHERE repo=?", (repo,))
         db.commit()
         cap = caps.get(repo)
@@ -150,9 +167,10 @@ def tick(cfg, gh, db, now: float) -> int:
             continue
         try:
             sha = gh.branch_sha(repo, gh.default_branch(repo))
-            jobs.enqueue(db, repo, 0, sha, "", cap.recipe, cap.platform, now, json.dumps({"purpose": jobs.SCREENS_PURPOSE}))
+            params = {"purpose": jobs.SCREENS_PURPOSE, **({"files": files} if files else {})}
+            jobs.enqueue(db, repo, 0, sha, "", cap.recipe, cap.platform, now, json.dumps(params))
             queued += 1
-            log.info("screens: queued a Playwright run of %s at %s", repo, sha[:7])
+            log.info("screens: queued a Playwright run of %s at %s%s", repo, sha[:7], f" ({len(files)} test files)" if files else "")
         except Exception:
             log.exception("screens: could not queue a Playwright run of %s", repo)
     for repo in caps:

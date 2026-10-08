@@ -9,6 +9,8 @@ import threading
 import urllib.error
 from urllib.parse import urlencode
 
+from .. import captures as CP
+from .. import jobs
 from .. import scenarios as SC
 from .. import screenboard as SB
 from . import labels as L
@@ -84,6 +86,121 @@ def _test_cell(pw: str) -> str:
     return f'<code class="sc-test" title="{esc(pw)}">{esc(short)}</code>'
 
 
+# ---------------------------------------------------------------- running the tests (a Playwright run on a worker, factory/captures.py)
+
+def feature_files(rows: list[dict], feature: str) -> list[str]:
+    """The test files the scenarios of `feature` ('-': those with none) are linked to. Retired scenarios are left out."""
+    return jobs.files_of(r["pw_test"] for r in SC.filtered(rows, feature) if r["pw_test"] and r["status"] != "retired")
+
+
+def _files_note(files: list[str]) -> str:
+    if not files:
+        return "all tests"
+    names = ", ".join(f.rsplit("/", 1)[-1] for f in files[:3]) + (f" and {len(files) - 3} more" if len(files) > 3 else "")
+    return f'<span title="{esc(" ".join(files))}">only {esc(names)}</span>'
+
+
+def run_status(db, repo: str) -> tuple[str, bool]:
+    """(one line on the repo's Playwright run: waiting, running, or the newest one with its results and reports, busy)."""
+    live, pending = CP.active(db, repo), repo in CP.requested(db)
+    if pending and not live:
+        return f'{badge("requested", "warn")} {_files_note(CP.requested_files(db, repo))} · starts at the factory\'s next poll.', True
+    if live and live["status"] == "queued":
+        return f'{badge("waiting", "warn")} {_files_note(jobs.run_files(live))} · waiting for a worker. <a href="/workers">Workers</a>', True
+    if live:
+        return (f'{badge("running", "warn")} {_files_note(jobs.run_files(live))} · on {esc(live["worker"] or "a worker")} '
+                f'since {esc(ago(live["claimed"] or live["created"]))}.'), True
+    run = CP.latest(db, repo)
+    if not run:
+        return '<span class="muted">Not run yet.</span>', False
+    jid, ran, names = int(run["id"]), jobs.tests(run), run.get("reports") or []
+    log_link = f'<a href="/workers/job?id={jid}">log</a>'
+    when = f'{esc(ago(run["finished"] or run["created"]))} at <code>{esc(run["base_sha"][:7])}</code>'
+    if run["status"] == "error":
+        return f'{badge("could not run", "bad")} {when} · {log_link}', False
+    if run["status"] == "failed" and run["exit_code"] == 2 and not ran:      # the recipe's "nothing to run"
+        why = (run["log"] or "").strip().splitlines()[-1:] or [""]
+        return f'{badge("nothing to run", "warn")} {esc(why[0][:200])} · {when} · {log_link}', False
+    bad = sum(1 for t in ran if t["outcome"] == "fail")
+    head = badge("passed", "good") if run["status"] == "passed" else badge("failed", "bad")
+    count = f'{len(ran) - bad} passed, {bad} failed' if ran else ("tests passed" if run["status"] == "passed" else "some tests failed")
+    links = [f'<a href="/screens/results?job={jid}">Results</a>'] if ran else []
+    links += [f'<a href="/workerreport?{esc(urlencode({"job": jid, "name": n}))}" target="_blank" rel="noopener">'
+              f'Playwright report{"" if len(names) == 1 else " " + esc(n)}</a>' for n in names]
+    missing = ("" if ran or names else
+               ' <span class="muted">This run sent no per-test results or report: the worker\'s recipe is older. Update it from '
+               '<a href="/workers">Workers</a>.</span>')
+    return f'{head} <strong>{count}</strong> · {_files_note(jobs.run_files(run))} · {when} · {" · ".join(links + [log_link])}{missing}', False
+
+
+def run_bar(cfg, db, repo: str, rows: list[dict], feature: str, csrf: str) -> str:
+    """Run every test of the repo, or those of the feature picked on the left, and see how the newest run went."""
+    if repo not in {c.repo for c in cfg.screens.captures}:
+        return ('<div class="sc-run"><p class="muted">To run these tests from here, set up a Playwright run for this repository: '
+                '<a href="/screens">Screens → Set up Playwright runs</a>.</p></div>')
+    line, busy = run_status(db, repo)
+    off = " disabled" if busy or not cfg.workers.enabled else ""
+    buttons = f'<button name="scope" value="all"{off}>Run all tests</button>'
+    if feature:
+        files = feature_files(rows, feature)
+        name = "No feature" if feature == "-" else feature
+        buttons += (f' <button class="secondary" name="scope" value="feature"{off if files else " disabled"}>Run “{esc(name)}” tests</button>'
+                    + (f' <span class="muted">{len(files)} test file{"" if len(files) == 1 else "s"}</span>' if files else
+                       ' <span class="muted">None of its scenarios is linked to a test.</span>'))
+    else:
+        buttons += ' <span class="muted">Pick a feature to run only its tests.</span>'
+    workers = ("" if cfg.workers.enabled else
+               '<p class="muted">Turn on verification workers first (<a href="/settings?section=workers">Settings → Workers</a>): the tests run on a worker.</p>')
+    return (f'<div class="sc-run"><form method="post" action="/scenarios/run">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}">'
+            f'<input type="hidden" name="feature" value="{esc(feature)}">{buttons}</form><p class="sc-last">{line}</p>{workers}</div>')
+
+
+def runbar_get(h, q: dict, csrf: str) -> None:
+    """The run bar alone, for the page's live refresh."""
+    cfg = h.app.cfg()
+    try:
+        repo = _repo(cfg, q.get("repo", ""))
+    except L.Refused:
+        return h._send(404, "", "text/plain")
+    db = _db(h)
+    try:
+        body = run_bar(cfg, db, repo, SC.listing(db, repo), q.get("feature", "")[:100], csrf) if repo else ""
+    finally:
+        db.close()
+    h._send(200, body)
+
+
+def run_post(h, form, csrf: str) -> None:
+    """Ask for a Playwright run of the repo: every test, or only the files the scenarios of one feature are linked to (worked out here
+    from the register, never taken from the browser). The orchestrator queues it at its next poll."""
+    cfg = h.app.cfg()
+    try:
+        repo = _repo(cfg, str(form.get("repo", "")))
+    except L.Refused as e:
+        return _back(h, csrf, url(), str(e), "bad")
+    picked = str(form.get("feature", ""))[:100]
+    feature = picked if form.get("scope") == "feature" else ""
+    back = url(repo, feature=picked)
+    if repo not in {c.repo for c in cfg.screens.captures}:
+        return _back(h, csrf, back, "Set up a Playwright run for this repository first (Screens → Set up Playwright runs).", "bad")
+    if not cfg.workers.enabled:
+        return _back(h, csrf, back, "Turn on verification workers first (Settings → Workers): the tests run on a worker.", "bad")
+    db = _db(h)
+    try:
+        files = feature_files(SC.listing(db, repo), feature) if feature else []
+        if feature and not files:
+            return _back(h, csrf, back, "None of the scenarios of that feature is linked to a test, so there is nothing to run.", "bad")
+        if len(files) > jobs.MAX_TEST_FILES:
+            return _back(h, csrf, back, f"That feature's tests are in {len(files)} files; a run can take at most {jobs.MAX_TEST_FILES}. "
+                                        "Run all tests instead.", "bad")
+        CP.request(db, [repo], files=files)
+    finally:
+        db.close()
+    log.info("tests: Playwright run requested for %s (%s)", repo, f"{len(files)} files of {feature}" if files else "all tests")
+    _back(h, csrf, back, ("Running the tests of that feature." if files else "Running all tests.")
+          + " A worker picks it up at the factory's next poll; this page shows the result when it is done.")
+
+
 def register_get(h, q: dict, csrf: str) -> None:
     cfg = h.app.cfg()
     try:
@@ -92,12 +209,13 @@ def register_get(h, q: dict, csrf: str) -> None:
         return _page(h, "Tests", f'<p class="muted">{esc(e)}</p>', csrf, 400)
     if not repo:
         return _page(h, "Tests", '<p class="muted">No repository is configured yet.</p>', csrf)
+    feature, result, status, text = q.get("feature", "")[:100], q.get("result", ""), q.get("status", ""), q.get("q", "")[:100]
     db = _db(h)
     try:
         rows = SC.listing(db, repo)
+        runs = f'<div id="live" data-src="/scenarios/runbar">{run_bar(cfg, db, repo, rows, feature, csrf)}</div>'
     finally:
         db.close()
-    feature, result, status, text = q.get("feature", ""), q.get("result", ""), q.get("status", ""), q.get("q", "")[:100]
     sort = q.get("sort", "id") if q.get("sort", "id") in SORTS else "id"
     if result not in ("", "none", *SC.RESULTS):
         result = ""
@@ -120,7 +238,7 @@ def register_get(h, q: dict, csrf: str) -> None:
     if not rows:
         table = ('<div class="card"><h3>Empty register</h3><p>No scenarios yet for this repository.</p>'
                  '<p class="muted">Add one, import a CSV or Excel file from your spreadsheet, or add the tests the repository already has.</p></div>')
-        return _page(h, "Tests", head + actions + table, csrf, bare=True)
+        return _page(h, "Tests", head + runs + actions + table, csrf, bare=True)
     feat_link = lambda v, name, n: (f'<a href="{esc(keep(feature=v))}"{" class=current aria-current=true" if v == feature else ""}>'
                                     f'<span>{esc(name)}</span><span class="sc-n">{n:,}</span></a>')
     feats = SC.features(rows)
@@ -159,7 +277,7 @@ def register_get(h, q: dict, csrf: str) -> None:
         for name, key in {"ID": "id", "Scenario": "title", "Last result": "result", "Last tested": "tested"}.items():   # sortable headers are links
             table = table.replace(f"<th>{esc(name)}</th>",
                                   f'<th aria-sort="{"ascending" if sort == key else "none"}"><a href="{esc(keep(sort=key))}">{esc(name)}</a></th>')
-    body = (head + actions + f'<div class="sc-layout">{side}<section class="sc-main" aria-label="Scenarios">'
+    body = (head + runs + actions + f'<div class="sc-layout">{side}<section class="sc-main" aria-label="Scenarios">'
             f'<div class="sc-tools">{filters}{results}</div>{summary}{table}</section></div>')
     _page(h, "Tests", body, csrf, bare=True)
 
@@ -520,6 +638,6 @@ def apply_post(h, form, csrf: str) -> None:
     _back(h, csrf, url(repo), f"Imported: {done['created']} new, {done['updated']} changed, {done['kept']} kept as they were.")
 
 
-GET = {"/scenarios": register_get, "/scenarios/view": view_get, "/scenarios/edit": edit_get, "/scenarios/export": export_get, "/scenarios/import": import_get}
-POST = {"/scenarios/save": save_post, "/scenarios/result": result_post, "/scenarios/ticket": ticket_post, "/scenarios/import/apply": apply_post, "/scenarios/discover": discover_post}
+GET = {"/scenarios": register_get, "/scenarios/runbar": runbar_get, "/scenarios/view": view_get, "/scenarios/edit": edit_get, "/scenarios/export": export_get, "/scenarios/import": import_get}
+POST = {"/scenarios/save": save_post, "/scenarios/result": result_post, "/scenarios/ticket": ticket_post, "/scenarios/import/apply": apply_post, "/scenarios/discover": discover_post, "/scenarios/run": run_post}
 POST_UPLOAD = {"/scenarios/import/preview": preview_post}

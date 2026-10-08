@@ -25,6 +25,8 @@ MAX_SCREEN_ARTIFACTS = 300                  # such a run returns every screensho
 MAX_FINDINGS, MAX_SNIPPET = 1000, 300
 MAX_TESTS, MAX_TEST_ID, MAX_TEST_MESSAGE = 5000, 300, 2000      # a Playwright run's per-test results (the Tests register reads them)
 MAX_REPORTS, MAX_REPORT = 6, 10_000_000     # and its HTML reports: Playwright's index.html, one per suite folder
+MAX_TEST_FILES = 50                         # a run limited to some test files (one feature of the Tests register) names at most this many
+TEST_FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.@+/-]{0,199}")   # such a file: a plain relative path (the worker checks it again)
 OUTCOMES = ("pass", "fail")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 MAX_PROGRESS = 200                          # one short line a worker says it is doing
@@ -292,6 +294,28 @@ def clean_test_id(tid) -> str | None:
     if not tid or len(tid) > MAX_TEST_ID or path.startswith("/") or ".." in path.split("/") or _CONTROL.search(tid) or "\n" in tid:
         return None
     return tid
+
+
+def clean_test_file(path) -> str | None:
+    """A test file a run may be limited to: a plain relative path in the repo, no .. and no characters a shell or a glob would read."""
+    if not isinstance(path, str) or not TEST_FILE.fullmatch(path) or ".." in path.split("/") or "//" in path or path.endswith("/"):
+        return None
+    return path
+
+
+def files_of(test_ids) -> list[str]:
+    """The test files of some test ids (the path before the first :: or ›), sorted, each once; ids whose file is not plain are left out."""
+    out = {clean_test_file(re.split(r"::| › ", t, maxsplit=1)[0]) for t in test_ids if clean_test_id(t)}
+    return sorted(f for f in out if f)
+
+
+def run_files(job: dict) -> list[str]:
+    """The test files a Playwright run was limited to; [] when it ran the whole suite."""
+    try:
+        files = json.loads(job.get("params") or "{}").get("files") or []
+    except (ValueError, AttributeError):
+        return []
+    return [f for f in files if clean_test_file(f)] if isinstance(files, list) else []
 
 
 def validate_tests(items) -> tuple[list[dict] | None, str]:

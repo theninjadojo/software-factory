@@ -22,6 +22,10 @@
 # into per-test results for the Tests register and sends each HTML report's index.html for the Screens board. So that each screenshot
 # can be shown with the test that took it, this recipe also writes shots.tsv there (the file each PNG was copied from), and a Python
 # suite is given E2E_SHOTS_FILE, where it appends {"file": "<PNG name>", "test": "<pytest node id>"} per PNG (one JSON object a line).
+#
+# When the worker sets FACTORY_TEST_FILES (a file outside the checkout, one test file a line, relative to the repository root, already
+# checked by the worker to be plain paths), only those files run: a feature of the Tests register. A folder holding none of them is
+# skipped. Exit 2 when none of them is in a suite this recipe runs.
 set -u
 . "$(dirname "$0")/lib.sh"
 ONLY=""
@@ -40,6 +44,9 @@ case "$ONLY" in /*|*..*) echo "[playwright-screens] --dir must be a plain relati
 ROOT=$(pwd)
 OUT="$ROOT/screens-out"
 mkdir -p "$OUT"
+PICKED=""
+[ -n "${FACTORY_TEST_FILES:-}" ] && [ -f "$FACTORY_TEST_FILES" ] && PICKED=$(cat "$FACTORY_TEST_FILES")
+set -f                                       # the picked files are expanded unquoted below: never as globs
 
 config_in() { for f in playwright.config.ts playwright.config.mts playwright.config.js playwright.config.mjs playwright.config.cjs; do [ -f "$1/$f" ] && { echo "$f"; return 0; }; done; return 1; }
 
@@ -56,7 +63,15 @@ if [ -z "$DIRS" ] && [ -z "$ONLY" ] && [ -f tests/e2e/requirements.txt ]; then
   SHOTS=""
   [ -n "${FACTORY_RESULTS_DIR:-}" ] && set -- --junitxml "$FACTORY_RESULTS_DIR/junit.xml" -o junit_family=xunit1     # xunit1 names each test's file
   [ -n "${FACTORY_RESULTS_DIR:-}" ] && SHOTS="$FACTORY_RESULTS_DIR/e2e-shots.jsonl"     # the suite says which test took each PNG
-  E2E_SCREENS_DIR="$OUT" E2E_SHOTS_FILE="$SHOTS" E2E_BROWSER="$BROWSER" "$VENV/bin/python" -m pytest tests/e2e -q -p no:cacheprovider "$@" || { echo "[playwright-screens] some tests failed (their screenshots are kept)" >&2; status=1; }
+  WHAT="tests/e2e"
+  if [ -n "$PICKED" ]; then
+    WHAT=""
+    for f in $PICKED; do case "$f" in tests/e2e/*) WHAT="$WHAT $f" ;; esac; done
+    [ -n "$WHAT" ] || { echo "[playwright-screens] none of the chosen test files is in tests/e2e" >&2; exit 2; }
+    echo "[playwright-screens] only:$WHAT"
+  fi
+  # shellcheck disable=SC2086
+  E2E_SCREENS_DIR="$OUT" E2E_SHOTS_FILE="$SHOTS" E2E_BROWSER="$BROWSER" "$VENV/bin/python" -m pytest $WHAT -q -p no:cacheprovider "$@" || { echo "[playwright-screens] some tests failed (their screenshots are kept)" >&2; status=1; }
   count=$(find "$OUT" -name '*.png' | wc -l)
   echo "[playwright-screens] $count screenshot(s) kept"
   exit "$status"
@@ -72,6 +87,15 @@ for D in $DIRS; do
   cd "$ROOT/$D" 2>/dev/null || { echo "[playwright-screens] no folder $D in the checkout" >&2; status=2; continue; }
   CFG=$(config_in .) || { echo "[playwright-screens] no Playwright config in $D" >&2; status=2; continue; }
   [ -f package.json ] || { echo "[playwright-screens] no package.json in $D" >&2; status=2; continue; }
+  ARGS=""
+  if [ -n "$PICKED" ]; then                  # this folder's chosen files, relative to it; Playwright reads each as a pattern, so dots are escaped
+    for f in $PICKED; do
+      if [ "$D" = "." ]; then rel="$f"; else case "$f" in "$D"/*) rel="${f#"$D"/}" ;; *) continue ;; esac; fi
+      ARGS="$ARGS $(printf '%s' "$rel" | sed 's/[.+]/\\&/g')"
+    done
+    [ -n "$ARGS" ] || { echo "[playwright-screens] none of the chosen test files is in $D; skipped"; cd "$ROOT"; continue; }
+    RAN=1
+  fi
   echo "[playwright-screens] == $D ($CFG)"
   if [ -f pnpm-lock.yaml ]; then pnpm_run install --frozen-lockfile
   elif [ -f yarn.lock ]; then yarn_run install --frozen-lockfile
@@ -101,8 +125,9 @@ $EXPORT {
   reporter: results ? [['line'], ['json', { outputFile: results + '/pw-$NAME.json' }], ['html', { outputFolder: results + '/report-$NAME', open: 'never' }]] : 'line',
 };
 JS
-  echo "[playwright-screens] playwright test --config $W"
-  npx --no-install playwright test --config "$W" || { echo "[playwright-screens] some tests failed in $D (their screenshots are kept)" >&2; [ "$status" = 0 ] && status=1; }
+  echo "[playwright-screens] playwright test --config $W$ARGS"
+  # shellcheck disable=SC2086
+  npx --no-install playwright test --config "$W" $ARGS || { echo "[playwright-screens] some tests failed in $D (their screenshots are kept)" >&2; [ "$status" = 0 ] && status=1; }
 
   PREFIX=""; [ "$D" != "." ] && PREFIX="$(slug "$D")-"
   find test-results-screens -name '*.png' 2>/dev/null | sort | while IFS= read -r f; do
@@ -117,6 +142,7 @@ JS
   cd "$ROOT"
 done
 
+if [ -n "$PICKED" ] && [ -z "${RAN:-}" ]; then echo "[playwright-screens] none of the chosen test files is in a Playwright folder" >&2; exit 2; fi
 count=$(find "$OUT" -name '*.png' | wc -l)
 echo "[playwright-screens] $count screenshot(s) kept"
 [ "$status" = 2 ] && [ "$count" = 0 ] && exit 2

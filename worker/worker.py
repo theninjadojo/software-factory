@@ -277,13 +277,34 @@ def read_findings(path: Path) -> list:
     return data
 
 
+TEST_FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.@+/-]{0,199}")
+MAX_TEST_FILES = 50
+
+
+def chosen_files(job: dict) -> list[str]:
+    """The test files a Playwright run is limited to (params "files"); [] for the whole suite. The orchestrator checked them; they are
+    checked again here because the recipe passes them to the test runner: a plain relative path, nothing a shell or a glob would read."""
+    files = job["params"].get("files") or []
+    if not isinstance(files, list) or len(files) > MAX_TEST_FILES:
+        raise ValueError("params files must be a list of at most 50 test files")
+    for f in files:
+        if (not isinstance(f, str) or not TEST_FILE.fullmatch(f) or ".." in f.split("/") or "//" in f or f.endswith("/")):
+            raise ValueError(f"not a plain relative test file: {f!r}")
+    return files
+
+
 def results_env(job: dict, tmp: Path) -> tuple[dict, Path | None]:
-    """For a Playwright run: an empty folder outside the checkout where the recipe leaves its reporter files (FACTORY_RESULTS_DIR)."""
+    """For a Playwright run: an empty folder outside the checkout where the recipe leaves its reporter files (FACTORY_RESULTS_DIR), and
+    when the run is limited to some test files, a file outside the checkout naming them one a line (FACTORY_TEST_FILES)."""
     if not is_screens(job):
         return {}, None
     d = tmp / "results"
     d.mkdir()
-    return {"FACTORY_RESULTS_DIR": str(d)}, d
+    env = {"FACTORY_RESULTS_DIR": str(d)}
+    if (files := chosen_files(job)):
+        (tmp / "test-files.txt").write_text("\n".join(files) + "\n")
+        env["FACTORY_TEST_FILES"] = str(tmp / "test-files.txt")
+    return env, d
 
 
 def _message(text) -> str:
