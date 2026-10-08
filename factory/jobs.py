@@ -276,8 +276,22 @@ def validate_result(body, max_artifacts: int = MAX_ARTIFACTS) -> tuple[dict | No
     reports, why = validate_reports(body.get("reports", []))
     if reports is None:
         return None, why
+    ids = {t["id"] for t in ran}                    # an artifact's test (the test that took the screenshot) must be one this run reported;
+    took = {a["name"]: a["test"] for a in arts       # anything else loses only the link, never the shot
+            if clean_test_id(a.get("test")) is not None and a["test"] in ids}
     return {"status": status, "exit_code": code, "log": clean_log(body.get("log")), "artifacts": out, "findings": found, "patch": patch,
-            "tests": ran, "reports": reports}, ""
+            "tests": ran, "reports": reports, "artifact_tests": took}, ""
+
+
+def clean_test_id(tid) -> str | None:
+    """A test id as a run reports it: text of at most MAX_TEST_ID characters, a relative path in the repo (no ..), then names, with no
+    control characters. None when it is not one."""
+    if not isinstance(tid, str):
+        return None
+    path = re.split(r"::| › ", tid, maxsplit=1)[0]
+    if not tid or len(tid) > MAX_TEST_ID or path.startswith("/") or ".." in path.split("/") or _CONTROL.search(tid) or "\n" in tid:
+        return None
+    return tid
 
 
 def validate_tests(items) -> tuple[list[dict] | None, str]:
@@ -289,8 +303,7 @@ def validate_tests(items) -> tuple[list[dict] | None, str]:
         if not isinstance(t, dict) or not isinstance(t.get("id"), str) or t.get("outcome") not in OUTCOMES or not isinstance(t.get("message", ""), str):
             return None, "each test needs an id, an outcome (pass or fail) and a message"
         tid = t["id"]
-        path = re.split(r"::| › ", tid, maxsplit=1)[0]
-        if not tid or len(tid) > MAX_TEST_ID or path.startswith("/") or ".." in path.split("/") or _CONTROL.search(tid) or "\n" in tid or tid in seen:
+        if clean_test_id(tid) is None or tid in seen:
             return None, f"a test id must be unique, relative and at most {MAX_TEST_ID} characters"
         seen.add(tid)
         out.append({"id": tid, "outcome": t["outcome"], "message": _CONTROL.sub("", t.get("message", ""))[:MAX_TEST_MESSAGE]})
@@ -365,7 +378,7 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
     if is_screens(job) and res["artifacts"]:                  # a Playwright run for the Screens board: its screens become board images
         try:
             from . import captures
-            captures.import_run(db, job, res["artifacts"])
+            captures.import_run(db, job, res["artifacts"], res["artifact_tests"])
         except Exception:                                      # the result is stored; a board problem must not fail the worker's report
             logging.getLogger("factory.jobs").exception("could not keep the screens of job %s on the board", job_id)
     return ""

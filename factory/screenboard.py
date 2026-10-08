@@ -36,6 +36,11 @@ def ensure_tables(db) -> None:
         """CREATE TABLE IF NOT EXISTS screen_shots (
             repo TEXT NOT NULL, page TEXT NOT NULL, view TEXT NOT NULL, sha TEXT NOT NULL, png BLOB NOT NULL, created REAL NOT NULL,
             PRIMARY KEY (repo, page, view, sha))""")
+    db.execute(                                          # which test of a Playwright run took a shot (jobs.validate_result checked it)
+        """CREATE TABLE IF NOT EXISTS screen_shot_tests (
+            repo TEXT NOT NULL, page TEXT NOT NULL, view TEXT NOT NULL, sha TEXT NOT NULL, test TEXT NOT NULL,
+            PRIMARY KEY (repo, page, view, sha, test))""")
+    db.execute("CREATE INDEX IF NOT EXISTS screen_shot_tests_t ON screen_shot_tests(repo, test)")
     db.execute("CREATE TABLE IF NOT EXISTS screen_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, created REAL NOT NULL)")   # "Refresh now"
 
 
@@ -117,7 +122,40 @@ def prune(db, keep: set[str]) -> int:
     for r, p, v, s in db.execute("SELECT repo, page, view, sha FROM screen_shots").fetchall():
         if (k := key(r, p, v, s)) not in newest and k not in keep:
             gone += db.execute("DELETE FROM screen_shots WHERE repo=? AND page=? AND view=? AND sha=?", (r, p, v, s)).rowcount
+            db.execute("DELETE FROM screen_shot_tests WHERE repo=? AND page=? AND view=? AND sha=?", (r, p, v, s))
     return gone
+
+
+def link_tests(db, repo: str, sha: str, links: dict[tuple[str, str], set[str]]) -> None:
+    """Record which tests took each (page, view) shot of a run at `sha`: this run's links replace any earlier ones of those shots."""
+    for (page, view), tests in links.items():
+        db.execute("DELETE FROM screen_shot_tests WHERE repo=? AND page=? AND view=? AND sha=?", (repo, page, view, sha))
+        db.executemany("INSERT OR IGNORE INTO screen_shot_tests (repo, page, view, sha, test) VALUES (?,?,?,?,?)",
+                       [(repo, page, view, sha, t) for t in sorted(tests)])
+
+
+def shots_for_test(db, repo: str, test: str) -> list[str]:
+    """Keys of the shots the test `test` took in `repo`'s newest Playwright run, in page and view order ([] when none)."""
+    sha = capture_sha(db, repo)
+    if not test or not sha:
+        return []
+    try:
+        rows = db.execute("SELECT page, view FROM screen_shot_tests WHERE repo=? AND sha=? AND test=?", (repo, sha, test)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [key(repo, p, v, sha) for p, v in sorted(rows, key=lambda r: (r[0], view_order(r[1])))]
+
+
+def tests_for_shot(db, k: str) -> list[str]:
+    """Ids of the tests that took the shot `k` ([] when none is known)."""
+    m = KEY.fullmatch(k or "")
+    if not m:
+        return []
+    try:
+        return [r[0] for r in db.execute("SELECT test FROM screen_shot_tests WHERE repo=? AND page=? AND view=? AND sha=? ORDER BY test",
+                                         m.groups()).fetchall()]
+    except sqlite3.OperationalError:
+        return []
 
 
 def status(db) -> dict:

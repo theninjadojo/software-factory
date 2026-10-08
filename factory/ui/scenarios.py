@@ -10,6 +10,7 @@ import urllib.error
 from urllib.parse import urlencode
 
 from .. import scenarios as SC
+from .. import screenboard as SB
 from . import labels as L
 from . import views
 from .views import ago, badge, csrf_field, cards_table, esc, trow
@@ -22,6 +23,7 @@ BADGE = {"pass": "good", "fail": "bad", "blocked": "warn", "": ""}
 _staged: dict = {}                      # token -> (csrf, repo, rows): an uploaded file waiting for its confirmation
 _staged_lock = threading.Lock()
 MAX_STAGED = 20
+MAX_SHOTS = 24                          # screenshots shown on a scenario; one parametrised test can take many more
 
 
 def url(repo: str = "", **q) -> str:
@@ -179,6 +181,30 @@ def _source(c: dict) -> str:
     return f'<span class="muted">{esc(c["source"])}</span>'
 
 
+def screenshots(db, cfg, repo: str, test: str) -> list[dict]:
+    """The board images that the scenario's Playwright test took in the repo's newest run, so each opens in the review tool."""
+    keys = SB.shots_for_test(db, repo, test)
+    if not keys:
+        return []
+    known = {i["key"]: i for i in SB.board_images(db, cfg.screens)}
+    return [known[k] for k in keys if k in known]
+
+
+def shots_card(shots: list[dict], linked: bool) -> str:
+    """The screenshots of a scenario's test, from the newest Playwright run of its repo (factory/captures.py)."""
+    if not linked:
+        empty = '<p class="muted">No screenshots yet. Set the Playwright test of this scenario to see what its last run looked like.</p>'
+    elif not shots:
+        empty = '<p class="muted">No screenshots yet. They appear here after the next Build screens run of this repository.</p>'
+    else:
+        empty = ""
+    grid = "".join(f'<li><figure><a href="/screens/review?{esc(urlencode({"img": x["key"]}))}"><img src="{esc(x["src"])}" '
+                   f'alt="{esc(x["label"])}" loading="lazy"></a><figcaption>{esc(x["label"])}</figcaption></figure></li>'
+                   for x in shots[:MAX_SHOTS])
+    more = f'<p class="muted">And {len(shots) - MAX_SHOTS} more on the Screens board.</p>' if len(shots) > MAX_SHOTS else ""
+    return f'<div class="card"><h3>Screenshots</h3>{empty}' + (f'<ul class="cp-grid">{grid}</ul>{more}' if grid else "") + '</div>'
+
+
 def view_get(h, q: dict, csrf: str) -> None:
     try:
         cfg, repo, db, s = _find(h, q)
@@ -187,6 +213,7 @@ def view_get(h, q: dict, csrf: str) -> None:
     try:
         hist = SC.history(db, s["id"]) if s else []
         links = SC.ticket_links(db, s["id"]) if s else []
+        shots = screenshots(db, cfg, repo, s["pw_test"]) if s else []
     finally:
         db.close()
     if not s:
@@ -224,7 +251,7 @@ def view_get(h, q: dict, csrf: str) -> None:
             '<p class="muted">Ticks choose which comments go in. Nothing starts until you pick a start label.</p></form>'
             + (f'<ul>{open_links}</ul>' if open_links else ""))
     body = (f'<p><a href="{esc(url(repo))}">Tests</a> / {esc(ref)}</p><h1>{esc(s["title"])}</h1>'
-            f'<div class="grid2">{card}{record}</div><h2>History and comments</h2>{tick}')
+            f'<div class="grid2">{card}{record}</div>{shots_card(shots, bool(s["pw_test"]))}<h2>History and comments</h2>{tick}')
     _page(h, f"{ref} · Tests", body, csrf)
 
 

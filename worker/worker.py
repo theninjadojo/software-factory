@@ -181,6 +181,11 @@ def is_screens(job: dict) -> bool:
     return isinstance(job.get("params"), dict) and job["params"].get("purpose") == "screens"
 
 
+def artifact_name(p: Path) -> str:
+    """The name a PNG is sent under: its file name without .png, slugged."""
+    return re.sub(r"[^a-z0-9-]+", "-", p.stem.lower()).strip("-")[:60]
+
+
 def collect_artifacts(recipe: Recipe, root: Path, limit: int = MAX_ARTIFACTS, budget: int | None = None) -> list[dict]:
     """PNGs matching the recipe's globs, inside the checkout, not symlinks, size-limited. The orchestrator validates them again.
     `budget` caps the total bytes, so one huge suite cannot make a result the API refuses."""
@@ -188,7 +193,7 @@ def collect_artifacts(recipe: Recipe, root: Path, limit: int = MAX_ARTIFACTS, bu
     for pattern in recipe.artifacts:
         for f in sorted(glob.glob(pattern, root_dir=root, recursive=True)):
             p = root / f
-            name = re.sub(r"[^a-z0-9-]+", "-", p.stem.lower()).strip("-")[:60]
+            name = artifact_name(p)
             if (len(out) >= limit or p.is_symlink() or not p.is_file() or not NAME.fullmatch(name or "-") or name in seen
                     or p.stat().st_size > MAX_PNG):
                 continue
@@ -294,40 +299,64 @@ def _inside(path: Path, root: Path) -> str | None:
     return rel if rel and rel != "." else None
 
 
-def playwright_tests(data, root: Path) -> list[tuple[str, str, str]]:
-    """(id, outcome, message) per test of a Playwright JSON report. The id is `path › describe › title`: the file relative to the checkout,
-    the innermost describe() around the test (if any), and its title; the same test in several projects (browsers) appears once per
-    project here and is merged later. expected and flaky are a pass, unexpected a fail, skipped is left out."""
+def _playwright_specs(data, root: Path):
+    """(id, test) per test entry of a Playwright JSON report. The id is `path › describe › title`: the file relative to the checkout, the
+    innermost describe() around the test (if any), and its title."""
     if not isinstance(data, dict):
-        return []
+        return
     base = Path((data.get("config") or {}).get("rootDir") or root)
-    out = []
 
-    def walk(suite: dict, path: str | None, group: str) -> None:
+    def walk(suite: dict, path: str | None, group: str):
         for spec in suite.get("specs") or []:
             if not isinstance(spec, dict) or not path:
                 continue
             for t in spec.get("tests") or []:
-                outcome = {"expected": "pass", "flaky": "pass", "unexpected": "fail"}.get((t or {}).get("status"))
-                if not outcome:
-                    continue
-                msg = ""
-                for r in reversed(t.get("results") or []):
-                    err = (r or {}).get("error") or {}
-                    msg = (err.get("message") or err.get("value") or "") if isinstance(err, dict) else ""
-                    if msg:
-                        break
-                tid = " › ".join(x for x in (path, group, str(spec.get("title") or "")) if x)
-                out.append((tid, outcome, _message(msg)))
+                if isinstance(t, dict):
+                    yield " › ".join(x for x in (path, group, str(spec.get("title") or "")) if x), t
         for child in suite.get("suites") or []:
             if isinstance(child, dict):
-                walk(child, path, str(child.get("title") or group))
+                yield from walk(child, path, str(child.get("title") or group))
 
     for top in data.get("suites") or []:
         if isinstance(top, dict):
-            path = _inside(base / str(top.get("file") or top.get("title") or ""), root)
-            walk(top, path, "")
+            yield from walk(top, _inside(base / str(top.get("file") or top.get("title") or ""), root), "")
+
+
+def playwright_tests(data, root: Path) -> list[tuple[str, str, str]]:
+    """(id, outcome, message) per test of a Playwright JSON report, ids as _playwright_specs makes them; the same test in several
+    projects (browsers) appears once per project here and is merged later. expected and flaky are a pass, unexpected a fail, skipped
+    is left out."""
+    out = []
+    for tid, t in _playwright_specs(data, root):
+        outcome = {"expected": "pass", "flaky": "pass", "unexpected": "fail"}.get(t.get("status"))
+        if not outcome:
+            continue
+        msg = ""
+        for r in reversed(t.get("results") or []):
+            err = (r or {}).get("error") or {}
+            msg = (err.get("message") or err.get("value") or "") if isinstance(err, dict) else ""
+            if msg:
+                break
+        out.append((tid, outcome, _message(msg)))
     return out
+
+
+def playwright_shots(data, root: Path) -> dict[str, str]:
+    """{resolved path of a screenshot: id of the test that took it}, from the PNG attachments of a Playwright JSON report."""
+    out = {}
+    for tid, t in _playwright_specs(data, root):
+        for r in t.get("results") or []:
+            for a in (r.get("attachments") or []) if isinstance(r, dict) else []:
+                if isinstance(a, dict) and a.get("contentType") == "image/png" and isinstance(a.get("path"), str) and "\0" not in a["path"]:
+                    out[str(Path(a["path"]).resolve())] = tid
+    return out
+
+
+def pytest_id(path: str | None, classes: list[str], name: str, root: Path) -> str | None:
+    """pytest's node id without parameters (path::Class::name), the path made relative to the checkout; None when it is outside it."""
+    rel = _inside(root / path, root) if path else None
+    name = re.sub(r"\[.*\]$", "", name or "", flags=re.S)
+    return "::".join([rel, *classes, name]) if rel and name else None
 
 
 def junit_tests(text: str, root: Path) -> list[tuple[str, str, str]]:
@@ -340,26 +369,26 @@ def junit_tests(text: str, root: Path) -> list[tuple[str, str, str]]:
         return []
     out = []
     for case in tree.iter("testcase"):
-        name = re.sub(r"\[.*\]$", "", case.get("name") or "")
         parts = [p for p in (case.get("classname") or "").split(".") if p]
         path, classes = None, []
         if case.get("file"):
-            path = _inside(root / case.get("file"), root)
+            path = case.get("file")
             stem = Path(case.get("file")).with_suffix("").as_posix().replace("/", ".")
             classes = parts[len(stem.split(".")):] if ".".join(parts).startswith(stem) else []
         else:
             for i in range(len(parts), 0, -1):
                 cand = root / ("/".join(parts[:i]) + ".py")
                 if cand.is_file():
-                    path, classes = _inside(cand, root), parts[i:]
+                    path, classes = cand.relative_to(root).as_posix(), parts[i:]
                     break
-        if not path or not name:
+        tid = pytest_id(path, classes, case.get("name") or "", root)
+        if not tid:
             continue
         if case.find("skipped") is not None:
             continue
         bad = case.find("failure") if case.find("failure") is not None else case.find("error")
         msg = "" if bad is None else ((bad.get("message") or "") + ("\n" + bad.text if bad.text else "")).strip()
-        out.append(("::".join([path, *classes, name]), "fail" if bad is not None else "pass", _message(msg)))
+        out.append((tid, "fail" if bad is not None else "pass", _message(msg)))
     return out
 
 
@@ -395,6 +424,57 @@ def collect_results(folder: Path, root: Path) -> tuple[list[dict], list[dict]]:
             continue
         reports.append({"name": name, "html_b64": base64.b64encode(index.read_bytes()).decode()})
     return merge_tests(found), reports
+
+
+def _results_lines(f: Path) -> list[str]:
+    """The lines of a small file the recipe or the suite wrote into FACTORY_RESULTS_DIR (none when it is missing, a symlink or too big)."""
+    if f.is_symlink() or not f.is_file() or f.stat().st_size > MAX_RESULTS_FILE:
+        return []
+    return f.read_text(errors="replace").splitlines()[:MAX_TESTS]
+
+
+def suite_shot_test(line: str, root: Path) -> tuple[str, str] | None:
+    """(PNG file name, test id) from one line of e2e-shots.jsonl, where a Python suite writes {"file", "test"} for each PNG it keeps:
+    the test is a pytest node id (or PYTEST_CURRENT_TEST), made the same as the JUnit ids (junit_tests). None for anything else."""
+    try:
+        x = json.loads(line)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(x, dict) or not isinstance(x.get("file"), str) or not isinstance(x.get("test"), str):
+        return None
+    name, test = x["file"], re.sub(r" \((setup|call|teardown)\)$", "", x["test"])
+    if not name.endswith(".png") or "/" in name or "\\" in name or name.startswith("."):
+        return None
+    node = re.match(r"[^\[]*", test).group(0)               # the parameters, which may hold "::", are dropped anyway
+    path, *rest = node.split("::")
+    tid = pytest_id(path, rest[:-1], rest[-1], root) if rest else None
+    return (name, tid) if tid else None
+
+
+def collect_shot_tests(folder: Path, root: Path, test_ids: set[str]) -> dict[str, str]:
+    """{artifact name: id of the test that took it}, only for ids among this run's test results. A Playwright run: the recipe's
+    shots.tsv (source path, TAB, file in screens-out) joined with the screenshots attached to each test in pw-*.json. A Python suite:
+    e2e-shots.jsonl (suite_shot_test). A shot with no known test is sent without one."""
+    by_path: dict[str, str] = {}
+    files: dict[str, str] = {}
+    try:
+        for f in sorted(folder.glob("pw-*.json")):
+            if not f.is_symlink() and f.is_file() and f.stat().st_size <= MAX_RESULTS_FILE:
+                by_path.update(playwright_shots(json.loads(f.read_text(errors="replace")), root))
+        for line in _results_lines(folder / "shots.tsv"):
+            src, _, out = line.partition("\t")
+            if out and "\0" not in src and (tid := by_path.get(str(Path(src).resolve()))):
+                files[out] = tid
+        for line in _results_lines(folder / "e2e-shots.jsonl"):
+            if (got := suite_shot_test(line, root)):
+                files[got[0]] = got[1]                       # the last line for a file wins: that is the picture left in the folder
+    except (OSError, ValueError, RecursionError):
+        log.warning("could not read which test took each screenshot")
+    out: dict[str, str] = {}
+    for f, tid in sorted(files.items()):
+        if tid in test_ids:
+            out.setdefault(artifact_name(Path(f)), tid)
+    return out
 
 
 def fit_result(result: dict) -> dict:
@@ -481,6 +561,10 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
             result["findings"] = read_findings(findings_file)
         if results_dir:                                      # a Playwright run: per-test results and its HTML reports, failing or not
             result["tests"], result["reports"] = collect_results(results_dir, checkout)
+            took = collect_shot_tests(results_dir, checkout, {t["id"] for t in result["tests"]})
+            for a in result["artifacts"]:
+                if a["name"] in took:
+                    a["test"] = took[a["name"]]
             result = fit_result(result)
         return result
     except Exception as e:                                   # a worker bug is an error, never a verdict on the patch

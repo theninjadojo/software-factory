@@ -19,7 +19,9 @@
 #
 # When the worker sets FACTORY_RESULTS_DIR (a folder outside the checkout), the suite also writes its results there, failing or not:
 # Playwright's JSON report (pw-<folder>.json) and HTML report (report-<folder>/), or pytest's JUnit XML (junit.xml). The worker turns them
-# into per-test results for the Tests register and sends each HTML report's index.html for the Screens board.
+# into per-test results for the Tests register and sends each HTML report's index.html for the Screens board. So that each screenshot
+# can be shown with the test that took it, this recipe also writes shots.tsv there (the file each PNG was copied from), and a Python
+# suite is given E2E_SHOTS_FILE, where it appends {"file": "<PNG name>", "test": "<pytest node id>"} per PNG (one JSON object a line).
 set -u
 . "$(dirname "$0")/lib.sh"
 ONLY=""
@@ -51,8 +53,10 @@ if [ -z "$DIRS" ] && [ -z "$ONLY" ] && [ -f tests/e2e/requirements.txt ]; then
   if [ -z "$BROWSER" ]; then "$VENV/bin/playwright" install chromium || { echo "[playwright-screens] FAILED: playwright install" >&2; exit 1; }; fi
   status=0
   set --
+  SHOTS=""
   [ -n "${FACTORY_RESULTS_DIR:-}" ] && set -- --junitxml "$FACTORY_RESULTS_DIR/junit.xml" -o junit_family=xunit1     # xunit1 names each test's file
-  E2E_SCREENS_DIR="$OUT" E2E_BROWSER="$BROWSER" "$VENV/bin/python" -m pytest tests/e2e -q -p no:cacheprovider "$@" || { echo "[playwright-screens] some tests failed (their screenshots are kept)" >&2; status=1; }
+  [ -n "${FACTORY_RESULTS_DIR:-}" ] && SHOTS="$FACTORY_RESULTS_DIR/e2e-shots.jsonl"     # the suite says which test took each PNG
+  E2E_SCREENS_DIR="$OUT" E2E_SHOTS_FILE="$SHOTS" E2E_BROWSER="$BROWSER" "$VENV/bin/python" -m pytest tests/e2e -q -p no:cacheprovider "$@" || { echo "[playwright-screens] some tests failed (their screenshots are kept)" >&2; status=1; }
   count=$(find "$OUT" -name '*.png' | wc -l)
   echo "[playwright-screens] $count screenshot(s) kept"
   exit "$status"
@@ -60,6 +64,7 @@ fi
 [ -n "$DIRS" ] || { echo "[playwright-screens] no Playwright config found in this repository" >&2; exit 2; }
 
 slug() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9][^a-z0-9]*/-/g; s/^-//; s/-$//'; }
+TAB=$(printf '\t')
 status=0
 count=0
 
@@ -106,6 +111,8 @@ JS
     sum=$(printf '%s' "$D/$f" | cksum | cut -d' ' -f1)
     if [ ${#label} -gt 46 ]; then label="$(printf '%s' "$label" | cut -c1-22)-$(printf '%s' "$label" | rev | cut -c1-23 | rev)"; fi   # keep both ends: the project is last
     cp "$f" "$OUT/$label-$sum.png"
+    case "$f" in *"$TAB"*) continue ;; esac
+    [ -n "${FACTORY_RESULTS_DIR:-}" ] && printf '%s\t%s\n' "$ROOT/$D/$f" "$label-$sum.png" >> "$FACTORY_RESULTS_DIR/shots.tsv"   # which file each came from: the worker matches it to its test
   done
   cd "$ROOT"
 done

@@ -8,9 +8,11 @@ import urllib.error
 from urllib.parse import urlencode
 
 from .. import reviewnotes as RN
+from .. import scenarios as SC
 from .. import screenboard as SB
 from . import labels as L
 from . import views
+from .scenarios import BADGE
 from .views import csrf_field, esc
 
 log = logging.getLogger("factory.ui")
@@ -279,14 +281,15 @@ def board_review_get(h, q: dict, csrf: str) -> None:
     """Review a screen of the Screens board. Its notes are kept apart from any ticket until a person turns them into one."""
     cfg = h.app.cfg()
     db = h.app.ro_db()
-    known, notes = [], []
+    known, notes, linked, sel = [], [], [], None
     if db is not None:
         try:
             notes = RN.notes(db, *RN.BOARD)
             known = SB.board_images(db, cfg.screens, [x["image"] for x in notes if x["sent"] is None])
+            sel = next((i for i in known if i["key"] == q.get("img")), known[0] if known else None)
+            linked = scenarios_for(db, sel["key"]) if sel else []
         finally:
             db.close()
-    sel = next((i for i in known if i["key"] == q.get("img")), known[0] if known else None)
     head = '<p><a href="/screens">← Screens</a></p>'
     if sel is None:
         body = head + '<p class="muted">There are no screens to review yet. Take the shots on the Screens page first.</p>'
@@ -296,10 +299,32 @@ def board_review_get(h, q: dict, csrf: str) -> None:
                   if sel["screen"][0] in {c.repo for c in cfg.screens.captures} and (sel["screen"] not in {(p.repo, p.name) for p in cfg.screens.pages}) else "")
         head = (f'<p><a href="/screens">← Screens</a>{canvas} · {esc(sel["screen"][1])}'
                 + (f' <span class="muted">({esc(sel["screen"][0])})</span>' if len({i["screen"][0] for i in known}) > 1 else "") + "</p>")
-        body = head + review_ui(*RN.BOARD, tabs, known, sel, notes, board_send(cfg, notes, known, sel, csrf), "Notes on the screens", csrf)
+        body = (head + review_ui(*RN.BOARD, tabs, known, sel, notes, board_send(cfg, notes, known, sel, csrf), "Notes on the screens", csrf)
+                + scenarios_card(linked, sel["screen"][0]))
     shown = L.flash_pop(csrf)
     h._send(200, views.page("Review a screen", body, "/screens", csrf, wide=True,
                             flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
+
+
+def scenarios_for(db, k: str) -> list[dict]:
+    """The scenarios in the shot's repo whose Playwright test took it (by pw_test), with their latest result."""
+    tests = set(SB.tests_for_shot(db, k))
+    if not tests:
+        return []
+    try:
+        return [s for s in SC.listing(db, SB.KEY.fullmatch(k).group(1)) if s["pw_test"] in tests]
+    except sqlite3.OperationalError:
+        return []
+
+
+def scenarios_card(linked: list[dict], repo: str) -> str:
+    """Which test scenarios this screenshot is evidence for. Links are built from the stored repo and ref only."""
+    if not linked:
+        return '<section class="card"><h2>Scenarios</h2><p class="muted">No linked scenarios.</p></section>'
+    rows = "".join(
+        f'<li><a href="/scenarios/view?{esc(urlencode({"repo": repo, "ref": s["ref"]}))}">{esc(s["ref"])}</a> {esc(s["title"])} '
+        f'{views.badge(SC.RESULT_LABEL[s["last_result"]], BADGE[s["last_result"]])}</li>' for s in linked)
+    return f'<section class="card"><h2>Scenarios</h2><p class="muted">The tests that took this screenshot.</p><ul>{rows}</ul></section>'
 
 
 START = (("", "Don't start it"), ("auto", "Auto: the factory picks the next stage"), ("design", "Design: send the notes to the designer"))
