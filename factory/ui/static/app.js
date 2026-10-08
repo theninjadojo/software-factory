@@ -137,10 +137,18 @@
       var c = e.target.closest && e.target.closest("[data-card]");
       if (!c) return;
       drag = c; shut(null); say("");
-      if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); }
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "");
+        // The whole card follows the pointer (not just the link inside it), grabbed where it was picked up.
+        if (e.dataTransfer.setDragImage) { var r = c.getBoundingClientRect(); e.dataTransfer.setDragImage(c, Math.max(0, e.clientX - r.left), Math.max(0, e.clientY - r.top)); }
+      }
+      // Dim the card left behind only after the browser has taken its picture, so the dragged copy stays fully visible.
+      setTimeout(function () { if (drag === c) c.classList.add("dragging"); }, 0);
     });
     document.addEventListener("dragend", function () {
+      if (drag) drag.classList.remove("dragging");
       drag = null;
+      Array.prototype.forEach.call(document.querySelectorAll(".kb-card.dragging"), function (x) { x.classList.remove("dragging"); });
       Array.prototype.forEach.call(document.querySelectorAll(".kb-col.over"), function (x) { x.classList.remove("over"); });
     });
     document.addEventListener("dragover", function (e) {
@@ -155,7 +163,7 @@
       if (!col) return;
       e.preventDefault();
       var card = drag, to = col.getAttribute("data-col"), word = (col.getAttribute("aria-label") || to).split(",")[0];
-      drag = null; col.classList.remove("over");
+      drag = null; col.classList.remove("over"); card.classList.remove("dragging");
       if (to === card.getAttribute("data-col")) return;
       var menu = card.querySelector(".kb-menu"), opt = card.querySelector('details.kb-opt[data-to="' + to + '"]');
       if (!menu) return;
