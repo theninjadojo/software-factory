@@ -30,7 +30,8 @@ class AdminCase(UiCase):
         f = {"section": "general", "general.poll_seconds": str(cfg.poll_seconds), "general.confidence_threshold": str(cfg.confidence_threshold),
              "github.trigger_label": cfg.trigger_label, "github.repos": "\n".join(["your-org/standalone-service"]),
              "github.poll_seconds": str(cfg.github_poll_seconds), "local.max_attachment_mb": str(cfg.attach_max_mb),
-             "local.max_attachments": str(cfg.attach_max_files), "local.max_attachments_total_mb": str(cfg.attach_max_total_mb)}
+             "local.max_attachments": str(cfg.attach_max_files), "local.max_attachments_total_mb": str(cfg.attach_max_total_mb),
+             "board.done_days": str(cfg.board_done_days)}
         if cfg.github_issues_enabled:
             f["github.issues_enabled"] = "1"                                              # a checked box is sent; an unchecked one is not
         f.update(over)
@@ -779,4 +780,4 @@ class SettingsLayout(UiCase):
         _, _, html = self.req("GET", "/settings?section=general", cookie=cookie)
         self.assertIn("Save changes", html)
         self.assertIn("Changes apply the next time the factory is idle", html)
-        self.assertEqual(html.count('class="srow'), 13)
+        self.assertEqual(html.count('class="srow'), 14)

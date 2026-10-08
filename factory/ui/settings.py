@@ -112,6 +112,8 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("local.max_attachment_mb", "Largest attachment (MB)", "int", "Files attached to a local ticket.", lo=1, hi=50, adv=True),
         Field("local.max_attachments", "Attachments per ticket", "int", "Files attached to one local ticket.", lo=1, hi=20, adv=True),
         Field("local.max_attachments_total_mb", "All attachments of a ticket (MB)", "int", "Together, for one local ticket.", lo=1, hi=200, adv=True),
+        Field("board.done_days", "Keep done tickets on the board (days)", "int",
+              "Done cards leave the Tickets board this many days after their last change. The list still shows every ticket.", lo=1, hi=365, adv=True),
         Field("github.poll_seconds", "Read GitHub every (seconds)", "int",
               "Local tickets are handled at every poll; GitHub issues can be read less often to spare API calls. "
               "The same as the poll interval reads GitHub at every poll.", lo=5, hi=86400, adv=True),
@@ -406,7 +408,7 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     return {"auto.label": "factory:auto", "routing.low.fallback_models": [], "routing.medium.fallback_models": [], "routing.high.fallback_models": [],
             "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
-            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "local.max_attachment_mb": 5, "local.max_attachments": 5, "local.max_attachments_total_mb": 20, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
+            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "local.max_attachment_mb": 5, "local.max_attachments": 5, "local.max_attachments_total_mb": 20, "board.done_days": 7, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
 def canon(key: str, v):
