@@ -265,7 +265,9 @@ class Board(LocalTickets):
         self.assertIn('class="kb-col" data-col="new"', html)
         self.assertIn('action="/tickets/start"', html)
         self.assertIn('action="/tickets/close"', html)
-        self.assertIn("The factory has no action that does this", html)            # PR and CI, Needs you and Failed are not offered
+        for action in ["auto"] + [r.name for r in self.cfg().roles]:                # Auto and every stage, each with its own confirmation
+            self.assertIn(f'name="action" value="{action}"', html)
+        self.assertIn("Start with Auto", html)
 
     def test_the_board_escapes_titles_and_unknown_views_fall_back_to_the_list(self):
         self.create(title="<script>alert(1)</script>")
@@ -286,7 +288,7 @@ class Board(LocalTickets):
     def test_build_is_never_started_from_the_board_and_github_numbers_still_need_a_token(self):
         self.create()
         n = tracker.LOCAL_BASE + 1
-        self.assertNotIn('<option value="build"', self.board()[2])
+        self.assertNotIn('name="action" value="build"', self.board()[2])
         self.post(self.cookie, self.csrf, "/tickets/start", {"repo": REPO, "n": str(n), "action": "bogus"})
         self.assertEqual(self.store().issue(REPO, n)["labels"], [])
         self.post(self.cookie, self.csrf, "/tickets/close", {"repo": REPO, "n": "12"})          # a GitHub number, no token: nothing happens
@@ -303,6 +305,34 @@ class Board(LocalTickets):
         ran = {**row, "state": "done", "closed": True, "journey": {"steps": [1]}}
         self.assertEqual((kanban.moves_for(ran, False)["new"][0], kanban.moves_for(ran, False)["done"][0]), ("", "reopen"))
 
+    def test_starts_offer_auto_and_the_stages_not_done_and_rerun_a_failed_ticket(self):
+        from factory.ui import kanban
+        cfg = self.cfg()
+        names = [r.name for r in cfg.roles]
+        st = {sid: "none" for sid, _ in board.STATIONS}
+        new = {"state": "new", "issue": tracker.LOCAL_BASE + 1, "stations": st}
+        note, starts = kanban.starts_for(new, cfg, False)
+        self.assertEqual((note, [a for a, _, _, why in starts if not why]), ("", ["auto", *names]))
+        failed = {**new, "state": "failed", "stations": {**st, names[0]: "done", "review": "fail"}}
+        offered = {a: why for a, _, _, why in kanban.starts_for(failed, cfg, False)[1]}
+        self.assertEqual((offered[names[0]], offered["build"]), ("already done", ""))      # a finished stage is shown, not offered
+        running = {**new, "state": "working", "stations": {**st, "build": "run"}}
+        self.assertEqual(kanban.starts_for(running, cfg, False), (kanban.RUNNING, []))
+        self.assertEqual(kanban.starts_for({**new, "issue": 12}, cfg, False), (kanban.NEEDS_TOKEN, []))
+        self.assertIn(kanban.BLOCKED.strip(), kanban._ask("auto", "Auto", "L-1", pm=True)[0])          # the PM may hold a build
+        self.assertNotIn(kanban.BLOCKED.strip(), kanban._ask("analyst", "Analyze", "L-1", pm=True)[0])
+
+    def test_done_cards_leave_the_board_after_the_configured_days(self):
+        from factory.ui import kanban
+        now = 1_000_000_000.0
+        rows = [{"when": now - 3600}, {"when": now - 8 * 86400}, {"when": 0}]
+        keep, old = kanban.recent(rows, 7, now)
+        self.assertEqual((keep, old), ([rows[0], rows[2]], 1))                       # no known activity time: it stays
+        self.assertEqual(self.cfg().board_done_days, 7)
+        n = tracker.LOCAL_BASE + 1
+        self.create()
+        self.post(self.cookie, self.csrf, "/tickets/close", {"repo": REPO, "n": str(n)})
+        self.assertIn("Done · last 7 days", self.board()[2])
 
 class PriorityAndRoadmap(LocalTickets):
     def test_a_pinned_priority_sticks_and_the_roadmap_shows_it(self):

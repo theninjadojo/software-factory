@@ -106,15 +106,38 @@
       .catch(function () { fail("Couldn’t reach the factory. Nothing was changed that we know of. Try again."); });
   });
 
-  // --- Board: dropping a card on a column opens the card's Move to menu at that column. The button in the menu is the confirmation
-  // (the ordinary form post), so a drop never changes anything by itself, and a column with no action explains why.
+  // --- Board: dropping a card on a column opens the card's menu at that column: Working shows its start choices, Done its close
+  // confirmation. The button in the menu is the confirmation (the ordinary form post), so a drop never changes anything by itself,
+  // and a column the factory fills by itself says so. One menu is open at a time; closing it also folds its choice back up.
   (function () {
     var drag = null;
     function alertBox() { return document.querySelector("[data-kb-alert]"); }
+    function say(text) { var box = alertBox(); if (box) { box.hidden = !text; box.textContent = text; } }
+    function shut(except) {
+      Array.prototype.forEach.call(document.querySelectorAll(".kb-menu[open]"), function (m) { if (m !== except) m.open = false; });
+    }
+    document.addEventListener("toggle", function (e) {
+      var d = e.target;
+      if (!d.classList) return;
+      if (d.classList.contains("kb-menu")) {
+        if (d.open) shut(d);
+        else Array.prototype.forEach.call(d.querySelectorAll(".kb-opt[open]"), function (o) { o.open = false; });
+      } else if (d.classList.contains("kb-opt") && d.open) {
+        var b = d.querySelector(".kb-conf button"); if (b) b.focus();
+      }
+    }, true);
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") return;
+      var m = document.querySelector(".kb-menu[open]");
+      if (!m) return;
+      var o = m.querySelector(".kb-opt[open]");
+      if (o) { o.open = false; o.querySelector("summary").focus(); } else { m.open = false; m.querySelector("summary").focus(); }
+    });
     document.addEventListener("dragstart", function (e) {
       var c = e.target.closest && e.target.closest("[data-card]");
       if (!c) return;
-      drag = c; if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); }
+      drag = c; shut(null); say("");
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); }
     });
     document.addEventListener("dragend", function () {
       drag = null;
@@ -131,15 +154,20 @@
       var col = drag && e.target.closest && e.target.closest(".kb-col");
       if (!col) return;
       e.preventDefault();
-      var card = drag, to = col.getAttribute("data-col"), box = alertBox();
+      var card = drag, to = col.getAttribute("data-col"), word = (col.getAttribute("aria-label") || to).split(",")[0];
       drag = null; col.classList.remove("over");
       if (to === card.getAttribute("data-col")) return;
-      var menu = card.querySelector(".kb-menu"), opt = card.querySelector('.kb-opt[data-to="' + to + '"]');
-      if (!menu || !opt) return;
-      var why = opt.classList.contains("off") ? opt.querySelector(".muted").textContent : "";
-      if (box) { box.hidden = !why; box.textContent = why; }
+      var menu = card.querySelector(".kb-menu"), opt = card.querySelector('details.kb-opt[data-to="' + to + '"]');
+      if (!menu) return;
+      if (!opt) {
+        var note = to === "working" ? card.querySelector(".kb-note") : null;
+        say(note ? note.textContent : "The factory moves tickets to " + word + " by itself. Nothing was changed.");
+        return;
+      }
+      say("");
       menu.open = true;
-      var go = opt.querySelector("button"); if (go) go.focus(); else if (menu.querySelector("summary")) menu.querySelector("summary").focus();
+      if (to === "working") opt.querySelector("summary").focus();     // several ways to start: the person picks one
+      else opt.open = true;                                           // one way to get there: straight to its confirmation
     });
   })();
 
