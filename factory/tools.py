@@ -211,7 +211,8 @@ def update_one(cfg, state_dir, name: str, run=subprocess.run, now=time.time) -> 
     if before and after == before:
         run([engine, "rmi", candidate], capture_output=True, timeout=60)
         return True, f"{t.label} is already on the newest version ({after})"
-    for cmd in ([engine, "tag", image, previous], [engine, "tag", candidate, image], [engine, "rmi", candidate]):
+    # The last step drops what the old :previous pointed at, now untagged; images a running sandbox uses are never removed.
+    for cmd in ([engine, "tag", image, previous], [engine, "tag", candidate, image], [engine, "rmi", candidate], [engine, "image", "prune", "-f"]):
         run(cmd, capture_output=True, timeout=60)
     return True, f"{t.label} updated: {before or '?'} to {after}. The previous image is kept as {previous}."
 

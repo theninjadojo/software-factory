@@ -55,6 +55,7 @@ class Update(unittest.TestCase):
         self.assertIn("TOOL_REFRESH=1234", build)                               # what busts the cached npm layer
         self.assertEqual(eng.versions[IMG], "2.2.0")
         self.assertEqual(eng.versions[PREV], "2.1.0")                           # the old image is kept for a rollback
+        self.assertEqual(eng.calls[-1][1:], ["image", "prune", "-f"])         # and the one it replaced does not pile up
 
     def test_a_new_cli_that_does_not_start_changes_nothing(self):
         eng = FakeEngine({IMG: "2.1.0"}, images={IMG})                          # the candidate prints no version

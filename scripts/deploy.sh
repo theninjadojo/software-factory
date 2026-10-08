@@ -39,6 +39,8 @@ cd app
 if ! python3 -m unittest discover -s tests > /tmp/sf-tests.log 2>&1; then tail -25 /tmp/sf-tests.log; echo 'TESTS FAILED: not restarting (the new code is on disk but the running service is unchanged)'; exit 1; fi
 tail -3 /tmp/sf-tests.log
 if [ "$1" = "--image" ]; then podman build -q -t factory-agent -f sandbox/Dockerfile sandbox && podman build -q -t factory-render -f sandbox/render/Dockerfile sandbox/render && podman build -q -t factory-screens -f sandbox/screens/Dockerfile sandbox/screens; fi
+# Each rebuild leaves the image it replaced untagged; on a small disk those pile up (14 GB on one host). Tagged images, :previous included, stay.
+if [ "$1" = "--image" ]; then podman image prune -f >/dev/null || true; fi
 systemctl --user restart factory.service
 # The UI runs no agents, so restarting it is always safe; without this it keeps serving the old code.
 if systemctl --user is-enabled factory-ui.service >/dev/null 2>&1; then systemctl --user restart factory-ui.service; fi

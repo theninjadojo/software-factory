@@ -123,4 +123,6 @@ if [ -z "${DRY_RUN:-}" ]; then
   for u in factory-proxy factory factory-ui; do systemctl --user is-enabled $u.service >/dev/null 2>&1 || continue
     systemctl --user is-active --quiet $u.service || rollback; done
 fi
+# Retagging :previous leaves the image it replaced untagged; on a small disk those pile up. Only after health, so a rollback still has :previous.
+run podman image prune -f || true
 if [ "$HAVE" = none ]; then echo "Now on $TAG."; else echo "Now on $TAG. Rollback with: $APP/deploy/update-native.sh v$HAVE   (read the release notes first)"; fi
