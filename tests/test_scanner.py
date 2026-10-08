@@ -272,6 +272,27 @@ class RecipeTests(unittest.TestCase):
             self.assertEqual(err.getvalue().count("took more than"), 3)           # the fourth and fifth file are not tried
             self.assertIn("smell slow dropped: too slow", err.getvalue())
 
+    def test_test_title_not_user_story(self):
+        sid = "test-title-not-user-story"
+        self.assertEqual(scanner.regex_problem(scanner.PRESETS[sid][2]["pattern"]), "")
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "e2e").mkdir()
+            (Path(d) / "e2e/a.spec.ts").write_text(
+                'test("coach marks a child absent", async () => {});\n'           # flagged
+                "  test.skip('billing page redirects', async () => {});\n"        # flagged
+                'it(`renders`, () => {});\n'                                       # flagged
+                'test("As a coach, I want to mark a child absent", async () => {});\n'
+                'test("As an admin, I want to see jobs", async () => {});\n'
+                'test.describe("on a phone", () => {});\n'
+                'await test.step("open the page", async () => {});\n'
+                "test(\n")
+            (Path(d) / "e2e/helpers.ts").write_text('test("not a test file", () => {});\n')
+            (Path(d) / "src").mkdir()
+            (Path(d) / "src/sum.test.ts").write_text('test("adds two numbers", () => {});\n')       # a unit test: not checked
+            rule = dict(scanner.PRESETS[sid][2], id=sid)
+            got = [(f["path"], f["line"]) for f in recipe.scan(d, {"smells": [rule]})]
+        self.assertEqual(got, [("e2e/a.spec.ts", 1), ("e2e/a.spec.ts", 2), ("e2e/a.spec.ts", 3)])
+
 
 
 if __name__ == "__main__":

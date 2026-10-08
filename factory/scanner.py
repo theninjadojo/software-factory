@@ -54,6 +54,13 @@ PRESETS.update({
                             {"type": "regex", "globs": _CODE, "pattern": r"\b(?:def|function)\s+\w+\s*\([^(),]*(?:,[^(),]*){5,}\)"}),
     "deep-nesting": ("Design: deep nesting", "Lines indented six or more levels (4 spaces or a tab each): hard to follow and test.",
                      {"type": "regex", "globs": _CODE, "pattern": r"^(?: {24,}|\t{6,})\S"}),
+    "test-title-not-user-story": ("Tests: end-to-end title is not a user story",
+                                  "End-to-end test titles (test(...) or it(...) in JS/TS spec and test files under an e2e, playwright or cypress folder) "
+                                  "that do not read \"As a <role>, I want to ...\". Unit tests are left alone. Only a title on the same line as the call is checked.",
+                                  {"type": "regex", "globs": [f"**/{d}/**/*.{k}.{e}" for d in ("e2e", "playwright", "cypress") for k in ("spec", "test", "cy")
+                                                              for e in ("js", "jsx", "ts", "tsx", "mjs", "cjs")],
+                                   "pattern": r"^\s*(?:test|it|test\.only|test\.skip|test\.fixme|test\.fail|test\.slow|it\.only|it\.skip)"
+                                              r"\(\s*[\"'`](?:[^A]|A[^s]|As[^ ]|As [^a])"}),
 })
 DEFAULT_ADVICE = {
     "hardcoded-secret": "Revoke the credential, move it to the environment or a secret store, and remove it from the history if it was ever pushed.",
@@ -64,6 +71,10 @@ DEFAULT_ADVICE = {
     "sql-concat": "Use parameterised queries (placeholders) and pass the values separately.",
     "long-parameter-list": "Group related parameters into an object or split the function.",
     "deep-nesting": "Use early returns, extract helpers, or flatten the conditions.",
+    "test-title-not-user-story": "Rename each test to a plain-language user story: \"As a <role>, I want to <goal>\", adding \", so that <reason>\" "
+                                 "only when the why is not obvious; a negative test reads \"As a <role>, I shouldn't be able to ...\". The role must be "
+                                 "the account the test actually signs in as (a visitor when nobody signs in). Say what the person sees or gets, without "
+                                 "function, table or CSS names, and keep titles unique within a file.",
 }
 
 

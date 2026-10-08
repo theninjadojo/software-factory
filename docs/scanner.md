@@ -15,7 +15,8 @@ A scan reads a configured repository on a timer, looks for smells, and opens one
 
 Presets: `todo-debt`, `long-files` (over `max_lines`, default 800), `missing-tests`. Also, for Python and JS/TS and with a default fix each (opt-in per scan, never added to existing scans):
 security (`hardcoded-secret`, whose matched text is redacted to `[REDACTED]` by the recipe; `dynamic-eval`, `shell-injection`, `tls-verify-off`,
-`weak-hash`, `sql-concat`) and rough structure checks (`long-parameter-list`, `deep-nesting`). These are per-line patterns, so approximations: there is
+`weak-hash`, `sql-concat`), rough structure checks (`long-parameter-list`, `deep-nesting`), and `test-title-not-user-story` (JS/TS `test(...)`/`it(...)` titles in
+spec and test files under an `e2e`, `playwright` or `cypress` folder that do not start "As a", for user-story titles such as "As a coach, I want to mark a child absent"). These are per-line patterns, so approximations: there is
 no real SOLID or design-pattern detection. Update the worker's copy of `smell-scan.py` too: an older recipe ignores the redacting rule. Custom smells are a regular expression per line plus file globs.
 Instruction (agent-evaluated) smells are not implemented yet.
 
