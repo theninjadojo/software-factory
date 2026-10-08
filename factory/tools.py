@@ -230,8 +230,11 @@ def _work(cfg, state_dir, names, run, now) -> None:
             _update_state(state_dir, last={"name": name, "ok": ok, "message": msg, "at": now()})
         scan(cfg, state_dir, run, now)
     finally:
-        _update_state(state_dir, building="")
-        _busy.release()
+        _busy.release()                                 # first: a failed write below (a full disk) must not block every later update
+        try:
+            _update_state(state_dir, building="")
+        except OSError:
+            log.exception("could not clear the tool build state")
 
 
 def tick(cfg, state_dir, run=subprocess.run, now=time.time, spawn=None) -> bool:
@@ -239,8 +242,15 @@ def tick(cfg, state_dir, run=subprocess.run, now=time.time, spawn=None) -> bool:
     Builds never block the poll and never touch running jobs (see the module docstring)."""
     if cfg.dry_run:
         return False
-    names = requested(state_dir)
-    due = now() - float(read(state_dir).get("scanned", 0) or 0) > RESCAN_SECONDS
+    names, st = requested(state_dir), read(state_dir)
+    if st.get("building") and _busy.acquire(blocking=False):
+        try:                                            # no build is running here: a leftover from a failed write or a restart
+            _update_state(state_dir, building="")
+        except OSError:
+            pass
+        finally:
+            _busy.release()
+    due = now() - float(st.get("scanned", 0) or 0) > RESCAN_SECONDS
     if not names and not due:
         return False
     if not _busy.acquire(blocking=False):
