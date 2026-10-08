@@ -132,13 +132,24 @@ def attachments_html(cfg, issue: dict, repo: str, n: int, hidden: str) -> str:
             f'<p class="muted">{esc(attach_help(cfg))}</p><button>Attach</button></form></details>')
 
 
-def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | None, approved: bool) -> str:
+INTERNAL = ("factory:", "stage:", "priority:")
+
+
+def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | None, approved: bool, actions: bool = True) -> str:
+    """actions=False: the start buttons are shown elsewhere (a failed ticket's What went wrong card)."""
     n = int(issue["number"])
     hidden = _hidden(repo, n, csrf, back)
     status, acts = L.actions_for(cfg, issue, decision, approved)
     closed = issue["state"] == "closed"
     who = AUTHOR.get(issue["user"]["login"], issue["user"]["login"])
-    labels = " ".join(L.chip(x, cfg) for x in L._names(issue)) or '<span class="muted">No labels.</span>'
+    opened = "Imported from GitHub" if issue["user"]["login"] == tracker.IMPORTED else f"Opened by {who}"
+    names = L._names(issue)
+    mine = [x for x in names if not x.strip().lower().startswith(INTERNAL)]
+    theirs = [x for x in names if x.strip().lower().startswith(INTERNAL)]
+    labels = (" ".join(L.chip(x, cfg) for x in mine) or ('<span class="muted">No labels.</span>' if not theirs else ""))
+    if theirs:                                  # the factory's own labels say where it stands, which the page already shows
+        labels += (f' <details class="lt-more"><summary>+ {len(theirs)} factory label{"" if len(theirs) == 1 else "s"}</summary>'
+                   + " ".join(L.chip(x, cfg) for x in theirs) + "</details>")
     body = md_render(issue["body"])[0] if issue["body"].strip() else '<p class="muted">No description.</p>'
     comments = "".join(
         f'<li class="lt-c"><p class="muted lt-by"><b>{esc(AUTHOR.get(c["user"]["login"], c["user"]["login"]))}</b> · '
@@ -154,10 +165,10 @@ def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | Non
         note = '<span class="muted">The factory stops its work on it.</span> ' if status in L.BUSY else ""
         state = (f'<form method="post" action="/tickets/close" class="inline">{hidden}{note}'
                  '<button class="secondary">Close ticket</button></form>')
-    start = L.action_forms(repo, n, acts, csrf, back) if acts and not closed else ""
+    start = L.action_forms(repo, n, acts, csrf, back) if acts and not closed and actions else ""
     return (f'<section class="sd-card lt-card" aria-labelledby="lt-h"><div class="sd-cardhead"><h3 id="lt-h">Local ticket</h3>'
             f'{badge(issue["state"], "" if closed else "good")}</div>'
-            f'<p class="muted">Opened by {esc(who)} {esc(ago(issue["created"]))}. Kept in the factory\'s own database, not on GitHub.</p>'
+            f'<p class="muted">{esc(opened)} {esc(ago(issue["created"]))}. Kept in the factory\'s own database, not on GitHub.</p>'
             f'<div class="doc lt-body">{body}</div><p class="lt-labels">{labels}</p>'
             f'<div class="sd-acts">{start}{state}</div>'
             f'<details class="lt-sec"><summary><span class="lt-sec-t">Edit title and description</span></summary>'
@@ -171,6 +182,15 @@ def card(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | Non
             f'<form method="post" action="/tickets/local/comment" class="field">{hidden}'
             f'<label>Add a comment<textarea name="body" rows="3" required maxlength="{L.MAX_BODY}"></textarea></label>'
             '<button>Comment</button></form></details></section>')
+
+
+def failed_extras(cfg, issue: dict, repo: str, csrf: str, back: str, decision: dict | None, approved: bool) -> tuple[str, dict | None]:
+    """For a failed local ticket's What went wrong card: its start buttons, and the factory's latest comment ({author, body, at})."""
+    _, acts = L.actions_for(cfg, issue, decision, approved)
+    buttons = L.action_forms(repo, int(issue["number"]), acts, csrf, back) if acts and issue["state"] != "closed" else ""
+    mine = [c for c in issue.get("comment_list", []) if c["user"]["login"] == tracker.FACTORY_AUTHOR]
+    latest = {"author": "Factory", "body": factory_data(mine[-1]["body"])[1], "at": L._epoch(mine[-1]["created_at"])} if mine else None
+    return buttons, latest
 
 
 # ---------------------------------------------------------------- actions

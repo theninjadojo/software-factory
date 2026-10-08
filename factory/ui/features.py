@@ -226,9 +226,17 @@ def tickets_strip(cfg, csrf: str, ask: bool = False) -> str:
              else badge("Off", "warn") + ' <span class="muted">every ticket is a GitHub issue</span>')
     items = [("Tickets live in", esc(live_in)), ("Build label", f'<code>{esc(cfg.trigger_label)}</code>'),
              ("Schedules", f'<a href="/schedules">{esc(_n(len(cfg.schedules), "schedule"))}</a>'), ("Local tickets", local)]
-    sw = switch_form("local.enabled", cfg.local_enabled, csrf, "/tickets", "Keep tickets in the factory" if not cfg.local_enabled else "Turn off",
+    sw = switch_form("local.enabled", cfg.local_enabled, csrf, "/tickets", "Keep tickets in the factory" if not cfg.local_enabled else "Turn off local tickets",
                      open_=ask, primary=False) if csrf else ""
-    return strip(items, f'<div class="ft-strip-acts">{sw}</div>' if sw else "", "The settings that shape Tickets", "tk-settings")
+    # Setup, not daily work: one line that opens to the details (and opens by itself when New ticket sent you here).
+    line = (f'Tickets live in {esc(live_in)} · Build label <code>{esc(cfg.trigger_label)}</code> · '
+            f'{esc(_n(len(cfg.schedules), "schedule"))}')
+    cells = "".join(f'<div class="ft-cell"><span class="ft-lab">{esc(k)}</span><span>{v}</span></div>' for k, v in items)
+    return (f'<details class="tk-line" id="tk-settings"{" open" if ask else ""}><summary><span class="muted">{line}</span>'
+            f'<span class="tk-line-more">Settings for this page</span></summary>'
+            f'<section class="ft-strip card" aria-label="The settings that shape Tickets"><div class="ft-cells">{cells}</div>'
+            + (f'<div class="ft-strip-acts">{sw}</div>' if sw else "")
+            + '<p class="ft-foot muted">The settings that shape Tickets. <a href="/settings">All settings</a></p></section></details>')
 
 
 def factory_strip(cfg, paused, csrf: str) -> str:

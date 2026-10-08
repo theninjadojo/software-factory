@@ -344,7 +344,7 @@ class ImportantEvents(UiCase):
         prs = self.req("GET", "/tickets?stage=prs", cookie=cookie)[2]
         self.assertIn('class="sd-chip on"', prs)
         self.assertIn("Checks failing", prs)                                 # the failing ticket is in PRs & CI, with its PR's checks
-        self.assertIn("Fix round 1 of ", prs)
+        self.assertRegex(prs, r"1 of \d fix rounds? used")                    # how the fix rounds ended, in What went wrong
         self.assertIn('href="https://github.com/o/web/pull/2"', prs)
         self.assertNotIn("github.com/bad repo", prs)
         self.assertNotIn("<b>", prs)
@@ -487,9 +487,12 @@ class JourneyPage(UiCase):
         cookie, _ = self.session()
         s, _, html = self.req("GET", "/ticket?repo=o/r&n=4", cookie=cookie)
         self.assertEqual(s, 200)
-        for want in ('id="j-h">Journey', 'class="sd-tiles"', 'class="sd-strip fm-jwrap"', "Steps in order", "CI fix round", "Pull requests and checks"):
+        for want in ('id="ww-h">What went wrong', 'id="j-h">Journey', 'class="sd-strip fm-jwrap"', "Steps in order", "CI fix round"):
             self.assertIn(want, html)
-        self.assertIn("1× opus · 1× sonnet", html)                             # the models used and how many times
+        self.assertLess(html.index("What went wrong"), html.index('id="j-h">Journey'))      # a failed ticket says what failed first
+        self.assertIn('<span class="sd-check bad">', html)                      # the failing check, in full
+        self.assertIn("2 runs on opus, sonnet", html)                           # the numbers in one line under the journey
+        self.assertIn('<details class="sd-card sd-history">', html)             # the run history is folded away
         self.assertNotIn("<b>x</b>", html)                                     # the decision text is escaped
         self.assertNotIn("style=", html)                                       # the CSP forbids inline styles
         self.assertNotIn('id="live"', html)                                    # a finished ticket does not poll

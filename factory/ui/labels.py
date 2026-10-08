@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 import urllib.error
+from datetime import datetime
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 
@@ -604,8 +605,9 @@ def question_popup(repo: str, i: dict, st, csrf: str, back: str, alone: bool = F
 
 
 def _epoch(iso) -> float:
+    """GitHub's 2026-10-08T12:00:00Z, or a local ticket's with fractions of a second; 0 when it cannot be read."""
     try:
-        return time.mktime(time.strptime(str(iso), "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
     except ValueError:
         return 0.0
 

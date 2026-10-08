@@ -566,10 +566,13 @@ class Handler(BaseHTTPRequestHandler):
                 if cold:
                     detail = board.slot("/fragment/detail?" + board._qs(repo=sel["repo"], n=sel["issue"], project=project), "Loading the ticket from GitHub", "sd-detail sd-loading")
                 else:
-                    local, issue = "", None
+                    local, issue, failed = "", None, ""
                     if is_local(sel["issue"]) and (issue := LT.ticket(db, sel["repo"], sel["issue"])) is not None:
-                        local = LT.card(cfg, issue, sel["repo"], csrf, back, L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])),
-                                        (sel["repo"], sel["issue"]) in L._approved(self))
+                        decision, approved = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])), (sel["repo"], sel["issue"]) in L._approved(self)
+                        local = LT.card(cfg, issue, sel["repo"], csrf, back, decision, approved, actions=sel["state"] != "failed")
+                        if sel["state"] == "failed":
+                            acts, latest = LT.failed_extras(cfg, issue, sel["repo"], csrf, back, decision, approved)
+                            failed = board.failed_card(sel, cfg.ci.fix_rounds, now, acts, latest)
                     local = PC.card(cfg, db, sel["repo"], sel["issue"], [x["name"] for x in issue["labels"]] if issue else None,
                                     issue["body"] if issue else "", csrf, back) + local
                     local += SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back) + CH.card(cfg, db, sel["repo"], sel["issue"], csrf, back)
@@ -578,7 +581,7 @@ class Handler(BaseHTTPRequestHandler):
                     close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
                                                                           sel["state"] in ("working", "needs"))
                     detail = board.detail_html(sel, needs_html, files, docs, events, cfg.ci.fix_rounds, now, explicit, images,
-                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close, csrf)
+                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close, csrf, failed)
                 if path == "/fragment/detail":
                     return self._send(200, detail)
         finally:

@@ -55,7 +55,9 @@ def card(cfg, db, repo: str, n: int, labels: list[str] | None, body: str, csrf: 
                  f'<p>It may change on the next sweep (every {int(cfg.pm.interval_minutes)} minutes at most, when the tickets changed). '
                  'Pick a priority above to pin it.</p></div></div>')
     elif source == "label":
-        owner = (f'<div class="pc-owner"><div><strong>{esc(PRIO_WORD[priority])}, from a priority label</strong>'
+        label = next((x for x in labels or [] if x.strip().lower().startswith("priority:")), "")
+        where = f"the label <code>{esc(label)}</code>" if label else "a priority label"
+        owner = (f'<div class="pc-owner"><div><strong>{esc(PRIO_WORD[priority])}, from {where}</strong>'
                  '<p>The project manager leaves it alone because a person changed the label. Pick a priority above to pin it here.</p></div></div>')
     else:
         owner = ('<div class="pc-owner"><div><strong>Normal · nobody set a priority yet</strong>'
