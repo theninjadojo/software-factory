@@ -156,6 +156,11 @@ the real app, grouped by project. Nothing is gated: no patch, and a failing suit
   `allow-same-origin`): it cannot read the factory's cookies or pages, loads nothing from the network and submits no form. A small fixed
   script gives it an in-memory `localStorage`, which an opaque origin lacks. A worker from before this release sends neither, and the
   run shows as before.
+- **Only some test files**: a run started from the Tests page for one feature carries `files` in its params (relative paths, at most 50,
+  each `[A-Za-z0-9_][A-Za-z0-9_.@+/-]*` without `..`; the orchestrator and the worker both check them). The worker writes them one a
+  line to a file outside the checkout and names it in `FACTORY_TEST_FILES`. The recipe passes each Playwright folder its own files
+  (relative to that folder, dots escaped, since Playwright reads them as patterns) and skips a folder with none; a Python suite gets those
+  in `tests/e2e`. None in any suite exits 2 (nothing to run). A worker recipe from before this release ignores the variable and runs everything.
 - **Which test took each screenshot**: the recipe writes `shots.tsv` to `FACTORY_RESULTS_DIR` (the file each PNG was copied from, a tab,
   its name in `screens-out/`), and the worker matches it with the screenshots Playwright's JSON report attaches to each test. A Python
   suite is given `E2E_SHOTS_FILE` (a file in the same folder) and appends one JSON object a line per PNG it keeps:
