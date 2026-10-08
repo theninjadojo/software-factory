@@ -116,6 +116,30 @@ class Tick(unittest.TestCase):
         self.assertEqual(st["building"], "")
         self.assertEqual(st["installed"]["claude-code"]["version"], "2.2.0")
 
+    def test_a_failed_state_write_does_not_block_later_updates(self):
+        real, fail = T._update_state, [True]
+        def update_state(state_dir, **fields):
+            if fail[0] and fields.get("building") != "claude-code":     # the disk fills during the build: every later write fails
+                raise OSError(28, "No space left on device")
+            real(state_dir, **fields)
+        T._update_state = update_state
+        try:
+            T.request(self.state, ["claude-code"])
+            with self.assertRaises(OSError):
+                self.run_tick(FakeEngine({IMG: "2.1.0", CAND: "2.2.0"}, images={IMG}))
+            self.assertFalse(T._busy.locked())
+            fail[0] = False                                             # space is freed
+            T.request(self.state, ["claude-code"])
+            self.assertEqual(self.run_tick(FakeEngine({IMG: "2.1.0", CAND: "2.2.0"}, images={IMG})), (True, True))
+        finally:
+            T._update_state = real
+        self.assertTrue(T.read(self.state)["last"]["ok"])
+
+    def test_a_leftover_building_mark_is_cleared_when_nothing_builds(self):
+        T._update_state(self.state, building="claude-code", scanned=1000)
+        self.assertEqual(self.run_tick(FakeEngine({}), now=lambda: 1001), (False, False))
+        self.assertEqual(T.read(self.state)["building"], "")
+
     def test_idle_with_a_recent_scan_does_nothing(self):
         T._update_state(self.state, scanned=1000)
         self.assertEqual(self.run_tick(FakeEngine({}), now=lambda: 1001), (False, False))
