@@ -15,7 +15,7 @@ from . import views
 from .views import ago, badge, csrf_field, cards_table, esc, trow
 
 log = logging.getLogger("factory.ui")
-HEADS = ["ID", "Feature", "Title", "Playwright test", "Last result", "Last tested", "Tickets"]
+HEADS = ["ID", "Scenario", "Last result", "Last tested", "Tickets"]
 HIST_HEADS = ["Include", "Result", "Comment", "By"]
 SORTS = {"id": "ID", "feature": "Feature", "title": "Title", "result": "Last result", "tested": "Last tested"}
 BADGE = {"pass": "good", "fail": "bad", "blocked": "warn", "": ""}
@@ -50,10 +50,10 @@ def _repo(cfg, value: str) -> str:
     return L._repo(cfg, repo)
 
 
-def _page(h, title: str, body: str, csrf: str, status: int = 200, flash=None, kind: str = "ok") -> None:
+def _page(h, title: str, body: str, csrf: str, status: int = 200, flash=None, kind: str = "ok", bare: bool = False) -> None:
     shown = None if flash else L.flash_pop(csrf)
     msg, k = (flash, kind) if flash else (shown if shown else (None, "ok"))
-    h._send(status, views.page(title, tabs("Tests") + body, "/scenarios", csrf, wide=True, flash=msg, flash_kind=k))
+    h._send(status, views.page(title, tabs("Tests") + body, "/scenarios", csrf, wide=True, flash=msg, flash_kind=k, bare=bare))
 
 
 def _back(h, csrf: str, where: str, msg: str, kind: str = "ok") -> None:
@@ -61,13 +61,26 @@ def _back(h, csrf: str, where: str, msg: str, kind: str = "ok") -> None:
     h._redirect(where)
 
 
-def _repo_links(cfg, repo: str) -> str:
+# ---------------------------------------------------------------- the register
+
+def _repo_picker(cfg, repo: str) -> str:
+    """One labelled choice of repository; it applies at once with the script, the Show button is for pages without it."""
     if len(cfg.repos) < 2:
         return ""
-    return views.chips([(r, r) for r in cfg.repos], repo, lambda r: url(r))
+    opts = "".join(f'<option{" selected" if r == repo else ""}>{esc(r)}</option>' for r in cfg.repos)
+    return (f'<form method="get" action="/scenarios" class="sc-repo" data-autosubmit><label for="sc-repo">Repository</label>'
+            f'<span><select id="sc-repo" name="repo">{opts}</select> <button class="secondary sc-apply">Show</button></span></form>')
 
 
-# ---------------------------------------------------------------- the register
+def _test_cell(pw: str) -> str:
+    """The linked test, short: its file name and the suite, the full id on hover."""
+    if not pw:
+        return '<span class="muted">Not linked</span>'
+    parts = [p.strip() for p in pw.split("›")]
+    parts[0] = parts[0].rsplit("/", 1)[-1]
+    short = " › ".join(parts[:-1] if len(parts) > 2 else parts)       # the last part is the test's name, which the title already says
+    return f'<code class="sc-test" title="{esc(pw)}">{esc(short)}</code>'
+
 
 def register_get(h, q: dict, csrf: str) -> None:
     cfg = h.app.cfg()
@@ -90,45 +103,63 @@ def register_get(h, q: dict, csrf: str) -> None:
         status = ""
     shown = SC.filtered(rows, feature, result, status, text, sort)
     keep = lambda **o: url(repo, **{"feature": feature, "result": result, "status": status, "q": text, "sort": sort, **o})
-    feats = SC.features(rows)
-    options = [("", f"All {len(rows)}")] + [(f, f"{'No feature' if f == '-' else f} {n}") for f, n in feats]
-    chips = views.chips(options, feature, lambda v: keep(feature=v))
-    sel = lambda name, cur, opts: (f'<label>{name}<select name="{name.lower()}">'
-                                   + "".join(f'<option value="{esc(v)}"{" selected" if v == cur else ""}>{esc(t)}</option>' for v, t in opts) + "</select></label>")
-    filters = (f'<form method="get" action="/scenarios" class="filters"><input type="hidden" name="repo" value="{esc(repo)}">'
-               f'<input type="hidden" name="feature" value="{esc(feature)}"><input type="hidden" name="sort" value="{esc(sort)}">'
-               f'<label>Search<input type="search" name="q" value="{esc(text)}" maxlength="100" placeholder="Search title or steps"></label>'
-               + sel("Result", result, [("", "Any")] + [("none", "Not run")] + [(r, SC.RESULT_LABEL[r]) for r in SC.RESULTS])
-               + sel("Status", status, [("", "Any")] + [(s, s.capitalize()) for s in SC.STATUSES])
-               + '<button>Filter</button>' + (f' <a href="{esc(url(repo))}">Clear filters</a>' if feature or result or status or text else "") + '</form>')
-    actions = (f'<p class="actions"><a class="btn" href="/scenarios/import?{esc(urlencode({"repo": repo}))}">Import CSV or Excel</a> '
-               f'<a class="btn" href="/scenarios/export?{esc(urlencode({"repo": repo}))}">Export CSV</a> '
-               f'<a class="btn" href="/scenarios/export?{esc(urlencode({"repo": repo, "format": "xlsx"}))}">Export Excel</a> '
-               f'<a class="btn" href="/scenarios/edit?{esc(urlencode({"repo": repo}))}">Add scenario</a></p>'
-               f'<form method="post" action="/scenarios/discover" class="actions">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}">'
-               '<button>Add from the repository\'s tests</button> <span class="muted">Reads the test files on GitHub; you see the list before anything is saved.</span></form>')
+    filtering = bool(feature or result or status or text)
+    head = (f'<div class="sc-head"><h1>Tests <span class="muted">{len(rows):,} scenario{"" if len(rows) == 1 else "s"}</span></h1>'
+            f'{_repo_picker(cfg, repo)}</div>')
+    enc = lambda **o: esc(urlencode({"repo": repo, **o}))
+    actions = (f'<div class="sc-bar"><a class="btn" href="/scenarios/edit?{enc()}">Add scenario</a>'
+               f'<form method="post" action="/scenarios/discover" class="sc-find">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}">'
+               '<button class="secondary">Add from the repository\'s tests</button></form>'
+               '<span class="muted sc-note">Reads the test files on GitHub; you see the list before anything is saved.</span>'
+               f'<span class="sc-files"><a class="btn secondary" href="/scenarios/import?{enc()}">Import CSV or Excel</a>'
+               f'<span class="sc-export" role="group" aria-label="Export"><span class="muted">Export</span>'
+               f'<a class="btn secondary" href="/scenarios/export?{enc()}">CSV</a>'
+               f'<a class="btn secondary" href="/scenarios/export?{enc(format="xlsx")}">Excel</a></span></span></div>')
     if not rows:
         table = ('<div class="card"><h3>Empty register</h3><p>No scenarios yet for this repository.</p>'
                  '<p class="muted">Add one, import a CSV or Excel file from your spreadsheet, or add the tests the repository already has.</p></div>')
-    elif not shown:
-        table = f'<p class="muted">No scenarios match these filters. <a href="{esc(url(repo))}">Clear filters</a></p>'
+        return _page(h, "Tests", head + actions + table, csrf, bare=True)
+    feat_link = lambda v, name, n: (f'<a href="{esc(keep(feature=v))}"{" class=current aria-current=true" if v == feature else ""}>'
+                                    f'<span>{esc(name)}</span><span class="sc-n">{n:,}</span></a>')
+    feats = SC.features(rows)
+    side = (f'<aside class="sc-feats" aria-labelledby="sc-feat-h"><h2 id="sc-feat-h">Feature <span class="sc-n">{len(feats)}</span></h2><div>'
+            + feat_link("", "All features", len(rows))
+            + "".join(feat_link(f, "No feature" if f == "-" else f, n) for f, n in feats) + '</div></aside>')
+    count = lambda r: sum(1 for x in rows if (x["last_result"] == "" if r == "none" else x["last_result"] == r))
+    seg = lambda v, name, dot: (f'<a href="{esc(keep(result=v))}"{" class=current aria-current=true" if v == result else ""}>'
+                                + (f'<span class="sc-dot {dot}"></span>' if dot else "") + f'{esc(name)}' + (f' <span class="sc-n">{count(v):,}</span>' if v else "") + '</a>')
+    results = ('<p class="sc-seg" aria-label="Last result">' + seg("", "All", "")
+               + "".join(seg(r, SC.RESULT_LABEL[r], BADGE[r]) for r in SC.RESULTS) + seg("none", "Not run", "none") + '</p>')
+    statuses = "".join(f'<option value="{esc(v)}"{" selected" if v == status else ""}>{esc(t)}</option>'
+                       for v, t in [("", "Any")] + [(s, s.capitalize()) for s in SC.STATUSES])
+    filters = (f'<form method="get" action="/scenarios" class="sc-filters" data-autosubmit><input type="hidden" name="repo" value="{esc(repo)}">'
+               f'<input type="hidden" name="feature" value="{esc(feature)}"><input type="hidden" name="result" value="{esc(result)}">'
+               f'<input type="hidden" name="sort" value="{esc(sort)}">'
+               f'<label class="sc-search"><span class="sr">Search title or steps</span><input type="search" name="q" value="{esc(text)}" maxlength="100" placeholder="Search title or steps"></label>'
+               f'<label class="sc-status">Status<select name="status">{statuses}</select></label>'
+               '<button class="secondary">Search</button></form>')
+    summary = (f'<p class="sc-count muted">Showing <strong>{len(shown):,}</strong> of {len(rows):,}'
+               + (f' <a href="{esc(url(repo))}">Clear filters</a>' if filtering else "") + '</p>')
+    if not shown:
+        table = (f'<div class="card sc-empty"><p><strong>No scenarios match these filters</strong></p>'
+                 f'<p class="muted">Try another feature or result, or clear the search.</p><p><a href="{esc(url(repo))}">Clear filters</a></p></div>')
     else:
-        head = lambda key, name: f'<a href="{esc(keep(sort=key))}">{esc(name)}</a>' if key in SORTS else esc(name)
-        keys = {"Feature": "feature", "Title": "title", "Last result": "result", "Last tested": "tested", "ID": "id"}
         cells = []
         for r in shown:
+            scen = (f'<span class="sc-title">{esc(r["title"])}</span><span class="sc-meta">'
+                    + (f'<span class="sc-tag">{esc(r["feature"])}</span>' if r["feature"] else "") + _test_cell(r["pw_test"]) + '</span>')
             cells.append(trow(HEADS, [
-                f'<a href="{esc(view_url(repo, r["ref"]))}">{esc(r["ref"])}</a>', esc(r["feature"] or "—"),
-                esc(r["title"]), f'<code>{esc(r["pw_test"])}</code>' if r["pw_test"] else '<span class="muted">Not linked</span>',
+                f'<a href="{esc(view_url(repo, r["ref"]))}">{esc(r["ref"])}</a>', scen,
                 badge(SC.RESULT_LABEL[r["last_result"]], BADGE[r["last_result"]]),
-                esc(ago(r["last_tested"])) if r["last_tested"] else "never",
-                " ".join(views.ticket_link(repo, n) for n in r["tickets"]) or "—"]))
-        table = cards_table(HEADS, "".join(cells))
-        for name, key in keys.items():                         # sortable column headers are links
-            table = table.replace(f"<th>{esc(name)}</th>", f'<th aria-sort="{"ascending" if sort == key else "none"}">{head(key, name)}</th>')
-    body = (f'<h1>Tests</h1>{_repo_links(cfg, repo)}{actions}'
-            f'<p class="muted" id="feat">Feature</p>{chips}{filters}{table}')
-    _page(h, "Tests", body, csrf)
+                esc(ago(r["last_tested"])) if r["last_tested"] else '<span class="muted">Never</span>',
+                " ".join(views.ticket_link(repo, n) for n in r["tickets"]) or '<span class="muted">—</span>']))
+        table = cards_table(HEADS, "".join(cells)).replace('<table class="', '<table class="sc-table ', 1)
+        for name, key in {"ID": "id", "Scenario": "title", "Last result": "result", "Last tested": "tested"}.items():   # sortable headers are links
+            table = table.replace(f"<th>{esc(name)}</th>",
+                                  f'<th aria-sort="{"ascending" if sort == key else "none"}"><a href="{esc(keep(sort=key))}">{esc(name)}</a></th>')
+    body = (head + actions + f'<div class="sc-layout">{side}<section class="sc-main" aria-label="Scenarios">'
+            f'<div class="sc-tools">{filters}{results}</div>{summary}{table}</section></div>')
+    _page(h, "Tests", body, csrf, bare=True)
 
 
 # ---------------------------------------------------------------- one scenario
