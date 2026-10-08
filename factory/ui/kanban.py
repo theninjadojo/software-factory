@@ -100,7 +100,7 @@ def switch(view: str, project: str, projects=()) -> str:
     pick = (f'<form method="get" action="/tickets" class="sd-form" data-autosubmit><input type="hidden" name="view" value="board">'
             f'<label class="sd-lab sd-project">Project <select name="project" aria-label="Filter tickets by project">{opt("", "All projects")}'
             f'{"".join(opt(v, w) for v, w in projects)}</select></label><button class="secondary sd-apply">Apply</button></form>') if projects and view == "board" else ""
-    return (f'<div class="sd-filters kb-switch"><nav class="sd-chips" aria-label="Tickets view">'
+    return (f'<div class="sd-filters"><nav class="sd-chips" aria-label="Tickets view">'
             f'<a{on("board")} href="/tickets?{esc(board._qs(view="board", project=project))}">Board</a>'
             f'<a{on("list")} href="/tickets?{esc(board._qs(project=project))}">List</a></nav>{pick}</div>')
 
