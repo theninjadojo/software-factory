@@ -24,6 +24,7 @@ def sanitize_markdown(text: str, limit: int = 60000) -> str:
 
 INLINE_CODE = re.compile(r"`([^`\n]+)`")
 BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
+ITALIC = re.compile(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])|(?<!\w)_(?=\S)([^\n]+?)(?<=\S)_(?!\w)")
 LINK = re.compile(r"\[([^\]\n]+)\]\((https://github\.com/[A-Za-z0-9._/#?=&;%~+-]*)\)")
 HEADING = re.compile(r"(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 BULLET = re.compile(r"[ \t]*[-*+][ \t]+(.*)")
@@ -32,11 +33,11 @@ TABLE_SEP = re.compile(r"\|?[ \t]*:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ 
 
 
 def _inline(s: str) -> str:
-    """Everything is escaped first, so the only markup is what is added here: code, bold and github.com links."""
+    """Everything is escaped first, so the only markup is what is added here: code, bold, italics and github.com links."""
     s = html.escape(s)
     parts = INLINE_CODE.split(s)
     for i in range(0, len(parts), 2):
-        p = BOLD.sub(r"<strong>\1</strong>", parts[i])
+        p = ITALIC.sub(lambda m: f"<em>{m.group(1) or m.group(2)}</em>", BOLD.sub(r"<strong>\1</strong>", parts[i]))
         parts[i] = LINK.sub(r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>', p)
     for i in range(1, len(parts), 2):
         parts[i] = f"<code>{parts[i]}</code>"

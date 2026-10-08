@@ -140,9 +140,20 @@ def _belt(into: str, extra: str = "") -> str:
     return f'<span class="sd-belt {kind}{extra}" aria-hidden="true">{_crates(kind)}</span>'
 
 
+SKIPPABLE = ("analyst", "designer", "architect", "review")
+
+
+def shown(st: dict) -> dict:
+    """The stations as a ticket's page shows them: a stage the ticket went past without running it is skipped, not "not yet"."""
+    ids = [sid for sid, _ in STATIONS]
+    last = max((i for i, sid in enumerate(ids) if st[sid] != "none"), default=-1)
+    return {sid: "skip" if v == "none" and sid in SKIPPABLE and ids.index(sid) < last else v for sid, v in st.items()}
+
+
 def strip(st: dict, verify: dict | None = None, now: float | None = None) -> str:
     """One ticket's route as a row of small machines joined by belts (the Journey card), with the railway to the worker that checks
     its build when there is one."""
+    st = shown(st)
     rows = [(sid, SHORT[sid], ICON[sid], st[sid]) for sid, _ in STATIONS]
     return f'<div class="sd-scroll"><div class="sd-strip fm-jwrap">{yard.journey(rows, verify, time.time() if now is None else now)}</div></div>'
 
@@ -264,13 +275,42 @@ def _why(state: str, j: dict, prs: list, need, t: dict, at, now: float) -> str:
         bad = [p for p in prs if p.get("status") == "failed"]
         if bad:
             return f'PR #{int(bad[0]["number"])}: CI failing, {views.pr_round_line(bad[0], 2).lower()}'
+        fails = [c for c in ci_results(j).values() if c["failing"]]
+        last = max(fails, key=lambda c: c["ts"]) if fails else None
+        if last and at == "ci":                 # its pull requests are closed: the last checks that failed say why
+            return f'CI failing on #{last["number"]}: ' + _clip(", ".join(_short_check(c) for c in last["checks"]), 110)
         why = (f[-1].get("message") or "") if f else ""
-        return f'{LABEL.get(at or "", "A step")} failed' + (f": {why[:70]}" if why else "")
+        return f'{LABEL.get(at or "", "A step")} failed' + (f": {_clip(plain(why), 90)}" if why else "")
     if state == "prs" and prs:
         p = next(p for p in prs if (p.get("status") or "") != "closed")
         return f'PR #{int(p["number"])} · {CI_WORD.get(p.get("status") or "", "checks pending")}'
     detail = plain((t.get("detail") or "").rsplit(";", 1)[-1])
     return detail[:90] or ("Merged" if prs else "Finished")
+
+
+CI_MSG = re.compile(r"^([\w.-]+/[\w.-]+)#(\d+): (failing|passed)(?:: (.*))?$", re.S)
+
+
+def ci_results(j: dict) -> dict:
+    """(repo, number) -> {repo, number, failing, checks, ts}: each pull request's latest CI result on the journey."""
+    out: dict = {}
+    for s in j.get("steps") or []:
+        m = CI_MSG.match(s.get("message") or "") if s["kind"] == "ci" else None
+        if m:
+            out[(m.group(1), int(m.group(2)))] = {"repo": m.group(1), "number": int(m.group(2)), "failing": m.group(3) == "failing",
+                                                  "checks": [c.strip() for c in (m.group(4) or "").split(", ") if c.strip()] if m.group(3) == "failing" else [],
+                                                  "ts": s["started"]}
+    return out
+
+
+def _short_check(name: str) -> str:
+    """A check without its workflow name ("CI / lint" -> "lint"), for one-line summaries."""
+    return name.split(" / ", 1)[-1]
+
+
+def _clip(text: str, n: int) -> str:
+    """At most n characters, cut at a word with an ellipsis."""
+    return text if len(text) <= n else text[:n].rsplit(" ", 1)[0].rstrip(" ,·:") + "…"
 
 
 def _open_pr(r: dict) -> bool:
@@ -281,6 +321,9 @@ _TAG = re.compile(r"\s*\(?cls=[\w/.=,:-]*\)?|\s*\[dry-run\]")
 _SAYS = (("human: classifier flagged needs_human", "The classifier asked for a person"), ("needs a person: ", ""), ("human: ", ""))
 
 
+REPO_START = re.compile(r"^[\w.-]+/[\w.-]+#\d")
+
+
 def plain(msg: str) -> str:
     """A decision or event message without the classifier's internal tag (cls=kind/complexity/human=.../conf=...), in words."""
     out = re.sub(r"([:;])\s*[:;]", r"\1", _TAG.sub("", msg or "")).strip(" ;:")
@@ -288,6 +331,8 @@ def plain(msg: str) -> str:
         if out.startswith(raw):
             out = said + out[len(raw):]
     out = out.strip(" ;:")
+    if REPO_START.match(out):                   # a repository name keeps its case
+        return out
     return out[:1].upper() + out[1:] if out else ""
 
 
@@ -444,7 +489,7 @@ def _step_label(s: dict) -> tuple[str, str]:
             return "Build", "CI fix round"
         return base, RUN_WORD.get(str(s.get("status") or ""), str(s.get("status") or ""))
     if s["kind"] == "person":
-        return ("Needs you", plain(s.get("message"))[:100])
+        return ("Needs you", plain(s.get("message"))[:100]) if s["state"] == "waiting" else ("Asked a person", plain(s.get("message"))[:100])
     if s["kind"] == "ci":
         return "CI", plain(s.get("message"))[:100]
     return "Classify", plain(s.get("message"))[:100]
@@ -481,13 +526,14 @@ def steps_html(j: dict, repo: str, issue: int, docs=()) -> str:
             f'<tbody>{rows}</tbody></table></div></section>')
 
 
-def prs_html(prs: list[dict], fix_rounds: int, csrf: str = "") -> str:
+def prs_html(prs: list[dict], fix_rounds: int, csrf: str = "", repo: str = "") -> str:
     rows = ""
     for p in prs:
         status = p.get("status") or "watching"
         tone = "done" if status in ("passed", "closed") else "fail" if status == "failed" else "run"
         url = f'https://github.com/{p["repo"]}/pull/{int(p["number"])}'
-        link = f'<a class="mono" href="{esc(url)}" rel="noopener noreferrer" target="_blank">#{int(p["number"])} ↗</a>' if views.REPO.match(p["repo"]) else f'#{int(p["number"])}'
+        name = ("" if p["repo"] == repo else p["repo"].split("/")[-1] + " ") + f'#{int(p["number"])}'
+        link = f'<a class="mono" href="{esc(url)}" rel="noopener noreferrer" target="_blank">{esc(name)} ↗</a>' if views.REPO.match(p["repo"]) else esc(name)
         merge = (f'<form method="post" action="/prs/merge" class="inline">{views.csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(p["repo"])}">'
                  f'<input type="hidden" name="n" value="{int(p["number"])}"><button aria-label="Merge pull request #{int(p["number"])}" '
                  'title="Merges this pull request on GitHub with a merge commit">Merge</button></form>'
@@ -497,9 +543,8 @@ def prs_html(prs: list[dict], fix_rounds: int, csrf: str = "") -> str:
                  f'<span class="muted">{esc(views.pr_round_line(p, fix_rounds))}</span>{merge}</li>')
     body = f'<ul class="sd-prs">{rows}</ul>' if rows else ""
     return (f'<section class="sd-card" aria-labelledby="pr-h"><h3 id="pr-h">Pull requests and checks</h3>{body}'
-            '<p class="muted sd-fine">' + ("Each check result and fix round shows here as the factory sees it." if rows else
-                                            "No pull request yet. When a build opens one, it appears here with its checks, the fix rounds and the merge state.")
-            + '</p></section>')
+            + ("" if rows else '<p class="muted sd-fine">No pull request yet. When a build opens one, it appears here with its checks, '
+               'the fix rounds and the merge state.</p>') + '</section>')
 
 
 def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str, imports: list[dict] | None = None) -> str:
@@ -530,7 +575,7 @@ def activity_html(events: list[dict], now: float) -> str:
 
 def phone_journey(r: dict, files: list, docs) -> str:
     """Phones: the ten stations in order, each with its time, agent, tokens and links; the mockups sit in the Designer step."""
-    st, steps, repo, n = r["stations"], r["journey"]["steps"], r["repo"], r["issue"]
+    st, steps, repo, n = shown(r["stations"]), r["journey"]["steps"], r["repo"], r["issue"]
     by: dict = {}
     for s in steps:
         if s["kind"] == "run":
@@ -539,7 +584,7 @@ def phone_journey(r: dict, files: list, docs) -> str:
     for i, (sid, label) in enumerate(STATIONS, 1):
         state, runs = st[sid], by.get(sid, [])
         took = sum(s["seconds"] or 0 for s in runs)
-        time_s = "Not started" if state == "none" else secs(took) if took else ""
+        time_s = "Not started" if state == "none" else "Skipped" if state == "skip" else secs(took) if took else ""
         note = {"wait": "needs you", "fail": "failed", "run": "running now"}.get(state, "")
         if runs:
             last = runs[-1]
@@ -558,9 +603,9 @@ def phone_journey(r: dict, files: list, docs) -> str:
     return f'<section class="sd-phj" aria-labelledby="pj-h"><h3 id="pj-h" class="lab">Journey</h3><ol>{items}</ol></section>'
 
 
-def journey_card(st: dict, verify: dict | None = None, now: float | None = None) -> str:
+def journey_card(st: dict, verify: dict | None = None, now: float | None = None, foot: str = "") -> str:
     return (f'<section class="sd-card sd-journey" aria-labelledby="j-h"><div class="sd-cardhead"><h3 id="j-h">Journey</h3>'
-            f'<span class="muted sd-fine">The same stations as the Factory floor</span></div>{strip(st, verify, now)}</section>')
+            f'<span class="muted sd-fine">The same stations as the Factory floor</span></div>{strip(st, verify, now)}{foot}</section>')
 
 
 def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, csrf: str = "", needs_html: str = "") -> str:
@@ -570,12 +615,93 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, c
     design_prs = sorted({f.get("pr") for f in files if f.get("pr")})
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
     return (journey_card(r["stations"], r.get("verify"), now) + phone_journey(r, files, docs) + needs_html + _tiles(j, r["state"])
-            + prs_html(r["prs"], fix_rounds, csrf) + design_html(files, repo, n, docs, design_link, r.get("design_imports")) + steps_html(j, repo, n, docs)
+            + prs_html(r["prs"], fix_rounds, csrf, repo) + design_html(files, repo, n, docs, design_link, r.get("design_imports")) + steps_html(j, repo, n, docs)
             + activity_html(events, now))
 
 
+X_ICON = '<svg class="sd-x" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+OK_ICON = '<svg class="sd-x" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>'
+
+
+def failed_card(r: dict, fix_rounds: int, now: float, actions: str = "", latest: dict | None = None) -> str:
+    """A failed ticket's first card: what failed (each pull request's failing checks, in full), how the fix rounds ended, the
+    factory's latest word on it and what a person can do next. latest: {author, body, at} of the newest factory comment."""
+    j, prs, repo = r["journey"], r["prs"], r["repo"]
+    results = ci_results(j)
+    failed = [s for s in j["steps"] if s["state"] == "failed"]
+    at = r.get("at")
+    if at == "ci" or any(p.get("status") == "failed" for p in prs):
+        used = max([int(p.get("rounds") or 0) for p in prs], default=0)
+        head = (f'CI kept failing after {used} of {fix_rounds} fix round{"" if fix_rounds == 1 else "s"}.' if used
+                else "CI failed and no fix round ran.")
+    else:
+        head = f'{LABEL.get(at or "", "A step")} failed.'
+    when = max([s["started"] for s in failed] or [0])
+    head += f" The factory stopped {ago(when, now)}." if when else ""
+    rows = ""
+    known = {(p["repo"], int(p["number"])) for p in prs}
+    seen = prs + [{"repo": k[0], "number": k[1], "status": "failed" if c["failing"] else "passed", "rounds": 0, "summary": ""}
+                  for k, c in results.items() if k not in known]           # a CI result for a pull request the factory no longer tracks
+    seen.sort(key=lambda p: not (results.get((p["repo"], int(p["number"]))) or {}).get("failing"))    # what still fails first
+    for p in seen:
+        res = results.get((p["repo"], int(p["number"])))
+        status = p.get("status") or ""
+        word = "Merged" if p.get("summary") == "merged" else {"failed": "Checks failing", "closed": "Closed", "passed": "Checks passed"}.get(status, "Checks running")
+        name = ("" if p["repo"] == repo else p["repo"].split("/")[-1] + " ") + f'#{int(p["number"])}'
+        url = f'https://github.com/{p["repo"]}/pull/{int(p["number"])}'
+        link = (f'<a class="mono" href="{esc(url)}" rel="noopener noreferrer" target="_blank">{esc(name)} ↗</a>' if views.REPO.match(p["repo"])
+                else f'<span class="mono">{esc(name)}</span>')
+        checks = res["checks"] if res and res["failing"] else ([c.strip() for c in p["summary"][len("failing: "):].split(", ")]
+                                                                if (p.get("summary") or "").startswith("failing: ") else [])
+        if checks:
+            chips = "".join(f'<span class="sd-check bad">{X_ICON}{esc(c)}</span>' for c in checks)
+        elif res and not res["failing"]:
+            chips = f'<span class="sd-check good">{OK_ICON}Checks passed{" after the fix" if int(p.get("rounds") or 0) else ""}</span>'
+        else:
+            chips = ""
+        rows += (f'<li class="sd-wwpr"><div class="sd-wwhead">{link}<span class="sd-word {"fail" if status == "failed" else "none"}">{esc(word)}</span>'
+                 f'<span class="muted">{esc(rounds_used(p, fix_rounds))}</span></div>' + (f'<div class="sd-checks">{chips}</div>' if chips else "") + "</li>")
+    if not rows and failed:
+        s = failed[-1]
+        label, _ = _step_label(s)
+        run = f' <a href="/runs/{int(s["run_id"])}">Open run #{int(s["run_id"])}</a>' if s["kind"] == "run" else ""
+        rows = f'<li class="sd-wwpr"><div class="sd-wwhead"><strong>{esc(label)}</strong>{run}</div><p class="sd-wwmsg">{esc(plain(s.get("message")) or "No message was recorded.")}</p></li>'
+    note = ""
+    if prs and all((p.get("status") or "") == "closed" for p in prs) and not any(p.get("summary") == "merged" for p in prs):
+        note = (f'<p class="sd-wwnote">{"Both pull requests are" if len(prs) == 2 else "The pull request is" if len(prs) == 1 else "The pull requests are"} '
+                'closed without being merged, so the factory no longer watches their checks.</p>')
+    said = (f'<div class="sd-wwsaid"><span class="lab">Latest from the factory · {esc(ago(latest["at"], now))}</span>'
+            f'<p>{esc(_clip(" ".join(latest["body"].split()), 400))}</p></div>') if latest and latest.get("body") else ""
+    return (f'<section class="sd-card sd-ww" aria-labelledby="ww-h"><div class="sd-wwtop"><h3 id="ww-h">What went wrong</h3>'
+            f'<span>{esc(head)}</span></div><div class="sd-wwbody">' + (f'<ul class="sd-wwprs">{rows}</ul>' if rows else "")
+            + note + said + (f'<div class="sd-acts sd-wwacts">{actions}</div>' if actions else "") + "</div></section>")
+
+
+def rounds_used(p: dict, limit: int) -> str:
+    n = int(p.get("rounds") or 0)
+    return f'{n} of {limit} fix round{"" if limit == 1 else "s"} used' if n else "no fix round used"
+
+
+def stats_line(j: dict) -> str:
+    tin, tout = j["tokens"]["in"], j["tokens"]["out"]
+    runs = sum(1 for s in j["steps"] if s["kind"] == "run")
+    parts = ([secs(j["seconds"])] if secs(j["seconds"]) != "—" else []) + ([f'{tok((tin or 0) + (tout or 0))} tokens ({tok(tin)} in, {tok(tout)} out)'] if tin is not None or tout is not None else [])
+    parts += [f'{runs} run{"" if runs == 1 else "s"}' + (f' on {", ".join(sorted(j["models"]))}' if j["models"] else "")] if runs else []
+    return f'<p class="mono muted sd-stats">{esc(" · ".join(parts))}</p>'
+
+
+def history_html(j: dict, repo: str, issue: int, docs, events, now: float) -> str:
+    """The step table and the activity, folded away: on a failed ticket the card above already says what matters."""
+    steps, runs = j["steps"], sum(1 for s in j["steps"] if s["kind"] == "run")
+    if not steps and not events:
+        return ""
+    return (f'<details class="sd-card sd-history"><summary><span class="sd-hist-t">Run history</span><span class="mono muted">'
+            f'{len(steps)} steps · {runs} runs' + (f' · {esc(secs(j["seconds"]))}' if secs(j["seconds"]) != "—" else "")
+            + f'</span></summary>{steps_html(j, repo, issue, docs)}{activity_html(events, now)}</details>')
+
+
 def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_rounds: int, now: float, live: bool, images: bool = False,
-                local_html: str = "", handling: str = "", close_html: str = "", csrf: str = "") -> str:
+                local_html: str = "", handling: str = "", close_html: str = "", csrf: str = "", failed_html: str = "") -> str:
     """local_html: a local ticket's own card (description, comments, edit); it has no GitHub page to link to. close_html: Close for a
     GitHub ticket (a local ticket's card has its own). handling: how the
     settings apply to this ticket (features.ticket_handling)."""
@@ -590,14 +716,23 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
              + "".join(f'<a href="{views.doc_url(repo, n, s)}">Read {esc(views.DOC_NOUN[s])}</a>' for s in docs)
              + (f'<a href="/ticket/images?{esc(_qs(repo=repo, n=n))}">View images</a>'
                 f'<a href="/ticket/review?{esc(_qs(repo=repo, n=n))}">Review the screens</a>' if images else ""))
-    body = live_part(r, files, docs, events, fix_rounds, now, csrf, needs_html)
+    history = ""
+    if r["state"] == "failed":
+        # what went wrong first; the journey with its numbers in one line; the run history folded away below the ticket itself
+        design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>'
+                              for u in sorted({f.get("pr") for f in files if f.get("pr")}) if views.GH_URL.match(u))
+        body = (failed_html or failed_card(r, fix_rounds, now)) + journey_card(r["stations"], r.get("verify"), now, stats_line(j)) \
+            + phone_journey(r, files, docs) + needs_html + design_html(files, repo, n, docs, design_link, r.get("design_imports"))
+        history = history_html(j, repo, n, docs, events, now)
+    else:
+        body = live_part(r, files, docs, events, fix_rounds, now, csrf, needs_html)
     if live and j["status"] in ("running", "waiting", "queued"):
         body = f'<div id="live" data-src="/fragment/ticket">{body}</div>'
     return (f'<article class="sd-detail" aria-label="Ticket {esc(display(int(n)))}">'
             f'<div class="sd-dhead"><div class="sd-row"><span class="mono muted">{esc(views.ref(repo, n))}</span>'
             f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></div>'
             f'<h2>{esc(r["title"])}</h2><div class="sd-links">{links}</div></div>'
-            + body + local_html + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + handling + "</article>")
+            + body + local_html + history + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + handling + "</article>")
 
 
 SUMMARY_LINE = re.compile(r"^\s*(?:\*\*)?Summary:?(?:\*\*)?:?\s*(.+)$", re.I | re.M)

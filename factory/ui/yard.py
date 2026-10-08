@@ -399,7 +399,7 @@ def _drone(path: str, load: str, dur: float, begin: float) -> str:
 
 # ---------------------------------------------------------------- one ticket's journey: the same stations, small, in a row
 J_M, J_STEP, J_TOP = 56, 82, 8
-J_WORD = {"done": "Done", "run": "Running", "wait": "Needs you", "fail": "Failed", "none": "Not yet"}
+J_WORD = {"done": "Done", "run": "Running", "wait": "Needs you", "fail": "Failed", "none": "Not yet", "skip": "Skipped"}
 J_TRAIN = ('<rect class="fm-wagon" x="-24" y="-6" width="22" height="12" rx="2"/><rect class="fm-load" x="-20" y="-3" width="14" height="6"/>'
            '<rect class="fm-loco" x="1" y="-6" width="20" height="12" rx="3"/><circle class="fm-head" cx="18" cy="0" r="1.8"/>')
 VERIFY_SHORT = {"queued": "Waiting", "claimed": "Checking", "passed": "Passed", "failed": "Failed", "error": "Could not run", "cancelled": "Cancelled"}
@@ -418,7 +418,7 @@ def journey(stations: list[tuple[str, str, str, str]], verify: dict | None, now:
     belts, machines = "", ""
     for i in range(n - 1):
         into = stations[i + 1][3] if stations[i + 1][3] != "none" else ("done" if stations[i][3] != "none" else "none")
-        kind = {"done": "ok", "none": "dim"}.get(into, into)
+        kind = {"done": "ok", "none": "dim", "skip": "dim"}.get(into, into)
         d = f"M {_f(cx[i])} {_f(cy)} L {_f(cx[i + 1])} {_f(cy)}"
         belts += f'<path class="fm-belt thin" d="{d}"/><path class="fm-flow {kind}" d="{d}"/>'
         if kind == "run":
