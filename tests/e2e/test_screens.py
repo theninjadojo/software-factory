@@ -1,4 +1,5 @@
 """Every screen renders without errors and fits its viewport, on desktop and on a phone."""
+import json
 import os
 import re
 from pathlib import Path
@@ -36,7 +37,11 @@ def keep_for_board(page, path, viewport):
     width = page.evaluate("document.documentElement.clientWidth")
     clip = {"x": 0, "y": 0, "width": width, "height": min(height, 5900)}
     Path(out).mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(Path(out) / f"{name[:46]}-{viewport}.png"), full_page=True, clip=clip, scale="css")
+    file = f"{name[:46]}-{viewport}.png"
+    page.screenshot(path=str(Path(out) / file), full_page=True, clip=clip, scale="css")
+    if os.environ.get("E2E_SHOTS_FILE"):                    # which test took it, so the Tests and Screens pages can link the two
+        with open(os.environ["E2E_SHOTS_FILE"], "a") as f:
+            f.write(json.dumps({"file": file, "test": os.environ.get("PYTEST_CURRENT_TEST", "")}) + "\n")
 
 
 @pytest.mark.parametrize("path", PAGES)

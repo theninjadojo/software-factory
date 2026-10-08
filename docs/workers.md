@@ -156,6 +156,17 @@ the real app, grouped by project. Nothing is gated: no patch, and a failing suit
   `allow-same-origin`): it cannot read the factory's cookies or pages, loads nothing from the network and submits no form. A small fixed
   script gives it an in-memory `localStorage`, which an opaque origin lacks. A worker from before this release sends neither, and the
   run shows as before.
+- **Which test took each screenshot**: the recipe writes `shots.tsv` to `FACTORY_RESULTS_DIR` (the file each PNG was copied from, a tab,
+  its name in `screens-out/`), and the worker matches it with the screenshots Playwright's JSON report attaches to each test. A Python
+  suite is given `E2E_SHOTS_FILE` (a file in the same folder) and appends one JSON object a line per PNG it keeps:
+  `{"file": "<name in E2E_SCREENS_DIR>", "test": "<pytest node id>"}`. `request.node.nodeid` or `PYTEST_CURRENT_TEST` both work (the
+  worker drops the parameters and a trailing ` (call)`, and makes the path relative to the repository, as for the JUnit ids); the last line
+  for a file wins. A suite that writes nothing still runs; its screenshots are just not linked. The worker sends the test id with each
+  screenshot only when it is one of the run's test results, and the orchestrator checks it again (the same rules as a test id, and it must
+  be in the run's results): a bad one drops only the link, never the screenshot. The links are stored with the shot (a shot several tests
+  took keeps them all; a run at the same commit replaces them) and go when the shot is pruned. A scenario's page then shows the
+  screenshots its *Playwright test* took in the repository's newest run (up to 24), and the review page of a screenshot lists the
+  scenarios of that repository whose *Playwright test* took it, with their latest result.
 - **Limits**: up to 300 screenshots and 40 MB per run (larger than the 8 of an ordinary check; the API accepts a 64 MB result), each
   checked like any worker PNG (at most 1600 x 6000, 3 MB). The newest 3 finished runs of a repo are kept; older ones with their images,
   results and reports are deleted. A backup keeps the runs but blanks their results and reports, like their logs. A run is lower priority than a verification job: the queue serves checks first.

@@ -42,11 +42,22 @@ def split_name(name: str) -> tuple[str, str]:
     return (page if PAGE.fullmatch(page) else "screen", view)
 
 
-def import_run(db, job: dict, shots: dict[str, bytes]) -> int:
+def import_run(db, job: dict, shots: dict[str, bytes], tests: dict[str, str] | None = None) -> int:
     """Keep a finished Playwright run's screenshots as Screens-board images (screenboard.store), under the run's commit, so a person can
-    open them in the review tool and leave notes. Older shots go unless an open note is on them. Returns how many were kept."""
+    open them in the review tool and leave notes, with the tests that took them (`tests`: {name: test id}, already checked by
+    jobs.validate_result). Older shots go unless an open note is on them. Returns how many were kept."""
     SB.ensure_tables(db)
-    n = sum(1 for name, png in shots.items() if SB.store(db, job["repo"], *split_name(name), job["base_sha"], png))
+    tests = tests or {}
+    links: dict[tuple[str, str], set[str]] = {}
+    n = 0
+    for name, png in shots.items():
+        page, view = split_name(name)
+        if SB.store(db, job["repo"], page, view, job["base_sha"], png):
+            n += 1
+            got = links.setdefault((page, view), set())     # several names can make one shot: it keeps every test that took one
+            if name in tests:
+                got.add(tests[name])
+    SB.link_tests(db, job["repo"], job["base_sha"], links)
     SB.prune(db, SB.kept_keys(db))
     db.commit()
     return n
