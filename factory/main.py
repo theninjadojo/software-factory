@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import questions as Q
 from . import db as dbm
@@ -1450,7 +1450,8 @@ def pm_sweep(cfg: Config, gh: GitHub, conn, repo: str, issues: list) -> str:
     route = Route(cfg.pm.harness, cfg.pm.model, cfg.pm.effort)
     stand_in = {"number": 0, "title": f"Project manager: {len(issues)} ticket(s)", "body": "", "updated_at": ""}
     run_id, sink = begin_run("pm", repo, stand_in, route, None, "pm"), {}
-    res = runner.run_task(cfg, gh, repo, stand_in, route, role="pm", sink=sink, backlog=pm.backlog_items(issues, cfg.pm.body_chars))
+    res = runner.run_task(cfg, gh, repo, stand_in, route, role="pm", sink=sink, backlog=pm.backlog_items(issues, cfg.pm.body_chars,
+                                                                                               {n: p for (_, n), p in plan.pins(conn, repo).items()}))
     end_run(run_id, res, sink)
     found = pm.parse(res.output, {i["number"] for i in issues}) if res.status == "stage" else None
     if found is None:

@@ -46,7 +46,8 @@ ROLE_PROMPTS = {
         "decision that the other ticket delivers). Prefer high for broken behaviour, security fixes and tickets that unblock "
         "others; low for nice-to-haves. Most tickets are normal. Do not invent dependencies: only name a blocker you can justify "
         "from the tickets or the code. Write a short document: a ranked list with one line of reasoning per ticket, then any "
-        "dependency chains. A person's priority label always wins over yours, and you never start, approve or cancel work."
+        "dependency chains. A person's priority label always wins over yours: a ticket with pinned_priority was set by a person, "
+        "so give it that priority and rank the other tickets around it. You never start, approve or cancel work."
         "\n\nPRIORITIES BLOCK (required). End your reply with exactly one fenced code block whose info string is "
         '`factory-priorities`, holding JSON like {"tickets": [{"issue": 12, "priority": "high", "blocked_by": [9], '
         '"reason": "Unblocks #14 and #15."}]}. One entry per ticket in the backlog; priority is one of high, normal or low; '

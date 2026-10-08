@@ -31,6 +31,7 @@ from . import reviewactions as RA
 from . import workers as WK
 from . import labels as L
 from . import localtickets as LT
+from . import plancard as PC
 from .auth import AuthStore, Sessions, Throttle
 from .settings import Form
 from .workerproc import WorkerApiProcess
@@ -540,7 +541,7 @@ class Handler(BaseHTTPRequestHandler):
             keys ={k for k, _, _ in board.FILTERS}
             flt = q.get("stage") if q.get("stage") in keys else ("needs" if c["needs"] else "all")
             at = q.get("at") if q.get("at") in board.LABEL else ""
-            text, order = (q.get("q") or "").strip()[:100], "oldest" if q.get("sort") == "oldest" else "latest"
+            text, order = (q.get("q") or "").strip()[:100], q.get("sort") if q.get("sort") in ("oldest", "priority") else "latest"
             repo, n = q.get("repo", ""), q.get("n", "")
             explicit = path in ("/ticket", "/fragment/ticket", "/fragment/detail")
             if explicit and not (views.REPO.match(repo) and n.isdigit() and len(n) < 10):
@@ -565,10 +566,12 @@ class Handler(BaseHTTPRequestHandler):
                 if cold:
                     detail = board.slot("/fragment/detail?" + board._qs(repo=sel["repo"], n=sel["issue"], project=project), "Loading the ticket from GitHub", "sd-detail sd-loading")
                 else:
-                    local = ""
+                    local, issue = "", None
                     if is_local(sel["issue"]) and (issue := LT.ticket(db, sel["repo"], sel["issue"])) is not None:
                         local = LT.card(cfg, issue, sel["repo"], csrf, back, L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])),
                                         (sel["repo"], sel["issue"]) in L._approved(self))
+                    local = PC.card(cfg, db, sel["repo"], sel["issue"], [x["name"] for x in issue["labels"]] if issue else None,
+                                    issue["body"] if issue else "", csrf, back) + local
                     local += SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back) + CH.card(cfg, db, sel["repo"], sel["issue"], csrf, back)
                     local += RA.card(db, sel["repo"], sel["issue"], csrf, back)
                     decided = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])) or {}

@@ -302,3 +302,29 @@ class Board(LocalTickets):
         self.assertEqual(kanban.moves_for(gh, True)["done"][0], "close")
         ran = {**row, "state": "done", "closed": True, "journey": {"steps": [1]}}
         self.assertEqual((kanban.moves_for(ran, False)["new"][0], kanban.moves_for(ran, False)["done"][0]), ("", "reopen"))
+
+
+class PriorityAndRoadmap(LocalTickets):
+    def test_a_pinned_priority_sticks_and_the_roadmap_shows_it(self):
+        from factory import plan, pm
+        from test_pm import PM
+        self.create()
+        n = tracker.LOCAL_BASE + 1
+        f = {"repo": REPO, "n": str(n), "back": f"/ticket?repo={quote(REPO, safe='')}&n={n}"}
+        self.assertEqual(self.post(self.cookie, self.csrf, "/tickets/priority", {**f, "priority": "high"})[0], 303)
+        self.assertEqual([x["name"] for x in self.store().issue(REPO, n)["labels"]], ["priority: high"])
+        html = self.page(n)[2]
+        self.assertIn("Pinned by you · High", html)
+        conn = self.db
+        hub = tracker.Hub(None, self.cfg().db_path)
+        pm.apply(PM, hub, conn, REPO, {n: {}}, [pm.Assessment(n, "low", (), "")], 1)
+        self.assertEqual([x["name"] for x in self.store().issue(REPO, n)["labels"]], ["priority: high"])   # the PM left it alone
+        self.post(self.cookie, self.csrf, "/tickets/priority", {**f, "priority": "pm"})
+        self.assertIsNone(plan.pin(conn, REPO, n))
+        self.post(self.cookie, self.csrf, "/roadmap/milestones", {"repo": REPO, "op": "add", "name": "Checkout"})
+        self.post(self.cookie, self.csrf, "/tickets/milestone", {**f, "milestone": "Checkout"})
+        s, _, html = self.req("GET", f"/roadmap?repo={quote(REPO, safe='')}", cookie=self.cookie)
+        self.assertEqual(s, 200)
+        self.assertIn("Checkout", html)
+        self.assertIn("Fix the footer", html)
+        self.assertEqual(self.post(self.cookie, "bad", "/tickets/priority", {**f, "priority": "high"})[0], 403)

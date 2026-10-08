@@ -5,8 +5,9 @@ On a periodic sweep a read-only agent reads the repository's open factory ticket
 data: each entry is validated against fixed sets (a ticket of the backlog, a priority of high / normal / low, blockers that are
 open issues of the same repository) and anything else is dropped. The PM can do exactly three things with it:
 
-* put `priority: high` / `priority: low` on a ticket, or take off the one it put there itself. A priority label a person set,
-  changed or removed always wins: from then on the PM leaves that ticket's priority alone. The poller already orders eligible
+* put `priority: high` / `priority: low` on a ticket, or take off the one it put there itself. A priority a person pinned (on
+  the Tickets page or with a priority label in the label editor, plan.py) or a priority label a person set, changed or removed
+  always wins: from then on the PM leaves that ticket's priority alone. The poller already orders eligible
   tickets by these labels (main.priority_rank); a priority never makes a ticket eligible.
 * record blockers. While the PM is enabled, a build ticket (implement or auto) whose blockers are still open waits, its trigger
   label untouched, and starts once they are closed. A blocker comes from the PM, or from a `Blocked by #N` line in the ticket's
@@ -21,13 +22,16 @@ import re
 from dataclasses import dataclass
 
 from . import db as dbm
+from . import plan
+from . import tracker
 from .sanitize import sanitize_markdown
 
 log = logging.getLogger("factory.pm")
 BLOCK = re.compile(r"^```factory-priorities[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 LABEL_FOR = {"high": "priority: high", "normal": "", "low": "priority: low"}
 MARKER = "<!-- factory:pm -->"
-EXPLICIT = re.compile(r"^[ \t]*blocked[ \t]+by:?[ \t]*((?:#\d{1,9}[ \t,]*)+)", re.I | re.M)
+EXPLICIT = re.compile(r"^[ \t]*blocked[ \t]+by:?[ \t]*((?:(?:#\d{1,9}|L-\d{1,8})[ \t,]*)+)", re.I | re.M)
+REF = re.compile(r"#(\d+)|L-(\d+)", re.I)
 BUILD_KINDS = ("implement", "auto")                 # the kinds of work a blocker holds back (read-only stages still run)
 MAX_BLOCKERS, MAX_EXPLICIT, MAX_REASON = 5, 10, 200
 STATUS_KEY = "pm:{repo}"
@@ -87,8 +91,8 @@ def parse(text: str, backlog: set) -> list | None:
 
 
 def explicit_blockers(body: str) -> list[int]:
-    """`Blocked by #9, #12` lines in a ticket's body."""
-    nums = [int(n) for m in EXPLICIT.finditer(body or "") for n in re.findall(r"#(\d+)", m.group(1))]
+    """`Blocked by #9, #12` lines in a ticket's body; a local ticket is named as it is shown (`Blocked by L-3`)."""
+    nums = [int(gh) if gh else tracker.LOCAL_BASE + int(loc) for m in EXPLICIT.finditer(body or "") for gh, loc in REF.findall(m.group(1))]
     return sorted(set(nums))[:MAX_EXPLICIT]
 
 
@@ -145,11 +149,18 @@ def backlog_issues(cfg, gh, repo: str, labels: list) -> list[dict]:
     return [found[n] for n in sorted(found)][:cfg.pm.max_tickets]
 
 
-def backlog_items(issues: list, body_chars: int) -> list[dict]:
-    """What the agent sees of each ticket. Of the labels only priority, factory and stage ones: they say where it stands."""
+def backlog_items(issues: list, body_chars: int, pinned: dict | None = None) -> list[dict]:
+    """What the agent sees of each ticket. Of the labels only priority, factory and stage ones: they say where it stands.
+    pinned: issue -> the priority a person pinned (plan.pins), which the agent ranks the rest around."""
     keep = lambda n: n.strip().lower().startswith(("priority:", "factory:", "stage:"))
-    return [{"number": i["number"], "title": i.get("title") or "", "body": (i.get("body") or "")[:body_chars],
-             "labels": [n for lb in i.get("labels", []) if keep(n := lb.get("name", ""))]} for i in issues]
+    out = []
+    for i in issues:
+        item = {"number": i["number"], "title": i.get("title") or "", "body": (i.get("body") or "")[:body_chars],
+                "labels": [n for lb in i.get("labels", []) if keep(n := lb.get("name", ""))]}
+        if (pinned or {}).get(i["number"]):
+            item["pinned_priority"] = pinned[i["number"]]
+        out.append(item)
+    return out
 
 
 def digest(issues: list) -> str:
@@ -201,9 +212,11 @@ def apply(cfg, gh, conn, repo: str, backlog: dict, found: list, run_id) -> list[
         prev = dbm.pm_assessment(conn, repo, a.issue) or {}
         mine, was_blocked = prev.get("applied_label", ""), dbm.pm_blocked_by(conn, repo, a.issue)
         current = {n.strip().lower(): n for lb in fresh.get("labels", []) if (n := lb.get("name", "")).strip().lower().startswith("priority:")}
-        # The PM owns the priority only while the labels are exactly what it left there. A person who adds, changes or removes a
-        # priority label takes it over for good (labels added from the UI use the factory's account, so the actor cannot tell).
-        owned = not prev.get("overridden") and set(current) == ({mine} if mine else set())
+        # The PM owns the priority only while nobody pinned it and the labels are exactly what it left there. A person who adds,
+        # changes or removes a priority label takes it over for good (labels added from the UI use the factory's account, so the
+        # actor cannot tell: the UI records a pin instead, which also covers a person choosing the label the PM had set).
+        owned = (plan.pin(conn, repo, a.issue) is None and not prev.get("overridden")
+                 and set(current) == ({mine} if mine else set()))
         target, priority_set = LABEL_FOR[a.priority], False
         if owned and target != mine:
             if mine:
