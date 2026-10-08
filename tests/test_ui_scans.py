@@ -120,7 +120,7 @@ class Scans(AdminCase):
         self.assertNotIn("scanner", self.overrides())
 
     def test_new_presets_are_listed_with_advice_and_none_is_added_to_a_scan(self):
-        for sid in ("hardcoded-secret", "dynamic-eval", "deep-nesting"):
+        for sid in ("hardcoded-secret", "dynamic-eval", "deep-nesting", "test-title-not-user-story"):
             self.assertIn(sid, scanner.PRESETS)
             self.assertIn(sid, self.req("GET", "/scans/smells", cookie=self.cookie)[2])
         self.assertTrue(scanner.advice_for(self.cfg().scanner, "hardcoded-secret"))
