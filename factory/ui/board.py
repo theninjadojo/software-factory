@@ -12,6 +12,7 @@ import time
 from urllib.parse import urlencode
 
 from .. import db as dbm
+from .. import plan
 from .. import questions as Q
 from .. import why as W
 from ..tracker import display, is_local
@@ -190,6 +191,9 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
                        needs_rows is not None or (not github and not is_local(int(t["issue"])))))
     if not github:
         out = [r for r in out if is_local(r["issue"]) or r["state"] == "working"]
+    prios = plan.who_set_all(db)
+    for r in out:
+        r["priority"], r["prio_src"] = prios.get((r["repo"], r["issue"]), ("normal", ""))
     out.sort(key=lambda r: (ORDER[r["state"]], -r["when"]))
     return out
 
@@ -308,7 +312,22 @@ def pick(rows: list[dict], flt: str, at: str = "", q: str = "", order: str = "la
         out = [r for r in out if q in r["title"].lower() or q in f'{r["repo"]}#{r["issue"]}'.lower()]
     if order == "oldest":
         out.sort(key=lambda r: (ORDER[r["state"]], r["when"]))
+    elif order == "priority":
+        out.sort(key=lambda r: (plan.RANK.get(r.get("priority"), 1), ORDER[r["state"]], -r["when"]))
     return out
+
+
+PIN_ICON = '<svg class="pr-pin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5M9 10.8V4h6v6.8l3 3.2H6z"/></svg>'
+PRIO_WORD = {"high": "High", "normal": "Normal", "low": "Low"}
+
+
+def prio_chip(priority: str, source: str) -> str:
+    """A ticket's priority, when someone set one; a pin when a person did. Nothing for a normal priority nobody chose."""
+    if source != "you" and priority == "normal":
+        return ""
+    who = {"you": "pinned by you", "pm": "set by the project manager", "label": "from a priority label"}.get(source, "")
+    return (f'<span class="pr-chip {esc(priority)}{" mine" if source == "you" else ""}" title="{esc(PRIO_WORD[priority] + " priority, " + who)}">'
+            f'{PIN_ICON if source == "you" else ""}{esc(PRIO_WORD[priority])}<span class="sr"> priority, {esc(who)}</span></span>')
 
 
 # ---------------------------------------------------------------- the Tickets screen
@@ -356,7 +375,7 @@ def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf
         on = sel is not None and (r["repo"], r["issue"]) == sel
         items += (f'<a class="sd-pick{" on" if on else ""}" href="{esc(ticket_url(r, flt, q, at, project))}"{" aria-current=page" if on else ""}>'
                   f'<span class="sd-row"><span class="mono muted">{esc(views.ref(r["repo"], r["issue"], short=True))}</span>'
-                  f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></span>'
+                  f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}</span>'
                   f'<span class="sd-title">{esc(r["title"])}</span><span class="sd-why muted">{esc(r["why"])}</span>{progress(r["stations"])}'
                   f'<span class="mono muted sd-at">{esc("At " + LABEL[r["at"]] if r["at"] else "Not started")} · {esc(ago(r["when"], now) if r["when"] else "")}</span></a>')
         need = r.get("need") or {}
@@ -376,7 +395,7 @@ def filters_html(c: dict, flt: str, q: str, at: str, order: str, repos=(), proje
                   f'{" aria-current=page" if on else ""}>{dot}{esc(word)} <b class="mono">{int(c.get(key, 0))}</b></a>')
     opt = lambda v, w, cur: f'<option value="{esc(v)}"{" selected" if v == cur else ""}>{esc(w)}</option>'
     station_opts = opt("", "Any", at) + "".join(opt(sid, w, at) for sid, w in STATIONS)
-    sort_opts = opt("latest", "Latest activity", order) + opt("oldest", "Oldest waiting", order)
+    sort_opts = opt("latest", "Latest activity", order) + opt("oldest", "Oldest waiting", order) + opt("priority", "Priority", order)
     pick_project = (f'<label class="sd-lab sd-project">Project <select name="project" aria-label="Filter tickets by project">'
                     f'{opt("", "All projects", project)}{"".join(opt(v, w, project) for v, w in projects)}</select></label>') if projects else ""
     return (f'<div class="sd-filters" role="search"><nav class="sd-chips" aria-label="Filter by state">{chips}</nav><span class="sd-grow"></span>'

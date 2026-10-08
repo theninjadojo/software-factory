@@ -2,6 +2,7 @@
 Only labels that already exist in the repository are accepted: GitHub's add-labels call would otherwise create them."""
 import logging
 import re
+import sqlite3
 import threading
 import time
 import urllib.error
@@ -9,6 +10,7 @@ from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import db as dbm
+from .. import plan
 from .. import questions as Q
 from .. import tracker
 from .. import why as W
@@ -760,12 +762,25 @@ def _act(h, form, csrf: str, action: str, steps) -> None:
     h._redirect(f"/labels/issue?repo={repo}&n={n}&ok={action}")
 
 
+def _pin(h, repo: str, n: int, label: str, added: bool) -> None:
+    """A priority label a person adds or removes here is their choice: pin it, so the project manager leaves it alone (labels the
+    UI writes on GitHub carry the factory's account, so the PM could not tell them from its own)."""
+    p = plan.pin_from_label(label, added)
+    if p is not None:
+        db = sqlite3.connect(h.app.cfg().db_path, timeout=10)
+        try:
+            plan.set_pin(db, repo, n, p)
+        finally:
+            db.close()
+
+
 def add(h, form, csrf: str) -> None:
     label = form.get("label", "")
 
     def steps(gh, repo, n):
         _existing(gh, repo, label)
         gh.add_labels(repo, n, [label])
+        _pin(h, repo, n, label, True)
         log.info("labels: added %r to %s#%d", label, repo, n)
 
     _act(h, form, csrf, "added", steps)
@@ -778,6 +793,7 @@ def remove(h, form, csrf: str) -> None:
         if not label or len(label) > 50:
             raise Refused("That label is not valid.")
         gh.remove_label(repo, n, label)
+        _pin(h, repo, n, label, False)
         log.info("labels: removed %r from %s#%d", label, repo, n)
 
     _act(h, form, csrf, "removed", steps)
@@ -795,6 +811,10 @@ def replace(h, form, csrf: str) -> None:
             gh.remove_label(repo, n, old)
         except (urllib.error.URLError, OSError):
             raise Refused(f"“{new}” was added but “{old}” could not be removed, so both are on the issue.")
+        if new.strip().lower().startswith("priority:"):
+            _pin(h, repo, n, new, True)
+        else:
+            _pin(h, repo, n, old, False)
         log.info("labels: replaced %r with %r on %s#%d", old, new, repo, n)
 
     _act(h, form, csrf, "replaced", steps)

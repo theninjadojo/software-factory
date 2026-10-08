@@ -762,7 +762,7 @@ class Labels(AdminCase):
 class SettingsLayout(UiCase):
     def test_nav_has_seven_items_and_moved_pages_render_in_settings(self):
         from factory.ui import views
-        self.assertEqual([n for _, n in views.NAV], ["Factory", "Tickets", "Events", "Screens", "Tests", "Settings"])
+        self.assertEqual([n for _, n in views.NAV], ["Factory", "Tickets", "Events", "Roadmap", "Screens", "Tests", "Settings"])
         cookie, _ = self.session()
         for path, side in (("/harnesses", "Harnesses"), ("/credentials", "Credentials"), ("/telegram", "Telegram"), ("/settings?section=labels", "Labels")):
             s, _, html = self.req("GET", path, cookie=cookie)
