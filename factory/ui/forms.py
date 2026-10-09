@@ -44,7 +44,7 @@ SIDE_GROUPS = [
                                ("design_links", "Design links", "/settings?section=design_links"), ("ticket_review", "Ticket review", "/settings?section=ticket_review")]),
     ("How the work is done", [("routing", "Models by ticket size", "/settings?section=routing"), ("roles", "Stage agents", "/settings?section=roles"),
                               ("classifier", "Classifier", "/settings?section=classifier"), ("runner", "Sandbox & limits", "/settings?section=runner"),
-                              ("questions", "Second opinions", "/settings?section=questions"), ("harnesses", "Harnesses", "/harnesses"), ("prompts", "Agent instructions", "/settings?section=prompts"),
+                              ("questions", "Second opinions", "/settings?section=questions"), ("design_libraries", "Design libraries", "/design/libraries"), ("harnesses", "Harnesses", "/harnesses"), ("prompts", "Agent instructions", "/settings?section=prompts"),
                               ("new_projects", "New project interviews", "/settings?section=new_projects")]),
     ("Before a pull request is done", [("review", "Code review", "/settings?section=review"), ("ci", "CI feedback", "/settings?section=ci"),
                                        ("conflicts", "Merge conflicts", "/settings?section=conflicts"), ("mockups", "Design mockups", "/settings?section=mockups"),

@@ -146,6 +146,27 @@ class DesignLinksCfg:
     ttl_hours: int = 24
 
 
+DESIGN_LIBRARY = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+DESIGN_CHECKS = ("off", "warn", "reject")
+
+
+@dataclass(frozen=True)
+class DesignCfg:
+    """The design library (designlib.py) a project uses when it has not picked one, and what happens to a designer's mockup that uses
+    colours or fonts outside its library. Set on the Design libraries page; a project can pick its own on that page too."""
+    library: str = "neutral"
+    check: str = "warn"              # off | warn (say so on the ticket) | reject (the mockup is discarded)
+
+
+def _design(d: dict) -> DesignCfg:
+    out = DesignCfg(**d)
+    if not isinstance(out.library, str) or not DESIGN_LIBRARY.fullmatch(out.library):
+        raise ValueError("design.library must be a library id (lower-case letters, digits and dashes)")
+    if out.check not in DESIGN_CHECKS:
+        raise ValueError("design.check must be off, warn or reject")
+    return out
+
+
 @dataclass(frozen=True)
 class IssueImagesCfg:
     """Pictures in a GitHub issue (a pasted screenshot), copied in for the agents, which cannot reach GitHub themselves. On by default:
@@ -438,6 +459,9 @@ class Project:
     name: str
     repos: tuple[ProjectRepo, ...]
     description: str = ""
+    design_library: str = ""         # a design library id ("": the [design] default)
+    design_version: int = 0          # stay on this version of it (0: always the newest)
+    design_check: str = ""           # off | warn | reject ("": the [design] default)
 
     def repo(self, name: str) -> "ProjectRepo | None":
         return next((r for r in self.repos if r.repo == name), None)
@@ -475,6 +499,16 @@ def _check_depends(p: "Project") -> "Project":
             full.append(hit[0].repo)
         out.append(dataclasses.replace(r, depends_on=tuple(dict.fromkeys(full))))
     return dataclasses.replace(p, repos=tuple(out))
+
+
+def _check_design(p: "Project") -> "Project":
+    if p.design_library and (not isinstance(p.design_library, str) or not DESIGN_LIBRARY.fullmatch(p.design_library)):
+        raise ValueError(f"projects.{p.name}: design_library must be a library id (lower-case letters, digits and dashes)")
+    if not isinstance(p.design_version, int) or isinstance(p.design_version, bool) or not 0 <= p.design_version <= 100000:
+        raise ValueError(f"projects.{p.name}: design_version must be a whole number (0 for the newest)")
+    if p.design_check not in ("", *DESIGN_CHECKS):
+        raise ValueError(f"projects.{p.name}: design_check must be off, warn or reject")
+    return p
 
 
 @dataclass(frozen=True)
@@ -585,6 +619,7 @@ class Config:
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
     split: SplitCfg = field(default_factory=SplitCfg)
     design_links: DesignLinksCfg = field(default_factory=DesignLinksCfg)
+    design: DesignCfg = field(default_factory=DesignCfg)
     issue_images: IssueImagesCfg = field(default_factory=IssueImagesCfg)
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
@@ -1131,8 +1166,10 @@ def parse(raw: dict) -> Config:
     if isinstance(rn.get("thinking_tokens"), dict):              # one effort level set alone keeps the built-in budget of the others
         rn["thinking_tokens"] = {**RunnerCfg().thinking_tokens, **rn["thinking_tokens"]}
     projects = tuple(
-        _check_depends(Project(name=p["name"], description=p.get("description", ""),
-                               repos=tuple(_project_repo(r, p["name"]) for r in p["repos"])))
+        _check_design(_check_depends(Project(name=p["name"], description=p.get("description", ""),
+                                             repos=tuple(_project_repo(r, p["name"]) for r in p["repos"]),
+                                             design_library=p.get("design_library", ""), design_version=p.get("design_version", 0),
+                                             design_check=p.get("design_check", ""))))
         for p in raw.get("projects", []))
     repos = list(gh["repos"])
     seen: dict[str, str] = {}
@@ -1275,6 +1312,7 @@ def parse(raw: dict) -> Config:
         mockups=mockups,
         split=split_cfg,
         design_links=design_links,
+        design=_design(raw.get("design", {})),
         issue_images=issue_images,
         updates=updates,
         pm=pm,

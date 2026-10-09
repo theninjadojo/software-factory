@@ -7,6 +7,7 @@ ticket) show it in a strip, and a simple switch can be flipped there after a con
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from ..designpresets import PRESETS
 from ..tracker import display
 from .integrations import SECRETS, secret_status
 from .views import badge, csrf_field, esc
@@ -96,6 +97,9 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           f"{cfg.runner.max_parallel} at once", "info", ("Factory",), "/settings?section=runner", "Sandbox & limits"),
         F("harnesses", "work", "Harnesses", "The agent programs available, and the credential each one uses.",
           _n(len(cfg.harnesses) or 1, "harness", "harnesses"), "info", ("Models by ticket size", "Stage agents"), "/harnesses", "Harnesses"),
+        F("design_libraries", "work", "Design libraries", "The colours, type, spacing and components the designer, builder and reviewer use. "
+          "Each project picks one.", "Default: " + (PRESETS[cfg.design.library]["name"] if cfg.design.library in PRESETS else cfg.design.library),
+          "info", ("A ticket", "Screens"), "/design/libraries", "Design libraries"),
         F("workers", "work", "Verification workers", "Run a repository's checks (Android, iOS …) on another machine before anything is pushed.",
           *_onoff(cfg.workers.enabled), ("Factory", "A ticket"), "/workers", "Workers"),
         F("ci", "checks", "CI feedback", f"Watches CI on factory pull requests; after a failure an agent tries up to {_n(cfg.ci.fix_rounds, 'fix')}.",

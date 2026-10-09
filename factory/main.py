@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, conflicts, designfiles, designlib, designlinks, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import judges
 from . import recommend
@@ -367,6 +367,16 @@ def ticket_design_imports(cfg: Config, repo: str, issue: dict) -> list[dict]:
         return []
 
 
+def project_design_library(cfg: Config, repo: str) -> dict | None:
+    """The design library the repo's project uses (None on any failure: a missing library never stops a run)."""
+    try:
+        db = _ev()
+        return designlib.resolve(db, cfg, project_for(cfg, repo)) if db is not None else None
+    except Exception:
+        log.exception("could not read the design library for %s", repo)
+        return None
+
+
 def chat_conversation(cfg: Config, repo: str, num: int) -> list:
     """The ticket chat's newest turns, as untrusted context for a stage run or a review ([] when there are none)."""
     try:
@@ -489,8 +499,15 @@ def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route,
     models = chain(route)
     if cfg.design_links.enabled and "design_imports" not in kw:
         kw["design_imports"] = ticket_design_imports(cfg, repo, issue)
+    if "design_library" not in kw:
+        kw["design_library"] = project_design_library(cfg, repo)
     for i, r in enumerate(models):
         run_id, sink = begin_run(kind, repo, issue, r, c, stage), {}
+        if kw["design_library"] and run_id is not None and (kind in ("build", "review", "fix") or stage == "designer"):
+            try:
+                designlib.record_run(_ev(), run_id, kw["design_library"])
+            except Exception:
+                log.exception("could not record the design library of run %s", run_id)
         res = runner.run_task(cfg, gh, repo, issue, r, sink=sink, **kw)
         if i + 1 < len(models) and runner.wants_fallback(res):
             res.detail = f"{res.detail} (falling back to {models[i + 1].model})"
@@ -1729,6 +1746,54 @@ def maybe_ticket_review(cfg: Config, gh: GitHub, conn) -> None:
         start(cfg, conn, r["repo"], 0, "ticket-review", lambda db, r=r: ticket_review_job(cfg, gh, db, r["id"], r["repo"], r["sources"], r["scope"]))
 
 
+def design_extract_job(cfg: Config, gh: GitHub, conn, rid: int, project) -> str:
+    """Propose a design library from a project's code: a read-only run with the designer's model ends with a library block, which is
+    checked like an upload and kept as a draft (designlib.parse_extract). Nothing uses a draft until a person approves it."""
+    role = next(r for r in cfg.roles if r.name == "designer")
+    route, repo = Route(role.harness, role.model, role.effort), project.repos[0].repo
+    stand_in = {"number": 0, "title": f"Design library from the code of {project.name}",
+                "body": "Read the code of every repository of the project and propose its design library.", "updated_at": ""}
+    run_id, sink = begin_run("design-extract", repo, stand_in, route, None, "design-extract"), {}
+    res = runner.run_task(cfg, gh, repo, stand_in, route, role="design-extract", sink=sink)
+    end_run(run_id, res, sink)
+    if res.status != "stage":
+        if res.status == "rate-limited" and pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+            alert(f"Rate limited while proposing a design library for {project.name}; pausing.", event="rate_limit")
+        designlib.set_extract(conn, rid, "failed", f"the run ended {res.status}", run_id=run_id)
+        return res.status
+    try:
+        got = designlib.parse_extract(res.output, f"{project.name} (from code)")
+    except designlib.LibraryRejected as e:
+        designlib.set_extract(conn, rid, "failed", "the agent's library did not pass the checks: " + "; ".join(e.problems[:4]), run_id=run_id)
+        return "stage"
+    lid = designlib.create(conn, got["name"], got["tokens"], got["rules"], "", "agent", project.name, status="draft", note=f"Proposed by run #{run_id}")
+    designlib.set_extract(conn, rid, "done", "", lid, run_id)
+    emit("design-library", f"a design library was proposed from the code of {project.name}; it waits for approval", repo, None, run_id)
+    return "stage"
+
+
+def maybe_design_extract(cfg: Config, gh: GitHub, conn) -> None:
+    """Start the library proposals a person asked for, in the pool under ticket number 0 of the project's first repository. Never in
+    dry-run or while paused (the request waits)."""
+    if cfg.dry_run or pause.paused(Path(cfg.db_path).parent):
+        return
+    for r in designlib.requested_extracts(conn):
+        project = next((p for p in cfg.projects if p.name == r["project"]), None)
+        if project is None or not project.repos:
+            designlib.set_extract(conn, r["id"], "failed", "there is no such project")
+            continue
+        if any(not q.get("reason") for q in queued) or not pool.can_take(jobkey(project.repos[0].repo, 0)):
+            continue
+        designlib.set_extract(conn, r["id"], "running")
+        def job(db, r=r, p=project):
+            try:
+                design_extract_job(cfg, gh, db, r["id"], p)
+            except Exception:
+                log.exception("design library proposal for %s failed", p.name)
+                designlib.set_extract(db, r["id"], "failed", "the run crashed; see the factory log")
+        start(cfg, conn, project.repos[0].repo, 0, "design-extract", job)
+
+
 def report_blocked(cfg: Config, repo: str, now_held: dict) -> None:
     """One event when a ticket becomes blocked or its blockers change, and one alert per cycle of tickets waiting for each other."""
     for k in [k for k in held if k[0] == repo and k[1] not in now_held]:
@@ -1867,6 +1932,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     except Exception:
         log.exception("ticket review failed")                   # never stops the poll
     try:
+        maybe_design_extract(cfg, gh, conn)
+    except Exception:
+        log.exception("design library proposal failed")        # never stops the poll
+    try:
         if cfg.github_issues_enabled:
             schedules.tick(cfg, gh, conn, time.time(), Path(cfg.db_path).parent, emit, alert)
     except Exception:
@@ -1879,6 +1948,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         screenboard.tick(cfg, conn, time.time(), gh.token, lambda: dbm.connect(cfg.db_path), emit)
     except Exception:
         log.exception("screens board failed")                   # never stops the poll
+    try:
+        designlib.tick(cfg, conn, lambda: dbm.connect(cfg.db_path))
+    except Exception:
+        log.exception("design library previews failed")         # never stops the poll
     try:
         captures.tick(cfg, gh, conn, time.time())
     except Exception:

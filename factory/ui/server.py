@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import backup, machines
 from .. import db as dbm
-from .. import designfiles
+from .. import designfiles, designlib
 from .. import jobs, pause, screenboard, updates, version
 from .. import questions as Q
 from .. import reviewnotes as RN
@@ -390,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
         """A multipart ticket form (/tickets/create with files, /tickets/local/attach): spooled to a private size-capped file, the
         CSRF token checked before the handler sees anything, and the work files always removed. The handler gets the text fields
         and the files as (name, bytes), bytes being None for a file over the size limit."""
-        max_bytes, max_files, max_total = tracker.attach_limits(self.app.cfg())
+        max_bytes, max_files, max_total = (designlib.MAX_ZIP, 1, designlib.MAX_ZIP) if path.startswith("/design/") else tracker.attach_limits(self.app.cfg())
         n = self._length(max_total + 8 * MAX_BODY + 64 * 1024 * (max_files + 1))
         if n is None:
             return

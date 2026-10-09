@@ -770,4 +770,41 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.focus();
   });
+  // --- Editing a design library: each colour picker and its hex box stay in step, and the preview redraws (the server draws the same picture).
+  var dlForm = document.getElementById("dl-edit");
+  if (dlForm) {
+    var dlHex = function (v) {
+      var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec((v || "").trim());
+      if (!m) return null;
+      var h = m[1].toLowerCase();
+      return "#" + (h.length === 3 ? h.replace(/./g, "$&$&") : h);
+    };
+    var dlToken = function (name, fallback) {
+      var i = dlForm.querySelector('[data-dl-token="' + name + '"]');
+      return (i && dlHex(i.value)) || fallback;
+    };
+    var dlDraw = function () {
+      var r = dlForm.querySelector('[data-dl-radius="md"]') || dlForm.querySelector("[data-dl-radius]");
+      var rad = Math.min(parseInt(r && r.value, 10) || 0, 22);
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">'
+        + '<rect width="320" height="120" fill="' + dlToken("page", "#ffffff") + '"/>'
+        + '<text x="28" y="74" font-family="sans-serif" font-size="34" font-weight="700" fill="' + dlToken("ink", "#000000") + '">Aa</text>'
+        + '<rect x="100" y="44" width="104" height="40" rx="' + rad + '" fill="' + dlToken("primary", "#0969da") + '"/>'
+        + '<text x="152" y="69" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="600" fill="' + dlToken("on-primary", "#ffffff") + '">Button</text>'
+        + '<rect x="222" y="40" width="70" height="48" rx="' + rad + '" fill="' + dlToken("surface", "#f6f8fa") + '" stroke="' + dlToken("line", "#d1d9e0") + '"/></svg>';
+      var img = document.querySelector("#dl-art img");
+      if (img) img.src = "data:image/svg+xml," + encodeURIComponent(svg);
+    };
+    dlForm.addEventListener("input", function (e) {
+      var t = e.target;
+      if (t.hasAttribute("data-dl-pick")) {
+        var box = dlForm.querySelector('[name="' + t.getAttribute("data-dl-pick") + '"]');
+        if (box) box.value = t.value;
+      } else if (t.classList.contains("dl-hex")) {
+        var h = dlHex(t.value), p = t.parentNode.querySelector("input[type=color]");
+        if (h && p) p.value = h;
+      }
+      dlDraw();
+    });
+  }
 })();

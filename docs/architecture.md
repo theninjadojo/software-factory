@@ -14,6 +14,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 | `roles.py` | Prompts for the analyst, designer and architect, and the stage names. |
 | `pm.py` | The project manager: validates its `factory-priorities` block, applies only the priority labels it owns, records blockers (`pm_assessments`), makes milestones and names features (short name, category) for a project within what it owns (`plan.py`), and answers "which open tickets hold this one back" for the poll loop. One sweep covers a project's repositories and leaves finished work out. |
 | `ticketreview.py` | The ticket review: validates the `factory-ticket-review` block into proposals (built / duplicate), stores them (`ticket_reviews`, `review_proposals`), and applies the ones a person picked in the UI, one resumable step at a time. |
+| `designlib.py` / `designpresets.py` | Design libraries: the colours, fonts, type sizes, spacing, radii, reference components and rules a project's designer, builder and reviewer use. Presets ship in `designpresets.py`; a person's own libraries (duplicated and edited, uploaded as a zip, or proposed by an agent from a project's code and approved) are versioned in the database (`design_libraries`, `design_library_versions`). Checks uploads, writes the library into the agent's `/task/design-library/`, checks a designer's mockups for colours and fonts outside it, and records the version each run got (`run_design_library`). All of it is managed on Settings › Design libraries. |
 | `split.py` | Splitting a large ticket: validates the analyst's `factory-split` block into a proposal, stores it (`split_proposals`, `split_items`), creates the children once a person approves (one recorded step each), keeps a later child's build waiting for the items it comes after, and closes the umbrella parent when every child is closed. |
 | `ci.py` | Watches CI on factory PRs; reports; drives the optional fix round. |
 | `verify.py` / `jobs.py` / `workerapi.py` | Verification workers ([workers.md](workers.md)): `verify.gate` enqueues one job per configured check after the patch is applied and waits; `jobs.py` is the SQLite queue and the strict validation of results; `workerapi.py` is the separate process workers poll. `worker/worker.py` is the reference worker. |
@@ -50,6 +51,9 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
    With `[roles.designer] design_pr = false` nothing is committed, pushed or opened: the validated canvases and their rendered previews are kept only in the factory's
    database (`design_sources`, `mockup_images`), with an empty `url` in `design_files`. The ticket comment then says so and links nothing; the UI shows the previews and
    offers each canvas as a download (`/design-source`, an attachment, never rendered).
+   **Design library.** Every designer, build and review run gets its project's design library (Settings › Design libraries; the default is the
+   Neutral preset) in `/task/design-library/`, and the prompt tells it to keep to it. A mockup using colours or fonts outside the library is
+   reported on the ticket, or with the check set to reject, dropped like an invalid file.
 8. **Review (optional).** After a build opens PRs, or when a person labels the ticket `factory:review`, a read-only reviewer is run with the PR
    branches checked out and its comment is posted on every PR of the change. It is a role like the analyst, so it uses the same sandbox,
    sanitizer and harness selection; it only ever comments.

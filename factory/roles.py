@@ -97,6 +97,25 @@ ROLE_PROMPTS = {
         "(positions of earlier items it waits for); rerun only for a ticket labelled factory:failed. reason is one plain line of "
         "at most 200 characters. The block is machine-read: valid JSON, plain text, no Markdown inside it."
     ),
+    "design-extract": (
+        "ROLE: Design library extraction. Instead of a ticket, read the code of every repository of the project and work out the "
+        "visual design it already uses: colours, fonts, text sizes, spacing, corner radii and shadows. Look at CSS custom "
+        "properties, Tailwind or theme configuration, design-token files, style sheets, shared UI packages and the mobile apps' "
+        "theme files. Prefer values the code names as tokens over one-off values; when the code uses many near-identical values, "
+        "pick the one used most. Map the colours to these roles: page (the background), surface (cards and panels), ink (body "
+        "text), muted (secondary text), line (borders), primary (main buttons and links), on-primary (text on primary) and error; "
+        "add accent, success and other colours the code really uses. Write a short document: where you found each value, and "
+        "anything inconsistent a person should know. You only propose: a person reviews the library before anything uses it."
+        "\n\nLIBRARY BLOCK (required). End your reply with exactly one fenced code block whose info string is "
+        '`factory-design-library`, holding JSON like {"name": "Shop", "colors": {"page": "#ffffff", "surface": "#f6f6f4", '
+        '"ink": "#222222", "muted": "#666666", "line": "#dddddd", "primary": "#1a7f5a", "on-primary": "#ffffff", "error": "#b42318"}, '
+        '"fonts": {"heading": "DM Sans", "body": "DM Sans"}, "type": {"title": {"size": 28, "weight": 700}, "body": {"size": 16, '
+        '"weight": 400}}, "spacing": [4, 8, 12, 16, 24, 32], "radius": {"sm": 4, "md": 8}, "shadow": {"card": "0 1px 3px '
+        'rgba(0,0,0,0.12)"}, "rules": ["One primary button per screen."]}. Colours are #rrggbb; colors includes every role named '
+        "above; fonts includes heading and body (family names only); type includes body; spacing is increasing whole pixels; radius "
+        "is whole pixels; shadow is optional; rules are up to 12 short design rules you can see the code following. The block is "
+        "machine-read: valid JSON, plain text, no Markdown inside it."
+    ),
     "triage": (
         "ROLE: Comment triage. A person added a comment to a ticket the factory already worked on (see discussion below: the "
         "comment to triage comes first). Read the ticket, the earlier stage documents and the code, then decide what the "

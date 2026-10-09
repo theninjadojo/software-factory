@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, DesignCfg, QuestionsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -714,8 +714,10 @@ def set_parallel(cfg_path: str, state_dir: Path, value: int) -> None:
 def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
     """The form edits names, descriptions, repos and roles. A repo's other keys (depends_on, publish: set in config.toml) are kept."""
     base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
+    eff_projects = deep_merge(base, new_ov).get("projects", [])
     extra = {r["repo"]: {k: v for k, v in r.items() if k not in ("repo", "role")}
-             for p in deep_merge(base, new_ov).get("projects", []) for r in p.get("repos", []) if isinstance(r, dict)}
+             for p in eff_projects for r in p.get("repos", []) if isinstance(r, dict)}
+    design = {p.get("name"): {k: v for k, v in p.items() if k.startswith("design_")} for p in eff_projects}   # set on the Design libraries page
     projects = []
     for i in range(20):
         name = (form.get(f"p{i}_name") or "").strip()
@@ -740,7 +742,7 @@ def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
                 r["depends_on"] = [d for d in r["depends_on"] if d in kept]
                 if not r["depends_on"]:
                     del r["depends_on"]
-        projects.append({"name": name, "description": (form.get(f"p{i}_desc") or "").strip()[:500], "repos": repos})
+        projects.append({"name": name, "description": (form.get(f"p{i}_desc") or "").strip()[:500], "repos": repos, **design.get(name, {})})
     if projects == base.get("projects", []):
         new_ov.pop("projects", None)
     else:
@@ -921,6 +923,30 @@ def apply_dependency(cfg_path: str, state_dir: Path, project: str, publisher: st
         add = [{"repo": c} for c in consumers if c not in {x.get("repo") for x in have}]
         if add:
             new_ov.setdefault("workers", {})["lockfiles"] = have + add
+    _save_projects_list(cfg_path, state_dir, base, new_ov, projects)
+
+
+def set_design_default(cfg_path: str, state_dir: Path, library: str, check: str) -> None:
+    """The library projects use when they have not picked one, and what happens to a mockup outside it (Design libraries page)."""
+    base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
+    for key, value, default in (("design.library", library, DesignCfg().library), ("design.check", check, DesignCfg().check)):
+        current = get_in(base, key, default)
+        if value == current:
+            del_in(new_ov, key)
+        else:
+            set_in(new_ov, key, value)
+    _commit(cfg_path, state_dir, new_ov)
+
+
+def set_project_design(cfg_path: str, state_dir: Path, project: str, library: str, version: int, check: str) -> None:
+    """One project's design library ("" for the default), the version it stays on (0: the newest) and its mockup check ("": the default).
+    The caller has checked that the library exists."""
+    base, new_ov, projects, p = _project_entry(cfg_path, project)
+    for key, value in (("design_library", library), ("design_version", version if library else 0), ("design_check", check)):
+        if value:
+            p[key] = value
+        else:
+            p.pop(key, None)
     _save_projects_list(cfg_path, state_dir, base, new_ov, projects)
 
 
