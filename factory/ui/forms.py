@@ -230,7 +230,7 @@ SECTION_INTRO = {
     "ticket_review": "On request, an agent proposes which open tickets are already built or duplicates. Nothing runs until a person asks.",
     "design_links": "Design exports linked in a ticket, fetched only from hosts you list.",
     "scanner": "Limits for code-smell scans. The scans themselves, and what they look for, are on the Scans page.",
-    "chat": "Ask about a ticket and get a quick answer, outside the label-driven pipeline.",
+    "chat": "Ask about a ticket and get a quick answer, outside the label-driven pipeline. The factory chat answers about every ticket and the settings.",
     "new_projects": "How the agent that interviews you about a new project runs. Start one under New project.",
     "health": "Alerts on Telegram when something that would stop the factory goes wrong: disk, memory, a hung poll, failing runs.",
     "update_check": "Whether the UI tells you when a newer release is out.",

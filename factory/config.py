@@ -256,6 +256,8 @@ class ChatCfg:
     check_seconds: int = 2                # how often the lane looks for a new message
     max_per_hour: int = 20                # messages per ticket
     context_turns: int = 20               # newest turns that later stage prompts carry
+    factory_enabled: bool = False         # the factory chat (factory.factorychat): ask about every ticket and the settings, read-only
+    factory_max_per_hour: int = 20        # factory chat messages per hour, all admins together
 
 
 @dataclass(frozen=True)
@@ -1159,7 +1161,9 @@ def parse(raw: dict) -> Config:
         raise ValueError("chat.effort must be low, medium or high")
     if not isinstance(chat.enabled, bool):
         raise ValueError("chat.enabled must be true or false")
-    for name in ("max_turns", "timeout_seconds", "max_parallel", "check_seconds", "max_per_hour", "context_turns"):
+    if not isinstance(chat.factory_enabled, bool):
+        raise ValueError("chat.factory_enabled must be true or false")
+    for name in ("max_turns", "timeout_seconds", "max_parallel", "check_seconds", "max_per_hour", "context_turns", "factory_max_per_hour"):
         top = 10000 if name == "timeout_seconds" else 1000
         v = getattr(chat, name)
         if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= top:
