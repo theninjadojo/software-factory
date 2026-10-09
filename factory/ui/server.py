@@ -24,7 +24,7 @@ from .. import questions as Q
 from ..config import HealthCfg, load
 from .. import tracker
 from ..tracker import display, is_local
-from . import admin, board, features, floor, floorplan, kanban, views
+from . import admin, board, features, floor, floorplan, integrations, kanban, views
 from . import chat as CH
 from . import splitcard as SPC
 from . import reviewactions as RA
@@ -97,6 +97,14 @@ class App:
             views.UPDATE.update(tag=got.get("tag", ""), url=got.get("url", ""))
         except Exception:
             log.exception("update notice failed")
+
+    def refresh_classifier_hint(self) -> None:
+        """Show the warning while an OpenRouter key is saved and the classifier is still on labels."""
+        try:
+            c = self.cfg()
+            views.CLASSIFIER_HINT["show"] = c.classifier_backend != "jev" and bool(integrations.read_secret(c, "openrouter"))
+        except Exception:
+            log.exception("classifier hint failed")
 
     @staticmethod
     def update_token(c) -> str:
@@ -595,6 +603,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
         self.app.refresh_update_notice()
+        self.app.refresh_classifier_hint()
         cached = L.needs_cached()                            # the nav count: never a GitHub call, only what the tray already read
         badges = {"/tickets": len(cached)} if cached else None
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))

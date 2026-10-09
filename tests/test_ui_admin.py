@@ -166,6 +166,23 @@ class ReviewSettings(AdminCase):
         self.assertFalse(load(str(self.root / "config.toml")).review.enabled)
 
 
+class ClassifierHint(AdminCase):
+    KEY = "sk" + "-or-" + "c" * 12
+    TEXT = "classifier is still set to"
+
+    def test_warns_while_a_key_is_saved_and_the_classifier_is_on_labels(self):
+        cookie, csrf = self.session()
+        self.assertNotIn(self.TEXT, self.req("GET", "/credentials", cookie=cookie)[2])                    # no key yet: nothing to say
+        self.post(cookie, csrf, "/credentials/save", {"name": "openrouter", "value": self.KEY})
+        html = self.req("GET", "/credentials", cookie=cookie)[2]
+        self.assertIn(self.TEXT, html)
+        self.assertIn('href="/settings?section=classifier"', html)
+        self.assertNotIn(self.KEY, html)
+        form = [("section", "classifier"), ("classifier.backend", "jev"), ("classifier.model", "typesafe/jev-1.13"), ("classifier.kind_aliases", "story=feature")]
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)
+        self.assertNotIn(self.TEXT, self.req("GET", "/credentials", cookie=cookie)[2])                    # switched: the warning goes
+
+
 class Credentials(AdminCase):
     def test_secrets_are_stored_0600_and_never_shown_again(self):
         cookie, csrf = self.session()

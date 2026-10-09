@@ -22,7 +22,7 @@ table.meta { background:var(--panel); border:1px solid var(--line); border-radiu
 .badge { display:inline-block; padding:.05rem .5rem; border-radius:999px; font-size:.78rem; border:1px solid var(--line); background:var(--bg); }
 .badge.good { color:var(--good); border-color:var(--good); } .badge.warn { color:var(--warn); border-color:var(--warn); } .badge.bad { color:var(--bad); border-color:var(--bad); }
 .muted { color:var(--muted); } .bad-text { color:var(--bad); } .nowrap { white-space:nowrap; } .wrap { word-break:break-word; max-width:36rem; }
-.flash { padding:.6rem .9rem; border-radius:8px; margin:0 0 1rem; border:1px solid var(--line); background:var(--panel); } .flash.ok { border-color:var(--good); } .flash.bad { border-color:var(--bad); }
+.flash { padding:.6rem .9rem; border-radius:8px; margin:0 0 1rem; border:1px solid var(--line); background:var(--panel); } .flash.ok { border-color:var(--good); } .flash.bad { border-color:var(--bad); } .flash.warn { border-color:var(--warn); }
 button, input, select, textarea { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:0; padding:.35rem .7rem; }
 button { min-height:44px; padding:0 18px; cursor:pointer; background:var(--blue); color:var(--blue-ink); font-weight:700; border-color:var(--blue); } button.link { background:none; border:0; color:var(--muted); padding:0; min-height:0; font-weight:400; }
 form.inline { display:inline; } .filters { display:flex; flex-wrap:wrap; gap:.5rem; margin:0 0 .8rem; } .pager { margin:.8rem 0; }
