@@ -36,7 +36,16 @@ class Workflow(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", text)
         self.assertIn("already released: nothing to do", text)
         self.assertEqual(text.count("steps.v.outputs.go == 'true'"), 4)       # every step after the decision is conditional
-        self.assertIn("self-hosted", text)
+
+    def test_no_workflow_runs_on_a_self_hosted_runner(self):
+        # The repository is public: a fork's pull request can change any workflow, so none may run on a self-hosted runner.
+        for path in (ROOT / ".github" / "workflows").glob("*.yml"):
+            runs_on = [l.strip() for l in path.read_text().splitlines() if l.strip().startswith("runs-on:")]
+            self.assertTrue(runs_on, path.name)
+            self.assertTrue(all(l.startswith("runs-on: ubuntu-") for l in runs_on), (path.name, runs_on))
+        test = (ROOT / ".github" / "workflows" / "test.yml").read_text()
+        self.assertIn("pull_request:", test)
+        self.assertIn("permissions:\n  contents: read\n", test)
 
 
 class AutoUpdate(unittest.TestCase):

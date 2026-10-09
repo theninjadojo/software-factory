@@ -4,15 +4,18 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+# Pull requests from forks run here, so every job uses a GitHub-hosted runner (never the self-hosted one) and a read-only token.
+permissions:
+  contents: read
 jobs:
   unit:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       # The runner's own python3 (3.12). setup-python's tool-cache build cannot find libpython once a test strips the environment.
       - run: python3 -m unittest discover -s tests
   browser:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,21 +24,10 @@ jobs:
       - run: pip install -r tests/e2e/requirements.txt && playwright install --with-deps chromium
       - run: pytest tests/e2e
   images:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t software-factory:ci .
       - run: docker run --rm --entrypoint python3 -w /app software-factory:ci -m unittest discover -s tests
-      # The self-hosted runner image has buildx but not the Compose plugin: fetch it (pinned, checksum checked) when it is missing.
-      - run: |
-          if ! docker compose version >/dev/null 2>&1; then
-            mkdir -p ~/.docker/cli-plugins
-            curl -fsSL -o ~/.docker/cli-plugins/docker-compose https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-x86_64
-            echo "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576  $HOME/.docker/cli-plugins/docker-compose" | sha256sum -c -
-            chmod +x ~/.docker/cli-plugins/docker-compose
-          fi
-          docker compose version
+      - run: docker compose version
       - run: FACTORY_HOME=/tmp/fh DOCKER_GID=0 docker compose config -q
-      # Keep the self-hosted runner's disk from filling up (see release.yml), but keep a day of build cache so CI stays quick.
-      - if: always()
-        run: docker image prune -af --filter until=24h && docker builder prune -af --filter until=24h
