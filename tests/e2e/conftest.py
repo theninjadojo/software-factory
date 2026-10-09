@@ -14,6 +14,7 @@ import threading
 import time
 import urllib.error
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -71,6 +72,8 @@ class FakeGitHub:
                 raise urllib.error.HTTPError(path, 404, "nf", {}, None)
             if p.endswith("/issues"):
                 return self.issues
+            if re.fullmatch(r"/repos/[\w.-]+/[\w.-]+", p):
+                return {"default_branch": "main"}
             return []
         self.writes.append((method, p, data))
         m = re.search(r"/issues/(\d+)/labels", p)
@@ -166,9 +169,15 @@ def server():
         s = Server(Path(t))
         orig = ghm.GitHub._req
         ghm.GitHub._req = lambda self, method, path, data=None: s.gh.req(self, method, path, data)
+        # The Updates page reads VERSION and the latest release straight from GitHub: never the network from a test.
+        offline = (mock.patch.object(ghm.GitHub, "raw_file", return_value=b"0.1.0\n"), mock.patch("factory.updates.fetch_latest", return_value=None))
+        for p in offline:
+            p.start()
         try:
             yield s
         finally:
+            for p in offline:
+                p.stop()
             ghm.GitHub._req = orig
             s.srv.shutdown()
 
