@@ -9,7 +9,7 @@ from .. import plan
 from .. import pm
 from .. import tracker
 from . import labels as L
-from .board import PIN_ICON, PRIO_WORD
+from .board import PIN_ICON, PRIO_WORD, _qs as board_qs
 from .views import ago, csrf_field, esc
 
 log = logging.getLogger("factory.ui")
@@ -73,16 +73,19 @@ def card(cfg, db, repo: str, n: int, labels: list[str] | None, body: str, csrf: 
         view = '<div class="pc-pm"><h4>The project manager\'s view</h4><p class="muted">Not assessed yet. It looks at the open factory tickets on its next sweep.</p></div>'
     else:
         view = '<div class="pc-pm"><h4>The project manager\'s view</h4><p class="muted">The project manager is off. <a href="/settings">Turn it on in Settings</a> to have it rank tickets and find what each one waits for.</p></div>'
-    names = plan.milestones(db, repo)
-    mine = plan.ticket_milestones(db, repo).get(n, "")
+    scope = plan.scope_of(cfg, repo)
+    names = plan.milestones(db, scope)
+    mine = plan.ticket_milestones(db, scope).get((repo, n), "")
+    by_pm = mine and plan.ticket_owners(db, [repo]).get((repo, n)) == "pm"
     waits = waits_for(db, repo, n, body)
-    road = f'/roadmap?repo={esc(repo)}&amp;focus={int(n)}'
+    road = esc("/roadmap?" + board_qs(project=scope, focus=f"{repo}#{int(n)}"))
     if names:
         opts = '<option value="">No milestone</option>' + "".join(f'<option value="{esc(m)}"{" selected" if m == mine else ""}>{esc(m)}</option>' for m in names)
         milestone = (f'<form method="post" action="/tickets/milestone" class="pc-ms">{hidden}<label>Milestone <select name="milestone">{opts}</select></label>'
-                     '<button class="secondary">Save</button></form>')
+                     '<button class="secondary">Save</button></form>'
+                     + ('<p class="muted">The project manager put it there. Pick one yourself and it stays where you put it.</p>' if by_pm else ""))
     else:
-        milestone = f'<p class="muted">No milestones yet. <a href="/roadmap?repo={esc(repo)}#milestones">Add them on the roadmap</a>.</p>'
+        milestone = f'<p class="muted">No milestones yet. <a href="{esc("/roadmap?" + board_qs(project=scope))}#milestones">Add them on the roadmap</a>.</p>'
     plan_line = ('Waits for ' + esc(_refs(repo, waits)) + '.' if waits else 'Waits for nothing.') + \
         f' To make it wait for another ticket yourself, add a line like <code>Blocked by {"L-2" if tracker.is_local(n) else "#12"}</code> to its description.'
     return (f'<section class="sd-card pc-card" aria-labelledby="pc-h"><div class="sd-cardhead"><h3 id="pc-h">Priority</h3>'
@@ -145,7 +148,9 @@ def milestone_post(h, form, csrf: str) -> None:
     name = plan.clean_name(form.get("milestone", ""))
     db = _write(h)
     try:
-        ok = plan.set_ticket_milestone(db, repo, n, name)
+        ok = plan.set_ticket_milestone(db, plan.scope_of(cfg, repo), repo, n, name)
+        if ok:                                  # a person's choice: the project manager never moves this ticket again
+            plan.mark_ticket(db, repo, n, "person")
     finally:
         db.close()
     L._done(h, form, csrf, (f"Moved to {name}." if name else "Taken out of its milestone.") if ok else "That milestone no longer exists.",
