@@ -212,6 +212,27 @@ class CommentsCfg:
     harness: str = "claude-code"
 
 
+QUESTION_CATEGORIES = ("protected-path", "credentials", "destructive", "permissions", "security", "cost")
+
+
+@dataclass(frozen=True)
+class QuestionsCfg:
+    """Second opinions on a stage's needs-person questions (judges.py). When the judges agree with the recommendation the factory
+    answers the question itself and moves on, and a person can change the answer afterwards. Questions in always_ask never go to
+    the judges. Off by default: the agent judge is a run."""
+    auto_answer: bool = False
+    min_confidence: float = 0.8           # each judge must be at least this sure
+    require: str = "all"                  # all: every judge agrees; any: one agrees and none disagrees
+    max_auto_per_ticket: int = 3          # more than this on one ticket and a person answers them all
+    jev: bool = True                      # the blind judge (needs the classifier's OpenRouter key)
+    agent: bool = True                    # the judge that reads the code
+    use_past_answers: bool = True         # show the judges how a person answered before in the same repository
+    always_ask: tuple = QUESTION_CATEGORIES
+    model: str = "opus"
+    effort: str = "medium"
+    harness: str = "claude-code"
+
+
 @dataclass(frozen=True)
 class PmCfg:
     """The project manager: a read-only agent that, on a periodic sweep, ranks a repository's factory tickets and says which
@@ -561,6 +582,7 @@ class Config:
     pm: PmCfg = field(default_factory=PmCfg)
     ticket_review: TicketReviewCfg = field(default_factory=TicketReviewCfg)
     comments: CommentsCfg = field(default_factory=CommentsCfg)
+    questions: QuestionsCfg = field(default_factory=QuestionsCfg)
     chat: ChatCfg = field(default_factory=ChatCfg)
     new_projects: NewProjectsCfg = field(default_factory=NewProjectsCfg)
     screens: ScreensCfg = field(default_factory=ScreensCfg)
@@ -702,7 +724,7 @@ def _harnesses(raw: dict, rn: "RunnerCfg") -> dict:
 
 
 def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None, pm: "PmCfg | None" = None,
-                  comments: "CommentsCfg | None" = None) -> None:
+                  comments: "CommentsCfg | None" = None, questions: "QuestionsCfg | None" = None) -> None:
     models = [(f"routing.{k}.model", r.model) for k, r in routes.items()] + [(f"roles.{r.name}.model", r.model) for r in roles]
     if review is not None:
         models.append(("review.model", review.model))
@@ -710,6 +732,8 @@ def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None,
         models.append(("pm.model", pm.model))
     if comments is not None:
         models.append(("comments.model", comments.model))
+    if questions is not None:
+        models.append(("questions.model", questions.model))
     for where, m in models:
         if not isinstance(m, str) or not MODEL_RE.fullmatch(m):
             raise ValueError(f"{where} is not a valid model id (letters, digits and . _ : / @ + [ ] - only, up to 200 characters)")
@@ -742,7 +766,7 @@ def chain(route) -> list:
 
 
 def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "ReviewCfg | None" = None,
-                       pm: "PmCfg | None" = None, comments: "CommentsCfg | None" = None) -> None:
+                       pm: "PmCfg | None" = None, comments: "CommentsCfg | None" = None, questions: "QuestionsCfg | None" = None) -> None:
     uses = [(f"routing.{k}", r.harness) for k, r in routes.items()] + [(f"roles.{r.name}", r.harness) for r in roles]
     if review is not None and review.enabled:
         uses.append(("review", review.harness))
@@ -750,9 +774,29 @@ def _check_harness_use(routes: dict, roles: tuple, harnesses: dict, review: "Rev
         uses.append(("pm", pm.harness))
     if comments is not None and comments.enabled:
         uses.append(("comments", comments.harness))
+    if questions is not None and questions.auto_answer and questions.agent:
+        uses.append(("questions", questions.harness))
     for where, harness in uses:
         if harness not in harnesses or not harnesses[harness].enabled:
             raise ValueError(f"{where} uses the harness {harness!r}, which does not exist or is not enabled")
+
+
+def _questions(raw: dict) -> QuestionsCfg:
+    q = QuestionsCfg(**{**raw, **({"always_ask": tuple(raw["always_ask"])} if isinstance(raw.get("always_ask"), list) else {})})
+    for name in ("auto_answer", "jev", "agent", "use_past_answers"):
+        if not isinstance(getattr(q, name), bool):
+            raise ValueError(f"questions.{name} must be true or false")
+    if isinstance(q.min_confidence, bool) or not isinstance(q.min_confidence, (int, float)) or not 0.5 <= q.min_confidence <= 1:
+        raise ValueError("questions.min_confidence must be a number from 0.5 to 1")
+    if q.require not in ("all", "any"):
+        raise ValueError("questions.require must be all or any")
+    if not isinstance(q.max_auto_per_ticket, int) or isinstance(q.max_auto_per_ticket, bool) or not 1 <= q.max_auto_per_ticket <= 20:
+        raise ValueError("questions.max_auto_per_ticket must be a whole number from 1 to 20")
+    if not isinstance(q.always_ask, tuple) or not all(c in QUESTION_CATEGORIES for c in q.always_ask):
+        raise ValueError(f"questions.always_ask may only list: {', '.join(QUESTION_CATEGORIES)}")
+    if q.effort not in ("low", "medium", "high"):
+        raise ValueError("questions.effort must be low, medium or high")
+    return dataclasses.replace(q, min_confidence=float(q.min_confidence))
 
 
 def _verbosity(v: str, section: str = "telegram") -> str:
@@ -1185,11 +1229,12 @@ def parse(raw: dict) -> Config:
         raise ValueError("comments.enabled must be true or false")
     if not isinstance(comments.max_per_day, int) or isinstance(comments.max_per_day, bool) or not 1 <= comments.max_per_day <= 100:
         raise ValueError("comments.max_per_day must be a whole number from 1 to 100")
+    questions = _questions(raw.get("questions", {}))
     screens = _screens(raw.get("screens", {}), repos)
     workers = _workers(raw.get("workers", {}), repos)
-    _check_models(routes, roles, review, pm, comments)
+    _check_models(routes, roles, review, pm, comments, questions)
     _check_fallbacks(routes, roles, review)
-    _check_harness_use(routes, roles, harnesses, review, pm, comments)
+    _check_harness_use(routes, roles, harnesses, review, pm, comments, questions)
     return Config(
         db_path=g["db_path"],
         poll_seconds=int(g["poll_seconds"]),
@@ -1223,6 +1268,7 @@ def parse(raw: dict) -> Config:
         pm=pm,
         ticket_review=tr,
         comments=comments,
+        questions=questions,
         chat=chat,
         new_projects=new_projects,
         health=health,

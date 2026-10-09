@@ -227,6 +227,25 @@ model = "sonnet"
 effort = "medium"
 harness = "claude-code"
 
+# Second opinions on open questions. Before a stage's needs-person question waits for you, judges answer it: Jev, blind to the
+# recommendation (needs [classifier] key_file), and an agent that reads the code and argues against the recommendation. When they
+# agree with the recommendation (require "all": every judge; "any": one, and none disagrees), each at least min_confidence sure,
+# the factory records that answer and moves on. You can change it on the stage's document page, and the stage runs again with
+# yours. Questions that mention an always_ask category never go to the judges. More than max_auto_per_ticket on one ticket and
+# you answer them all. Off by default (the agent judge is a run).
+[questions]
+auto_answer = false
+min_confidence = 0.8
+require = "all"
+max_auto_per_ticket = 3
+jev = true
+agent = true
+use_past_answers = true
+always_ask = ["protected-path", "credentials", "destructive", "permissions", "security", "cost"]
+model = "opus"
+effort = "medium"
+harness = "claude-code"
+
 # What a build needs from the design stage. The designer's rendered mockup images are shown to the build and review agents to match.
 # mode "block": a ticket whose design stage should have produced mockups (it ran, and did not say there are no screens) is not built
 # without them. "warn" builds anyway and says so on the ticket. "off" never checks. A person puts bypass_label on one ticket to skip.

@@ -71,6 +71,12 @@ def connect(path: str) -> sqlite3.Connection:
             repo TEXT NOT NULL, issue INTEGER NOT NULL, stage TEXT NOT NULL, pending INTEGER NOT NULL, updated REAL NOT NULL,
             PRIMARY KEY (repo, issue))"""
     )
+    db.execute(                                     # how open questions were settled: the judges' examples and their tally (judges.py)
+        """CREATE TABLE IF NOT EXISTS question_answers (
+            repo TEXT NOT NULL, issue INTEGER NOT NULL, stage TEXT NOT NULL, question TEXT NOT NULL, chosen TEXT NOT NULL,
+            recommended TEXT NOT NULL, auto INTEGER NOT NULL, overturned INTEGER NOT NULL DEFAULT 0, updated REAL NOT NULL,
+            PRIMARY KEY (repo, issue, stage, question))"""
+    )
     db.execute(                                     # the design files each run published, for the UI to link
         """CREATE TABLE IF NOT EXISTS design_files (
             run_id INTEGER NOT NULL, repo TEXT NOT NULL, path TEXT NOT NULL, url TEXT NOT NULL, pr TEXT NOT NULL DEFAULT '',
@@ -166,6 +172,34 @@ def set_questions(db, repo: str, issue: int, stage: str, pending: int) -> None:
     else:
         db.execute("DELETE FROM open_questions WHERE repo=? AND issue=?", (repo, issue))
     db.commit()
+
+
+def save_answers(db, repo: str, issue: int, stage: str, rows: list) -> None:
+    """rows: (question, chosen, recommended, auto, overturned). A newer answer to the same question replaces the older one, but an
+    automatic answer a person overturned stays counted as overturned."""
+    now = time.time()
+    for question, chosen, recommended, auto, overturned in rows:
+        db.execute("INSERT INTO question_answers VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(repo, issue, stage, question) DO UPDATE SET "
+                   "chosen=excluded.chosen, recommended=excluded.recommended, auto=MAX(auto, excluded.auto), "
+                   "overturned=MAX(overturned, excluded.overturned), updated=excluded.updated",
+                   (repo, issue, stage, question[:500], chosen[:200], recommended[:200], int(auto), int(overturned), now))
+    db.commit()
+
+
+def past_answers(db, repo: str, limit: int = 20) -> list[dict]:
+    """A person's answers in the repository, oldest first: an automatic answer counts only once a person overturned it."""
+    rows = db.execute("SELECT question, chosen, recommended FROM question_answers WHERE repo=? AND (auto=0 OR overturned=1) "
+                      "ORDER BY updated DESC LIMIT ?", (repo, limit)).fetchall()
+    return [{"question": q, "chosen": c, "recommended": r} for q, c, r in reversed(rows)]
+
+
+def auto_tally(db, since: float = 0) -> tuple[int, int]:
+    """(questions answered automatically, how many of them a person changed)."""
+    try:
+        n, bad = db.execute("SELECT COUNT(*), COALESCE(SUM(overturned), 0) FROM question_answers WHERE auto=1 AND updated>=?", (since,)).fetchone()
+        return int(n), int(bad)
+    except Exception:                               # an older database the orchestrator has not upgraded yet
+        return 0, 0
 
 
 def questions_waiting(db, repo: str) -> set[int]:

@@ -566,7 +566,7 @@ def question_form(repo: str, n: int, st, csrf: str, back: str = "/tickets") -> s
         cls = badge("safe default", "good") if q.safe else badge("needs a person", "bad") + (f' <span class="muted">{esc(q.why)}</span>' if q.why else "")
         head = f'<div class="nd-qhead"><span class="muted fl-mono">{k} of {len(st.questions)}</span> {cls}</div><h3 class="nd-qt">{esc(q.text)}</h3>'
         if q.id in st.answers:
-            blocks.append(f'<div class="nd-q" data-q="done">{head}<p class="muted">{esc(Q.describe(q, st.answers[q.id]))}</p></div>')
+            blocks.append(f'<div class="nd-q" data-q="done">{head}<p class="muted">{esc(Q.describe(q, st.answers[q.id], st.auto.get(q.id, "")))}</p></div>')
             continue
         opts = "".join(
             f'<label class="nd-opt{" rec" if o == q.recommended else ""}"><input type="radio" name="a_{esc(q.id)}" value="{esc(o)}">'
@@ -1183,6 +1183,38 @@ def answer_all(h, form, csrf: str) -> None:
     log.info("tickets: recommendations accepted on %d ticket(s) from the UI, %d failed", ok, len(failed))
     msg = f"Recommendations accepted on {ok} ticket{'s' if ok != 1 else ''}." + (f" Could not do: {', '.join(failed)}." if failed else "")
     _done(h, form, csrf, msg, "bad" if failed and not ok else "ok")
+
+
+def auto_answers(h, repo: str, issue: int, stage: str, csrf: str) -> str:
+    """The stage's questions the factory answered itself (judges.py), each with its options and the automatic answer chosen, so a person
+    can change one: the stage then runs again with their answer. Read from GitHub; nothing when there are none or GitHub fails."""
+    gh = _gh(h)
+    if gh is None or repo not in h.app.cfg().repos:
+        return ""
+    try:
+        st = next((s for s in Q.from_comments(gh.issue_comments(repo, issue), _login(gh)) if s.stage == stage), None)
+    except Exception:
+        log.warning("tickets: could not read the questions of %s#%d", repo, issue)
+        return ""
+    if st is None or not st.auto:
+        return ""
+    back = f"/ticket?repo={repo}&n={int(issue)}"
+    hidden = (f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(issue)}">'
+              f'<input type="hidden" name="stage" value="{esc(stage)}"><input type="hidden" name="back" value="{esc(back)}">')
+    blocks = ""
+    for q in st.questions:
+        if q.id not in st.auto:
+            continue
+        kind, value = st.answers.get(q.id, ("option", q.recommended))
+        opts = "".join(f'<label class="sd-opt"><input type="radio" name="a_{esc(q.id)}" value="{esc(o)}"{" checked" if kind == "option" and o == value else ""}>'
+                       f'<span>{esc(lab)}</span></label>' for o, lab in q.options)
+        blocks += (f'<fieldset class="sd-q"><legend>{esc(q.text)}</legend>{opts}<span class="muted sd-fine">{esc(st.auto[q.id])}</span></fieldset>')
+    n = len(st.auto)
+    return (f'<section class="sd-card" aria-labelledby="aa-h"><form method="post" action="/tickets/answer" class="nd-form sd-qform">{hidden}'
+            f'<div class="sd-cardhead"><h3 id="aa-h">{n} question{"s" if n != 1 else ""} answered automatically</h3></div>'
+            '<p class="muted sd-fine">Independent second opinions agreed with the recommendation, so the factory answered without asking you. '
+            'Change an answer and the stage runs again with yours.</p>'
+            f'{blocks}<div class="sd-acts"><button name="send" value="1" class="secondary">Change answers</button></div></form></section>')
 
 
 def stage_comment(h, repo: str, issue: int, stage: str) -> str | None:

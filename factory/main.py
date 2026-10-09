@@ -15,6 +15,7 @@ from pathlib import Path
 from . import why as W
 from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
+from . import judges
 from . import recommend
 from . import questions as Q
 from . import db as dbm
@@ -715,6 +716,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
     claim(gh, repo, num, trigger_label, role.name)
     comments = human_comments(gh, repo, num)
     before = question_state(gh, repo, num)
+    save_settled(conn, repo, num, before)
     # This stage asked and has now been answered: it is revising its own document, and the chain goes on from the revision.
     answered = any(st.stage == role.name and st.answers and not st.pending() for st in before)
     chain = chain or answered
@@ -748,12 +750,19 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         doc, qs = Q.extract(output)                     # qs None: no block or a malformed one, so the classifier alone decides
         pending = [q for q in qs or [] if not q.safe]
         earlier = [q for st in before if st.stage != role.name for q in st.pending()]    # still unanswered from another stage
-        settled = (f"(every open question was a safe default; the recommendations were auto-accepted)\n"
-                   + Q.summary([Q.StageQuestions(role.name, qs)]) + "\n\n" if qs and not pending else "")
+        try:                                            # second opinions: the questions the judges agree on are answered here
+            auto = second_opinion(cfg, gh, conn, repo, issue, role.name, doc, pending, before, comments)
+        except Exception:
+            log.exception("second opinions on %s#%s failed", repo, num)
+            auto = {}
+        pending = [q for q in pending if q.id not in auto]
+        mine = Q.StageQuestions(role.name, qs or [], {q.id: ("option", q.recommended) for q in qs or [] if q.id in auto}, dict(auto))
+        settled = (f"(every open question was a safe default or answered automatically; the recommendations were accepted)\n"
+                   + Q.summary([mine]) + "\n\n" if qs and not pending else "")
         hint, nxt, rec = None, None, recommend.parse(doc)
         done_now = stages_done(cfg, labels)
         try:                                            # ask Jev what should happen next, now that this stage is done
-            answers_now = Q.summary(before + ([Q.StageQuestions(role.name, qs)] if qs else []))
+            answers_now = Q.summary(before + ([mine] if qs else []))
             nxt = classifier.classify(issue["title"], issue.get("body") or "", labels,
                                       next_step_context(role.name, settled + doc, answers_now) + comments,
                                       project_info(project_for(cfg, repo), repo), done_now)
@@ -782,6 +791,9 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             hint = stop + (f"; suggested next: {h}" if nxt and (h := next_hint(cfg, dataclasses.replace(nxt, needs_human=False))) else "")
             res = dataclasses.replace(res, status="needs-person", detail=f"{res.detail}; waiting for a person: {stop}")
         url = gh.comment(repo, num, stage_comment(role, route, doc, hint, res.files, res.notes, qs, role.design_files))
+        if auto:                                        # after the document, so it answers this version of the questions
+            gh.comment(repo, num, Q.answers_comment(role.name, qs, mine.answers, "second opinion", auto))
+            save_settled(conn, repo, num, [mine])
         gh.add_labels(repo, num, [role.done_label])
         gh.remove_label(repo, num, working)
         if pending or earlier:                          # a visible "waiting for you" mark on the issue itself
@@ -797,16 +809,20 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         if ask:
             ask_person(cfg, gh, conn, repo, issue, role, nxt, stop)
         done = f"{role.name.title()} done: {repo}#{num}\n{url}" + (f"\n{len(res.files)} design file(s): {res.pr_url}" if res.files else "")
+        auto_lines = "".join(f"\nAnswered automatically: {q.id}. {q.text[:200]} -> {q.label(q.recommended)[:120]} ({auto[q.id][:200]})"
+                           for q in qs or [] if q.id in auto)
+        change = auto_buttons(cfg, repo, num, role.name) if auto else []
         if pending:                                     # one message per ticket, asking only about what needs a person
             text, buttons = question_message(cfg, repo, num, pending)
-            alert(done + "\n\n" + text, buttons, event="needs_human")
+            alert(done + auto_lines + "\n\n" + text, buttons + change, event="needs_human")
         elif ask:
-            alert(f"{done}\nNeeds a person: {stop}" + (suggestion(nxt) if nxt else ""),
-                  human_buttons(cfg, repo, num, nxt or _NO_STAGE, done_now), event="needs_human")
+            alert(f"{done}{auto_lines}\nNeeds a person: {stop}" + (suggestion(nxt) if nxt else ""),
+                  [human_buttons(cfg, repo, num, nxt or _NO_STAGE, done_now)] + change if change else human_buttons(cfg, repo, num, nxt or _NO_STAGE, done_now),
+                  event="needs_human")
         else:
-            assumed = "".join(f"\n{q.id}. {Q.describe(q, None)}" for q in qs or [])
-            alert(done + ("\nContinuing automatically: " + (hint or "next stage") + assumed if go_on else (f"\nWaiting for you: {hint}" if hint else "")),
-                  event="stage_done")
+            assumed = "".join(f"\n{q.id}. {Q.describe(q, mine.answers.get(q.id), mine.auto.get(q.id, ''))}" for q in qs or [])
+            alert(done + ("\nContinuing automatically: " + (hint or "next stage") + assumed if go_on else (f"\nWaiting for you: {hint}" if hint else ""))
+                  + ("" if go_on else auto_lines), change or None, event="stage_done")
         if proposal:
             propose_split(cfg, gh, conn, repo, num, proposal)
     elif res.status == "cancelled":
@@ -817,6 +833,56 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         gh.remove_label(repo, num, working)
         alert(f"{role.name.title()} failed: {repo}#{num} ({res.status})\n{res.detail[:300]}", event="failure")
     return res
+
+
+def save_settled(conn, repo: str, num: int, stages: list) -> None:
+    """Keep how each answered question was settled: a person's answers are the judges' examples, and automatic answers a person
+    changed are the tally on the Second opinions page."""
+    if conn is None:
+        return
+    try:
+        for st in stages:
+            rows = []
+            for q in st.questions:
+                if (ans := st.answers.get(q.id)):
+                    kind, value = ans
+                    rows.append((q.text, q.label(value) if kind == "option" else "Other: " + value, q.label(q.recommended),
+                                 q.id in st.auto or q.id in st.overturned, q.id in st.overturned))
+            if rows:
+                dbm.save_answers(conn, repo, num, st.stage, rows)
+    except Exception:
+        log.exception("could not keep the answers of %s#%s", repo, num)
+
+
+def second_opinion(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, stage: str, doc: str, pending: list, before: list,
+                   comments: list) -> dict:
+    """question id -> why, for the needs-person questions the judges agreed to answer with the recommendation (judges.py)."""
+    qc, num = cfg.questions, issue["number"]
+    if not (qc.auto_answer and pending):
+        return {}
+    try:
+        history = judges.history_lines(dbm.past_answers(conn, repo)) if qc.use_past_answers and conn is not None else []
+    except Exception:
+        log.exception("could not read the past answers of %s", repo)
+        history = []
+    key_file = cfg.openrouter_key_file
+    key = Path(key_file).read_text().strip() if qc.jev and key_file and Path(key_file).exists() else ""
+    ask_jev = (lambda qs: judges.jev_verdicts(key, cfg.jev_model, issue["title"], issue.get("body") or "", stage, doc, qs, history)) if key else None
+
+    def ask_agent(qs: list) -> dict:
+        route = Route(qc.harness, qc.model, qc.effort)
+        prior = stage_outputs(gh, repo, num)
+        prior.pop(stage, None)
+        prior[stage] = doc                              # the document that asked, newest last
+        run_id, sink = begin_run("judge", repo, issue, route), {}
+        res = runner.run_task(cfg, gh, repo, issue, route, role="second-opinion", sink=sink, prior=prior, comments=comments,
+                              answers=Q.summary(before), judge=judges.agent_brief(qs), history=history)
+        end_run(run_id, res, sink)
+        return judges.parse_agent(res.output, qs, route.model) if res.status == "stage" else {}
+
+    found = judges.decide(cfg, pending, sum(len(st.auto) for st in before), ask_jev, ask_agent if qc.agent else None)
+    emit("answers", f"second opinions: {len(found)} of the {stage}'s {len(pending)} question(s) answered automatically", repo, num)
+    return found
 
 
 def propose_split(cfg: Config, gh: GitHub, conn, repo: str, num: int, proposal) -> None:
@@ -863,6 +929,14 @@ def question_message(cfg: Config, repo: str, num: int, pending: list) -> tuple[s
     if len(pending) <= 2:
         rows += [[(f"{q.id}: {lab[:40]}", f"q:{q.id}:{oid}|{repo}|{num}") for oid, lab in q.options] for q in pending]
     return text, [[b for b in row if b[1].startswith("url:") or len(b[1].encode()) <= 64] for row in rows]
+
+
+def auto_buttons(cfg: Config, repo: str, num: int, stage: str) -> list:
+    """A Change answers link to the stage's document page, where automatic answers can be changed (only with the UI's address set)."""
+    if not (ui_url := cfg.telegram_ui_url or cfg.slack_ui_url):
+        return []
+    from urllib.parse import urlencode
+    return [[("Change answers", "url:" + ui_url + "/ticket/doc?" + urlencode({"repo": repo, "n": num, "stage": stage}))]]
 
 
 def resume_asking_stage(cfg: Config, gh: GitHub, repo: str, num: int, stage: str) -> None:
