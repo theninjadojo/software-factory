@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -62,6 +62,9 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
             out.append(Field("roles.designer.design_dir", "Designer: mockup folder", "text",
                              "Relative folder in the repo, for example docs/design. Avoid design/ if your repo git-ignores it."))
     return out + [Field("auto.label", "Auto-allocate label", "text", "A person applies it and the classifier picks the next stage."),
+                  Field("split.notes_label", "Meeting notes label", "text",
+                        "Put on a ticket by 'These are meeting notes': the analyst always considers splitting it into several tickets, "
+                        "which a person approves."),
                   Field("auto.chain", "Auto continues to the next stage", "bool",
                         "On (default): after a stage, if nothing needs a person, the next stage starts by itself. Off: one stage per label."),
                   Field("auto.confirm_stages", "Ask before auto runs a stage", "bool",
@@ -390,7 +393,7 @@ def del_in(d: dict, dotted: str) -> None:
 
 
 DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "questions": QuestionsCfg, "ticket_review": TicketReviewCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
-                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg}
+                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg}
 
 
 def default_for(key: str):

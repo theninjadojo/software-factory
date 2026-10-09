@@ -24,6 +24,7 @@ def factory_labels(cfg) -> list[tuple[str, str, str]]:
             (cfg.mockups.bypass_label, "bfdadc", "Build without design mockups"),
             (cfg.mockups.approve_label, "0e8a16", "The design mockups are approved"),
             (cfg.mockups.request_label, "fbca04", "A person asked for screens to review before the build"),
+            (cfg.split.notes_label, "fbca04", "Meeting notes: the analyst considers splitting them into several tickets"),
             (cfg.screens.label, "fbca04", "Screen baselines changed: review the images"),
             (tracker.MOVED_LABEL, "ededed", "Moved to the factory's local tracker"), ("factory:working", "fef2c0", "An agent is working on this"), ("factory:pr-open", "c5def5", "The factory opened a PR"),
             ("factory:failed", "d93f0b", "The last factory run failed"),

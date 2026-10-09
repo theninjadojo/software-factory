@@ -128,6 +128,13 @@ class MockupsCfg:
 
 
 @dataclass(frozen=True)
+class SplitCfg:
+    """Splitting a ticket into smaller ones. notes_label marks a ticket whose text or pictures are unstructured meeting notes: the
+    analyst then always considers a split, whatever the ticket's size. It only shapes the prompt; a person still approves every split."""
+    notes_label: str = "factory:notes"
+
+
+@dataclass(frozen=True)
 class DesignLinksCfg:
     """Design exports (single HTML files, e.g. from Claude Design) linked in a ticket body. Off by default: the orchestrator fetches
     only https links on the listed hosts (plain host names, no wildcards), at most max_links per ticket and max_bytes each, and re-fetches
@@ -576,6 +583,7 @@ class Config:
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
+    split: SplitCfg = field(default_factory=SplitCfg)
     design_links: DesignLinksCfg = field(default_factory=DesignLinksCfg)
     issue_images: IssueImagesCfg = field(default_factory=IssueImagesCfg)
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
@@ -1159,6 +1167,9 @@ def parse(raw: dict) -> Config:
             or not mockups.request_label.strip()):
         raise ValueError("mockups.mode must be block, warn or off, and mockups.bypass_label, mockups.approve_label and "
                          "mockups.request_label must not be empty")
+    split_cfg = SplitCfg(**raw.get("split", {}))
+    if not isinstance(split_cfg.notes_label, str) or not split_cfg.notes_label.strip():
+        raise ValueError("split.notes_label must not be empty")
     design_links = DesignLinksCfg(**_tuples(raw.get("design_links", {})))
     from .designlinks import valid_host
     if (not all(valid_host(h) for h in design_links.hosts) or not 1 <= design_links.max_links <= 5
@@ -1262,6 +1273,7 @@ def parse(raw: dict) -> Config:
         conflicts=conflicts,
         review=review,
         mockups=mockups,
+        split=split_cfg,
         design_links=design_links,
         issue_images=issue_images,
         updates=updates,

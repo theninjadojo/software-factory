@@ -10,7 +10,8 @@ derived from untrusted ticket text, so it is only data, validated against fixed 
 
 A proposal is stored (`split_proposals`, `split_items`) and nothing is created until a person approves it in the admin UI or the
 chat buttons (`split:<id>`). On approval the children are created one at a time, each step recorded so a retry or a restart never
-creates one twice. Children carry no label unless the approver chose one start action; the factory database is the record of which
+creates one twice. In the admin UI the approver may also drop items (flagged `dropped`, never deleted; an item that came after a
+dropped one inherits what that one came after). Children carry no label unless the approver chose one start action; the factory database is the record of which
 ticket belongs to which (so it works for local tickets too), and `blockers` keeps a later child's build waiting for the items it
 comes after. The parent stays open as an umbrella and `sweep` closes it once every child is closed. main.py decides when these run."""
 import hashlib
@@ -125,6 +126,8 @@ def ensure_tables(db) -> None:
             child_repo TEXT, child_issue INTEGER, PRIMARY KEY (proposal_id, pos));
         CREATE INDEX IF NOT EXISTS split_items_child ON split_items (child_repo, child_issue);
     """)
+    if "dropped" not in {r[1] for r in db.execute("PRAGMA table_info(split_items)")}:   # 1 = the approver left it out; older databases get it here
+        db.execute("ALTER TABLE split_items ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0")
     db.commit()
 
 
@@ -149,8 +152,19 @@ def get(db, pid: int) -> dict | None:
 
 
 def items(db, pid: int) -> list[dict]:
-    return [dict(zip(("pos", "title", "body", "repo", "after", "status", "child_repo", "child_issue"), r)) for r in db.execute(
-        "SELECT pos, title, body, repo, after, status, child_repo, child_issue FROM split_items WHERE proposal_id=? ORDER BY pos", (int(pid),))]
+    return [dict(zip(("pos", "title", "body", "repo", "after", "status", "child_repo", "child_issue", "dropped"), r)) for r in db.execute(
+        "SELECT pos, title, body, repo, after, status, child_repo, child_issue, dropped FROM split_items WHERE proposal_id=? ORDER BY pos",
+        (int(pid),))]
+
+
+def kept(rows: list[dict]) -> list[dict]:
+    """The items that become tickets (the approver did not drop them), in order."""
+    return [r for r in rows if not r["dropped"]]
+
+
+def kept_index(rows: list[dict], pos: int) -> int:
+    """An item's number among the kept items, counting from 1 (what its ticket says)."""
+    return next((i for i, r in enumerate(kept(rows), 1) if r["pos"] == pos), pos + 1)
 
 
 def for_ticket(db, repo: str, issue: int, statuses=("proposed", "approved", "done")) -> dict | None:
@@ -168,18 +182,50 @@ def parent_of(db, repo: str, issue: int) -> tuple[dict, dict] | None:
     return (p, next(i for i in items(db, p["id"]) if i["pos"] == r[1])) if p else None
 
 
-def decide(db, pid: int, repo: str, issue: int, accept: bool, start_action: str = "", allowed_starts=()) -> bool:
+def rewire(rows: list[dict], drop) -> dict[int, str]:
+    """The `after` of every kept item once the dropped ones are gone: an item that came after a dropped one comes after what that one
+    came after (through any chain of dropped items). Positions are kept, so `after` still points only at earlier items."""
+    gone, eff, out = set(drop), {}, {}
+    for r in rows:
+        deps = set()
+        for a in (int(x) for x in r["after"].split(",") if x):
+            deps |= eff.get(a, set()) if a in gone else {a}
+        eff[r["pos"]] = deps
+        if r["pos"] not in gone:
+            out[r["pos"]] = ",".join(map(str, sorted(deps)))
+    return out
+
+
+def decide(db, pid: int, repo: str, issue: int, accept: bool, start_action: str = "", allowed_starts=(), drop=()) -> bool:
     """A person's decision. Only a proposal of this very ticket that still waits; the start action must be one the caller allows.
+    drop: positions the approver leaves out (approve only); each must be an item of the proposal, once, and at least MIN_ITEMS must
+    remain. The dropped items are flagged, not deleted, and the kept items' `after` is rewired in the same transaction.
     False when nothing changed."""
     p = get(db, pid)
     if p is None or p["repo"] != repo or p["issue"] != int(issue) or p["status"] != "proposed":
         return False
     if start_action and start_action not in allowed_starts:
         return False
-    cur = db.execute("UPDATE split_proposals SET status=?, start_action=?, updated=? WHERE id=? AND status='proposed'",
-                     ("approved" if accept else "dismissed", start_action if accept else "", time.time(), int(pid)))
-    db.commit()
-    return cur.rowcount == 1
+    drop = list(drop) if accept else []
+    rows = items(db, pid)
+    if (any(not isinstance(d, int) or isinstance(d, bool) for d in drop) or len(set(drop)) != len(drop)
+            or not set(drop) <= {r["pos"] for r in rows} or len(rows) - len(drop) < MIN_ITEMS):
+        return False
+    try:
+        cur = db.execute("UPDATE split_proposals SET status=?, start_action=?, updated=? WHERE id=? AND status='proposed'",
+                         ("approved" if accept else "dismissed", start_action if accept else "", time.time(), int(pid)))
+        if cur.rowcount != 1:
+            db.rollback()
+            return False
+        if drop:
+            db.executemany("UPDATE split_items SET dropped=1 WHERE proposal_id=? AND pos=?", [(int(pid), d) for d in drop])
+            db.executemany("UPDATE split_items SET after=? WHERE proposal_id=? AND pos=?",
+                           [(after, int(pid), pos) for pos, after in rewire(rows, drop).items()])
+        db.commit()
+    except sqlite3.Error:
+        db.rollback()
+        raise
+    return True
 
 
 def _set(db, pid: int, status: str, detail: str = "", fails: int | None = None) -> None:
@@ -192,11 +238,12 @@ def _shown(repo: str, num: int) -> str:
     return tracker.ref(repo, num)
 
 
-def _create(gh, conn, p: dict, it: dict, made: dict, total: int, github_ok: bool) -> tuple[int, str]:
-    """The child ticket of one item: local when the parent is local, otherwise a GitHub issue. Returns (number, id on GitHub or '')."""
+def _create(gh, conn, p: dict, it: dict, made: dict, index: int, total: int, github_ok: bool) -> tuple[int, str]:
+    """The child ticket of one item (number `index` of the `total` kept items): local when the parent is local, otherwise a GitHub
+    issue. Returns (number, id on GitHub or '')."""
     marker = f"<!-- factory:split={p['id']}.{it['pos']} -->"
     after = [made[a] for a in map(int, filter(None, it["after"].split(",")))]
-    body = (CHILD_HEAD.format(parent=_shown(p["repo"], p["issue"]), pos=it["pos"] + 1, total=total)
+    body = (CHILD_HEAD.format(parent=_shown(p["repo"], p["issue"]), pos=index, total=total)
             + (f"Starts after: {', '.join(_shown(*a) for a in after)}.\n\n" if after else "") + it["body"] + "\n\n" + marker)
     if tracker.is_local(p["issue"]):
         return tracker.LocalTracker(conn).create(it["repo"], it["title"], body, author=tracker.FACTORY_ACTOR), ""
@@ -218,24 +265,24 @@ def apply_one(github_ok: bool, gh, conn, p: dict, start_labels, emit, trigger_la
     parent = gh.get_issue(repo, num)
     if parent.get("state") != "open" or ("pull_request" in parent):
         return _set(conn, pid, "stale", "the ticket was closed")
-    rows = items(conn, pid)
+    rows = kept(items(conn, pid))                       # dropped items never become tickets
     if p["snapshot"] != fingerprint(parent) and not any(r["status"] != "new" for r in rows):
         return _set(conn, pid, "stale", "the ticket was edited after the split was proposed")
     made = {}
-    for it in rows:
+    for index, it in enumerate(rows, 1):
         if it["status"] == "created":
             made[it["pos"]] = (it["child_repo"], it["child_issue"])
             continue
         if it["status"] == "creating":                   # a crash between creating the ticket and recording it
             found = _found_local(conn, it, pid) if tracker.is_local(num) else None
             if found is None:
-                return _set(conn, pid, "failed", f"item {it['pos'] + 1} may already exist; a person should check before it is created again")
+                return _set(conn, pid, "failed", f"item {index} may already exist; a person should check before it is created again")
             number, gh_id = found, ""
         else:
             conn.execute("UPDATE split_items SET status='creating' WHERE proposal_id=? AND pos=?", (pid, it["pos"]))
             conn.commit()
             try:
-                number, gh_id = _create(gh, conn, p, it, made, len(rows), github_ok)
+                number, gh_id = _create(gh, conn, p, it, made, index, len(rows), github_ok)
             except Exception:
                 if tracker.is_local(num):                # a local ticket is stored whole or not at all, so it is safe to try again
                     conn.execute("UPDATE split_items SET status='new' WHERE proposal_id=? AND pos=?", (pid, it["pos"]))
@@ -308,7 +355,7 @@ def sweep(gh, conn, emit, github_due: bool = True) -> None:
     """Close the parent of a split once every child is closed. Once only: a parent a person reopens is left alone."""
     cache: dict = {}
     for (pid,) in conn.execute("SELECT id FROM split_proposals WHERE status='done' AND umbrella_closed IS NULL ORDER BY id LIMIT ?", (SWEEP_LIMIT,)).fetchall():
-        p, kids = get(conn, pid), items(conn, pid)
+        p, kids = get(conn, pid), kept(items(conn, pid))
         parts = [(k["child_repo"], k["child_issue"]) for k in kids]
         if not parts or any(n is None for _, n in parts) or (not github_due and any(not tracker.is_local(n) for _, n in parts + [(p["repo"], p["issue"])])):
             continue
