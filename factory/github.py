@@ -29,24 +29,24 @@ class GitHub:
     def __init__(self, token: str | None):
         self.token = token
 
-    def _req(self, method: str, path: str, data: dict | None = None):
+    def _req(self, method: str, path: str, data: dict | None = None, accept: str = "application/vnd.github+json"):
         """One API call. A call that is safe to repeat is tried again when GitHub times out or answers 5xx, so a short GitHub
         hiccup does not throw away a finished run."""
         waits = RETRY_WAITS if _repeatable(method, path) else ()
         for wait in (*waits, None):
             try:
-                return self._send(method, path, data)
+                return self._send(method, path, data, accept)
             except Exception as e:
                 if wait is None or not _transient(e):
                     raise
                 time.sleep(wait)
 
-    def _send(self, method: str, path: str, data: dict | None = None):
+    def _send(self, method: str, path: str, data: dict | None = None, accept: str = "application/vnd.github+json"):
         req = urllib.request.Request(
             f"https://api.github.com{path}",
             method=method,
             data=json.dumps(data).encode() if data is not None else None,
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "shikumi"},
+            headers={"Accept": accept, "User-Agent": "shikumi"},
         )
         if self.token:
             req.add_header("Authorization", f"Bearer {self.token}")
@@ -130,6 +130,15 @@ class GitHub:
 
     def issue_comments(self, repo: str, issue: int) -> list[dict]:
         return self._get(f"/repos/{repo}/issues/{issue}/comments?per_page=30")
+
+    def issue_html(self, repo: str, issue: int) -> str:
+        """The issue body as GitHub renders it (in a private repository its pictures carry short-lived signed URLs)."""
+        return self._req("GET", f"/repos/{repo}/issues/{issue}", accept="application/vnd.github.full+json").get("body_html") or ""
+
+    def comments_html(self, repo: str, issue: int) -> list[tuple[str, str]]:
+        """(author login, rendered body) of the comments issue_comments reads."""
+        got = self._req("GET", f"/repos/{repo}/issues/{issue}/comments?per_page=30", accept="application/vnd.github.full+json")
+        return [((c.get("user") or {}).get("login") or "", c.get("body_html") or "") for c in got]
 
     def comments_since(self, repo: str, since: str) -> list[dict]:
         """Comments on every issue and pull request of the repository changed since an ISO time, oldest change first (one page)."""

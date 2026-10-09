@@ -381,6 +381,8 @@ def _import_one(cfg, gh: GitHub, db, repo: str, num: int, close: bool, triggers:
     if row is None:
         if (why := refusal(db, repo, issue)):
             return why
+        from . import issueimages
+        pictures, _ = issueimages.collect(cfg, gh, repo, num)     # right away: a private repository's picture URLs expire in minutes
         comments = gh.issue_comments(repo, num)
         login = gh.login() if gh.token else ""
         skip = triggers | {cfg.auto_label}
@@ -395,6 +397,11 @@ def _import_one(cfg, gh: GitHub, db, repo: str, num: int, close: bool, triggers:
                 local.add_comment(repo, number, FACTORY_AUTHOR, c.get("body") or "")
             else:
                 local.add_comment(repo, number, IMPORTED, f"Comment by {who} on GitHub:\n\n{c.get('body') or ''}")
+        for name, data in pictures:
+            try:
+                local.add_attachment(repo, number, name, data, IMPORTED, attach_limits(cfg), commit=False)
+            except ValueError as e:                     # over the ticket's limits: the rest of the move goes on
+                log.info("a picture of %s#%s was not copied: %s", repo, num, e)
         db.execute("INSERT INTO local_imports VALUES (?,?,?,?,0,?)", (repo, num, number, int(close), time.time()))
         db.commit()
         row = (number, int(close), 0)
@@ -437,3 +444,60 @@ def process_imports(cfg, gh: GitHub, db, triggers: frozenset, emit) -> None:
         if done:
             db.execute("DELETE FROM import_requests WHERE repo=? AND gh_number=?", (repo, num))
             db.commit()
+
+
+def backfill_images(cfg, gh: GitHub, db, repos: list[str], apply: bool, out=print) -> int:
+    """Copy the pictures of already-moved GitHub issues onto their local tickets (`ctl images backfill`). Without apply it only
+    reports. A picture already on the ticket (same sha256) is not added again; one that does not fit the ticket's limits is skipped
+    and reported. Returns 1 only when GitHub could not be reached for any issue."""
+    import urllib.error
+    from . import issueimages
+    ensure_tables(db)
+    local = LocalTracker(db, IMPORTED)
+    limits = attach_limits(cfg)
+    max_bytes, max_files, max_total = limits
+    reached = unreachable = 0
+    rows = db.execute(f"SELECT repo, gh_number, local_number FROM local_imports WHERE repo IN ({','.join('?' * len(repos))}) "
+                      "ORDER BY repo, gh_number", repos).fetchall() if repos else []
+    for repo, gh_num, number in rows:
+        where = f"{repo}#{gh_num} -> {display(number)}"
+        try:
+            urls = issueimages.read(gh, repo, gh_num, cfg.issue_images.max_images)
+        except urllib.error.HTTPError as e:
+            reached += 1
+            out(f"{where}: the GitHub issue could not be read (HTTP {int(e.code)}), skipped")
+            continue
+        except Exception as e:
+            unreachable += 1
+            out(f"{where}: GitHub could not be reached ({type(e).__name__}), skipped")
+            continue
+        reached += 1
+        items, failed = issueimages.download(urls, cfg.issue_images.max_mb * 1024 * 1024)
+        have = {r[0] for r in db.execute("SELECT sha256 FROM local_attachments WHERE repo=? AND number=?", (repo, number))}
+        count, total = db.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM local_attachments WHERE repo=? AND number=?",
+                                  (repo, number)).fetchone()
+        added = present = over = 0
+        for name, data in items:
+            if hashlib.sha256(data).hexdigest() in have:
+                present += 1
+                continue
+            if len(data) > max_bytes or count + 1 > max_files or total + len(data) > max_total:
+                over += 1
+                continue
+            if apply:
+                try:
+                    local.add_attachment(repo, number, name, data, IMPORTED, limits, commit=False)
+                except ValueError:
+                    failed += 1
+                    continue
+            have.add(hashlib.sha256(data).hexdigest())
+            count, total, added = count + 1, total + len(data), added + 1
+        if apply:
+            db.commit()
+        out(f"{where}: {added} {'added' if apply else 'to add'}, {present} already there, {over} skipped (over the ticket's "
+            f"attachment limits), {failed} could not be read")
+    if not rows:
+        out("no moved issues in " + (", ".join(repos) or "the configured repositories"))
+    if not apply and rows:
+        out("\nRun with --apply to copy them.")
+    return 1 if unreachable and not reached else 0
