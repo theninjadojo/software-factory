@@ -4,6 +4,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:          # release.yml runs these same jobs and publishes only when they pass
 # Pull requests from forks run here, so every job uses a GitHub-hosted runner (never the self-hosted one) and a read-only token.
 permissions:
   contents: read
