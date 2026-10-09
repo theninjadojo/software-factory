@@ -148,7 +148,7 @@ class Flow(unittest.TestCase):
         TR.decide(self.db, self.ids(), True, 5.0)
         gh = Gh(open_=(2, n))
         TR.process(CFG, gh, self.db, self.emit)
-        text = next(x[2] for x in gh.calls if x[0] == "comment")
+        text = next(x[2] for x in gh.calls if x[0] == "comment" and x[1] == 2)
         self.assertIn("L-3", text)
         self.assertNotIn(str(n), text)
 
@@ -229,6 +229,170 @@ class Flow(unittest.TestCase):
         db.execute("INSERT INTO local_imports VALUES ('o/r', 9, ?, 0, 0, 0)", (n,))
         got, _ = TR.snapshot(cfg, G2(), db, "o/r", "github")
         self.assertEqual([i["number"] for i in got], [7])
+
+
+
+def split_entry(n, k=2, repo="o/r", **kw):
+    return dict(issue=n, verdict="split", reason="too big", items=[dict(title=f"part {i}", body="do it", repo=repo, after=[]) for i in range(k)], **kw)
+
+
+def lab(n, *names, updated="u1"):
+    return {"number": n, "title": f"T{n}", "body": "", "updated_at": updated, "labels": [{"name": x} for x in names]}
+
+
+class Recommendations(unittest.TestCase):
+    def test_split_rerun_and_merge_are_validated(self):
+        got = TR.parse(block([split_entry(1), dict(issue=2, verdict="rerun", reason="flaky"), dict(issue=3, verdict="merge", of=4, reason="same")]),
+                       NUMS, {"o/r"}, frozenset({2}))
+        self.assertEqual([(p.issue, p.verdict) for p in got], [(1, "split"), (2, "rerun"), (3, "duplicate")])
+        self.assertEqual([it.title for it in got[0].evidence], ["part 0", "part 1"])
+        bad = [split_entry(1, 1), split_entry(1, 11), split_entry(1, repo="evil/repo"), dict(issue=2, verdict="rerun"),
+               dict(split_entry(1), items=[dict(title="x", body="y", repo="o/r", after=[0])] * 2)]
+        self.assertEqual(TR.parse(block(bad), NUMS, {"o/r"}, frozenset()), [])
+
+    def test_merge_keeps_the_ticket_further_along(self):
+        by = {1: lab(1, "factory:working"), 2: lab(2), 3: lab(3, "factory:pr-open"), 4: lab(4, "stage:analyzed")}
+        got = TR.orient([TR.Proposal(1, "duplicate", 2, (), "r"), TR.Proposal(4, "duplicate", 3, (), "r")], by)
+        self.assertEqual([(p.issue, p.target) for p in got], [(2, 1), (4, 3)])
+        got = TR.orient([TR.Proposal(1, "duplicate", 2, (), "r"), TR.Proposal(2, "built", None, ("a",), "r")], by)
+        self.assertEqual([(p.issue, p.target) for p in got], [(1, 2), (2, None)])          # 2 has its own proposal: no swap
+
+    def test_snapshot_leaves_out_finished_work_and_honours_the_scope(self):
+        class G:
+            def issues(self, repo, state, label, page):
+                return [lab(1), lab(2, "factory:failed"), lab(3, "factory:pr-open"), lab(4, "factory:pr-open", "factory:failed"),
+                        lab(5, "stage:analyzed")], False
+        from dataclasses import replace
+        cfg = replace(CFG, local_enabled=False, github_issues_enabled=True)
+        db = sqlite3.connect(":memory:")
+        tracker.ensure_tables(db)
+        nums = lambda scope: [i["number"] for i in TR.snapshot(cfg, G(), db, "o/r", "github", scope)[0]]
+        self.assertEqual(nums("all"), [1, 2, 4, 5])
+        self.assertEqual(nums("new"), [1])
+        self.assertEqual(nums("progress"), [2, 4, 5])
+        self.assertIn("1 finished ticket(s) left out", TR.snapshot(cfg, G(), db, "o/r", "github")[1])
+        self.assertEqual(TR.failed([lab(2, "factory:failed"), lab(4, "factory:pr-open", "factory:failed"), lab(5)]), {2})
+
+    def test_scope_is_stored_with_the_request(self):
+        db = sqlite3.connect(":memory:")
+        TR.request(db, "o/r", "github", 1.0, "progress")
+        TR.request(db, "o/x", "github", 1.0, "nonsense")
+        self.assertEqual([r["scope"] for r in TR.requested(db)], ["progress", "all"])
+
+    def test_old_tables_are_widened_and_keep_their_rows(self):
+        db = sqlite3.connect(":memory:")
+        db.execute("""CREATE TABLE review_proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, review_id INTEGER NOT NULL, repo TEXT NOT NULL,
+            issue INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', verdict TEXT NOT NULL CHECK (verdict IN ('built','duplicate')),
+            target INTEGER, evidence TEXT NOT NULL DEFAULT '[]', reason TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+            snapshot_updated TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, step INTEGER NOT NULL DEFAULT 0,
+            fails INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '', decided REAL, UNIQUE (review_id, issue))""")
+        db.execute("""CREATE TABLE ticket_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, sources TEXT NOT NULL,
+            status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', tickets INTEGER NOT NULL DEFAULT 0, run_id INTEGER,
+            created REAL NOT NULL, finished REAL)""")
+        db.execute("INSERT INTO review_proposals (review_id, repo, issue, verdict, status, step) VALUES (1, 'o/r', 7, 'built', 'queued', 1)")
+        TR.ensure_tables(db)
+        TR.ensure_tables(db)
+        self.assertEqual(db.execute("SELECT issue, verdict, status, step, merged FROM review_proposals").fetchall(), [(7, "built", "queued", 1, 0)])
+        db.execute("INSERT INTO review_proposals (review_id, repo, issue, verdict, status) VALUES (2, 'o/r', 8, 'rerun', 'proposed')")
+        self.assertIn("scope", {r[1] for r in db.execute("PRAGMA table_info(ticket_reviews)")})
+
+
+class Gh2(Gh):
+    def __init__(self, bodies=None, **kw):
+        super().__init__(**kw)
+        self.bodies = bodies or {}
+
+    def get_issue(self, repo, n):
+        return dict(super().get_issue(repo, n), title=f"T{n}", body=self.bodies.get(n, ""))
+
+    def add_labels(self, repo, n, labels): self._w("add", n, tuple(labels))
+
+
+class Apply(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        TR.ensure_tables(self.db)
+        self.emit = lambda *a: None
+
+    def queue(self, found, its):
+        rid = TR.request(self.db, "o/r", "github", 1.0)
+        TR.store(self.db, rid, "o/r", found, its)
+        TR.decide(self.db, [r[0] for r in self.db.execute("SELECT id FROM review_proposals")], True, 2.0)
+
+    def status(self):
+        return dict(self.db.execute("SELECT issue, status FROM review_proposals").fetchall())
+
+    def test_merge_carries_the_description_once_then_closes_the_duplicate(self):
+        self.queue([TR.Proposal(2, "duplicate", 3, (), "same")], items(2, 3))
+        body = "Please add X.\n![shot](https://github.com/user-attachments/assets/abc) <script>alert(1)</script> @someone"
+        gh = Gh2(bodies={2: body})
+        gh.update_issue = lambda *a, **k: (_ for _ in ()).throw(OSError("down"))
+        TR.process(CFG, gh, self.db, self.emit)                                  # closing fails: it resumes
+        merged = [c for c in gh.calls if c[0] == "comment" and c[1] == 3]
+        self.assertEqual(len(merged), 1)
+        text = merged[0][2]
+        self.assertIn("Please add X.", text)
+        self.assertIn("https://github.com/user-attachments/assets/abc", text)
+        self.assertNotIn("<script>", text)
+        self.assertNotIn("@someone", text)
+        gh.update_issue = lambda repo, n, body=None, state=None: gh.calls.append(("state", n, state))
+        TR.process(CFG, gh, self.db, self.emit)
+        self.assertEqual(len([c for c in gh.calls if c[0] == "comment" and c[1] == 3]), 1)   # not merged twice
+        self.assertIn(("state", 2, "closed"), gh.calls)
+        self.assertEqual(self.status(), {2: "applied"})
+
+    def test_split_is_only_proposed_on_the_ticket(self):
+        p = TR.parse(block([split_entry(1, 3)]), NUMS, {"o/r"})
+        self.queue(p, items(1))
+        gh = Gh2()
+        TR.process(CFG, gh, self.db, self.emit)
+        self.assertEqual(gh.calls, [])                                            # nothing is written to the tracker
+        from factory import split
+        prop = split.for_ticket(self.db, "o/r", 1)
+        self.assertEqual(prop["status"], "proposed")
+        self.assertEqual([i["title"] for i in split.items(self.db, prop["id"])], ["part 0", "part 1", "part 2"])
+        self.assertEqual(self.status(), {1: "applied"})
+
+    def test_rerun_applies_auto_only_while_it_still_failed(self):
+        self.queue([TR.Proposal(1, "rerun", None, (), "flaky"), TR.Proposal(2, "rerun", None, (), "flaky")], items(1, 2))
+        gh = Gh2(labels={1: ["factory:failed"], 2: ["factory:failed", CFG.trigger_label]})
+        TR.process(CFG, gh, self.db, self.emit)
+        self.assertEqual(gh.calls, [("add", 1, (CFG.auto_label,))])
+        self.assertEqual(self.status(), {1: "applied", 2: "stale"})
+
+
+class Page(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        TR.ensure_tables(self.db)
+        rid = TR.request(self.db, "o/r", "github", 1.0)
+        TR.store(self.db, rid, "o/r", [TR.Proposal(1, "built", None, ("a.py",), "r"), TR.Proposal(2, "duplicate", 3, (), "same"),
+                                       TR.Proposal(4, "rerun", None, (), "<b>flaky</b>")], items(1, 2, 3, 4))
+        ids = [r[0] for r in self.db.execute("SELECT id FROM review_proposals ORDER BY issue")]
+        TR.decide(self.db, ids[:1], False, 2.0)
+        self.db.execute("UPDATE review_proposals SET status='applied' WHERE issue=2")
+
+    def test_tabs_split_waiting_applied_and_dismissed(self):
+        from factory.ui import ticketreview as TRV
+        out = TRV.page(CFG, self.db, "o/r", "tok")
+        self.assertIn("Waiting for you <b class=\"mono\">1</b>", out)
+        self.assertIn("Applied <b class=\"mono\">1</b>", out)
+        self.assertIn("Dismissed <b class=\"mono\">1</b>", out)
+        self.assertIn("Failed: re-run", out)
+        self.assertNotIn("Already built", out)
+        self.assertIn("&lt;b&gt;flaky", out)
+        self.assertIn("Apply selected", out)
+        applied = TRV.page(CFG, self.db, "o/r", "tok", view="applied")
+        self.assertIn(">Merge<", applied)
+        self.assertNotIn("Apply selected", applied)
+        self.assertIn("Close: already built", TRV.page(CFG, self.db, "o/r", "tok", view="dismissed"))
+
+    def test_tickets_link_only_with_a_session_and_when_on(self):
+        from dataclasses import replace
+        from factory.ui import ticketreview as TRV
+        self.assertIn('href="/tickets/review?repo=o%2Fr"', TRV.link(CFG, "", "tok"))
+        self.assertEqual(TRV.link(CFG, "", ""), "")
+        self.assertEqual(TRV.link(replace(CFG, ticket_review=replace(CFG.ticket_review, enabled=False)), "", "tok"), "")
 
 
 if __name__ == "__main__":

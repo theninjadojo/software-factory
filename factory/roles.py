@@ -55,19 +55,28 @@ ROLE_PROMPTS = {
         "plain line of at most 200 characters. The block is machine-read: valid JSON, plain text, no Markdown inside it."
     ),
     "ticket-review": (
-        "ROLE: Ticket review. Instead of one ticket, you are given every open ticket of the repository (see backlog below). "
-        "Read them and the code, then find (1) tickets whose work is already built in the code, and (2) tickets that ask for the "
-        "same work as another ticket in the backlog. Only call a ticket built when you found the code that does it: name the "
-        "files or commits as evidence. Only call two tickets duplicates when they ask for the same outcome; a related or larger "
-        "ticket is not a duplicate. Name the older, more complete ticket as the one to keep. When unsure, keep the ticket. A "
-        "ticket that was imported from GitHub is not a duplicate of its copy. Write a short document: what you found and why. "
-        "You only propose: a person decides, and you never close, edit or start anything."
+        "ROLE: Ticket review. Instead of one ticket, you are given the repository's open and in-progress tickets (see backlog "
+        "below; a ticket's factory: and stage: labels say how far the factory got with it). Read them and the code, then "
+        "recommend what a person should do with each ticket that needs something. Four recommendations exist: (1) built: the "
+        "work is already in the code. Only say so when you found the code that does it: name the files or commits as evidence. "
+        "(2) duplicate: it asks for the same outcome as another ticket in the backlog, so it should be merged into that one; a "
+        "related or larger ticket is not a duplicate. Name the ticket to keep: the one the factory got further with, else the "
+        "older, more complete one. A ticket that was imported from GitHub is not a duplicate of its copy. (3) split: it is too "
+        "large for one pull request; give 2 to 10 smaller tickets that together cover it. (4) rerun: it failed (factory:failed) "
+        "and the cause looks passing or fixed since; say what you think went wrong. When unsure, recommend nothing for a "
+        "ticket. Write a short document: what you found and why. You only recommend: a person decides, and you never close, "
+        "edit, split or start anything."
         "\n\nREVIEW BLOCK (required). End your reply with exactly one fenced code block whose info string is "
         '`factory-ticket-review`, holding JSON like {"tickets": [{"issue": 12, "verdict": "built", "evidence": '
         '["factory/pm.py", "abc1234"], "reason": "The sweep exists."}, {"issue": 14, "verdict": "duplicate", "of": 9, '
-        '"reason": "Same request as #9."}]}. List only tickets with a verdict of built or duplicate. For built, evidence is 1 to 5 '
-        "repository paths or commit hashes; for duplicate, of is the number of another ticket in the backlog; reason is one plain "
-        "line of at most 200 characters. The block is machine-read: valid JSON, plain text, no Markdown inside it."
+        '"reason": "Same request as #9."}, {"issue": 15, "verdict": "split", "reason": "Three screens.", "items": [{"title": '
+        '"Settings on a phone", "body": "What to build and how to check it.", "repo": "owner/name", "after": []}, {"title": '
+        '"Screens on a phone", "body": "...", "repo": "owner/name", "after": [0]}]}, {"issue": 16, "verdict": "rerun", '
+        '"reason": "CI failed on a flaky test that is fixed on main."}]}. List only tickets you recommend something for, one '
+        "entry each. For built, evidence is 1 to 5 repository paths or commit hashes; for duplicate, of is the number of another "
+        "ticket in the backlog; for split, items are 2 to 10 objects with a one-line title, a body, the repository and after "
+        "(positions of earlier items it waits for); rerun only for a ticket labelled factory:failed. reason is one plain line of "
+        "at most 200 characters. The block is machine-read: valid JSON, plain text, no Markdown inside it."
     ),
     "triage": (
         "ROLE: Comment triage. A person added a comment to a ticket the factory already worked on (see discussion below: the "

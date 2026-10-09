@@ -32,6 +32,7 @@ from . import workers as WK
 from . import labels as L
 from . import localtickets as LT
 from . import plancard as PC
+from . import ticketreview as TRV
 from .auth import AuthStore, Sessions, Throttle
 from .settings import Form
 from .workerproc import WorkerApiProcess
@@ -150,13 +151,13 @@ class App:
         finally:
             db.close()
 
-    def request_ticket_review(self, repo: str, sources: str) -> bool:
+    def request_ticket_review(self, repo: str, sources: str, scope: str = "all") -> bool:
         """Queue a ticket review for the orchestrator (the UI has no GitHub token for this). The caller has checked repo and sources.
         False when one is already waiting or running for the repository."""
         from .. import ticketreview
         db = sqlite3.connect(self.cfg().db_path, timeout=10)
         try:
-            return ticketreview.request(db, repo, sources, time.time()) is not None
+            return ticketreview.request(db, repo, sources, time.time(), scope) is not None
         finally:
             db.close()
 
@@ -598,6 +599,7 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             db.close()
         new = (L.new_ticket_form(cfg, cfg.repos[0], csrf) + L.import_form(cfg, cfg.repos[0], csrf)) if cfg.repos else ""
+        new += TRV.link(cfg, project, csrf)
         shown = L.flash_pop(csrf)
         title = f"{display(int(sel['issue']))} · Tickets" if explicit and sel else "Tickets"
         strip = features.tickets_strip(cfg, csrf, q.get("ask") == "local")

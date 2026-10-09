@@ -1656,11 +1656,11 @@ def maybe_pm_sweep(cfg: Config, gh: GitHub, conn, repo: str) -> None:
     start(cfg, conn, repo, 0, "pm", lambda db: pm_sweep(cfg, gh, db, repo, issues))
 
 
-def ticket_review_job(cfg: Config, gh: GitHub, conn, rid: int, repo: str, sources: str) -> str:
+def ticket_review_job(cfg: Config, gh: GitHub, conn, rid: int, repo: str, sources: str, scope: str = "all") -> str:
     """One ticket review: snapshot the open tickets, run the read-only agent, store the validated proposals (see ticketreview.py).
     Nothing is closed here: a person picks proposals in the UI."""
     tr = cfg.ticket_review
-    items, notes = ticketreview.snapshot(cfg, gh, conn, repo, sources)
+    items, notes = ticketreview.snapshot(cfg, gh, conn, repo, sources, scope)
     if not items:
         ticketreview.set_status(conn, rid, "done", "; ".join(["no open tickets to review", *notes]))
         return "stage"
@@ -1669,7 +1669,9 @@ def ticket_review_job(cfg: Config, gh: GitHub, conn, rid: int, repo: str, source
     run_id, sink = begin_run("ticket-review", repo, stand_in, route, None, "ticket-review"), {}
     res = runner.run_task(cfg, gh, repo, stand_in, route, role="ticket-review", sink=sink, backlog=pm.backlog_items(items, tr.body_chars))
     end_run(run_id, res, sink)
-    found = ticketreview.parse(res.output, {i["number"] for i in items}) if res.status == "stage" else None
+    allowed = {r.repo for r in project_for(cfg, repo).repos if r.repo in cfg.repos} | {repo}     # where a split's tickets may go
+    found = (ticketreview.parse(res.output, {i["number"] for i in items}, allowed, ticketreview.failed(items))
+             if res.status == "stage" else None)
     if found is None:
         if res.status == "rate-limited":
             if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
@@ -1679,8 +1681,8 @@ def ticket_review_job(cfg: Config, gh: GitHub, conn, rid: int, repo: str, source
         ticketreview.set_status(conn, rid, "failed", "the agent did not finish with a valid review" if res.status == "stage" else res.status, len(items), run_id)
         return res.status
     kept = ticketreview.store(conn, rid, repo, found, items)
-    ticketreview.set_status(conn, rid, "done", "; ".join([f"{kept} proposal(s) from {len(items)} ticket(s)", *notes]), len(items), run_id)
-    emit("ticket-review", f"ticket review of {repo}: {kept} proposal(s) from {len(items)} ticket(s)", repo, None, run_id)
+    ticketreview.set_status(conn, rid, "done", "; ".join([f"{kept} recommendation(s) from {len(items)} ticket(s)", *notes]), len(items), run_id)
+    emit("ticket-review", f"ticket review of {repo}: {kept} recommendation(s) from {len(items)} ticket(s)", repo, None, run_id)
     return "stage"
 
 
@@ -1697,7 +1699,7 @@ def maybe_ticket_review(cfg: Config, gh: GitHub, conn) -> None:
         if any(not q.get("reason") for q in queued) or not pool.can_take(jobkey(r["repo"], 0)):
             continue
         ticketreview.set_status(conn, r["id"], "running")
-        start(cfg, conn, r["repo"], 0, "ticket-review", lambda db, r=r: ticket_review_job(cfg, gh, db, r["id"], r["repo"], r["sources"]))
+        start(cfg, conn, r["repo"], 0, "ticket-review", lambda db, r=r: ticket_review_job(cfg, gh, db, r["id"], r["repo"], r["sources"], r["scope"]))
 
 
 def report_blocked(cfg: Config, repo: str, now_held: dict) -> None:
