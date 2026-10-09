@@ -88,13 +88,13 @@ class _Conn(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
-def http_get(url: str, max_bytes: int):
+def http_get(url: str, max_bytes: int, accept: str = "text/html"):
     """(status, headers, body) of one GET with no cookies or credentials; the body is read up to max_bytes + 1."""
     p = urlsplit(url)
     conn = _Conn(p.hostname, resolve(p.hostname), TIMEOUT)
     try:
         conn.request("GET", (p.path or "/") + (f"?{p.query}" if p.query else ""),
-                     headers={"Host": p.hostname, "Accept": "text/html", "User-Agent": "software-factory", "Accept-Encoding": "identity"})
+                     headers={"Host": p.hostname, "Accept": accept, "User-Agent": "software-factory", "Accept-Encoding": "identity"})
         r = conn.getresponse()
         return r.status, {k.lower(): v for k, v in r.getheaders()}, r.read(max_bytes + 1)
     finally:

@@ -106,6 +106,15 @@ installs used). For the Docker install, `FACTORY_WORKERS=1 ./scripts/setup.sh` d
 - Tokens expire: a GitHub token that lapses shows up as failed runs and Telegram alerts.
 - Local tickets can carry attachments (Settings → General sets the size and count limits). They live in the `local_attachments` table,
   so a backup holds them and grows with them; restoring such a backup into an older version drops them silently.
+- Pictures in GitHub issues (`[issue_images]`, on by default): before each run the orchestrator copies the pictures of a GitHub
+  issue (body and comments, at most `max_images`) into the agents' `/task/attachments/` as `issue-<n>.png|jpg|gif`. It fetches only
+  from GitHub's own image hosts, without credentials. A picture that cannot be read is skipped and the agent is told so. Moving an
+  issue to the local tracker copies its pictures onto the local ticket (author `imported`, within the attachment limits). For
+  issues moved before this existed, run `python3 -m factory.ctl images backfill` first: it only reports, per ticket, what it would
+  add, what is already there, what is skipped because the ticket is at its attachment limits, and what could not be read. Then add
+  `--apply` (optionally with `owner/repo ...`) to copy them; running it again adds nothing. To take them off, delete them on the
+  ticket page; to remove all of them at once, take a backup first and then run
+  `DELETE FROM local_attachments WHERE author='imported' AND name LIKE 'issue-%'` (this cannot be undone).
 
 ## Docker notes
 

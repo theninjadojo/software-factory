@@ -1,4 +1,4 @@
-"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|deps [--apply]|screens baseline <owner/repo> <checkout>|workers add <name>|schedules [list|run <name>]|scans [list|run <name>]|health]"""
+"""Tiny operator CLI: python3 -m factory.ctl [status|version|pause|resume|doctor|labels [owner/repo ...]|deps [--apply]|images backfill [--apply] [owner/repo ...]|screens baseline <owner/repo> <checkout>|workers add <name>|schedules [list|run <name>]|scans [list|run <name>]|health]"""
 import os
 import secrets
 import sqlite3
@@ -228,6 +228,26 @@ def deps_cmd(cfg, gh, cfg_path: str, args: list[str], out=print) -> int:
     return bad
 
 
+def images_cmd(cfg, gh, args: list[str], out=print) -> int:
+    """`images backfill [--apply] [owner/repo ...]`: copy the pictures of GitHub issues moved before pictures were copied onto their
+    local tickets. Without --apply it only reports what it would do."""
+    from . import db as dbm
+    if args[:1] != ["backfill"]:
+        out("usage: images backfill [--apply] [owner/repo ...]")
+        return 1
+    if not cfg.local_enabled:
+        out("the local tracker is off ([local] enabled = false): there are no moved issues to fill in")
+        return 1
+    if not cfg.issue_images.enabled:
+        out("issue pictures are off ([issue_images] enabled = false)")
+        return 1
+    repos = [a for a in args[1:] if a != "--apply"] or list(cfg.repos)
+    if (unknown := [r for r in repos if r not in cfg.repos]):
+        out(f"not a configured repository: {', '.join(unknown)}")
+        return 1
+    return tracker.backfill_images(cfg, gh, dbm.local(cfg.db_path), repos, "--apply" in args, out)
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     cfg = load(os.environ.get("FACTORY_CONFIG", "/srv/factory/config.toml"))
@@ -257,6 +277,12 @@ def main():
             print("no GitHub token: put it in", cfg.token_file)
             sys.exit(1)
         sys.exit(deps_cmd(cfg, GitHub(token), os.environ.get("FACTORY_CONFIG", "/srv/factory/config.toml"), sys.argv[2:]))
+    if cmd == "images":
+        token = Path(cfg.token_file).read_text().strip() if cfg.token_file and Path(cfg.token_file).exists() else None
+        if not token:
+            print("no GitHub token: put it in", cfg.token_file)
+            sys.exit(1)
+        sys.exit(images_cmd(cfg, GitHub(token), sys.argv[2:]))
     if cmd == "workers" and sys.argv[2:3] == ["add"] and len(sys.argv) == 4:
         sys.exit(workers_add(cfg, sys.argv[3]))
     if cmd == "health":

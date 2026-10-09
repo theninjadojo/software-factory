@@ -140,6 +140,16 @@ class DesignLinksCfg:
 
 
 @dataclass(frozen=True)
+class IssueImagesCfg:
+    """Pictures in a GitHub issue (a pasted screenshot), copied in for the agents, which cannot reach GitHub themselves. On by default:
+    the orchestrator fetches only <img> addresses on GitHub's own image hosts (fixed in code), with no credentials, at most max_images
+    per ticket and max_mb each, for every run and when an issue is moved to the local tracker."""
+    enabled: bool = True
+    max_images: int = 5
+    max_mb: int = 5
+
+
+@dataclass(frozen=True)
 class UpdatesCfg:
     """Tell the person in the UI when a newer release exists (one cached read of GitHub's public releases API, every few hours)."""
     check: bool = True
@@ -544,6 +554,7 @@ class Config:
     review: ReviewCfg = field(default_factory=ReviewCfg)
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
     design_links: DesignLinksCfg = field(default_factory=DesignLinksCfg)
+    issue_images: IssueImagesCfg = field(default_factory=IssueImagesCfg)
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
     ticket_review: TicketReviewCfg = field(default_factory=TicketReviewCfg)
@@ -1109,6 +1120,10 @@ def parse(raw: dict) -> Config:
             or (design_links.enabled and not design_links.hosts)):
         raise ValueError("design_links.hosts must be lower-case host names (no wildcards, and at least one when enabled), max_links 1-5, "
                          "max_bytes 1-5000000 and ttl_hours 1-720")
+    issue_images = IssueImagesCfg(**raw.get("issue_images", {}))
+    if (not isinstance(issue_images.enabled, bool) or not isinstance(issue_images.max_images, int) or not 1 <= issue_images.max_images <= 10
+            or not isinstance(issue_images.max_mb, int) or not 1 <= issue_images.max_mb <= 10):
+        raise ValueError("issue_images.enabled must be true or false, max_images 1-10 and max_mb 1-10")
     updates = UpdatesCfg(**raw.get("updates", {}))
     if not isinstance(updates.repo, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", updates.repo):
         raise ValueError("updates.repo must look like owner/name")
@@ -1199,6 +1214,7 @@ def parse(raw: dict) -> Config:
         review=review,
         mockups=mockups,
         design_links=design_links,
+        issue_images=issue_images,
         updates=updates,
         pm=pm,
         ticket_review=tr,
