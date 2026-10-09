@@ -138,13 +138,21 @@
       var c = e.target.closest && e.target.closest("[data-card]");
       if (!c) return;
       drag = c; shut(null); say("");
+      var ghost = null;
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "");
         // The whole card follows the pointer (not just the link inside it), grabbed where it was picked up.
-        if (e.dataTransfer.setDragImage) { var r = c.getBoundingClientRect(); e.dataTransfer.setDragImage(c, Math.max(0, e.clientX - r.left), Math.max(0, e.clientY - r.top)); }
+        // The picture is of a copy set apart from the board: taken in place, the browser also takes in
+        // whatever lies behind and around the card (the column, its neighbours).
+        if (e.dataTransfer.setDragImage) {
+          var r = c.getBoundingClientRect();
+          ghost = c.cloneNode(true); ghost.removeAttribute("id"); ghost.classList.add("kb-ghost"); ghost.style.width = r.width + "px";
+          document.body.appendChild(ghost);
+          e.dataTransfer.setDragImage(ghost, Math.max(0, e.clientX - r.left), Math.max(0, e.clientY - r.top));
+        }
       }
       // Dim the card left behind only after the browser has taken its picture, so the dragged copy stays fully visible.
-      setTimeout(function () { if (drag === c) c.classList.add("dragging"); }, 0);
+      setTimeout(function () { if (ghost) ghost.remove(); if (drag === c) c.classList.add("dragging"); }, 0);
     });
     document.addEventListener("dragend", function () {
       if (drag) drag.classList.remove("dragging");
