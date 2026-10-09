@@ -46,7 +46,7 @@ def release_body(h, csrf: str) -> str:
     try:
         top, base = _latest(h, repo, gh)
         pulls = gh.open_pulls(repo, BRANCH)
-    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as e:   # TypeError: a reply of another shape
         return head + f'<p class="bad-text" role="alert"><span aria-hidden="true">✕</span> Release information could not be loaded: {esc(_github_error(e))} Updates above still work.</p>'
     rows = ""
     for p in pulls:
@@ -80,7 +80,7 @@ def bump_post(h, form, csrf: str) -> None:
     except urllib.error.HTTPError as e:
         msg = "A branch or pull request for that version already exists." if e.code == 422 else _github_error(e)
         return _back(h, csrf, msg, "bad")
-    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as e:   # TypeError: a reply of another shape
         return _back(h, csrf, _github_error(e), "bad")
     _back(h, csrf, f"Opened {url}. Merge it below to start the release build.")
 
@@ -100,7 +100,7 @@ def merge_post(h, form, csrf: str) -> None:
     except urllib.error.HTTPError as e:
         msg = f"GitHub would not merge it ({e.code}): a required check or review is missing, or it changed just now." if e.code in (405, 409, 422) else _github_error(e)
         return _back(h, csrf, msg, "bad")
-    except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as e:   # TypeError: a reply of another shape
         return _back(h, csrf, _github_error(e), "bad")
     _back(h, csrf, f"Merged #{n}. The release workflow is building it; the new version appears as a release in a few minutes.")
 

@@ -130,6 +130,13 @@ class Releases(AdminCase):
         self.assertIn('action="/updates/check"', html)
         self.assertIn('name="updates.check"', html)
 
+    def test_a_github_reply_of_another_shape_still_renders_the_page(self):
+        self.gh.default_branch.side_effect = TypeError("list indices must be integers or slices, not str")
+        cookie, _ = self.session()
+        s, _, html = self.req("GET", "/updates", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn("Release information could not be loaded", html)
+
     def test_the_old_pages_redirect_to_the_fixed_path(self):
         cookie, _ = self.session()
         for path in ("/release", "/release?next=//evil.example", "/settings?section=update_check"):
