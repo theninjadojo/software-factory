@@ -1680,7 +1680,7 @@ def ticket_review_job(cfg: Config, gh: GitHub, conn, rid: int, repo: str, source
             alert(f"Ticket review failed for {repo} ({res.status})\n{res.detail[:300]}", event="failure")
         ticketreview.set_status(conn, rid, "failed", "the agent did not finish with a valid review" if res.status == "stage" else res.status, len(items), run_id)
         return res.status
-    kept = ticketreview.store(conn, rid, repo, found, items)
+    kept = ticketreview.store(conn, rid, repo, found, items, ticketreview.trigger_labels(cfg))
     ticketreview.set_status(conn, rid, "done", "; ".join([f"{kept} recommendation(s) from {len(items)} ticket(s)", *notes]), len(items), run_id)
     emit("ticket-review", f"ticket review of {repo}: {kept} recommendation(s) from {len(items)} ticket(s)", repo, None, run_id)
     return "stage"

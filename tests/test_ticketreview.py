@@ -395,5 +395,57 @@ class Page(unittest.TestCase):
         self.assertEqual(TRV.link(replace(CFG, ticket_review=replace(CFG.ticket_review, enabled=False)), "", "tok"), "")
 
 
+
+class FollowUps(unittest.TestCase):
+    def test_tickets_whose_prs_are_all_merged_are_left_out(self):
+        class G:
+            def issues(self, repo, state, label, page):
+                return [lab(1, "stage:implemented"), lab(2, "stage:implemented"), lab(3)], False
+        from dataclasses import replace
+        cfg = replace(CFG, local_enabled=False, github_issues_enabled=True)
+        db = sqlite3.connect(":memory:")
+        tracker.ensure_tables(db)
+        db.execute("CREATE TABLE prs (repo TEXT, number INTEGER, issue_repo TEXT, issue_num INTEGER, status TEXT, rounds INTEGER, "
+                   "watch_started REAL, updated REAL, summary TEXT)")
+        db.executemany("INSERT INTO prs VALUES ('o/r', ?, 'o/r', ?, 'closed', 0, 0, 0, ?)",
+                       [(31, 1, "merged"), (32, 1, "merged"), (33, 2, "merged"), (34, 2, "")])     # 2 still has an open PR
+        got, notes = TR.snapshot(cfg, G(), db, "o/r", "github")
+        self.assertEqual([i["number"] for i in got], [2, 3])
+        self.assertIn("1 finished ticket(s) left out", notes)
+        self.assertFalse(TR.merged(sqlite3.connect(":memory:"), "o/r", 1))            # no prs table yet
+
+    def test_merging_two_tickets_being_built_needs_a_confirm(self):
+        db = sqlite3.connect(":memory:")
+        TR.ensure_tables(db)
+        rid = TR.request(db, "o/r", "github", 1.0)
+        its = [lab(1, "factory:working"), lab(2, CFG.trigger_label), lab(3, CFG.trigger_label), lab(4)]
+        TR.store(db, rid, "o/r", [TR.Proposal(2, "duplicate", 1, (), "same"), TR.Proposal(4, "duplicate", 3, (), "same")], its,
+                 TR.trigger_labels(CFG))
+        rows = {r["issue"]: r for r in TR.proposals(db, "o/r")}
+        self.assertEqual(rows[2]["warn"], "Both are being built: merging stops the work on #2")
+        self.assertEqual(rows[4]["warn"], "")
+        self.assertEqual(TR.needs_confirm(db, [rows[2]["id"], rows[4]["id"]]), {rows[2]["id"]})
+        from factory.ui import ticketreview as TRV
+        out = TRV.page(CFG, db, "o/r", "tok")
+        self.assertIn("Both are being built: merging stops the work on #2", out)
+        self.assertIn(f'name="confirm" value="{rows[2]["id"]}"', out)
+        self.assertEqual(out.count('name="confirm"'), 1)
+
+    def test_tickets_of_the_reviewed_repo_are_named_short(self):
+        db = sqlite3.connect(":memory:")
+        TR.ensure_tables(db)
+        rid = TR.request(db, "o/r", "github", 1.0)
+        n = tracker.LOCAL_BASE + 5
+        TR.store(db, rid, "o/r", [TR.Proposal(2, "duplicate", 3, (), "same"), TR.Proposal(n, "built", None, ("a.py",), "r")], items(2, 3, n))
+        from factory.ui import ticketreview as TRV
+        out = TRV.page(CFG, db, "o/r", "tok")
+        self.assertIn('>#2</a>', out)
+        self.assertIn('>#3</a>', out)
+        self.assertIn('>L-5</a>', out)
+        self.assertIn("#2's description", out)
+        self.assertNotIn("o/r#2", out)
+        self.assertNotIn("o/r#3", out)
+
+
 if __name__ == "__main__":
     unittest.main()
