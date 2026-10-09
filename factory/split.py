@@ -76,6 +76,11 @@ def parse(text: str, allowed) -> Proposal | None:
         d = json.loads(blocks[-1])
     except ValueError:
         return None
+    return validate(d, allowed)
+
+
+def validate(d, allowed) -> Proposal | None:
+    """One decoded split ({"reason", "items"}), checked as `parse` checks a block; the ticket review proposes splits in this shape."""
     raw = d.get("items") if isinstance(d, dict) else None
     if not isinstance(raw, list) or not MIN_ITEMS <= len(raw) <= MAX_ITEMS:
         return None
