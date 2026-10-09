@@ -1561,6 +1561,6 @@ p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .tr-item > input { width:22px; height:22px; margin:2px 0 0; flex:none; } .tr-body { flex:1; min-width:0; } .tr-body p { margin:0 0 8px; } .tr-body p:last-child { margin:0; }
 .tr-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:500; } .tr-parts { margin:0 0 8px; padding-left:1.4rem; }
 .badge.blue { color:var(--blue); border-color:var(--blue); }
-.tr-warn { margin:0 0 8px; padding:10px 12px; border:1px solid var(--warn); background:var(--panel2); } .tr-warn p { margin:0 0 6px; color:var(--warn); } .tr-warn .check { min-height:44px; }
+.tr-warn { margin:0 0 8px; padding:10px 12px; border:1px solid var(--warn); background:var(--panel2); } .tr-warn p { margin:0 0 6px; color:var(--warn); } .tr-warn .check { display:flex; align-items:center; gap:10px; min-height:44px; margin:0; cursor:pointer; } .tr-warn .check input { width:22px; height:22px; margin:0; flex:none; }
 .tr-acts { display:flex; flex-wrap:wrap; gap:12px; margin-top:20px; }
 @media (max-width:760px) { .tr-run label, .tr-run button, .tr-acts button { flex:1 1 100%; } }
