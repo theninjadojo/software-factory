@@ -53,7 +53,7 @@ def settings_link(page, name):
     going back to All settings for one in another group."""
     link = page.get_by_role("link", name=re.compile(rf"^{re.escape(name)}")).locator("visible=true")
     if not link.count():
-        page.get_by_role("link", name="‹ All settings").click()
+        page.get_by_role("link", name="Back to all settings").click()
     return link.first
 
 
@@ -73,7 +73,11 @@ def test_navigating_every_primary_and_secondary_destination(page, server, viewpo
     for name in ("Harnesses", "Credentials", "Telegram", "Labels"):
         settings_link(page, name).click()
         expect(page.get_by_role("heading", level=1)).to_be_visible()
-        expect(side.locator("a.active", has_text=name)).to_be_visible()
+        active = side.locator("a.active", has_text=name)
+        if viewport == "phone":      # the phone hides the side list of the page you are on (the heading says where you are), but still marks it
+            expect(active).to_have_attribute("aria-current", "page")
+        else:
+            expect(active).to_be_visible()
     go(page, viewport, "Factory")
     expect(page.get_by_role("heading", name="Factory", exact=True)).to_be_visible()
 
@@ -194,6 +198,7 @@ def test_local_tickets_are_turned_on_from_new_ticket(page, server, viewport):
     strip.get_by_role("button", name="Turn on").click()
     expect(page.locator(".flash")).to_contain_text("Local tickets turned on")
     assert tomllib.loads((server.root / "config.overrides.toml").read_text())["local"]["enabled"] is True
+    page.get_by_text("Settings for this page").click()                  # it opens by itself only when New ticket sent you here
     expect(page.get_by_role("region", name="The settings that shape Tickets")).to_contain_text("GitHub and the factory")
     page.get_by_role("button", name="New ticket").click()
     expect(page.get_by_label("Keep it in")).to_be_visible()
@@ -202,6 +207,20 @@ def test_local_tickets_are_turned_on_from_new_ticket(page, server, viewport):
 def test_settings_opens_on_every_feature_and_switches_one(page, server, viewport):
     page.goto(server.url + "/")
     go(page, viewport, "Settings")
+    if viewport == "phone":
+        # The phone's Settings home is a list of pages with their state; a feature is switched on from its own page.
+        row = page.locator(".sl-list").get_by_role("link", name=re.compile("^Code review"))
+        expect(row).to_contain_text("Off")
+        row.click()
+        page.get_by_label("Enable the code reviewer").check()
+        page.get_by_role("button", name="Save changes").click()
+        expect(page.locator(".flash")).to_contain_text("Saved")
+        page.goto(server.url + "/settings")
+        expect(page.locator(".sl-list").get_by_role("link", name=re.compile("^Code review"))).to_contain_text("On")
+        page.get_by_role("link", name=re.compile("^Off")).click()
+        expect(page.locator(".sl-list").get_by_role("link", name=re.compile("^Comment triage"))).to_be_visible()
+        expect(page.locator(".sl-list").get_by_role("link", name=re.compile("^Code review"))).to_have_count(0)
+        return
     card = page.locator("#f-review")
     expect(card).to_contain_text("Off")
     card.locator("summary", has_text="Turn on").click()
