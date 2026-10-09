@@ -254,10 +254,11 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                  mockups: list | None = None, built: list | None = None, screen_text: str = "", verify_text: str = "",
                  review: dict | None = None, attachments: list | None = None,
                  design_imports: list | None = None, conversation: list | None = None, stages: tuple = (), released: str = "", follow: str = "",
-                 missed_images: int = 0, judge: str = "", history: list | None = None) -> str:
+                 missed_images: int = 0, judge: str = "", history: list | None = None, notes: bool = False) -> str:
     """judge: the open questions put to the second-opinion role (judges.agent_brief); history: a person's earlier answers in the repository.
     conversation: (author, text) turns of the ticket chat (chat.prompt_turns), untrusted data; stages: the names the chat may propose.
     missed_images: how many pictures in the GitHub issue could not be copied in (a fixed line says so).
+    notes: the ticket carries the meeting notes label (split.notes_label), so the analyst always considers a split.
     review: a person's notes on the screens (reviewnotes.for_designer), told to the designer only.
     backlog: the project manager's tickets ({number, title, labels, body}, untrusted text); it replaces the single ticket.
     operator: standing instructions from the operator's config (trusted), put before everything else and subordinate to the
@@ -277,7 +278,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
         if role == "designer" and design_files:
             task += design_files_rules(design_dir)
         if role in STAGE_TO_ROLE.values():
-            task += stage_rules(role)
+            task += stage_rules(role, notes)
         if role == "reviewer":
             task += follow
         if role == "designer" and review:
@@ -681,7 +682,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
                          (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown, built_names,
                          screen_retry["text"] if screen_retry else "", verify_retry["text"] if verify_retry else "", review, attached, imported,
-                         conversation, released=released, follow=follow, missed_images=missed_images, judge=judge, history=history))
+                         conversation, released=released, follow=follow, missed_images=missed_images, judge=judge, history=history,
+                         notes=role == "analyst" and cfg.split.notes_label in {lb.get("name") for lb in issue.get("labels") or [] if isinstance(lb, dict)}))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
