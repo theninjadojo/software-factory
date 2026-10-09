@@ -275,8 +275,7 @@ def canvas_body(cfg, db, repo: str, csrf: str) -> str:
             f'{sum(len(v) for v in pages.values())} screens on {len(pages)} pages · {sum(noted.get(x["key"], 0) for v in pages.values() for x in v.values())} open notes</span></p>')
     if not pages:
         return head + '<p class="muted">No screens yet. Press <em>Build screens</em> on the Screens page.</p>'
-    zoom = ('<div class="cv-zoom" role="group" aria-label="Zoom"><span class="muted">Zoom</span>'
-            + "".join(f'<button type="button" data-zoom="{z}" aria-pressed="{"true" if z == "2" else "false"}">{t}</button>' for z, t in (("1", "Small"), ("2", "Medium"), ("3", "Large"))) + "</div>")
+    zoom = views.zoom_buttons("cv")
     rows = ""
     for page in sorted(pages):
         cells = ""
@@ -287,7 +286,7 @@ def canvas_body(cfg, db, repo: str, csrf: str) -> str:
             cells += (f'<figure class="cv-shot cv-{esc(v)}"><a href="{esc(open_url(x["key"]))}"><img src="{esc(SB.src(x["key"]))}" '
                       f'alt="{esc(page)} {esc(v)}" loading="lazy"></a><figcaption>{esc(v)} {badge}</figcaption></figure>')
         rows += f'<section class="cv-page"><h3>{esc(page)}</h3><div class="cv-row">{cells}</div></section>'
-    return head + zoom + f'<div class="cv" data-z="2" tabindex="0" aria-label="Screens of {esc(repo)}">{rows}</div>'
+    return head + zoom + f'<div class="cv" id="cv" data-z="2" tabindex="0" aria-label="Screens of {esc(repo)}">{rows}</div>'
 
 
 def canvas_get(h, q: dict, csrf: str) -> None:

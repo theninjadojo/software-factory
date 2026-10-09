@@ -812,11 +812,28 @@ main.full { max-width:none; }
 .cv[data-z="1"] .cv-shot { width:16rem; } .cv[data-z="1"] .cv-tablet { width:11rem; } .cv[data-z="1"] .cv-phone, .cv[data-z="1"] .cv-mobile { width:5.5rem; }
 .cv[data-z="3"] .cv-shot { width:52rem; } .cv[data-z="3"] .cv-tablet { width:34rem; } .cv[data-z="3"] .cv-phone, .cv[data-z="3"] .cv-mobile { width:17rem; }
 .cv[data-z="1"] .cv-row { gap:.6rem; }
+.cv[data-z="4"] .cv-shot { width:auto; } .cv[data-z="4"] .cv-shot img { width:auto; max-width:none; }
+.cv-zoom { flex-wrap:wrap; } .cv-zoom button { min-height:44px; } .dz-open { margin-left:auto; }
+/* A ticket's Design output card: the top of each design screen at a readable size; the zoom buttons set the size. */
+.dz { overflow-x:auto; padding:2px 2px 8px; }
+.dz-row { display:flex; align-items:flex-start; gap:16px; width:max-content; }
+.dz-shot { margin:0; flex:none; width:22rem; }
+.dz-shot a { display:block; border:1px solid var(--line2); background:#fff; }
+.dz-shot a:hover, .dz-shot a:focus-visible { border-color:var(--accent); }
+.dz-shot img { display:block; width:100%; aspect-ratio:4/5; object-fit:cover; object-position:top; }
+.dz-shot figcaption { margin-top:6px; font-size:13px; overflow-wrap:anywhere; }
+.dz[data-z="1"] .dz-shot { width:12rem; } .dz[data-z="3"] .dz-shot { width:36rem; }
+.dz .dz-narrow { width:11rem; } .dz[data-z="1"] .dz-narrow { width:6.5rem; } .dz[data-z="3"] .dz-narrow { width:17rem; }
+.dz-narrow img { aspect-ratio:9/16; }
+.dz-hint { margin:8px 0 0; }
 @media (max-width:760px) {
   .cv-row { width:auto; flex-wrap:wrap; gap:.6rem; }
   .cv[data-z] .cv-shot { width:calc(50% - .3rem); }
   .cv[data-z] .cv-tablet { width:calc(30% - .3rem); }
   .cv[data-z] .cv-phone, .cv[data-z] .cv-mobile { width:calc(20% - .3rem); }
+  .cv[data-z="4"] .cv-row { width:max-content; flex-wrap:nowrap; } .cv[data-z="4"] .cv-shot { width:auto; }
+  .dz-canvas[data-z] .cv-shot { width:100%; } .dz-canvas[data-z="1"] .cv-shot, .dz-canvas[data-z] .cv-phone { width:calc(50% - .3rem); }
+  .dz-canvas[data-z="1"] .cv-phone { width:calc(25% - .45rem); } .dz-canvas[data-z="4"] .cv-shot { width:auto; }
 }
 
 /* The floor's layout editor (/floor/edit, floor-edit.js): a plan of the buildings and belts on the layout's grid. Wide screens only. */

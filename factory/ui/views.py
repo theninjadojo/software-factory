@@ -16,7 +16,7 @@ REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 NAV = [("/", "Factory"), ("/tickets", "Tickets"), ("/events", "Events"), ("/roadmap", "Roadmap"), ("/screens", "Screens"), ("/scenarios", "Tests"), ("/settings", "Settings")]
 # Needs you, Runs and PRs & CI are part of Tickets: those pages light up the Tickets tab, and the needs count sits on it.
-TICKET_PAGES = {"/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/ticket/review", "/labels", "/labels/issue"}
+TICKET_PAGES = {"/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/ticket/review", "/ticket/design", "/labels", "/labels/issue"}
 ICON = '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 16 16\'%3E%3Ccircle cx=\'8\' cy=\'8\' r=\'6\' fill=\'%23e0a030\'/%3E%3C/svg%3E">'
 BRAND = ('<svg class="brand-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V10l6 4V10l6 4V6h6v15z"/></svg>')
 MENU_ICON = '<svg class="ph-menu-i" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>'
@@ -70,6 +70,30 @@ def badge(text, kind: str | None = None) -> str:
 def gh_link(url: str, label: str | None = None) -> str:
     u = str(url or "")
     return f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">{esc(label or u)}</a>' if GH_URL.match(u) else esc(label or u)
+
+
+def mockup_ok(f) -> bool:
+    return designfiles.record_ok(f) and "/previews/" in f["path"] and f["path"].endswith(".png")
+
+
+def mockup_src(f) -> str:
+    return "/mockup?" + urlencode({"repo": f["repo"], "path": f["path"]})
+
+
+def mockup_name(path: str) -> str:
+    """A preview's screen name for people: docs/design/previews/factory-56-run-summary.png -> Run summary."""
+    stem = re.sub(r"^factory-\d+-", "", path.rpartition("/")[2].removesuffix(".png"))
+    return stem.replace("-", " ").capitalize() or stem
+
+
+NARROW = 800                                     # a screen narrower than this (pixels) is a phone's: it is drawn narrower than a desktop one
+
+
+def zoom_buttons(target: str, levels=(("1", "Small"), ("2", "Medium"), ("3", "Large")), on: str = "2", extra: str = "") -> str:
+    """The Small / Medium / Large buttons of a canvas of screens (app.js sets data-z on the element with id `target`)."""
+    return (f'<div class="cv-zoom" role="group" aria-label="Zoom" data-for="{esc(target)}"><span class="muted">Zoom</span>'
+            + "".join(f'<button type="button" data-zoom="{z}" aria-pressed="{"true" if z == on else "false"}">{t}</button>' for z, t in levels)
+            + extra + "</div>")
 
 
 def mockup_img(f) -> str:

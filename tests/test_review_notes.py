@@ -56,6 +56,14 @@ class Store(unittest.TestCase):
         self.assertTrue(all(i["src"].startswith(("/mockup?", "/runimg?")) for i in RN.images(self.db, REPO, 5)))
         self.assertIsNotNone(old)
 
+    def test_preview_widths_come_from_the_png_header(self):
+        d, _ = seed(self.db)
+        phone = PATH.replace("home", "home-phone")
+        dbm.add_design_files(self.db, d, [{"repo": REPO, "path": phone, "url": f"https://github.com/{REPO}/blob/{'a' * 40}/{phone}", "pr": "",
+                                           "png": png(390, 2400)}])
+        self.assertEqual(dbm.mockup_widths(self.db, [{"repo": REPO, "path": PATH}, {"repo": REPO, "path": phone}, {"repo": REPO, "path": "x"}]),
+                         {(REPO, PATH): 1440, (REPO, phone): 390})
+
     def test_areas_must_lie_inside_the_image_and_a_point_has_no_size(self):
         self.assertEqual(RN.area(0, 0, 1000, 1000), (0, 0, 1000, 1000))
         self.assertEqual(RN.area(500, 500, 0, 0), (500, 500, 0, 0))
@@ -253,6 +261,29 @@ class Page(UiCase):
         self.assertIn("Review the screens", self.req("GET", f"/ticket/doc?repo={REPO}&n=5&stage=designer", cookie=cookie)[2])
         self.assertIn("Review the screens", self.req("GET", f"/ticket/images?repo={REPO}&n=5", cookie=cookie)[2])
         self.assertIn("no screens to review", self.page_for(cookie, 6))
+
+    def test_the_design_canvas_shows_the_screens_whole_with_zoom_and_each_opens_in_review(self):
+        self.assertEqual(self.req("GET", f"/ticket/design?repo={REPO}&n=5")[0], 303)
+        cookie, csrf = self.session()
+        for q in ("repo=evil/x&n=5", f"repo={REPO}&n=x"):
+            self.assertEqual(self.req("GET", "/ticket/design?" + q, cookie=cookie)[0], 404, q)
+        self.post(cookie, csrf, "/review/add", img=MOCKUP, x="1", y="1", text="Tighter")
+        s, _, html = self.req("GET", f"/ticket/design?repo={REPO}&n=5", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn('data-zoom="4"', html)                                    # Small, Medium, Large and Actual size
+        self.assertIn('data-for="cv"', html)
+        self.assertIn("/ticket/review?" + urlencode({"repo": REPO, "n": 5, "img": MOCKUP}).replace("&", "&amp;"), html)
+        self.assertIn('<figcaption>Home <span class="rv-count"', html)          # factory-5-home.png, with its open note
+        self.assertIn('<figure class="cv-shot"><a', html)                       # 1440 wide: drawn as a desktop screen, not a phone's
+        self.assertNotIn("home-desktop", html)                                  # built screenshots are not design output
+        self.assertIn("No design screens yet", self.req("GET", f"/ticket/design?repo={REPO}&n=6", cookie=cookie)[2])
+
+    def test_the_ticket_design_card_has_zoom_and_opens_the_canvas(self):
+        cookie, _ = self.session()
+        html = self.req("GET", f"/fragment/detail?repo={REPO}&n=5", cookie=cookie)[2]
+        self.assertIn('class="dz" id="dz" data-z="2"', html)
+        self.assertIn(f"/ticket/design?repo={REPO.replace('/', '%2F')}&amp;n=5", html)
+        self.assertIn(urlencode({"img": MOCKUP}), html)                         # each screen opens in Review the screens
 
     def page_for(self, cookie, n):
         return self.req("GET", f"/ticket/review?repo={REPO}&n={n}", cookie=cookie)[2]
