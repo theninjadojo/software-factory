@@ -11,7 +11,7 @@ jobs:
   unit:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0      # the release-guard tests compare against the repository's tags
       # The runner's own python3 (3.12). setup-python's tool-cache build cannot find libpython once a test strips the environment.
@@ -19,8 +19,8 @@ jobs:
   browser:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install -r tests/e2e/requirements.txt && playwright install --with-deps chromium
@@ -28,7 +28,7 @@ jobs:
   images:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: docker build -t software-factory:ci .
       - run: docker run --rm --entrypoint python3 -w /app software-factory:ci -m unittest discover -s tests
       - run: docker compose version
