@@ -76,13 +76,15 @@ def ensure_tables(db: sqlite3.Connection) -> None:
             snapshot_updated TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL CHECK (status IN ('proposed','queued','applied','rejected','stale','failed')),
             step INTEGER NOT NULL DEFAULT 0, fails INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '',
-            decided REAL, merged INTEGER NOT NULL DEFAULT 0, UNIQUE (review_id, issue))""")
+            decided REAL, merged INTEGER NOT NULL DEFAULT 0, warn TEXT NOT NULL DEFAULT '', UNIQUE (review_id, issue))""")
     if old and "'rerun'" not in old[0]:
         cols = ("id, review_id, repo, issue, title, verdict, target, evidence, reason, note, snapshot_updated, status, step, fails, "
                 "detail, decided")
         db.execute(f"INSERT INTO review_proposals ({cols}) SELECT {cols} FROM review_proposals_v1")
         db.execute("DROP TABLE review_proposals_v1")
         db.execute("DROP INDEX IF EXISTS review_proposals_repo")
+    if "warn" not in {r[1] for r in db.execute("PRAGMA table_info(review_proposals)")}:
+        db.execute("ALTER TABLE review_proposals ADD COLUMN warn TEXT NOT NULL DEFAULT ''")
     db.execute("CREATE INDEX IF NOT EXISTS review_proposals_repo ON review_proposals (repo, status)")
     db.commit()
 
@@ -181,6 +183,21 @@ def finished(issue: dict) -> bool:
     return DONE_LABEL in names and FAILED_LABEL not in names
 
 
+def merged(db, repo: str, n: int) -> bool:
+    """Every pull request the factory opened for the ticket is merged (ci.py records a merged one as summary 'merged')."""
+    try:
+        got = [r[0] for r in db.execute("SELECT summary FROM prs WHERE issue_repo=? AND issue_num=?", (repo, int(n)))]
+    except sqlite3.OperationalError:
+        return False
+    return bool(got) and all(x == "merged" for x in got)
+
+
+def busy(issue: dict, triggers) -> bool:
+    """Being built: running now, queued (a trigger label) or waiting for a person's answers."""
+    names = _names(issue)
+    return any(n.startswith("factory:working") for n in names) or bool(names & set(triggers))
+
+
 def failed(items: list[dict]) -> frozenset:
     """The tickets a review may propose to re-run: they failed and nothing runs or waits on them now."""
     return frozenset(i["number"] for i in items if FAILED_LABEL in _names(i) and progress(i) < 2)
@@ -213,10 +230,10 @@ def snapshot(cfg, gh, db, repo: str, sources: str, scope: str = "all") -> tuple[
                         break
             except OSError:
                 notes.append("GitHub skipped (it could not be reached)")
-    done = [i for i in items if finished(i)]
+    done = {i["number"] for i in items if finished(i) or merged(db, repo, i["number"])}
     if done:
         notes.append(f"{len(done)} finished ticket(s) left out")
-        items = [i for i in items if not finished(i)]
+        items = [i for i in items if i["number"] not in done]
     if scope == "new":
         items = [i for i in items if progress(i) == 0]
     elif scope == "progress":
@@ -267,8 +284,9 @@ def expire(db, now: float) -> None:
     db.commit()
 
 
-def store(db, rid: int, repo: str, found: list[Proposal], items: list[dict]) -> int:
-    """Keep the proposals a person has not rejected before; an older proposal still waiting is superseded. Returns how many were kept."""
+def store(db, rid: int, repo: str, found: list[Proposal], items: list[dict], triggers=()) -> int:
+    """Keep the proposals a person has not rejected before; an older proposal still waiting is superseded. Returns how many were kept.
+    A merge of two tickets that are both being built (triggers: the labels that queue work) carries a warning a person confirms."""
     by = {i["number"]: i for i in items}
     notes = blocker_notes(items)
     found = orient(found, by)
@@ -280,10 +298,12 @@ def store(db, rid: int, repo: str, found: list[Proposal], items: list[dict]) -> 
         if (p.issue, p.verdict, p.target or 0) in rejected:
             continue
         i = by[p.issue]
-        db.execute("INSERT INTO review_proposals (review_id, repo, issue, title, verdict, target, evidence, reason, note, snapshot_updated, status) "
-                   "VALUES (?,?,?,?,?,?,?,?,?,?,'proposed')",
+        warn = (f"Both are being built: merging stops the work on {tracker.display(p.issue)}"
+                if p.verdict == "duplicate" and p.target in by and busy(i, triggers) and busy(by[p.target], triggers) else "")
+        db.execute("INSERT INTO review_proposals (review_id, repo, issue, title, verdict, target, evidence, reason, note, snapshot_updated, "
+                   "status, warn) VALUES (?,?,?,?,?,?,?,?,?,?,'proposed',?)",
                    (rid, repo, p.issue, (i.get("title") or "")[:200], p.verdict, p.target, json.dumps(_evidence(p)),
-                    sanitize_markdown(p.reason, MAX_REASON), notes.get(p.issue, ""), i.get("updated_at", "")))
+                    sanitize_markdown(p.reason, MAX_REASON), notes.get(p.issue, ""), i.get("updated_at", ""), warn))
         kept += 1
     db.commit()
     return kept
@@ -333,13 +353,23 @@ def proposals(db, repo: str, view: str = "waiting") -> list[dict]:
     """One view's proposals, newest review first: waiting for a person (or being applied, or failed), applied, or dismissed."""
     sts = VIEWS.get(view, VIEWS["waiting"])
     try:
-        rows = db.execute("SELECT id, issue, title, verdict, target, evidence, reason, note, status, detail FROM review_proposals "
+        rows = db.execute("SELECT id, issue, title, verdict, target, evidence, reason, note, status, detail, warn FROM review_proposals "
                           f"WHERE repo=? AND status IN ({','.join('?' * len(sts))}) ORDER BY review_id DESC, issue LIMIT 200",
                           (repo, *sts)).fetchall()
     except sqlite3.OperationalError:
         return []
-    return [{"id": a, "issue": b, "title": c, "verdict": d, "target": e, "evidence": json.loads(f), "reason": g, "note": h, "status": s, "detail": x}
-            for a, b, c, d, e, f, g, h, s, x in rows]
+    return [{"id": a, "issue": b, "title": c, "verdict": d, "target": e, "evidence": json.loads(f), "reason": g, "note": h, "status": s, "detail": x,
+             "warn": w} for a, b, c, d, e, f, g, h, s, x, w in rows]
+
+
+def needs_confirm(db, ids: list[int]) -> set[int]:
+    """Of the picked proposals, the ones whose warning a person must confirm before they are applied."""
+    if not ids:
+        return set()
+    try:
+        return {r[0] for r in db.execute(f"SELECT id FROM review_proposals WHERE warn != '' AND status='proposed' AND id IN ({','.join('?' * len(ids))})", ids)}
+    except sqlite3.OperationalError:
+        return set()
 
 
 def decide(db, ids: list[int], accept: bool, now: float) -> int:

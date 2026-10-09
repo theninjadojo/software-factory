@@ -21,9 +21,17 @@ WHAT = {"built": "It is closed with a comment naming the evidence.",
         "rerun": "It starts again with Auto, as its own Auto button does."}
 
 
+def _link(repo: str, n) -> str:
+    """A ticket of the reviewed repository by its short name (#19, L-3), linked like views.ticket_link."""
+    shown = tracker.display(int(n))
+    if tracker.is_local(int(n)):
+        return f'<a href="/ticket?repo={esc(quote(repo, safe=""))}&amp;n={int(n)}">{esc(shown)}</a>'
+    return views.gh_link(f"https://github.com/{repo}/issues/{int(n)}", shown) if views.REPO.match(repo) else esc(shown)
+
+
 def _what(repo: str, p: dict) -> str:
     if p["verdict"] == "duplicate":
-        keep, close = esc(tracker.ref(repo, p["target"])), esc(tracker.ref(repo, p["issue"]))
+        keep, close = esc(tracker.display(p["target"])), esc(tracker.display(p["issue"]))
         return (f"{close}'s description and the addresses of its images are added to {keep} as a comment, so the work there "
                 f"covers it. {close} is closed with a link to {keep}.")
     return WHAT[p["verdict"]]
@@ -33,9 +41,9 @@ def _detail(repo: str, p: dict) -> str:
     if p["verdict"] == "built":
         return '<p><span class="muted">Evidence:</span> ' + " ".join(f"<code>{esc(e)}</code>" for e in p["evidence"]) + "</p>"
     if p["verdict"] == "duplicate":
-        return f'<p><span class="muted">Keep:</span> {views.ticket_link(repo, p["target"])}</p>'
+        return f'<p><span class="muted">Keep:</span> {_link(repo, p["target"])}</p>'
     if p["verdict"] == "split":
-        return ('<ol class="tr-parts">' + "".join(f'<li>{esc(it.get("title", ""))} <span class="muted">({esc(it.get("repo", ""))})</span></li>'
+        return ('<ol class="tr-parts">' + "".join(f'<li>{esc(it.get("title", ""))}' + (f' <span class="muted">({esc(it.get("repo", ""))})</span>' if it.get("repo") != repo else "") + "</li>"
                                                   for it in p["evidence"] if isinstance(it, dict)) + "</ol>")
     return ""
 
@@ -48,8 +56,13 @@ def _item(repo: str, p: dict) -> str:
     state = STATUS.get(p["status"], "")
     note = f'<p class="muted">⚠ {esc(p["note"])}: closing it does not unblock them.</p>' if p["note"] and p["verdict"] in ("built", "duplicate") else ""
     detail = f' <span class="muted">{esc(p["detail"])}</span>' if p["detail"] else ""
+    warn = ""
+    if p.get("warn"):
+        confirm = (f'<label class="check"><input type="checkbox" name="confirm" value="{int(p["id"])}"> Merge anyway</label>'
+                   if p["status"] == "proposed" else "")
+        warn = f'<div class="tr-warn" role="note"><p><strong>⚠ {esc(p["warn"])}.</strong></p>{confirm}</div>'
     return (f'<li class="tr-item">{pick}<div class="tr-body"><p class="tr-head"><span class="badge {tone}">{esc(word)}</span> '
-            f'{views.ticket_link(repo, p["issue"])} {esc(p["title"])}</p>{_detail(repo, p)}'
+            f'{_link(repo, p["issue"])} {esc(p["title"])}</p>{_detail(repo, p)}{warn}'
             f'<p><span class="muted">Why:</span> {esc(p["reason"]) or "(no reason given)"}</p>{note}'
             + (f'<p class="muted">What happens: {_what(repo, p)}</p>' if p["status"] == "proposed" else "")
             + (f'<p class="muted">{esc(state)}{detail}</p>' if state or detail else "") + "</div></li>")
@@ -142,6 +155,15 @@ def _decide(h, form, csrf: str, accept: bool) -> None:
         return _back(h, csrf, repo, "Select at least one recommendation.", "bad")
     if len(ids) > tracker.MAX_BULK:
         return _back(h, csrf, repo, f"Select at most {tracker.MAX_BULK} recommendations at a time. Nothing was changed.", "bad")
+    if accept:
+        db = h.app.ro_db()
+        try:
+            unconfirmed = TR.needs_confirm(db, ids) - {int(v) for v in form.getall("confirm") if v.isdigit() and len(v) <= 9} if db is not None else set()
+        finally:
+            if db is not None:
+                db.close()
+        if unconfirmed:
+            return _back(h, csrf, repo, "Both tickets of a merge are being built. Tick Merge anyway on it to apply it. Nothing was changed.", "bad")
     n = h.app.decide_proposals(repo, ids, accept)
     if accept:
         return _back(h, csrf, repo, f"Applying {n} recommendation(s). The factory does it at its next poll." if n else "Nothing to apply: those were already decided.", "ok" if n else "bad")
