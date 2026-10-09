@@ -144,9 +144,11 @@ pre .c{color:var(--muted)}
 .box .arrow{text-align:center;color:var(--accent);margin:2px 0}
 /* tours */
 .tours{display:grid;gap:28px;grid-template-columns:1fr 1fr}
+.tour.wide{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:center}
 .tour{min-width:0}
 .tour h3{margin:0 0 6px;font-size:21px}
-.tour>p{margin:0 0 16px;color:var(--muted);font-size:15.5px;min-height:4.8em}
+.tour p{margin:0 0 16px;color:var(--muted);font-size:15.5px}
+.tours>.tour:not(.wide)>p{min-height:4.8em}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
 .chips span{font:13px var(--mono);padding:4px 10px;border:1px solid var(--line2);border-radius:99px;color:var(--muted)}
 /* faq/honest */
@@ -158,7 +160,7 @@ footer{border-top:1px solid var(--line);padding:34px 0;color:var(--muted);font-s
 footer .wrap{display:flex;gap:20px;flex-wrap:wrap;justify-content:space-between}
 footer a{color:var(--muted)}
 @media(max-width:860px){
- .grid,.honest{grid-template-columns:1fr 1fr}.sec,.need,.tours{grid-template-columns:1fr}.tour>p{min-height:0}
+ .grid,.honest{grid-template-columns:1fr 1fr}.sec,.need,.tours,.tour.wide{grid-template-columns:1fr}.tours>.tour:not(.wide)>p{min-height:0}
  nav .links a:not(.btn){display:none}
 }
 @media(max-width:560px){
@@ -319,9 +321,9 @@ footer a{color:var(--muted)}
 </div></section>
 
 <section id="tour"><div class="wrap">
- <div class="eyebrow">Tours · two to three minutes each</div>
- <h2>Set it up, tune it, and check the work</h2>
- <p class="sub">Two short walkthroughs of the admin UI: setting the factory up and tuning its agents, then the tests and screens that show you a change works and looks right.</p>
+ <div class="eyebrow">Tours · under three minutes each</div>
+ <h2>Set it up, tune it, check the work, plan the delivery</h2>
+ <p class="sub">Three short walkthroughs of the admin UI: setting the factory up and tuning its agents, the tests and screens that show you a change works and looks right, and the tickets, priorities and roadmap that decide what ships next.</p>
  <div class="tours">
   <div class="tour">
    <h3>Set it up once. Tune it as you learn.</h3>
@@ -342,6 +344,18 @@ footer a{color:var(--muted)}
      <a href="assets/tests-tour.mp4">Download the tests and screens tour (MP4)</a>
     </video></div>
    <div class="chips" aria-label="Covered in the tests and screens tour"><span>Tests register</span><span>Run a feature's tests</span><span>Scenario history</span><span>Failures first</span><span>Build screens</span><span>Canvas</span><span>Journeys</span><span>Review notes → ticket</span><span>Baselines</span></div>
+  </div>
+  <div class="tour wide">
+   <div>
+    <h3>Plan the delivery with it</h3>
+    <p>Tickets as a list or a board, local tickets, pinned priorities and the project manager that ranks the rest and records blockers, then the roadmap's milestones and steps, splitting a large ticket, the ticket review, schedules and ticket chat.</p>
+    <div class="chips" aria-label="Covered in the delivery tour"><span>Tickets &amp; board</span><span>Local tickets</span><span>Pinned priorities</span><span>Project manager</span><span>Blockers</span><span>Roadmap</span><span>Milestones</span><span>Split a ticket</span><span>Ticket review</span><span>Schedules</span><span>Chat</span></div>
+   </div>
+   <div class="shot video"><div class="bar"><i></i><i></i><i></i>&nbsp; Delivery · 2:24</div>
+    <video controls playsinline preload="none" poster="assets/delivery-tour.jpg" width="1280" height="720" aria-label="Shikumi delivery tour video, 2 minutes 24 seconds">
+     <source src="assets/delivery-tour.mp4" type="video/mp4">
+     <a href="assets/delivery-tour.mp4">Download the delivery tour (MP4)</a>
+    </video></div>
   </div>
  </div>
  <p class="credits">Music: “Aeon” by Theatre Of Delays, from <a href="https://www.bensound.com/free-music-for-videos">Bensound</a> (licence code GMFQWILTYDKRSDGP); “Blue Hill Valley” by Iros Young on <a href="https://uppbeat.io/c/iros-young">Uppbeat</a> (licence code BREVUEBWJMZP6RLF). Voices: <a href="https://elevenlabs.io">ElevenLabs</a>. The music and voices are used under their own licences, not the MIT licence.</p>
