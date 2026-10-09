@@ -602,6 +602,7 @@ class Handler(BaseHTTPRequestHandler):
             db.close()
         new = (L.new_ticket_form(cfg, cfg.repos[0], csrf) + L.import_form(cfg, cfg.repos[0], csrf)) if cfg.repos else ""
         new += TRV.link(cfg, project, csrf)
+        new += '<a class="btn secondary" href="/projects/new">New project</a>' if csrf else ""
         shown = L.flash_pop(csrf)
         title = f"{display(int(sel['issue']))} · Tickets" if explicit and sel else "Tickets"
         strip = features.tickets_strip(cfg, csrf, q.get("ask") == "local")

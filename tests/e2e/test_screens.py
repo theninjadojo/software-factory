@@ -23,7 +23,7 @@ STICKS_OUT = """() => {
 
 PAGES = ["/", "/needs", "/tickets", "/runs", "/runs/1", "/prs", "/events", "/ticket?repo=your-org/standalone-service&n=9",
          "/updates", "/workers", "/screens", "/screens/canvas?repo=your-org/standalone-service",
-         "/screens/review?img=screen:your-org/standalone-service:home:desktop:" + "c" * 40, "/settings", "/settings?section=general", "/settings?section=runner", "/harnesses", "/credentials", "/telegram", "/slack", "/labels/issue?repo=your-org/standalone-service&n=7"]
+         "/screens/review?img=screen:your-org/standalone-service:home:desktop:" + "c" * 40, "/projects/new", "/settings", "/settings?section=general", "/settings?section=runner", "/harnesses", "/credentials", "/telegram", "/slack", "/labels/issue?repo=your-org/standalone-service&n=7"]
 
 
 def keep_for_board(page, path, viewport):
