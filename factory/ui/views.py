@@ -141,6 +141,16 @@ def update_banner() -> str:
             f'<a href="{esc(url)}" rel="noopener noreferrer" target="_blank">Release notes</a>. <a href="/updates">Update</a>.</div>')
 
 
+CLASSIFIER_HINT = {"show": False}   # set by the server: an OpenRouter key is saved but the classifier is still on labels
+
+
+def classifier_banner() -> str:
+    if not CLASSIFIER_HINT.get("show"):
+        return ""
+    return ('<div class="flash warn" role="status">An OpenRouter key is saved, but the classifier is still set to <strong>Labels</strong>, so it does not read the ticket. '
+            '<a href="/settings?section=classifier">Switch to Jev in Settings</a>.</div>')
+
+
 def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "",
          bare: bool = False, full: bool = False) -> str:
     """bare: the body draws its own heading (the Factory and Tickets screens)."""
@@ -164,7 +174,7 @@ def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | N
             f'<details class="ph-menu"><summary aria-label="Menu">{MENU_ICON}</summary><div class="ph-menu-list">'
             + "".join(f'<a href="{p}"{" class=active" if p == active else ""}>{esc(n)}{count(p)}</a>' for p, n in items)
             + f'<form method="post" action="/logout">{csrf_field(csrf)}<button class="link">Sign out</button></form></div></details></header>'
-            f'<main{" class=\"wide full\"" if full else " class=wide" if wide else ""}>{update_banner()}{note}{"" if bare else f"<h1>{esc(title)}</h1>"}{body}<p class="muted ver">Shikumi {esc(version.current())}</p></main><script src="/static/app.js" defer></script></body></html>')
+            f'<main{" class=\"wide full\"" if full else " class=wide" if wide else ""}>{update_banner()}{classifier_banner()}{note}{"" if bare else f"<h1>{esc(title)}</h1>"}{body}<p class="muted ver">Shikumi {esc(version.current())}</p></main><script src="/static/app.js" defer></script></body></html>')
 
 
 def login_page(error: str | None = None, setup_hint: bool = False) -> str:
