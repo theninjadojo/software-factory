@@ -16,7 +16,7 @@ from .. import plan
 from .. import questions as Q
 from .. import why as W
 from ..tracker import display, is_local
-from . import floorplan, localtickets as LT, plant, views, yard
+from . import floorplan, localtickets as LT, outcome as OC, plant, views, yard
 from .views import ago, esc, tok
 
 STATIONS = (("poll", "Poll"), ("classify", "Classify"), ("route", "Route"), ("analyst", "Analyst"), ("designer", "Designer"),
@@ -202,6 +202,10 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
                        needs_rows is not None or (not github and not is_local(int(t["issue"])))))
     if not github:
         out = [r for r in out if is_local(r["issue"]) or r["state"] == "working"]
+    heads = dbm.doc_heads(db, [(r["repo"], r["issue"]) for r in out if r["state"] == "done"])
+    for r in out:
+        if r["state"] == "done":
+            r["outcome"] = outcome_line(r, heads.get((r["repo"], r["issue"])))
     prios = plan.who_set_all(db)
     for r in out:
         r["priority"], r["prio_src"] = prios.get((r["repo"], r["issue"]), ("normal", ""))
@@ -233,7 +237,34 @@ def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -
     return {"repo": t["repo"], "issue": int(t["issue"]), "title": (loc or {}).get("title") or title or (need or {}).get("title") or t.get("title")
             or f"Ticket {display(int(t['issue']))}",
             "state": state, "closed": bool(loc and loc["state"] == "closed"), "stations": st, "at": at, "when": last,
-            "why": _idle_why(at) if idle else _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need}
+            "why": _idle_why(at) if idle else _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need,
+            "decision": t.get("outcome") or "", "detail": t.get("detail") or ""}
+
+
+def outcome_of(r: dict, head) -> dict:
+    """The Outcome of a Done row; head is its latest stage document as (stage, text), or None."""
+    stage, text = head or ("", "")
+    ignored = _clip(plain(r.get("detail") or ""), 200) if r.get("decision") == "ignored" else ""
+    return OC.derive(r, doc_gist(text) if text else "", stage, ignored)
+
+
+def outcome_line(r: dict, head) -> str:
+    """The Tickets list's one line: the document's sentence, else the reason; empty when nothing was recorded."""
+    o = outcome_of(r, head)
+    return "" if o["tone"] == "warn" else OC.preview(o["sentence"] or o["reason"])
+
+
+def outcome_card(o: dict, repo: str, issue: int, at: float = 0) -> str:
+    """The Outcome card at the top of a Done ticket: headline, the document's sentence, why it is Done, and links."""
+    links = "".join(f'<a href="https://github.com/{esc(repo)}/pull/{int(n)}" rel="noopener noreferrer" target="_blank" '
+                    f'aria-label="Pull request {int(n)}, opens GitHub">PR #{int(n)} ↗</a>' for n in o["prs"]) if views.REPO.match(repo) else ""
+    if o["stage"] in views.DOC_NOUN:
+        links += f'<a href="{views.doc_url(repo, issue, o["stage"])}">Read the full report</a>'
+    when = f'<span>{esc(time.strftime("%-d %b %Y, %H:%M", time.localtime(at)))}</span>' if at else ""
+    sentence = f'<p class="sd-outsent">{esc(o["sentence"])}</p>' if o["sentence"] else ""
+    return (f'<section class="sd-card sd-outcome {esc(o["tone"])}" aria-labelledby="out-h"><h3 id="out-h" class="lab">Outcome</h3>'
+            f'<b class="sd-outhead">{esc(o["headline"])}</b>{sentence}<p class="sd-why muted">{esc(o["reason"])}</p>'
+            f'<div class="sd-outlinks muted sd-fine">{when}{links}</div></section>')
 
 
 def _idle_why(at) -> str:
@@ -246,10 +277,11 @@ def row_for(db, repo: str, issue: int, needs_rows=None, titles: dict | None = No
     need = next((r for r in needs_rows or [] if r["repo"] == repo and r["issue"] == issue), None)
     try:
         prs = [p for p in dbm.watched_prs(db, 500) if p["issue_repo"] == repo and p["issue_num"] == issue]
-        title = next((x["title"] for x in dbm.tickets(db, 500) if x["repo"] == repo and x["issue"] == issue), None)
+        dec = next((x for x in dbm.tickets(db, 500) if x["repo"] == repo and x["issue"] == issue), {})
     except Exception:
-        prs, title = [], None
-    return _one(db, {"repo": repo, "issue": issue, "title": title, "detail": "", "decided_at": 0}, prs, need, (titles or {}).get((repo, issue)), now,
+        prs, dec = [], {}
+    return _one(db, {"repo": repo, "issue": issue, "title": dec.get("title"), "detail": dec.get("detail") or "", "outcome": dec.get("outcome") or "",
+                     "decided_at": 0}, prs, need, (titles or {}).get((repo, issue)), now,
                 needs_rows is not None)
 
 
@@ -429,10 +461,12 @@ def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf
     items = ""
     for r in rows[:60]:
         on = sel is not None and (r["repo"], r["issue"]) == sel
+        out_line = f'<span class="sd-why muted">Outcome: {esc(r["outcome"])}</span>' if r.get("outcome") else ""
         items += (f'<a class="sd-pick{" on" if on else ""}" href="{esc(ticket_url(r, flt, q, at, project))}"{" aria-current=page" if on else ""}>'
                   f'<span class="sd-row"><span class="mono muted">{esc(views.ref(r["repo"], r["issue"], short=True))}</span>'
                   f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}</span>'
-                  f'<span class="sd-title">{esc(r["title"])}</span><span class="sd-why muted">{esc(r["why"])}</span>{progress(r["stations"])}'
+                  f'<span class="sd-title">{esc(r["title"])}</span><span class="sd-why muted">{esc(r["why"])}</span>'
+                  f"{out_line}{progress(r['stations'])}"
                   f'<span class="mono muted sd-at">{esc("At " + LABEL[r["at"]] if r["at"] else "Not started")} · {esc(ago(r["when"], now) if r["when"] else "")}</span></a>')
         need = r.get("need") or {}
         if need.get("acts") and not need.get("st") and csrf:
@@ -640,7 +674,8 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, c
     repo, n, j = r["repo"], r["issue"], r["journey"]
     design_prs = sorted({f.get("pr") for f in files if f.get("pr")})
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
-    return (journey_card(r["stations"], r.get("verify"), now) + phone_journey(r, files, docs) + needs_html + _tiles(j, r["state"])
+    card = outcome_card(r["outcome_full"], repo, n, r.get("when") or 0) if r["state"] == "done" and r.get("outcome_full") else ""
+    return (card + journey_card(r["stations"], r.get("verify"), now) + phone_journey(r, files, docs) + needs_html + _tiles(j, r["state"])
             + prs_html(r["prs"], fix_rounds, csrf, repo) + design_html(files, repo, n, docs, design_link, r.get("design_imports")) + steps_html(j, repo, n, docs)
             + activity_html(events, now))
 
