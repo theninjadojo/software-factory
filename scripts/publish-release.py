@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a GitHub Release for a tag and upload the files in a folder, with no `gh` CLI (the self-hosted runners do not have it).
+"""Create a GitHub Release for a tag and upload the files in a folder, with no `gh` CLI (standard library only).
 Env: GH_TOKEN, GITHUB_REPOSITORY, RELEASE_TAG (else GITHUB_REF_NAME), GITHUB_SHA (the commit to tag when the tag does not exist yet); GITHUB_API / GITHUB_UPLOADS override the endpoints (tests).
 Usage: publish-release.py <folder-of-assets>"""
 import json

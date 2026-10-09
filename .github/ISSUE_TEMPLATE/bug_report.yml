@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in Shikumi does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem? Please do not open an issue: report it privately, as described in SECURITY.md.
+        Factory labels on this issue are ignored unless a maintainer applies them.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown at the bottom of every page in the UI, or in the VERSION file.
+      placeholder: "0.39.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it is installed
+      options:
+        - Install script (containers)
+        - Native (update-native.sh)
+        - Source checkout
+        - Other
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Remove tokens, chat ids, host names and private ticket text first.
+      render: text

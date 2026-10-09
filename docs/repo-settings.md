@@ -17,13 +17,13 @@ chromium --headless --screenshot=docs/assets/social-preview.png --window-size=12
 
 ## Before making the repository public
 
-- [ ] Pull-request CI jobs run on GitHub-hosted runners, not self-hosted ones (`.github/workflows/test.yml`); self-hosted only for `release.yml`.
+- [x] Every workflow runs on GitHub-hosted runners (a fork's pull request can edit any workflow, so a self-hosted runner on this repository could run its code), and the self-hosted runner is removed from the repository.
 - [ ] Settings → Actions → General: require approval for all outside collaborators.
-- [ ] The full git history is scanned for secrets (for example `gitleaks detect --log-opts="--all"`); anything found is rotated and, if needed, history rewritten.
-- [ ] Screenshots under `screens/` show no real project names, tokens or ticket text.
+- [x] The full git history is scanned for secrets (for example `gitleaks detect --log-opts="--all"`); anything found is rotated and, if needed, history rewritten.
+- [x] Screenshots under `screens/` show no real project names, tokens or ticket text.
 - [ ] Private vulnerability reporting is enabled (Security tab), as `SECURITY.md` promises.
 - [ ] The `ghcr.io/theninjadojo/shikumi*` packages (five, see [releasing.md](releasing.md)) are public, then the repository.
-- [ ] Issue templates are added under `.github/ISSUE_TEMPLATE/` by a person (the factory cannot write to `.github/`).
+- [x] Issue templates are added under `.github/ISSUE_TEMPLATE/` by a person (the factory cannot write to `.github/`).
 - [ ] After going public: run the install script and `docker pull` anonymously.
 
 ## Project site (GitHub Pages)

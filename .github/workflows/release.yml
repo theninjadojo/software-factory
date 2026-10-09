@@ -14,9 +14,12 @@ permissions:
   packages: write
 jobs:
   release:
-    runs-on: [self-hosted, Linux, X64]
+    # GitHub-hosted: this repository is public, and a self-hosted runner on it could be reached from a fork's pull request.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # The five images need more room than the runner has free: drop preinstalled toolchains the build does not use.
+      - run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - name: Decide what to release
         id: v
         run: |
@@ -63,8 +66,3 @@ jobs:
           tar -czf dist/shikumi-worker.tar.gz --exclude=__pycache__ worker sandbox/android
           cp .env.example dist/env.example      # GitHub renames a release file that starts with a dot (to default.env.example)
           python3 scripts/publish-release.py dist
-      # The self-hosted runner's disk is small and shared with the factory: the images are in the registry now, so drop them and the
-      # build cache (each release left ~8 GB behind and filled the disk). Runs after a failed release too.
-      - name: Free the runner's disk
-        if: always()
-        run: docker image prune -af && docker builder prune -af
