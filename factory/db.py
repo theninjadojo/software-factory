@@ -705,6 +705,19 @@ def stage_doc(db, repo: str, issue: int, stage: str) -> dict | None:
     return {"id": r["id"], "started": r["started"], "output": r["output"], "truncated": len(r["output"]) >= MAX_OUTPUT}
 
 
+def doc_heads(db, keys) -> dict:
+    """{(repo, issue): (stage, first 4000 characters)} of each ticket's latest stage document, in one query."""
+    want = set(keys)
+    if not want:
+        return {}
+    try:
+        rows = db.execute("SELECT repo, issue, stage, substr(output, 1, 4000) FROM runs WHERE stage IN (?,?,?) AND output<>'' ORDER BY id",
+                          DOC_STAGES)
+    except sqlite3.OperationalError:
+        return {}
+    return {(r, i): (st, head) for r, i, st, head in rows if (r, i) in want}
+
+
 def doc_stages(db, repo: str, issue: int) -> list[str]:
     """The stages that have a stored document for the ticket, in pipeline order."""
     try:

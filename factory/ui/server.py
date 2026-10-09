@@ -568,6 +568,8 @@ class Handler(BaseHTTPRequestHandler):
                 files, docs, events, images = board.ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
                 sel["design_imports"] = dbm.design_imports(db, sel["repo"], sel["issue"])
                 sel["verify"] = board.ticket_verify(db, sel["repo"], sel["issue"])
+                if sel["state"] == "done":
+                    sel["outcome_full"] = board.outcome_of(sel, dbm.doc_heads(db, [(sel["repo"], sel["issue"])]).get((sel["repo"], sel["issue"])))
                 back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}" + (f"&project={quote(project, safe='')}" if project else "")
                 needs_html = (board.summary_card(db, sel["repo"], sel["issue"], docs, files) if sel["need"] else "") + board.needs_card(sel["need"], csrf, back)
                 if path == "/fragment/ticket":

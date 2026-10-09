@@ -1471,3 +1471,7 @@ p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .fm-m.skip .fm-box { fill:#1a2025; stroke-dasharray:2 4; } .fm-m.skip .fm-jl, .fm-m.skip .fm-js { fill:var(--muted); }
 .sd-pj.skip { opacity:.6; } .sd-segs i.skip { opacity:.25; }
 .lt-more { display:inline; font-size:13px; color:var(--muted); } .lt-more > summary { display:inline; cursor:pointer; }
+.sd-outcome { border-left:3px solid var(--line); } .sd-outcome.good { border-left-color:var(--good); } .sd-outcome.warn { border-left-color:var(--warn); }
+.sd-outhead { display:block; margin-top:6px; font-size:18px; font-weight:700; } .sd-outcome.good .sd-outhead { color:var(--good); } .sd-outcome.warn .sd-outhead { color:var(--warn); }
+.sd-outsent { margin:8px 0 0; } .sd-outcome .sd-why { margin:6px 0 0; } .sd-outlinks { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:8px; overflow-wrap:anywhere; }
+.sd-outlinks a { display:inline-flex; align-items:center; min-height:32px; }
