@@ -859,7 +859,7 @@ def needs_card(row: dict | None, csrf: str, back: str) -> str:
     safe = [q for q in st.questions if q.id not in pend_ids]
     folded = ""
     if safe:
-        said = " ".join(f'{esc(q.text.rstrip("?"))}: <b class="sd-said">{esc(Q.describe(q, st.answers[q.id]) if q.id in st.answers else q.label(q.recommended))}</b>.' for q in safe)
+        said = " ".join(f'{esc(q.text.rstrip("?"))}: <b class="sd-said">{esc(Q.describe(q, st.answers[q.id], st.auto.get(q.id, "")) if q.id in st.answers else q.label(q.recommended))}</b>.' for q in safe)
         folded = (f'<details class="sd-safe"><summary>{len(safe)} answered with safe defaults</summary><p class="muted">{said} '
                   f'<a href="{views.doc_url(repo, n, st.stage)}">Change an assumption</a></p></details>')
     total = len(st.questions)

@@ -133,6 +133,13 @@ def build_state(title: str, body: str, labels: list[str], comments: list[str] | 
     return state
 
 
+def post(api_key: str, body: dict, timeout: int = 20) -> dict:
+    req = urllib.request.Request(URL, data=json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
 class JevClassifier:
     def __init__(self, api_key: str, model: str = "typesafe/jev-1.13", timeout: int = 20, post=None, kind_aliases: dict | None = None):
         self.key, self.model, self.timeout, self.aliases = api_key, model, timeout, kind_aliases
@@ -140,11 +147,7 @@ class JevClassifier:
         self.fallback = RuleClassifier(kind_aliases)
 
     def _http_post(self, body: dict) -> dict:
-        req = urllib.request.Request(
-            URL, data=json.dumps(body).encode(),
-            headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
-            return json.load(r)
+        return post(self.key, body, self.timeout)
 
     def classify(self, title: str, body: str, labels: list[str], comments: list[str] | None = None,
                  project: dict | None = None, stages_done: list[str] | None = None) -> Classification:

@@ -43,6 +43,18 @@ RULES = (
 )
 
 
+# The rules' reasons as short keys, for settings that say which kinds of question always go to a person (questions.always_ask).
+CATEGORIES = {"mentions a protected path": "protected-path", "mentions credentials": "credentials",
+              "involves a destructive step or a migration": "destructive", "involves permissions or a trust boundary": "permissions",
+              "involves security or privacy": "security", "involves cost": "cost"}
+
+
+def categories(q: "Question") -> set:
+    """Every rule category the question's text, reason and options touch, whatever class the agent gave it."""
+    text = " ".join([q.text, q.reason, *(label for _, label in q.options)])
+    return {CATEGORIES[reason] for rx, reason in RULES if rx.search(text)}
+
+
 @dataclass(frozen=True)
 class Question:
     id: str
@@ -66,6 +78,8 @@ class StageQuestions:
     stage: str
     questions: list
     answers: dict = field(default_factory=dict)       # question id -> ("option", option id) | ("other", text), set by a person
+    auto: dict = field(default_factory=dict)          # question id -> the line saying why it was answered automatically (judges.py)
+    overturned: set = field(default_factory=set)      # question ids a person answered differently after they were answered automatically
 
     def pending(self) -> list:
         """Questions that need a person and have no answer yet: the only ones that stop a ticket."""
@@ -187,25 +201,48 @@ def valid_answers(questions: list, picks: dict) -> dict:
     return out
 
 
-def answers_comment(stage: str, questions: list, picks: dict, source: str) -> str:
-    """The answers comment. The first two lines are data the factory reads; the rest is for people."""
+def answers_comment(stage: str, questions: list, picks: dict, source: str, auto: dict | None = None) -> str:
+    """The answers comment. The first two lines are data the factory reads; the rest is for people.
+    auto: question id -> why, for answers the factory gave itself because its judges agreed (judges.py). Only the factory posts
+    these comments, so the marker is only ever read from its own account (from_comments)."""
     picks = valid_answers(questions, picks)
     data = {"stage": stage, "answers": {k: {"option": v} if kind == "option" else {"other": v} for k, (kind, v) in picks.items()}}
+    if auto:
+        data["auto"] = {k: " ".join(str(v).split())[:MAX_REASON] for k, v in auto.items() if k in picks}
     by_id = {q.id: q for q in questions}
-    lines = [f"- **{k}.** {by_id[k].text} → " + (by_id[k].label(v) if kind == "option" else f"Other: {v}") for k, (kind, v) in picks.items()]
+    lines = [f"- **{k}.** {by_id[k].text} → " + (by_id[k].label(v) if kind == "option" else f"Other: {v}")
+             + (f"  \n  _{data['auto'][k]}_" if k in data.get("auto", {}) else "") for k, (kind, v) in picks.items()]
+    who = ("answered automatically: independent second opinions agreed with the recommendation. Change an answer on the factory UI "
+           "and the stage runs again with yours" if auto else f"recorded by a signed-in person ({source})")
     return (ANSWERS + "\n<!-- " + _escaped_json(data) + " -->\n"
-            + sanitize_markdown(f"**Answers to the {stage}'s open questions**, recorded by a signed-in person ({source}):\n\n" + "\n".join(lines), 8000))
+            + sanitize_markdown(f"**Answers to the {stage}'s open questions**, {who}:\n\n" + "\n".join(lines), 8000))
 
 
-def read_answers(body: str) -> tuple[str, dict] | None:
-    """(stage, raw answers) from an answers comment, or None. The caller checks the author and validates the answers."""
+def _answers_data(body: str):
     if not body.startswith(ANSWERS + "\n<!-- "):
         return None
     line = body[len(ANSWERS) + 1:].partition("\n")[0]
     if not line.endswith(" -->"):
         return None
     try:
-        d = json.loads(line[5:-4])
+        return json.loads(line[5:-4])
+    except ValueError:
+        return None
+
+
+def read_auto(body: str) -> dict:
+    """question id -> why, for the answers in an answers comment the factory gave automatically ({} for a person's)."""
+    d = _answers_data(body)
+    auto = d.get("auto") if isinstance(d, dict) else None
+    return {k: v for k, v in auto.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(auto, dict) else {}
+
+
+def read_answers(body: str) -> tuple[str, dict] | None:
+    """(stage, raw answers) from an answers comment, or None. The caller checks the author and validates the answers."""
+    try:
+        d = _answers_data(body)
+        if d is None:
+            return None
         stage, raw = d["stage"], d["answers"]
         if not isinstance(stage, str) or not isinstance(raw, dict):
             return None
@@ -237,7 +274,15 @@ def from_comments(comments: list, me: str) -> list:
                 stages.pop(name, None)
         elif (got := read_answers(body)) and got[0] in stages:
             st = stages[got[0]]
-            st.answers.update(valid_answers(st.questions, got[1]))
+            picks, auto = valid_answers(st.questions, got[1]), read_auto(body)
+            for k, v in picks.items():
+                if k in auto:
+                    st.auto[k] = auto[k]
+                elif k in st.auto:                       # a person answered after the judges did: theirs wins
+                    st.auto.pop(k)
+                    if st.answers.get(k) != v:
+                        st.overturned.add(k)
+            st.answers.update(picks)
     return list(stages.values())
 
 
@@ -253,7 +298,8 @@ class Refused(ValueError):
 def record(gh, repo: str, num: int, stage: str | None, picks: dict | None, source: str, accept_all: bool = False) -> tuple[str, bool]:
     """Post a person's answers as the factory's account, after checking them against the questions the factory itself
     posted on the ticket (re-read from GitHub, never taken from the request). accept_all answers every question without an
-    answer with its recommendation. Returns (stage, True when no question needing a person is left)."""
+    answer with its recommendation. An answer the same as the one already recorded is dropped, so confirming an automatic answer
+    changes nothing. Returns (stage, True when an answer changed and no question needing a person is left)."""
     stages = from_comments(gh.issue_comments(repo, num), gh.login())
     cur = next((s for s in stages if s.stage == stage), None) if stage else latest(stages)
     if cur is None or not cur.questions:
@@ -264,6 +310,9 @@ def record(gh, repo: str, num: int, stage: str | None, picks: dict | None, sourc
         chosen = valid_answers(cur.questions, picks)
         if not chosen or len(chosen) != len(picks or {}):
             raise Refused("That answer does not match the ticket's questions. Reload the page.")
+        chosen = {k: v for k, v in chosen.items() if cur.answers.get(k) != v}
+        if not chosen:
+            return cur.stage, False
     if chosen:
         gh.comment(repo, num, answers_comment(cur.stage, cur.questions, chosen, source))
     done = not StageQuestions(cur.stage, cur.questions, {**cur.answers, **chosen}).pending()
@@ -272,9 +321,11 @@ def record(gh, repo: str, num: int, stage: str | None, picks: dict | None, sourc
     return cur.stage, done
 
 
-def describe(q: Question, ans) -> str:
+def describe(q: Question, ans, auto: str = "") -> str:
     if ans:
         kind, value = ans
+        if auto:
+            return f"{q.label(value) if kind == 'option' else 'Other: ' + value} (answered automatically: {auto})"
         return f"{q.label(value) if kind == 'option' else 'Other: ' + value} (answered by a person)"
     if q.safe:
         return f"Assumed: {q.label(q.recommended)} (recommended, auto-accepted)"
@@ -283,7 +334,7 @@ def describe(q: Question, ans) -> str:
 
 def summary(stages: list) -> str:
     """What the next stage's agent is told about the earlier open questions."""
-    return "\n".join(f"- {s.stage} {q.id}. {q.text} -> {describe(q, s.answers.get(q.id))}" for s in stages for q in s.questions)
+    return "\n".join(f"- {s.stage} {q.id}. {q.text} -> {describe(q, s.answers.get(q.id), s.auto.get(q.id, ''))}" for s in stages for q in s.questions)
 
 
 def section(questions: list) -> str:

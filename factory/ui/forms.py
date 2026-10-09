@@ -44,7 +44,7 @@ SIDE_GROUPS = [
                                ("design_links", "Design links", "/settings?section=design_links"), ("ticket_review", "Ticket review", "/settings?section=ticket_review")]),
     ("How the work is done", [("routing", "Models by ticket size", "/settings?section=routing"), ("roles", "Stage agents", "/settings?section=roles"),
                               ("classifier", "Classifier", "/settings?section=classifier"), ("runner", "Sandbox & limits", "/settings?section=runner"),
-                              ("harnesses", "Harnesses", "/harnesses"), ("prompts", "Agent instructions", "/settings?section=prompts"),
+                              ("questions", "Second opinions", "/settings?section=questions"), ("harnesses", "Harnesses", "/harnesses"), ("prompts", "Agent instructions", "/settings?section=prompts"),
                               ("new_projects", "New project interviews", "/settings?section=new_projects")]),
     ("Before a pull request is done", [("review", "Code review", "/settings?section=review"), ("ci", "CI feedback", "/settings?section=ci"),
                                        ("conflicts", "Merge conflicts", "/settings?section=conflicts"), ("mockups", "Design mockups", "/settings?section=mockups"),
@@ -226,6 +226,7 @@ SECTION_INTRO = {
     "workers": "Run a repository's checks on another machine before anything is pushed.",
     "screens": "Screenshots of each app at every viewport, compared with the approved ones.",
     "prompts": "Your own instructions for each agent. They come before its built-in instructions, which always apply.",
+    "questions": "Before a stage's open question waits for you, other models answer it. When they agree with the recommendation, the factory moves on.",
     "comments": "When a person comments on a ticket the factory worked on, an agent can work out what the comment asks for.",
     "ticket_review": "On request, an agent proposes which open tickets are already built or duplicates. Nothing runs until a person asks.",
     "design_links": "Design exports linked in a ticket, fetched only from hosts you list.",
@@ -292,6 +293,14 @@ def _matrix(section: str, fields, eff, base, submitted) -> tuple[str, list]:
         flow = ('<ol class="mx-flow" aria-label="The order of stages">' + "".join(f"<li>{esc(t)}</li>" for t in steps)
                 + '</ol>')
     return flow + "".join(cards), [f for f in fields if f.key not in used]
+
+
+def auto_tally(n: int, changed: int) -> str:
+    """How the automatic answers have held up: the evidence for loosening or tightening the settings below."""
+    if not n:
+        return '<p class="muted">No question has been answered automatically yet.</p>'
+    return (f'<p><b>{n}</b> question{"s" if n != 1 else ""} answered automatically, and you changed <b>{changed}</b> of them '
+            f'({changed * 100 // n}%).</p>')
 
 
 def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None) -> str:

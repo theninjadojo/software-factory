@@ -113,6 +113,9 @@ def render_settings(h, section: str, csrf: str, submitted=None, tester: str = ""
     body = forms.settings_form(section, eff, base, csrf, submitted)
     if section == "classifier":
         body += forms.classifier_tester(csrf, tester)
+    if section == "questions":
+        db = h.app.ro_db()
+        body = forms.auto_tally(*(dbm.auto_tally(db) if db is not None else (0, 0))) + body
     return body
 
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, ChatCfg, NewProjectsCfg, CommentsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -238,6 +238,25 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("comments.effort", "Triage effort", "select", choices=EFFORTS),
         Field("comments.harness", "Triage agent harness", "select", choices=("claude-code",), adv=True),
     ]),
+    "questions": ("Second opinions", [
+        Field("questions.auto_answer", "Answer questions when the judges agree", "bool",
+              "Before a stage's question waits for you, independent judges answer it. When they agree with the stage agent's recommendation "
+              "the factory records that answer and moves on. You can change it afterwards, and the stage runs again with yours."),
+        Field("questions.min_confidence", "How sure each judge must be", "float", "From 0.5 to 1.", lo=0.5, hi=1),
+        Field("questions.require", "Judges that must agree", "select",
+              "all: every judge agrees. any: one agrees and none disagrees.", choices=("all", "any")),
+        Field("questions.max_auto_per_ticket", "Automatic answers per ticket", "int", "More than this and you answer them all.", lo=1, hi=20),
+        Field("questions.always_ask", "Always ask me about", "checks",
+              "Questions that mention these never go to the judges.", choices=QUESTION_CATEGORIES),
+        Field("questions.jev", "Blind judge (Jev)", "bool",
+              "Sees the ticket, the document and the options but not the recommendation. Needs the classifier's OpenRouter key."),
+        Field("questions.agent", "Judge that reads the code", "bool",
+              "An agent argues against the recommendation and looks for evidence in the repositories. It is a run."),
+        Field("questions.use_past_answers", "Show the judges my earlier answers", "bool", "Your answers to earlier questions in the same repository."),
+        Field("questions.model", "Code judge model", "text", "sonnet, opus, haiku (or a full model id). Best a different one from the stage agents."),
+        Field("questions.effort", "Code judge effort", "select", choices=EFFORTS),
+        Field("questions.harness", "Code judge harness", "select", choices=("claude-code",), adv=True),
+    ]),
     "ticket_review": ("Ticket review", [
         Field("ticket_review.enabled", "Allow ticket reviews", "bool",
               "On request, an agent looks at every open ticket of a repository and proposes which are already built or duplicates. A person picks what to close."),
@@ -370,7 +389,7 @@ def del_in(d: dict, dotted: str) -> None:
             chain[i - 1].pop(parts[i - 1], None)
 
 
-DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "ticket_review": TicketReviewCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
+DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "questions": QuestionsCfg, "ticket_review": TicketReviewCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
                       "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg}
 
 

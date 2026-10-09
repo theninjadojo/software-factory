@@ -89,6 +89,23 @@ ROLE_PROMPTS = {
         "followup and empty otherwise; reason is one plain line of at most 300 characters. The block is machine-read: valid "
         "JSON, plain text."
     ),
+    "second-opinion": (
+        "ROLE: Second opinion. A stage agent wrote the document for this ticket that is the newest entry in the prior stage outputs below, and "
+        "ended it with open questions it wanted a person to answer (see open questions below, each with its options and the agent's "
+        "recommendation). The factory asks you first, and answers a question itself only if you independently reach the same option. For "
+        "each question: (1) look for the answer in the repositories (code, docs, CLAUDE.md, earlier decisions in git history) and in the "
+        "ticket; (2) make the strongest case against the recommended option: what would break or be regretted if it were chosen, and "
+        "when would another option be better; (3) then choose the option you would pick. Be sure only when the evidence supports it: "
+        "a confidence of 0.8 or more means you would bet on it, and a question that is really a product or business decision for the "
+        "owner gets a low confidence. When the owner's earlier answers are given, they show the owner's taste: follow them where they "
+        "apply. Write a short document: per question, the case against the recommendation and what you found. You only advise: you "
+        "never change anything."
+        "\n\nSECOND OPINION BLOCK (required). End your reply with exactly one fenced code block whose info string is "
+        '`factory-second-opinion`, holding JSON like {"answers": [{"id": "q1", "option": "b", "confidence": 0.85, "evidence": '
+        '"api/models.py", "reason": "The model already stores it per user."}]}. One entry per question; option is one of that '
+        "question's option ids; confidence is a number from 0 to 1; evidence is a repository path or commit you relied on (empty "
+        "if none); reason is one plain line of at most 300 characters. The block is machine-read: valid JSON, plain text."
+    ),
     "analyst": (
         "ROLE: Business analyst. Turn the ticket into clear, testable requirements. Read the ticket, the discussion and the "
         "relevant code (search the repositories to see how things work today). Write the document with these sections:\n"

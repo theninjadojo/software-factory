@@ -507,7 +507,7 @@ class Handler(BaseHTTPRequestHandler):
         time.sleep(0.4)                                   # slow down guessing
         self._send(401, views.login_page("Wrong password."))
 
-    def _doc(self, db, repo: str, n: int, stage: str) -> str:
+    def _doc(self, db, repo: str, n: int, stage: str, csrf: str = "") -> str:
         """The stored document first; GitHub (the factory's own stage comment) when it is missing or was cut short."""
         doc, notice, source = dbm.stage_doc(db, repo, n, stage), "", "Stored output"
         text = Q.readable(doc["output"]) if doc else ""
@@ -518,6 +518,7 @@ class Handler(BaseHTTPRequestHandler):
             elif doc:
                 notice = ('<p class="muted"><strong>Warning:</strong> this document was cut short when it was stored, and the full text could not be '
                           'fetched from GitHub. Open the ticket on GitHub for the rest.</p>')
+        notice += L.auto_answers(self, repo, n, stage, csrf) if csrf else ""
         return views.doc_page(repo, n, stage, dbm.doc_stages(db, repo, n), doc, text, source, notice, "/needs",
                               dbm.mockup_previews(db, repo, n) if stage == "designer" else ())
 
@@ -707,7 +708,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, "no such ticket", "text/plain")
                 if stage not in views.DOC_LABEL:
                     return self._send(404, "Unknown stage.", "text/plain")
-                return page(f"{views.DOC_LABEL[stage]} · {q['repo']} #{int(n)}", self._doc(db, q["repo"], int(n), stage))
+                return page(f"{views.DOC_LABEL[stage]} · {q['repo']} #{int(n)}", self._doc(db, q["repo"], int(n), stage, csrf))
             if path == "/ticket/images":
                 n = q.get("n", "")
                 if not views.REPO.match(q.get("repo", "")) or not n.isdigit():
