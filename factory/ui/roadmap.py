@@ -177,6 +177,8 @@ def _flags(c: dict) -> str:
 
 
 def _progress(ts: list[dict]) -> str:
+    if not ts:                              # an empty bar would read as 0% done
+        return '<span class="rp-prog"><span class="rp-count rp-empty">No tickets yet</span></span><span class="rp-flags"></span>'
     c = _counts(ts)
     return (f'<span class="rp-prog"><span class="rp-track"><span class="rp-fill {_w(c["done"], len(ts))}"></span></span>'
             f'<span class="rp-count mono">{c["done"]} of {len(ts)} done</span></span><span class="rp-flags">{_flags(c)}</span>')
