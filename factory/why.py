@@ -9,11 +9,13 @@ SENTENCES = {
     "done": "The classifier chose a stage that is already done.",
     "behind": "The classifier chose an earlier stage than one already done.",
     "question": "The classifier says this ticket is a question, which needs a person.",
+    "build": "The last stage's document recommends a build, and a build is started by a person.",
+    "advice": "The last stage's document asks for a person before anything else runs.",
 }
 
 
 def build(threshold: float, c, reason: str, overall: float | None = None) -> str:
-    """reason: low, human, questions, done, behind or question. overall: the score compared with the threshold, when it is not c.confidence."""
+    """reason: low, human, questions, done, behind, question, build or advice. overall: the score compared with the threshold, when it is not c.confidence."""
     return json.dumps({"reason": reason, "threshold": threshold, "confidence": c.confidence if overall is None else overall,
                        "source": c.source, "answers": c.scores or {}})
 
