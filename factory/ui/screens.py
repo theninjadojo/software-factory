@@ -15,6 +15,7 @@ from .. import reviewnotes as RN
 from .. import scenarios
 from .. import screenboard as SB
 from ..config import deep_merge
+from . import canvas as CV
 from . import labels as L
 from . import scenarios as TS
 from . import settings as S
@@ -261,32 +262,29 @@ def captures_save(h, form, csrf: str) -> None:
 
 
 def canvas_body(cfg, db, repo: str, csrf: str) -> str:
-    """Every screen of a repo's newest Playwright run on one canvas: a row per page with its viewports side by side. Click one to open it
-    in the review tool (drag over an area, write what should change); the notes become a ticket from there."""
+    """Every screen of a repo's newest Playwright run on the canvas a ticket's design output uses: a row per page with its viewports side
+    by side, the open notes as pins and listed beside it. Click a screen to open it large in the review tool, or pick Note and click
+    one to leave a note on the canvas; the notes become a ticket from the review tool."""
     pages: dict[str, dict] = {}
     for (r, p), views_ in SB.capture_shots(db, cfg.screens).items():
         if r == repo:
             pages[p] = views_
-    noted = {}
-    for x in RN.notes(db, *RN.BOARD, open_only=True):
-        noted[x["image"]] = noted.get(x["image"], 0) + 1
+    keys = {x["key"] for v in pages.values() for x in v.values()}
+    here = [(k, x) for k, x in CV.numbered(RN.notes(db, *RN.BOARD, open_only=True)) if x["image"] in keys]
     head = (f'<p><a href="/screens">← Screens</a> · <strong>{esc(repo)}</strong> '
             f'<span class="muted">{esc(ago(max((x["created"] for v in pages.values() for x in v.values()), default=0)))} · '
-            f'{sum(len(v) for v in pages.values())} screens on {len(pages)} pages · {sum(noted.get(x["key"], 0) for v in pages.values() for x in v.values())} open notes</span></p>')
+            f'{len(keys)} screens on {len(pages)} pages · {len(here)} open notes</span></p>')
     if not pages:
         return head + '<p class="muted">No screens yet. Press <em>Build screens</em> on the Screens page.</p>'
-    zoom = views.zoom_buttons("cv")
-    rows = ""
-    for page in sorted(pages):
-        cells = ""
-        for v in sorted(pages[page], key=SB.view_order):
-            x = pages[page][v]
-            c = noted.get(x["key"], 0)
-            badge = f'<span class="rv-count" title="Open notes">{c}</span>' if c else ""
-            cells += (f'<figure class="cv-shot cv-{esc(v)}"><a href="{esc(open_url(x["key"]))}"><img src="{esc(SB.src(x["key"]))}" '
-                      f'alt="{esc(page)} {esc(v)}" loading="lazy"></a><figcaption>{esc(v)} {badge}</figcaption></figure>')
-        rows += f'<section class="cv-page"><h3>{esc(page)}</h3><div class="cv-row">{cells}</div></section>'
-    return head + zoom + f'<div class="cv" id="cv" data-z="2" tabindex="0" aria-label="Screens of {esc(repo)}">{rows}</div>'
+    rows = [(page, [CV.shot(x["key"], SB.src(x["key"]), f"{page} {v}", v, open_url(x["key"]), v in ("phone", "mobile"))
+                    for v in sorted(pages[page], key=SB.view_order) for x in (pages[page][v],)]) for page in sorted(pages)]
+    board = CV.canvas("cv", f"Screens of {repo}", rows, here, CV.scope_hidden(*RN.BOARD, csrf, board=True), "canvas", full=True)
+    label = {x["key"]: f"{page} · {v}" for page in pages for v, x in pages[page].items()}
+    turn = (f'<p><a href="{esc(open_url(here[0][1]["image"]))}">Turn notes into a ticket →</a></p>' if here else "")
+    side = (f'<aside class="pz-side" aria-labelledby="pz-nh"><h2 id="pz-nh">Notes on the screens</h2>'
+            f'{CV.notes_list(here, label, open_url, "cv")}{turn}'
+            '<p class="muted">Notes stay with the screens until you turn them into a ticket.</p></aside>')
+    return head + f'<div class="pz-page">{board}{side}</div>'
 
 
 def canvas_get(h, q: dict, csrf: str) -> None:

@@ -349,12 +349,15 @@ class Canvas(UiCase):
         self.assertEqual(s, 200)
         self.assertIn("6 screens on 3 pages", html)
         for page in ("home", "tickets", "login-spec-x"):
-            self.assertIn(f"<h3>{page}</h3>", html)
-        self.assertLess(html.index("cv-desktop"), html.index("cv-tablet"))
-        self.assertLess(html.index("cv-tablet"), html.index("cv-phone"))
-        key = SB.key(SHOP, "home", "tablet", SHA)
-        self.assertIn(("/screens/review?" + urlencode({"img": key})).replace("&", "&amp;"), html)
-        self.assertIn('data-zoom="3"', html)
+            self.assertIn(f'<h4 class="pz-title">{page}</h4>', html)
+        home = [SB.key(SHOP, "home", v, SHA) for v in ("desktop", "tablet", "phone")]
+        self.assertLess(html.index(f'data-key="{home[0]}"'), html.index(f'data-key="{home[1]}"'))
+        self.assertLess(html.index(f'data-key="{home[1]}"'), html.index(f'data-key="{home[2]}"'))
+        self.assertIn(f'<figure class="pz-shot pz-narrow" data-key="{home[2]}"', html)
+        self.assertIn(("/screens/review?" + urlencode({"img": home[1]})).replace("&", "&amp;"), html)
+        self.assertIn('data-pz data-pz-wheel', html)                            # the same canvas as a ticket's design output
+        self.assertIn('name="board" value="1"', html)
+        self.assertIn('name="back" value="canvas"', html)
         self.assertNotIn("style=", html.split("<main")[1])
 
     def test_only_a_repo_with_a_playwright_run_has_a_canvas_and_it_needs_a_session(self):
@@ -381,6 +384,10 @@ class Canvas(UiCase):
         html = self.get("/screens/canvas?" + urlencode({"repo": SHOP}))[2]
         self.assertIn('class="rv-count" title="Open notes">1<', html)
         self.assertIn("1 open notes", html)
+        self.assertIn('<g class="rv-pin" data-note="1">', html)
+        body = urlencode({"csrf": self.csrf, "board": "1", "img": key, "text": "and here", "x": "50", "y": "50", "back": "canvas"})
+        s, h, _ = self.req("POST", "/review/add", body, cookie=self.cookie)
+        self.assertEqual(h["Location"], "/screens/canvas?" + urlencode({"repo": SHOP}))   # a note dropped on the canvas stays there
 
     def test_a_newer_run_replaces_the_canvas_but_a_note_keeps_its_older_screen(self):
         from factory import reviewnotes as RN
@@ -391,7 +398,7 @@ class Canvas(UiCase):
         run_with_shots(self.db, SHOP, ["home-desktop", "home-tablet"], sha="d" * 40, now=500.0)
         html = self.get("/screens/canvas?" + urlencode({"repo": SHOP}))[2]
         self.assertIn("2 screens on 1 pages", html)
-        self.assertNotIn("<h3>tickets</h3>", html)
+        self.assertNotIn('<h4 class="pz-title">tickets</h4>', html)
         self.assertIsNotNone(SB.image(self.db, old))                                   # kept: an open note is on it
         self.assertIsNone(SB.image(self.db, SB.key(SHOP, "home", "tablet", SHA)))        # no note, and a newer run has its own home: replaced
 

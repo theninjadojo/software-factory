@@ -25,15 +25,210 @@
   document.addEventListener("change", function (e) { var f = e.target.closest("form.nd-form"); if (f) count(f); });
   document.addEventListener("input", function (e) { var f = e.target.closest("form.nd-form"); if (f) count(f); });
 
-  // --- A canvas of screens (a Playwright run's, a ticket's design): the zoom buttons set how big the screens are (CSS does the rest).
-  // The live refresh leaves data-z and the buttons' aria-pressed alone (skipAttr), so the chosen zoom stays.
+  // --- The canvas of screens (canvas.py): drag (or scroll, on a page of its own) to pan; the buttons, Ctrl + scroll, a pinch or the
+  // keys + - 0 1 to zoom. The Note tool drops a pin where a person clicks a screen and opens the note form there. The state lives on
+  // the element, and pzSync puts it back after the live refresh has redrawn the ticket (which drops the style and hidden changes).
+  var PZ_MIN = 0.05, PZ_MAX = 4;
+  function pzState(root) {
+    if (!root._pz) root._pz = { s: 1, x: 0, y: 0, touched: false, mode: "move", draft: null };
+    return root._pz;
+  }
+  function pzParts(root) {
+    return { view: root.querySelector(".pz-view"), layer: root.querySelector("[data-pz-layer]"), pct: root.querySelector("[data-pz-pct]"),
+             form: root.querySelector("[data-pz-note]") };
+  }
+  function pzApply(root) {
+    var st = pzState(root), p = pzParts(root);
+    if (!p.layer) return;
+    p.layer.style.transform = "translate(" + st.x + "px," + st.y + "px) scale(" + st.s + ")";
+    p.layer.style.setProperty("--pz-inv", String(1 / st.s));
+    p.view.style.backgroundPosition = st.x + "px " + st.y + "px";
+    if (p.pct) p.pct.textContent = Math.round(st.s * 100) + "%";
+  }
+  // The first view fits the widest row and starts at the top (screens are often whole, tall pages); Fit shows everything.
+  function pzFit(root, all) {
+    var st = pzState(root), p = pzParts(root);
+    if (!p.layer || !p.view.clientWidth) return;
+    var w = p.layer.offsetWidth, h = p.layer.offsetHeight, vw = p.view.clientWidth, vh = p.view.clientHeight - 56;   // 56: the toolbar
+    st.s = Math.max(PZ_MIN, Math.min(1, vw / w, all ? vh / h : Infinity));
+    st.x = (vw - w * st.s) / 2; st.y = 56 + (all ? Math.max(0, (vh - h * st.s) / 2) : 0);
+    pzApply(root);
+  }
+  function pzZoom(root, k, cx, cy) {
+    var st = pzState(root), p = pzParts(root), r = p.view.getBoundingClientRect();
+    if (cx === undefined) { cx = r.width / 2; cy = r.height / 2; }
+    var s = Math.max(PZ_MIN, Math.min(PZ_MAX, st.s * k));
+    st.x = cx - (cx - st.x) * s / st.s; st.y = cy - (cy - st.y) * s / st.s; st.s = s; st.touched = true;
+    pzApply(root);
+  }
+  function pzMode(root, mode) {
+    var st = pzState(root);
+    st.mode = mode;
+    root.setAttribute("data-mode", mode);
+    var b = root.querySelector("[data-pz-tool=note]");
+    if (b) b.setAttribute("aria-pressed", mode === "note" ? "true" : "false");
+    if (mode !== "note") pzClose(root);
+  }
+  function pzClose(root) {
+    var st = pzState(root), p = pzParts(root);
+    st.draft = null;
+    if (p.form) p.form.hidden = true;
+    var d = root.querySelectorAll(".pz-draft");
+    for (var i = 0; i < d.length; i++) d[i].parentNode.removeChild(d[i]);
+  }
+  function pzDraft(root) {                     // the open note: its pin on the screen, the form beside it
+    var st = pzState(root), p = pzParts(root), d = st.draft;
+    var old = root.querySelectorAll(".pz-draft");
+    for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+    if (!d || !p.form) return;
+    var fig = null, figs = root.querySelectorAll(".pz-shot");
+    for (var j = 0; j < figs.length; j++) if (figs[j].getAttribute("data-key") === d.key) fig = figs[j];
+    if (!fig) { pzClose(root); return; }
+    var frame = fig.querySelector(".pz-frame"), pin = document.createElement("span");
+    pin.className = "pz-draft"; pin.style.left = d.x + "%"; pin.style.top = d.y + "%";
+    frame.appendChild(pin);
+    p.form.hidden = false;
+    var pr = pin.getBoundingClientRect(), rr = root.getBoundingClientRect(), fw = p.form.offsetWidth, fh = p.form.offsetHeight;
+    var left = pr.right - rr.left + 12, top = pr.top - rr.top - 12;
+    if (left + fw > rr.width - 8) left = Math.max(8, pr.left - rr.left - fw - 12);
+    top = Math.max(8, Math.min(top, rr.height - fh - 8));
+    p.form.style.left = left + "px"; p.form.style.top = top + "px";
+  }
+  function pzSync() {
+    var all = document.querySelectorAll("[data-pz]");
+    for (var i = 0; i < all.length; i++) {
+      var root = all[i], st = pzState(root);
+      if (!root._pzReady) pzSetup(root);
+      root.setAttribute("data-mode", st.mode);
+      var b = root.querySelector("[data-pz-tool=note]");
+      if (b) b.setAttribute("aria-pressed", st.mode === "note" ? "true" : "false");
+      if (st.touched) pzApply(root); else pzFit(root);
+      if (st.draft) pzDraft(root); else pzClose(root);
+    }
+  }
+  function pzSetup(root) {
+    root._pzReady = true;
+    var st = pzState(root), p = pzParts(root), view = p.view, pts = {}, drag = null, pinch = null, moved = false;
+    if (!view) return;
+    root.addEventListener("load", function () { if (!st.touched) pzFit(root); }, true);       // an image arrived: the layout grew
+    root.addEventListener("click", function (e) {
+      var t = e.target, z = t.closest("[data-pz-zoom]"), tool = t.closest("[data-pz-tool]");
+      if (z) {
+        var v = z.getAttribute("data-pz-zoom");
+        if (v === "in") pzZoom(root, 1.25); else if (v === "out") pzZoom(root, 0.8);
+        else if (v === "fit") { st.touched = true; pzFit(root, true); } else pzZoom(root, 1 / st.s);
+        return;
+      }
+      if (tool) { pzMode(root, st.mode === "note" ? "move" : "note"); return; }
+      if (t.closest("[data-pz-cancel]")) { pzClose(root); return; }
+      if (!view.contains(t)) return;
+      if (moved) { e.preventDefault(); moved = false; return; }           // the end of a drag is not a click on a screen
+      if (st.mode !== "note") return;
+      e.preventDefault();
+      var fig = t.closest(".pz-shot"), img = fig && fig.querySelector("img");
+      if (!img || !img.contains(t) && !t.closest(".pz-frame")) { pzClose(root); return; }
+      var r = img.getBoundingClientRect();
+      st.draft = { key: fig.getAttribute("data-key"), x: Math.round(Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100)) * 10) / 10,
+                   y: Math.round(Math.max(0, Math.min(100, (e.clientY - r.top) / r.height * 100)) * 10) / 10 };
+      pzDraft(root);
+      var ta = p.form.querySelector("textarea"); if (ta) ta.focus({ preventScroll: true });
+    });
+    if (p.form) p.form.addEventListener("submit", function () {          // the live refresh may have reset the hidden fields: set them now
+      var d = st.draft;
+      if (!d) return;
+      p.form.querySelector("[name=img]").value = d.key;
+      p.form.querySelector("[name=x]").value = d.x; p.form.querySelector("[name=y]").value = d.y;
+      p.form.querySelector("[name=w]").value = 0; p.form.querySelector("[name=h]").value = 0;
+    });
+    view.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var ids = Object.keys(pts);
+      if (ids.length === 2) {
+        var a = pts[ids[0]], b = pts[ids[1]];
+        pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: st.s }; drag = null;
+      } else if (ids.length === 1) {
+        drag = { x: e.clientX, y: e.clientY, ox: st.x, oy: st.y, id: e.pointerId, live: false }; moved = false;
+      }
+    });
+    view.addEventListener("pointermove", function (e) {
+      if (!pts[e.pointerId]) return;
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var ids = Object.keys(pts);
+      if (pinch && ids.length === 2) {
+        var a = pts[ids[0]], b = pts[ids[1]], r = view.getBoundingClientRect(), d = Math.hypot(a.x - b.x, a.y - b.y);
+        pzZoom(root, pinch.s * d / pinch.d / st.s, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+        moved = true;
+        return;
+      }
+      if (!drag) return;
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.live && Math.abs(dx) + Math.abs(dy) < 5) return;
+      if (!drag.live) { drag.live = true; try { view.setPointerCapture(drag.id); } catch (err) {} view.classList.add("pz-drag"); }
+      moved = true; st.touched = true;
+      st.x = drag.ox + dx; st.y = drag.oy + dy;
+      pzApply(root);
+    });
+    function up(e) {
+      delete pts[e.pointerId];
+      if (Object.keys(pts).length < 2) pinch = null;
+      if (drag && drag.id === e.pointerId) { drag = null; view.classList.remove("pz-drag"); }
+      if (e.type === "pointercancel") moved = false;
+    }
+    view.addEventListener("pointerup", up);
+    view.addEventListener("pointercancel", up);
+    view.addEventListener("dragstart", function (e) { e.preventDefault(); });
+    view.addEventListener("wheel", function (e) {
+      var r = view.getBoundingClientRect();
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); pzZoom(root, Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top); return; }
+      if (!root.hasAttribute("data-pz-wheel")) return;                 // on the ticket, scrolling scrolls the page
+      e.preventDefault();
+      st.x -= e.deltaX; st.y -= e.deltaY; st.touched = true;
+      pzApply(root);
+    }, { passive: false });
+    view.addEventListener("keydown", function (e) {
+      var k = e.key, step = 60;
+      if (k === "+" || k === "=") pzZoom(root, 1.25);
+      else if (k === "-") pzZoom(root, 0.8);
+      else if (k === "0") pzZoom(root, 1 / st.s);
+      else if (k === "1") { st.touched = true; pzFit(root, true); }
+      else if (k === "n" || k === "N") pzMode(root, st.mode === "note" ? "move" : "note");
+      else if (k === "ArrowLeft" || k === "ArrowRight" || k === "ArrowUp" || k === "ArrowDown") {
+        st.x += k === "ArrowLeft" ? step : k === "ArrowRight" ? -step : 0; st.y += k === "ArrowUp" ? step : k === "ArrowDown" ? -step : 0;
+        st.touched = true; pzApply(root);
+      } else return;
+      e.preventDefault();
+    });
+    root.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") return;
+      if (st.draft) { pzClose(root); view.focus(); } else if (st.mode === "note") pzMode(root, "move");
+    });
+  }
+  // A note in the list beside a canvas: show its pin, centred.
   document.addEventListener("click", function (e) {
-    var b = e.target.closest("[data-zoom]"), g = b && b.closest("[data-for]"), cv = g && document.getElementById(g.getAttribute("data-for"));
-    if (!cv) return;
-    cv.setAttribute("data-z", b.getAttribute("data-zoom"));
-    var all = g.querySelectorAll("[data-zoom]");
-    for (var i = 0; i < all.length; i++) all[i].setAttribute("aria-pressed", all[i] === b ? "true" : "false");
+    var b = e.target.closest("[data-pz-show]"), root = b && document.getElementById(b.getAttribute("data-pz-for"));
+    if (!root) return;
+    var id = b.getAttribute("data-pz-show"), li = b.closest("li"), was = li.classList.contains("on");
+    var on = document.querySelectorAll(".pz-side .on, .pz .on");
+    for (var i = 0; i < on.length; i++) on[i].classList.remove("on");
+    if (was) return;
+    li.classList.add("on");
+    var hit = root.querySelectorAll('.rv-marks [data-note="' + id + '"]');
+    for (var j = 0; j < hit.length; j++) hit[j].classList.add("on");
+    var pin = root.querySelector('.rv-pin[data-note="' + id + '"] circle');
+    if (!pin) return;
+    var fig = pin.closest(".pz-shot"); if (fig) fig.classList.add("on");
+    var st = pzState(root), view = root.querySelector(".pz-view"), vr = view.getBoundingClientRect(), pr = pin.getBoundingClientRect();
+    if (st.s < 0.5) pzZoom(root, 0.5 / st.s, pr.left + pr.width / 2 - vr.left, pr.top + pr.height / 2 - vr.top);
+    pr = pin.getBoundingClientRect();
+    st.x += vr.width / 2 - (pr.left + pr.width / 2 - vr.left); st.y += vr.height / 2 - (pr.top + pr.height / 2 - vr.top); st.touched = true;
+    pzApply(root);
   });
+  window.addEventListener("resize", function () {
+    var all = document.querySelectorAll("[data-pz]");
+    for (var i = 0; i < all.length; i++) if (!pzState(all[i]).touched) pzFit(all[i]);
+  });
+  pzSync();
 
   // --- Popups for tickets with many questions.
   document.addEventListener("click", function (e) {
@@ -203,7 +398,7 @@
   function fill(slot) {
     get(slot.getAttribute("data-load")).then(function (html) {
       if (html === null) { slot.querySelector(".ld p").textContent = "Could not load this. Reload the page to try again."; return; }
-      slot.outerHTML = html; countAll(); calm(); tod();
+      slot.outerHTML = html; countAll(); calm(); tod(); pzSync();
     }).catch(function () { var p = slot.querySelector(".ld p"); if (p) p.textContent = "Could not reach the factory. Reload the page to try again."; });
   }
   var slots = document.querySelectorAll("[data-load]");
@@ -235,7 +430,7 @@
     get("/fragment/detail" + url.search).then(function (html) {
       var spot = document.querySelector(".sd-detail");
       if (html === null || !spot) { location.href = href; return; }
-      spot.outerHTML = html; countAll(); calm(); tod();
+      spot.outerHTML = html; countAll(); calm(); tod(); pzSync();
     }).catch(function () { location.href = href; });
   }
   document.addEventListener("click", function (e) {
@@ -383,7 +578,6 @@
   }
   function skipAttr(tag, name, form, el) {
     if (name === "open") return tag === "details" || tag === "dialog";
-    if (name === "data-z" || (name === "aria-pressed" && el.hasAttribute("data-zoom"))) return true;
     if (name === "begin") return /^(animate|animatemotion|animatetransform|set)$/i.test(tag);
     return form && /^(value|checked|selected)$/.test(name);
   }
@@ -444,7 +638,7 @@
       .then(function (html) { if (html !== null && document.getElementById("live") === live) {
         if (live === lastLive && html === lastHtml) return;
         lastLive = live; lastHtml = html;
-        morph(live, html); countAll(); calm(); tod();
+        morph(live, html); countAll(); calm(); tod(); pzSync();
       } })
       .catch(function () {});
   }

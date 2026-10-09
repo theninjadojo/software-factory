@@ -270,20 +270,48 @@ class Page(UiCase):
         self.post(cookie, csrf, "/review/add", img=MOCKUP, x="1", y="1", text="Tighter")
         s, _, html = self.req("GET", f"/ticket/design?repo={REPO}&n=5", cookie=cookie)
         self.assertEqual(s, 200)
-        self.assertIn('data-zoom="4"', html)                                    # Small, Medium, Large and Actual size
-        self.assertIn('data-for="cv"', html)
+        self.assertIn('id="cv" data-pz data-pz-wheel', html)                   # a full canvas: scrolling pans it
+        for z in ("in", "out", "fit", "1"):
+            self.assertIn(f'data-pz-zoom="{z}"', html)
+        self.assertIn('data-pz-tool="note"', html)
         self.assertIn("/ticket/review?" + urlencode({"repo": REPO, "n": 5, "img": MOCKUP}).replace("&", "&amp;"), html)
         self.assertIn('<figcaption>Home <span class="rv-count"', html)          # factory-5-home.png, with its open note
-        self.assertIn('<figure class="cv-shot"><a', html)                       # 1440 wide: drawn as a desktop screen, not a phone's
+        self.assertIn('<g class="rv-pin" data-note="1"><circle cx="1%" cy="1%"', html)   # drawn on its screen
+        self.assertIn('data-pz-show="1"', html)                                 # and listed beside the canvas
+        self.assertIn('<figure class="pz-shot" data-key', html)                 # 1440 wide: drawn as a desktop screen, not a phone's
+        self.assertIn('name="back" value="design"', html)
+        self.assertIn("Send 1 note to the designer", html)
         self.assertNotIn("home-desktop", html)                                  # built screenshots are not design output
+        self.assertNotIn("style=", html.split("<main")[1])
         self.assertIn("No design screens yet", self.req("GET", f"/ticket/design?repo={REPO}&n=6", cookie=cookie)[2])
 
-    def test_the_ticket_design_card_has_zoom_and_opens_the_canvas(self):
-        cookie, _ = self.session()
+    def test_the_ticket_design_card_is_a_canvas_that_opens_the_full_one(self):
+        cookie, csrf = self.session()
+        self.post(cookie, csrf, "/review/add", img=MOCKUP, x="10", y="20", text="Bigger")
         html = self.req("GET", f"/fragment/detail?repo={REPO}&n=5", cookie=cookie)[2]
-        self.assertIn('class="dz" id="dz" data-z="2"', html)
-        self.assertIn(f"/ticket/design?repo={REPO.replace('/', '%2F')}&amp;n=5", html)
-        self.assertIn(urlencode({"img": MOCKUP}), html)                         # each screen opens in Review the screens
+        card = html[html.index('class="sd-card sd-design"'):]
+        self.assertIn('class="pz" id="dz" data-pz>', card)                      # no data-pz-wheel: scrolling scrolls the ticket
+        self.assertIn(f"/ticket/design?repo={REPO.replace('/', '%2F')}&amp;n=5", card)
+        self.assertIn("Open full canvas", card)
+        self.assertIn(urlencode({"img": MOCKUP}), card)                         # each screen opens large in Review the screens
+        self.assertIn('<g class="rv-pin" data-note="1"><circle cx="10%" cy="20%"', card)
+        self.assertIn('name="back" value="ticket"', card)
+        self.assertIn("1 open note", card)
+
+    def test_a_note_dropped_on_a_canvas_returns_to_that_canvas(self):
+        cookie, csrf = self.session()
+        s, h, _ = self.post(cookie, csrf, "/review/add", img=MOCKUP, x="12.5", y="40", w="0", h="0", text="Here", back="design")
+        self.assertEqual(s, 303)
+        self.assertEqual(h["Location"], "/ticket/design?" + urlencode({"repo": REPO, "n": 5}))
+        n = RN.notes(self.db, REPO, 5)[0]
+        self.assertEqual((n["x"], n["y"], n["w"], n["h"]), (125, 400, 0, 0))
+        s, h, _ = self.post(cookie, csrf, "/review/add", img=MOCKUP, x="1", y="1", text="There", back="ticket")
+        self.assertEqual(h["Location"], "/ticket?" + urlencode({"repo": REPO, "n": 5}))
+        s, h, _ = self.post(cookie, csrf, "/review/add", img=MOCKUP, x="1", y="1", text="", back="ticket")
+        self.assertEqual(h["Location"], "/ticket?" + urlencode({"repo": REPO, "n": 5}))   # the error comes back to the canvas too
+        for back in ("https://evil.example/", "canvas", ""):                    # anything else: Review the screens
+            s, h, _ = self.post(cookie, csrf, "/review/add", img=MOCKUP, x="1", y="1", text="Again", back=back)
+            self.assertTrue(h["Location"].startswith("/ticket/review?"), back)
 
     def page_for(self, cookie, n):
         return self.req("GET", f"/ticket/review?repo={REPO}&n={n}", cookie=cookie)[2]
