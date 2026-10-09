@@ -14,6 +14,7 @@ from pathlib import Path
 from . import why as W
 from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
+from . import recommend
 from . import questions as Q
 from . import db as dbm
 from .classifier import RuleClassifier
@@ -167,6 +168,8 @@ def human_buttons(cfg: Config, repo: str, num: int, c, done=()) -> list:
 
 
 def suggestion(c) -> str:
+    if recommend.from_document(c):
+        return f"\nThe last stage's document recommends: {c.stage}" if c.stage else "\nThe last stage's document asks for a person first"
     return f"\nJev suggests: {c.stage} first" if c and c.stage else ""
 
 
@@ -695,12 +698,14 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                                       project_info(project_for(cfg, repo), repo), stages_done(cfg, labels))
             nxt, _ = pick_stage(cfg, nxt, stages_done(cfg, labels), len(project_for(cfg, repo).repos) > 1,
                                 cfg.mockups.request_label in labels)
+            nxt = recommend.apply(cfg, nxt, doc, stages_done(cfg, labels))     # a classifier that names no stage: the document's own line
             hint = next_hint(cfg, nxt)
             # Keep going only when nothing needs a person and the classifier named a real next step. A needs-a-person question
             # always stops the chain; with only safe defaults the classifier still has to agree (a second opinion that can only
             # stop it). The re-applied label goes through the normal auto gate, which still asks before a build it is unsure
             # about. Stages already done are never chosen again, so a chain always ends.
             go_on = bool(chain and cfg.auto_chain and not pending and not earlier and not nxt.needs_human
+                         and not recommend.build_waits(nxt)         # a document's "implement" is shown to a person, never started
                          and (nxt.stage in STAGE_TO_ROLE or nxt.stage == "implement")
                          and not behind(cfg, STAGE_TO_ROLE.get(nxt.stage or ""), stages_done(cfg, labels)))
         except Exception:
@@ -1330,9 +1335,10 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         return None
     labels = [lb["name"] for lb in issue.get("labels", [])]
     done = stages_done(cfg, labels)
-    seen_by_classifier, open_questions = human_comments(gh, repo, num), False
+    seen_by_classifier, open_questions, outputs = human_comments(gh, repo, num), False, {}
     if kind == "auto":                                  # earlier stage documents (and the open questions in them) inform the next call
-        seen_by_classifier += [f"({k} document written by the factory) {v[:2500]}" for k, v in stage_outputs(gh, repo, num).items()]
+        outputs = stage_outputs(gh, repo, num)
+        seen_by_classifier += [f"({k} document written by the factory) {v[:2500]}" for k, v in outputs.items()]
         asked = question_state(gh, repo, num)
         open_questions = any(st.pending() for st in asked)
         if (settled := Q.summary(asked)):
@@ -1344,7 +1350,13 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
 
     if kind == "auto":
         before = c.stage
-        c, adjusted = pick_stage(cfg, c, done, len(project_for(cfg, repo).repos) > 1, cfg.mockups.request_label in labels)
+        if not open_questions:                          # a classifier that named no stage: the last document's own recommendation
+            c = recommend.apply(cfg, c, recommend.latest(outputs, done), done)
+        if recommend.from_document(c):                  # the document already chose between architect and a build
+            adjusted = None
+            summary += f"; the last stage's document recommends {c.stage or 'a person'}"
+        else:
+            c, adjusted = pick_stage(cfg, c, done, len(project_for(cfg, repo).repos) > 1, cfg.mockups.request_label in labels)
         if adjusted:
             summary = f"{summary}; stage {before} -> {c.stage} ({adjusted})"
             emit("decision", f"auto: {c.stage} instead of {before} ({adjusted})", repo, num)
@@ -1360,9 +1372,12 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             st, read_only_pick = "analyst", True       # unsure what to do: the cheap read-only analyst is the right first step, not a question
             emit("decision", f"unsure ({summary}): running the analyst first", repo, num)
         # A question that needs a person is never auto-resolved: until it is answered, auto does not build (whatever the classifier says).
-        if not read_only_pick and (c.needs_human or open_questions or not sure or (st and (st in done or back))):
-            code = ("human" if c.needs_human else "questions" if open_questions else "low" if not sure else "behind" if back else "done")
-            reason = {"human": "needs a person", "questions": "open questions need a person", "low": "low confidence",
+        waits = recommend.build_waits(c)                # a document's "implement" is shown to a person: builds are started by a person
+        if waits or (not read_only_pick and (c.needs_human or open_questions or not sure or (st and (st in done or back)))):
+            code = ("build" if waits else "advice" if recommend.from_document(c) and c.needs_human else "human" if c.needs_human
+                    else "questions" if open_questions else "low" if not sure else "behind" if back else "done")
+            reason = {"build": "a build is started by a person", "advice": "the last stage's document asks for a person",
+                      "human": "needs a person", "questions": "open questions need a person", "low": "low confidence",
                       "behind": "chose an earlier stage than one already done", "done": "chose a stage already done"}[code]
             overall = min(c.confidence, c.stage_confidence if c.stage_confidence is not None else c.confidence)
             scored = W.build(cfg.confidence_threshold, c, code, overall)

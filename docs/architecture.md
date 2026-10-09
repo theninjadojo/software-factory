@@ -33,6 +33,7 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 2. **Trust gate.** The issue timeline says who applied *that* label; their repo permission must be in `trusted_permissions`.
 3. **Classify.** The ticket, its human comments and the project description go to the classifier. Output is typed and
    validated. A stage label skips this (a person already chose); `factory:auto` uses the classifier's stage, and may skip stages straight to a build (high complexity goes to the architect first; no stage means the analyst, but only before any stage has run: auto never goes back to an earlier stage).
+   A classifier that names no stage (the labels-only one never does) falls back to the last stage document's own `Recommended next stage` line, read from our account's comment only and only as one of a fixed set of words: `design` and `architect` carry on, while `implement` and `needs-human` always stop and ask a person (a build is never started from a document's recommendation; `factory:ready` starts it). A stage already done, or while questions are open, is ignored (`factory/recommend.py`).
 4. **Claim.** The trigger label is swapped for a working label, so a crash or restart leaves a visible, recoverable state. The working label
    comes off only after the outcome (comment and labels) is on the ticket; a job that crashes before that marks the ticket `factory:failed`.
 5. **Run.** The orchestrator clones each repo of the project (twice: a pristine `base/` it controls and a `work/` copy
