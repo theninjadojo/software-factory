@@ -4,15 +4,19 @@ Things that live in GitHub Settings, not in the code, recorded so they can be re
 
 ## About
 
-- Description: `Label a GitHub issue and sandboxed AI agents analyse, build and propose the pull request. Agents run with no network and no credentials.`
-- Topics: `ai-agents`, `github-automation`, `llm`, `sandbox`, `prompt-injection`, `claude-code`, `python`
+- Description: `Open-source, self-hosted AI coding agents: label a GitHub issue and sandboxed agents analyse, build and open the pull request. No network, no credentials.`
+- Website: `https://theninjadojo.github.io/software-factory/`
+- Topics: `ai-agents`, `ai-coding-agent`, `coding-agent`, `autonomous-agents`, `claude-code`, `claude`, `anthropic`, `github-automation`, `pull-requests`, `llm`, `sandbox`, `prompt-injection`, `self-hosted`, `devtools`, `automation`, `devin-alternative`, `open-source`, `python`
 
 ## Social preview
 
-`docs/assets/social-preview.html` is the source (1280×640, system fonts only). Export it and upload the PNG (under 1 MB) in Settings → General → Social preview:
+`docs/assets/social-preview.html` is the source (1280×640, the site's fonts). The exported PNG is `site/assets/og.png`: the project site
+uses it as its link preview (`og:image`), and the same file is uploaded in Settings → General → Social preview (under 1 MB). After
+changing the source, export it again:
 
 ```bash
-chromium --headless --screenshot=docs/assets/social-preview.png --window-size=1280,640 docs/assets/social-preview.html
+chromium --headless=new --hide-scrollbars --allow-file-access-from-files --window-size=1280,640 \
+  --screenshot=site/assets/og.png "file://$PWD/docs/assets/social-preview.html"
 ```
 
 ## Before making the repository public
