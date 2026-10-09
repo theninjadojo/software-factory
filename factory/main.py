@@ -1610,49 +1610,76 @@ def ci_submit(cfg: Config, conn):
 
 
 def pm_sweep(cfg: Config, gh: GitHub, conn, repo: str, issues: list) -> str:
-    """The project manager's run over a repository's factory tickets. Read-only in the sandbox; afterwards the orchestrator applies
-    only what pm.parse validated (see pm.py). Returns the outcome."""
+    """The project manager's run over a project's factory tickets (all its repositories: each issue then carries "repo"; a
+    repository in no project alone). Read-only in the sandbox; afterwards the orchestrator applies only what pm.parse and
+    pm.parse_milestones validated (see pm.py). Priorities and blockers stay per repository; milestones span the project."""
+    scope = plan.scope_of(cfg, repo)
+    multi = any(i.get("repo") for i in issues)
+    by_repo: dict[str, list] = {}
+    for i in issues:
+        by_repo.setdefault(i.get("repo") or repo, []).append(i)
+    key = lambda r, n: (r, n) if multi else n
+    pinned = {key(r, n): p for rr in by_repo for (r, n), p in plan.pins(conn, rr).items()}
+    towner, mowner = plan.ticket_owners(conn, by_repo), plan.milestone_owners(conn, scope)
+    placed = {key(r, n): (name, towner.get((r, n), "person")) for (r, n), name in plan.ticket_milestones(conn, scope).items()}
+    named = {key(r, n): v for (r, n), v in plan.features(conn, by_repo).items()}
+    roadmap = [{"name": n, "by": mowner.get(n, "person")} for n in plan.milestones(conn, scope)]
     route = Route(cfg.pm.harness, cfg.pm.model, cfg.pm.effort)
     stand_in = {"number": 0, "title": f"Project manager: {len(issues)} ticket(s)", "body": "", "updated_at": ""}
     run_id, sink = begin_run("pm", repo, stand_in, route, None, "pm"), {}
-    res = runner.run_task(cfg, gh, repo, stand_in, route, role="pm", sink=sink, backlog=pm.backlog_items(issues, cfg.pm.body_chars,
-                                                                                               {n: p for (_, n), p in plan.pins(conn, repo).items()}))
+    res = runner.run_task(cfg, gh, repo, stand_in, route, role="pm", sink=sink,
+                          backlog=pm.backlog_items(issues, cfg.pm.body_chars, pinned, placed, named), milestones=roadmap)
     end_run(run_id, res, sink)
-    found = pm.parse(res.output, {i["number"] for i in issues}) if res.status == "stage" else None
+    keys = {key(i.get("repo") or repo, i["number"]) for i in issues}
+    found = pm.parse(res.output, keys) if res.status == "stage" else None
     if found is None:
-        pm.set_sweep_state(conn, repo, time.time(), "")             # try again after the interval, even if nothing changed
+        pm.set_sweep_state(conn, scope, time.time(), "")            # try again after the interval, even if nothing changed
         if res.status == "rate-limited":
             if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
-                alert(f"Rate limited during the project manager's sweep of {repo}; pausing.", event="rate_limit")
+                alert(f"Rate limited during the project manager's sweep of {scope}; pausing.", event="rate_limit")
         elif res.status == "stage":
             emit("pm", "the project manager's reply had no valid factory-priorities block: nothing changed", repo, None, run_id)
         else:
-            alert(f"Project manager failed for {repo} ({res.status})\n{res.detail[:300]}", event="failure")
+            alert(f"Project manager failed for {scope} ({res.status})\n{res.detail[:300]}", event="failure")
         return res.status
-    changes = pm.apply(cfg, gh, conn, repo, {i["number"]: i for i in issues}, found, run_id)
+    changes = []
+    for r, mine in by_repo.items():
+        got = pm.apply(cfg, gh, conn, r, {i["number"]: i for i in mine}, [a for a in found if (a.repo or repo) == r], run_id)
+        changes += [f"{r} {c}" if multi else c for c in got]
+    if (proposal := pm.parse_milestones(res.output, keys)) is not None:
+        assign = {(r or repo, n): name for (r, n), name in proposal[1].items()}
+        changes += pm.apply_milestones(conn, scope, {(i.get("repo") or repo, i["number"]) for i in issues}, proposal[0], assign)
+    changes += pm.apply_features(conn, {(r or repo, n): v for (r, n), v in pm.parse_features(res.output, keys).items()})
     emit("pm", f"project manager assessed {len(found)} ticket(s), changed {len(changes)}" + "".join(f"; {c}" for c in changes)[:1500],
          repo, None, run_id)
     if changes:
-        alert(f"Project manager: {repo}\n" + "\n".join(changes[:20]), event="info")
+        alert(f"Project manager: {scope}\n" + "\n".join(changes[:20]), event="info")
     return "stage"
 
 
 def maybe_pm_sweep(cfg: Config, gh: GitHub, conn, repo: str) -> None:
-    """Start a sweep when the PM is on, its interval has passed, the repository's tickets changed since the last one, and no
-    ticket is waiting for a slot (real work comes first). It runs in the pool under ticket number 0, which no issue has."""
+    """Start a sweep when the PM is on, its interval has passed, the project's tickets changed since the last one, and no
+    ticket is waiting for a slot (real work comes first). One sweep covers a project's repositories and is started from the
+    first of them; it runs in the pool under ticket number 0, which no issue has. Finished work is left out (pm.finished)."""
     if not cfg.pm.enabled or cfg.dry_run or any(not q.get("reason") for q in queued):
         return
-    if not pool.can_take(jobkey(repo, 0)) or pause.paused(Path(cfg.db_path).parent):
+    scope = plan.scope_of(cfg, repo)
+    repos = [r for r in plan.scope_repos(cfg, scope) if r in cfg.repos] or [repo]
+    if repo != repos[0] or not pool.can_take(jobkey(repo, 0)) or pause.paused(Path(cfg.db_path).parent):
         return
-    last, now = pm.sweep_state(conn, repo), time.time()
+    last, now = pm.sweep_state(conn, scope), time.time()
     if now - float(last.get("ts") or 0) < cfg.pm.interval_minutes * 60:
         return
-    issues = pm.backlog_issues(cfg, gh, repo, [label for _, label in triggers(cfg)] + [r.done_label for r in cfg.roles])
+    labels = [label for _, label in triggers(cfg)] + [r.done_label for r in cfg.roles]
+    issues = []
+    for r in repos:
+        got = pm.backlog_issues(cfg, gh, r, labels, skip=lambda i, r=r: pm.finished(conn, r, i, DONE))
+        issues += [dict(i, repo=r) for i in got] if len(repos) > 1 else got
     dig = pm.digest(issues)
     if not issues or dig == last.get("digest"):
-        pm.set_sweep_state(conn, repo, now, last.get("digest") or "")
+        pm.set_sweep_state(conn, scope, now, last.get("digest") or "")
         return
-    pm.set_sweep_state(conn, repo, now, dig)
+    pm.set_sweep_state(conn, scope, now, dig)
     start(cfg, conn, repo, 0, "pm", lambda db: pm_sweep(cfg, gh, db, repo, issues))
 
 
@@ -1826,6 +1853,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
                 triage_process(cfg, gh, conn, repo, github_due)
             except Exception:
                 log.exception("comment triage of %s failed", repo)           # never stops the poll
+    try:                                                    # milestones of a repository that joined a project move into it
+        plan.migrate(conn, lambda r: plan.scope_of(cfg, r))
+    except Exception:
+        log.exception("could not move milestones into their projects")
     for repo in cfg.repos:                                  # after every repository's tickets had their chance at a slot
         try:
             maybe_pm_sweep(cfg, gh, conn, repo)

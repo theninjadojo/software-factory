@@ -82,8 +82,8 @@ class Milestones(unittest.TestCase):
         self.assertFalse(plan.add_milestone(c, "o/r", " Checkout "))
         plan.move_milestone(c, "o/r", "Launch", -1)
         self.assertEqual(plan.milestones(c, "o/r"), ["Checkout", "Launch", "Accounts"])
-        self.assertTrue(plan.set_ticket_milestone(c, "o/r", 5, "Launch"))
-        self.assertFalse(plan.set_ticket_milestone(c, "o/r", 5, "Nope"))
+        self.assertTrue(plan.set_ticket_milestone(c, "o/r", "o/r", 5, "Launch"))
+        self.assertFalse(plan.set_ticket_milestone(c, "o/r", "o/r", 5, "Nope"))
         plan.delete_milestone(c, "o/r", "Launch")
         self.assertEqual(plan.ticket_milestones(c, "o/r"), {})
 
@@ -96,13 +96,13 @@ class Pages(unittest.TestCase):
     def setUp(self):
         self.conn = dbm.connect(":memory:")
         plan.add_milestone(self.conn, "o/r", "Checkout")
-        plan.set_ticket_milestone(self.conn, "o/r", 5, "Checkout")
+        plan.set_ticket_milestone(self.conn, "o/r", "o/r", 5, "Checkout")
         dbm.set_pm_assessment(self.conn, "o/r", 6, "normal", "", False, [5], "Needs <b>#5</b>", "", 1)
 
     def test_the_roadmap_orders_tickets_into_milestone_steps(self):
-        m = roadmap.model(self.conn, [row(5, priority="high", src="you"), row(6), row(9, "done")], "o/r")
+        m = roadmap.model(self.conn, [row(5, priority="high", src="you"), row(6), row(9, "done")], "o/r", ["o/r"])
         self.assertEqual({t["issue"]: t["step"] for t in m["tickets"]}, {5: 1, 6: 2})      # #9 is done and in no milestone
-        out = roadmap.page(replace(CFG, repos=["o/r"]), m, "o/r", 6, "tok")
+        out = roadmap.page(replace(CFG, repos=["o/r"]), m, ("o/r", 6), "tok")
         self.assertIn("rm-c2", out)
         self.assertIn("Checkout", out)
         self.assertIn("Tracing", out)

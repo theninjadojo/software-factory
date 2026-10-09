@@ -370,5 +370,15 @@ class PriorityAndRoadmap(LocalTickets):
         s, _, html = self.req("GET", f"/roadmap?repo={quote(REPO, safe='')}", cookie=self.cookie)
         self.assertEqual(s, 200)
         self.assertIn("Checkout", html)
+        s, _, html = self.req("GET", f"/roadmap?repo={quote(REPO, safe='')}&milestone=Checkout", cookie=self.cookie)
         self.assertIn("Fix the footer", html)
+        back = f"/roadmap?project={quote(REPO, safe='')}&milestone=Checkout"
+        self.assertEqual(self.post(self.cookie, self.csrf, "/roadmap/feature", {"project": REPO, "repo": REPO, "n": str(n), "short": "Tidy footer",
+                                                                                "category": "Website", "back": back})[0], 303)
+        self.assertEqual(plan.features(conn, [REPO])[(REPO, n)], {"short": "Tidy footer", "category": "Website", "short_by": "person", "category_by": "person"})
+        pm.apply_features(conn, {(REPO, n): {"short": "Footer fix", "category": "Site"}})          # a person's wording sticks
+        self.assertEqual(plan.features(conn, [REPO])[(REPO, n)]["short"], "Tidy footer")
+        s, _, html = self.req("GET", back, cookie=self.cookie)
+        self.assertIn("Tidy footer", html)
+        self.assertIn("Fix the footer", html)                                                    # the full title, when opened
         self.assertEqual(self.post(self.cookie, "bad", "/tickets/priority", {**f, "priority": "high"})[0], 403)

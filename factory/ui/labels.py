@@ -41,7 +41,7 @@ NO_TOKEN = "Save a GitHub token on the Credentials page first."
 # the server per session (never taken from the URL), so a link cannot make the page say something.
 _flash: dict = {}
 _flash_lock = threading.Lock()
-BACK = re.compile(r"^/(?:\?(?:station|need|view)=[a-z]{1,12}(?:&(?:station|need|view)=[a-z]{1,12}){0,2}|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?|ticket\?repo=[\w.%-]{1,150}&n=\d{1,9})?$")
+BACK = re.compile(r"^/(?:\?(?:station|need|view)=[a-z]{1,12}(?:&(?:station|need|view)=[a-z]{1,12}){0,2}|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?|ticket\?repo=[\w.%-]{1,150}&n=\d{1,9}|roadmap(?:\?[\w=&%.:/+-]{0,300})?)?$")
 
 
 def flash_set(csrf: str, msg: str, kind: str = "ok") -> None:
@@ -57,7 +57,7 @@ def flash_pop(csrf: str):
 
 
 def _back(form) -> str:
-    """Where to return to: only the Floor or the Tickets page, with their own query. Anything else goes to Tickets."""
+    """Where to return to: only the Floor, the Tickets page or the Roadmap, with their own query. Anything else goes to Tickets."""
     b = form.get("back", "")
     return b if BACK.fullmatch(b) and "//" not in b else "/tickets"
 

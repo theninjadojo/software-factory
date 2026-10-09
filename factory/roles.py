@@ -48,11 +48,30 @@ ROLE_PROMPTS = {
         "from the tickets or the code. Write a short document: a ranked list with one line of reasoning per ticket, then any "
         "dependency chains. A person's priority label always wins over yours: a ticket with pinned_priority was set by a person, "
         "so give it that priority and rank the other tickets around it. You never start, approve or cancel work."
+        "\n\nMILESTONES. Also group the tickets into milestones. A milestone is ONE plain English sentence saying what the "
+        "product's users (parents, coaches, managers, customers: never the developers) can do once it is done. Start with who, "
+        "then what they can do.\n"
+        "Good: \"Parents can pay all their invoices in one checkout\", \"Coaches can see their whole week's classes in one "
+        "place\", \"Guardians can enrol a child without the account owner\".\n"
+        "Bad: \"Billing\" (says nothing), \"Phase 2\" (a number), \"Implement multi-invoice API\" (developer words).\n"
+        "Rules: no ticket numbers, file names, phases, sprints, versions or internal terms (API, RLS, route, schema). Group "
+        "tickets by what the user gets, not by code area or factory stage. Keep 3 to 6 milestones; each needs at least 2 "
+        "tickets, unless it is the single most important item. Order them by the pinned priorities first (high in the first "
+        "milestones, low last), then by what unblocks what. Keep what exists: repeat the current milestones word for word and "
+        "keep tickets where they are unless that clearly no longer fits. A milestone or ticket placed by a person stays as it is."
+        "\n\nFEATURE NAMES. Give each ticket a short: a plain name for what it does for users, at most 40 characters, no "
+        "numbers or developer words (good: \"Pay several invoices at once\"; bad: \"Multi-invoice Stripe session\"). And a "
+        "category: the part of the business it touches, at most 24 characters (good: \"Payments\", \"Enrolment\", "
+        "\"Coach tools\"). Use one small set of at most 8 categories for the whole project. Keep a ticket's current short and "
+        "category unless they are wrong; ones set by a person stay as they are."
         "\n\nPRIORITIES BLOCK (required). End your reply with exactly one fenced code block whose info string is "
-        '`factory-priorities`, holding JSON like {"tickets": [{"issue": 12, "priority": "high", "blocked_by": [9], '
-        '"reason": "Unblocks #14 and #15."}]}. One entry per ticket in the backlog; priority is one of high, normal or low; '
-        "blocked_by lists at most 5 numbers of other open tickets in the backlog (use [] when nothing blocks it); reason is one "
-        "plain line of at most 200 characters. The block is machine-read: valid JSON, plain text, no Markdown inside it."
+        '`factory-priorities`, holding JSON like {"milestones": ["Parents can pay all their invoices in one checkout"], '
+        '"tickets": [{"issue": 12, "priority": "high", "blocked_by": [9], "milestone": "Parents can pay all their invoices in '
+        'one checkout", "short": "Pay several invoices at once", "category": "Payments", "reason": "Unblocks #14 and #15."}]}. One entry per ticket in the backlog; priority is one of high, '
+        "normal or low; blocked_by lists at most 5 numbers of other open tickets in the backlog of the same repository (use [] "
+        "when nothing blocks it); milestone is one of your milestones, word for word; short and category as above; reason is one plain line of at most 200 "
+        "characters. When the tickets carry a repo, add \"repo\" with that value to each entry. The block is machine-read: "
+        "valid JSON, plain text, no Markdown inside it."
     ),
     "ticket-review": (
         "ROLE: Ticket review. Instead of one ticket, you are given the repository's open and in-progress tickets (see backlog "
