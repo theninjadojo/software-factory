@@ -796,44 +796,64 @@ main.full { max-width:none; }
 .cp-grid a:hover img, .cp-grid a:focus-visible img { border-color:var(--accent); }
 .cp-grid figcaption { color:var(--muted); font-size:.75rem; margin-top:.25rem; overflow-wrap:anywhere; }
 
-/* The canvas of a Playwright run's screens (/screens/canvas): one surface, a row per page, its viewports side by side. */
-.cv-zoom button[aria-pressed=true] { outline:2px solid var(--accent); outline-offset:1px; }
-.cv-zoom { display:flex; align-items:center; gap:.5rem; margin:.6rem 0; }
-.cv { overflow-x:auto; min-height:12rem; background:var(--panel); border:1px solid var(--line); padding:1rem; }
-.cv-page { margin:0 0 1.6rem; }
-.cv-page h3 { margin:0 0 .5rem; font-size:1rem; overflow-wrap:anywhere; }
-.cv-row { display:flex; align-items:flex-start; gap:1rem; width:max-content; }
-.cv-shot { margin:0; flex:none; }
-.cv-shot a { display:block; }
-.cv-shot img { display:block; width:100%; height:auto; border:1px solid var(--line2); background:#fff; }
-.cv-shot a:hover img, .cv-shot a:focus-visible img { border-color:var(--accent); }
-.cv-shot figcaption { color:var(--muted); font-size:.8rem; margin-top:.25rem; display:flex; gap:.4rem; align-items:center; }
-.cv-shot { width:30rem; } .cv-tablet { width:20rem; } .cv-phone, .cv-mobile { width:10rem; }
-.cv[data-z="1"] .cv-shot { width:16rem; } .cv[data-z="1"] .cv-tablet { width:11rem; } .cv[data-z="1"] .cv-phone, .cv[data-z="1"] .cv-mobile { width:5.5rem; }
-.cv[data-z="3"] .cv-shot { width:52rem; } .cv[data-z="3"] .cv-tablet { width:34rem; } .cv[data-z="3"] .cv-phone, .cv[data-z="3"] .cv-mobile { width:17rem; }
-.cv[data-z="1"] .cv-row { gap:.6rem; }
-.cv[data-z="4"] .cv-shot { width:auto; } .cv[data-z="4"] .cv-shot img { width:auto; max-width:none; }
-.cv-zoom { flex-wrap:wrap; } .cv-zoom button { min-height:44px; } .dz-open { margin-left:auto; }
-/* A ticket's Design output card: the top of each design screen at a readable size; the zoom buttons set the size. */
-.dz { overflow-x:auto; padding:2px 2px 8px; }
-.dz-row { display:flex; align-items:flex-start; gap:16px; width:max-content; }
-.dz-shot { margin:0; flex:none; width:22rem; }
-.dz-shot a { display:block; border:1px solid var(--line2); background:#fff; }
-.dz-shot a:hover, .dz-shot a:focus-visible { border-color:var(--accent); }
-.dz-shot img { display:block; width:100%; aspect-ratio:4/5; object-fit:cover; object-position:top; }
-.dz-shot figcaption { margin-top:6px; font-size:13px; overflow-wrap:anywhere; }
-.dz[data-z="1"] .dz-shot { width:12rem; } .dz[data-z="3"] .dz-shot { width:36rem; }
-.dz .dz-narrow { width:11rem; } .dz[data-z="1"] .dz-narrow { width:6.5rem; } .dz[data-z="3"] .dz-narrow { width:17rem; }
-.dz-narrow img { aspect-ratio:9/16; }
-.dz-hint { margin:8px 0 0; }
+/* The canvas of screens (canvas.py): a ticket's Design output card, its design page and a Screens board canvas. The screens sit in rows at
+   their own size; app.js pans and zooms the layer (transform) and sets --pz-inv (1 / zoom) so pins and outlines keep their size on screen.
+   Without the script the canvas scrolls and the screens keep a readable size. */
+.pz { position:relative; }
+.pz-view { position:relative; height:460px; overflow:hidden; background-color:#0d1013; background-image:radial-gradient(var(--line) 1px, transparent 1px);
+  background-size:20px 20px; border:1px solid var(--line2); cursor:grab; touch-action:pan-y; outline-offset:2px; }
+.pz-full .pz-view { height:calc(100vh - 200px); min-height:420px; touch-action:none; }
+.pz-view.pz-drag { cursor:grabbing; }
+.pz[data-mode=note] .pz-view, .pz[data-mode=note] .pz-frame a { cursor:crosshair; }
+.pz-layer { position:absolute; left:0; top:0; transform-origin:0 0; display:flex; flex-direction:column; gap:160px; padding:96px; width:max-content; }
+.pz-row { display:flex; flex-direction:column; gap:32px; }
+.pz-title { margin:0; font-size:max(44px, calc(16px * var(--pz-inv, 1))); font-weight:700; letter-spacing:0; text-transform:none; color:var(--muted); }
+.pz-shots { display:flex; align-items:flex-start; gap:96px; }
+.pz-shot { margin:0; flex:none; }
+.pz-frame { position:relative; line-height:0; box-shadow:0 0 0 calc(1px * var(--pz-inv, 1)) var(--line2), 0 12px 40px rgba(0,0,0,.45); }
+.pz-frame a { display:block; }
+.pz-frame img { display:block; background:#fff; user-select:none; -webkit-user-select:none; }
+.js .pz-frame img { max-width:none; }
+.pz-frame:hover, .pz-frame:focus-within, .pz-shot.on .pz-frame { box-shadow:0 0 0 calc(3px * var(--pz-inv, 1)) var(--accent); }
+.pz-shot figcaption { margin-top:calc(8px * var(--pz-inv, 1)); font-size:max(26px, calc(13px * var(--pz-inv, 1))); color:var(--muted); display:flex; gap:12px; align-items:center; }
+.pz-shot figcaption .rv-count { font-size:max(20px, calc(12px * var(--pz-inv, 1))); height:1.5em; min-width:1.7em; border-radius:.75em; }
+.pz .rv-pin circle { r:calc(14px * var(--pz-inv, 1)); stroke-width:calc(2px * var(--pz-inv, 1)); }
+.pz .rv-pin text { font-size:calc(13px * var(--pz-inv, 1)); }
+.pz .rv-box { stroke-width:calc(2px * var(--pz-inv, 1)); }
+.pz .rv-pin.on circle { stroke-width:calc(3px * var(--pz-inv, 1)); }
+.pz-draft { position:absolute; width:calc(20px * var(--pz-inv, 1)); height:calc(20px * var(--pz-inv, 1)); margin:calc(-10px * var(--pz-inv, 1)) 0 0 calc(-10px * var(--pz-inv, 1));
+  border-radius:50%; background:var(--blue); box-shadow:0 0 0 calc(2px * var(--pz-inv, 1)) var(--bg); pointer-events:none; }
+html:not(.js) .pz-view { overflow:auto; height:auto; max-height:70vh; cursor:auto; }
+html:not(.js) .pz-layer { position:static; gap:24px; padding:16px; }
+html:not(.js) .pz-title { font-size:1rem; } html:not(.js) .pz-shots { gap:16px; } html:not(.js) .pz-shot figcaption { font-size:.8rem; margin-top:6px; }
+html:not(.js) .pz-frame img { width:30rem; height:auto; } html:not(.js) .pz-narrow .pz-frame img { width:12rem; }
+html:not(.js) .pz-bar, html:not(.js) .pz-note { display:none; }
+.pz-bar { position:absolute; z-index:2; left:12px; right:12px; top:12px; display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px; pointer-events:none; }
+.pz-bar > * { pointer-events:auto; }
+.pz-zoom { display:flex; align-items:center; background:var(--panel); border:1px solid var(--line2); }
+.pz-b { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-width:44px; min-height:44px; padding:0 12px; background:var(--panel);
+  color:var(--text); border:1px solid var(--line2); font-weight:500; }
+.pz-zoom .pz-b { border:0; } .pz-zoom .pz-b + .pz-b, .pz-zoom .pz-pct + .pz-b { border-left:1px solid var(--line2); }
+.pz-zoom [data-pz-zoom=in], .pz-zoom [data-pz-zoom=out] { font-size:20px; }
+.pz-b[aria-pressed=true] { background:var(--blue); color:var(--blue-ink); border-color:var(--blue); }
+.pz-pct { min-width:4rem; text-align:center; font-size:13px; }
+.pz-open { margin-left:auto; display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 16px; background:var(--blue); color:var(--blue-ink);
+  font-weight:700; text-decoration:none; }
+.pz-open:hover { color:var(--blue-ink); background:#a9bcff; }
+.pz-note { position:absolute; z-index:3; width:min(320px, calc(100% - 24px)); display:flex; flex-direction:column; gap:8px; padding:12px 14px;
+  background:var(--panel); border:1px solid var(--line2); box-shadow:0 12px 32px rgba(0,0,0,.5); }
+.pz-note[hidden] { display:none; }
+.pz-note textarea { resize:vertical; } .pz-acts { display:flex; gap:8px; flex-wrap:wrap; }
+.pz-cancel { background:transparent; color:var(--text); border-color:var(--line2); font-weight:500; }
+.pz-hint { margin:10px 0 0; }
+.pz-page { display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start; }
+.pz-page > .pz { flex:999 1 560px; min-width:0; }
+.pz-side { flex:1 1 300px; min-width:0; display:flex; flex-direction:column; gap:12px; }
+.pz-side .rv-list li { padding-right:14px; }
+.pz-side h2 { margin:0; font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 @media (max-width:760px) {
-  .cv-row { width:auto; flex-wrap:wrap; gap:.6rem; }
-  .cv[data-z] .cv-shot { width:calc(50% - .3rem); }
-  .cv[data-z] .cv-tablet { width:calc(30% - .3rem); }
-  .cv[data-z] .cv-phone, .cv[data-z] .cv-mobile { width:calc(20% - .3rem); }
-  .cv[data-z="4"] .cv-row { width:max-content; flex-wrap:nowrap; } .cv[data-z="4"] .cv-shot { width:auto; }
-  .dz-canvas[data-z] .cv-shot { width:100%; } .dz-canvas[data-z="1"] .cv-shot, .dz-canvas[data-z] .cv-phone { width:calc(50% - .3rem); }
-  .dz-canvas[data-z="1"] .cv-phone { width:calc(25% - .45rem); } .dz-canvas[data-z="4"] .cv-shot { width:auto; }
+  .pz-view { height:360px; } .pz-full .pz-view { height:62vh; min-height:320px; }
+  .pz-bar { left:8px; right:8px; top:8px; } .pz-b span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 }
 
 /* The floor's layout editor (/floor/edit, floor-edit.js): a plan of the buildings and belts on the layout's grid. Wide screens only. */

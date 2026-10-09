@@ -11,10 +11,12 @@ from .. import db as dbm
 from .. import reviewnotes as RN
 from .. import scenarios as SC
 from .. import screenboard as SB
+from . import canvas as CV
 from . import labels as L
 from . import views
+from .canvas import marks
 from .scenarios import BADGE
-from .views import csrf_field, esc
+from .views import esc
 
 log = logging.getLogger("factory.ui")
 DESIGNER = "designer"
@@ -39,9 +41,7 @@ def _scope(h, form) -> tuple[str, int]:
 
 
 def _hidden(repo: str, n: int, csrf: str) -> str:
-    if (repo, n) == RN.BOARD:
-        return f'{csrf_field(csrf)}<input type="hidden" name="board" value="1">'
-    return f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">'
+    return CV.scope_hidden(repo, n, csrf, (repo, n) == RN.BOARD)
 
 
 def _images(h, repo: str, n: int) -> list[dict]:
@@ -78,26 +78,19 @@ def where(note: dict) -> str:
     return f"{_pct(note['w'])}% × {_pct(note['h'])}% at {_pct(note['x'])}%, {_pct(note['y'])}%"
 
 
-def marks(notes: list[tuple[int, dict]]) -> str:
-    """The notes on one image as SVG drawn over it in percentages (no inline styles: the page's CSP forbids them)."""
-    out = ""
-    for k, n in notes:
-        x, y, w, h = (_pct(n[c]) for c in ("x", "y", "w", "h"))
-        if n["w"]:
-            out += f'<rect class="rv-box" data-note="{int(n["id"])}" x="{x}%" y="{y}%" width="{w}%" height="{h}%"></rect>'
-        out += (f'<g class="rv-pin" data-note="{int(n["id"])}"><circle cx="{x}%" cy="{y}%" r="14"></circle>'
-                f'<text x="{x}%" y="{y}%" text-anchor="middle" dominant-baseline="central">{k}</text></g>')
-    return f'<svg class="rv-marks" aria-hidden="true">{out}</svg>'
-
-
 def page_body(repo: str, n: int, imgs: list[dict], sel: dict | None, notes: list[dict], queued: bool, can_send: bool, csrf: str) -> str:
     """A ticket's review page."""
-    hidden = _hidden(repo, n, csrf)
     head = (f'<p>{views.ticket_link(repo, n)} · <a href="/ticket?repo={esc(repo)}&amp;n={int(n)}">Pipeline</a> · '
             f'<a href="{views.doc_url(repo, n, DESIGNER)}">Design document</a></p>')
     if not imgs:
         return head + ('<p class="muted">This ticket has no screens to review yet. They appear here once the design stage renders its '
                        'mockups, or a build keeps screenshots.</p>')
+    return head + review_ui(repo, n, imgs, imgs, sel, notes, send_form(repo, n, notes, queued, can_send, csrf), "Notes for the designer", csrf)
+
+
+def send_form(repo: str, n: int, notes: list[dict], queued: bool, can_send: bool, csrf: str) -> str:
+    """Send the open notes to the designer (a design run), or why that is not possible now."""
+    hidden = _hidden(repo, n, csrf)
     k = sum(1 for x in notes if x["sent"] is None)
     if queued:
         send = ('<p class="flash ok">A design run is queued. The open notes go with it, along with any you add before it starts.</p>')
@@ -108,7 +101,7 @@ def page_body(repo: str, n: int, imgs: list[dict], sel: dict | None, notes: list
                 f'<button{" disabled" if not k else ""}>Send {k} note{"" if k == 1 else "s"} to the designer</button>'
                 '<p class="muted">The design stage runs again with the notes and the screens they are on. Notes you leave here go with '
                 'the next design run anyway.</p></form>')
-    return head + review_ui(repo, n, imgs, imgs, sel, notes, send, "Notes for the designer", csrf)
+    return send
 
 
 def review_ui(repo: str, n: int, imgs: list[dict], known: list[dict], sel: dict, notes: list[dict], send: str, notes_title: str,
@@ -185,9 +178,24 @@ def review_get(h, q: dict, csrf: str) -> None:
                             flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
 
 
-def _back(h, csrf: str, repo: str, n: int, img: str, msg: str, kind: str = "ok") -> None:
+def _back(h, csrf: str, repo: str, n: int, img: str, msg: str, kind: str = "ok", back: str = "") -> None:
     L.flash_set(csrf, msg, kind)
-    h._redirect(url(repo, n, img))
+    h._redirect(back_url(repo, n, img, back) or url(repo, n, img))
+
+
+def back_url(repo: str, n: int, img: str, back: str) -> str:
+    """The canvas a note came from (canvas.BACK), so a person who drops a note there stays there; '' for Review the screens."""
+    if back == "ticket" and repo:
+        return "/ticket?" + urlencode({"repo": repo, "n": int(n)})
+    if back == "design" and repo:
+        return design_url(repo, n)
+    if back == "canvas" and (repo, n) == RN.BOARD and (m := SB.KEY.fullmatch(img)):
+        return "/screens/canvas?" + urlencode({"repo": m.group(1)})
+    return ""
+
+
+def design_url(repo: str, n: int) -> str:
+    return "/ticket/design?" + urlencode({"repo": repo, "n": int(n)})
 
 
 def _area(form) -> tuple[int, int, int, int]:
@@ -213,19 +221,19 @@ def add(h, form, csrf: str) -> None:
         repo, n = _scope(h, form)
     except L.Refused as e:
         return L._page(h, 400, "Review", "", csrf, str(e), "bad")
-    img = form.get("img", "")
+    img, back = form.get("img", ""), form.get("back", "")
     if img not in {i["key"] for i in _images(h, repo, n)}:
         return _back(h, csrf, repo, n, "", "That screen is no longer here. Nothing was saved.", "bad")
     try:
         box = _area(form)
     except ValueError:
-        return _back(h, csrf, repo, n, img, "Mark an area on the screen first (or set it by numbers). Nothing was saved.", "bad")
+        return _back(h, csrf, repo, n, img, "Mark an area on the screen first (or set it by numbers). Nothing was saved.", "bad", back)
     try:
         _write(h, lambda db: RN.add(db, repo, n, img, box, form.get("text", "")))
     except ValueError as e:
-        return _back(h, csrf, repo, n, img, f"Not saved: {e}.", "bad")
+        return _back(h, csrf, repo, n, img, f"Not saved: {e}.", "bad", back)
     log.info("review: note added on %s", f"{repo}#{n}" if repo else "the screens board")
-    _back(h, csrf, repo, n, img, "Note added.")
+    _back(h, csrf, repo, n, img, "Note added.", back=back)
 
 
 def delete(h, form, csrf: str) -> None:
@@ -427,30 +435,35 @@ def board_issue(h, form, csrf: str) -> None:
     _back(h, csrf, repo, n, "", msg)
 
 
-def design_body(repo: str, n: int, imgs: list[dict], notes: list[dict], widths: dict | None = None) -> str:
-    """A ticket's design screens (the latest design run's previews) whole, on one canvas with the Screens board's zoom. Click one to
-    mark it up in Review the screens."""
+def design_rows(shots: list[dict], widths: dict, href) -> list[tuple[str, list[dict]]]:
+    """A ticket's design screens [{key, src, label}] as canvas rows: the screens of one name (its desktop and phone versions) side by side."""
+    rows: dict[str, list[dict]] = {}
+    for i in shots:
+        name = views.mockup_name(i["key"].rpartition(":")[2])
+        narrow = 0 < widths.get(i["key"], 0) < views.NARROW
+        rows.setdefault(CV.group(name), []).append(CV.shot(i["key"], i["src"], i["label"], name, href(i["key"]), narrow))
+    return list(rows.items())
+
+
+def design_body(repo: str, n: int, imgs: list[dict], notes: list[dict], widths: dict | None = None, send: str = "", csrf: str = "") -> str:
+    """A ticket's design screens (the latest design run's previews) on the canvas, with the open notes beside it. Click a screen to open
+    it large in Review the screens; pick Note to drop a note on the canvas itself."""
     shots = [i for i in imgs if i["key"].startswith("mockup:")]
-    count: dict = {}
-    for x in notes:
-        if x["sent"] is None:
-            count[x["image"]] = count.get(x["image"], 0) + 1
+    keys = {i["key"] for i in shots}
+    opened = CV.numbered(notes)
+    here = [(k, x) for k, x in opened if x["image"] in keys]
     head = (f'<p>{views.ticket_link(repo, n)} · <strong>Design output</strong> <span class="muted">· {len(shots)} screen{"s" if len(shots) != 1 else ""} · '
-            f'{sum(count.get(i["key"], 0) for i in shots)} open notes</span></p>')
+            f'{len(here)} open note{"" if len(here) == 1 else "s"}</span></p>')
     if not shots:
         return head + '<p class="muted">No design screens yet. They appear here once the designer has rendered its mockups.</p>'
-    zoom = views.zoom_buttons("cv", (("1", "Small"), ("2", "Medium"), ("3", "Large"), ("4", "Actual size")),
-                              extra=f'<a class="dz-open" href="{esc(url(repo, n))}">Review the screens</a>')
-    cells = ""
-    for i in shots:
-        c = count.get(i["key"], 0)
-        badge = f' <span class="rv-count" title="Open notes">{c}</span>' if c else ""
-        name = views.mockup_name(i["key"].rpartition(":")[2])
-        narrow = 0 < (widths or {}).get(i["key"], 0) < views.NARROW
-        cells += (f'<figure class="cv-shot{" cv-phone" if narrow else ""}"><a href="{esc(url(repo, n, i["key"]))}" aria-label="Mark up {esc(name)}"><img src="{esc(i["src"])}" '
-                  f'alt="{esc(i["label"])}" loading="lazy"></a><figcaption>{esc(name)}{badge}</figcaption></figure>')
-    return (head + zoom + f'<div class="cv dz-canvas" id="cv" data-z="2" tabindex="0" aria-label="Design screens of #{int(n)}"><div class="cv-row">{cells}</div></div>'
-            '<p class="muted">Each screen is shown whole. Click one to open it in Review the screens: drag over an area and write what should change.</p>')
+    rows = design_rows(shots, widths or {}, lambda k: url(repo, n, k))
+    board = CV.canvas("cv", f"Design screens of #{int(n)}", rows, here, _hidden(repo, n, csrf), "design", full=True)
+    label = {i["key"]: views.mockup_name(i["key"].rpartition(":")[2]) for i in imgs}
+    side = (f'<aside class="pz-side" aria-labelledby="pz-nh"><h2 id="pz-nh">Notes for the designer</h2>'
+            f'{CV.notes_list(opened, label, lambda k: url(repo, n, k), "cv")}{send}'
+            f'<p class="muted">Click a screen to open it large, drag over an area and write what should change. '
+            f'<a href="{esc(url(repo, n))}">Review the screens</a></p></aside>')
+    return head + f'<div class="pz-page">{board}{side}</div>'
 
 
 def design_get(h, q: dict, csrf: str) -> None:
@@ -468,4 +481,8 @@ def design_get(h, q: dict, csrf: str) -> None:
             widths = {k: got.get(v, 0) for k, v in mocks.items()}
         finally:
             db.close()
-    h._send(200, views.page(f"Design output · #{n}", design_body(repo, n, imgs, notes, widths), "/ticket/design", csrf, wide=True))
+    cfg = h.app.cfg()
+    send = send_form(repo, n, notes, (repo, n) in L._approved(h), any(r.name == DESIGNER for r in cfg.roles), csrf)
+    shown = L.flash_pop(csrf)
+    h._send(200, views.page(f"Design output · #{n}", design_body(repo, n, imgs, notes, widths, send, csrf), "/ticket/design", csrf, wide=True,
+                            flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))

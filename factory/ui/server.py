@@ -21,6 +21,7 @@ from .. import db as dbm
 from .. import designfiles
 from .. import jobs, pause, screenboard, updates, version
 from .. import questions as Q
+from .. import reviewnotes as RN
 from ..config import HealthCfg, load
 from .. import tracker
 from ..tracker import display, is_local
@@ -567,6 +568,7 @@ class Handler(BaseHTTPRequestHandler):
             if sel is not None:
                 files, docs, events, images = board.ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
                 sel["design_imports"] = dbm.design_imports(db, sel["repo"], sel["issue"])
+                sel["review_notes"] = RN.notes(db, sel["repo"], sel["issue"], open_only=True)
                 sel["verify"] = board.ticket_verify(db, sel["repo"], sel["issue"])
                 if sel["state"] == "done":
                     sel["outcome_full"] = board.outcome_of(sel, dbm.doc_heads(db, [(sel["repo"], sel["issue"])]).get((sel["repo"], sel["issue"])))

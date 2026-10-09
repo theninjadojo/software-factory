@@ -596,8 +596,11 @@ def design_url(repo: str, issue: int) -> str:
     return "/ticket/design?" + _qs(repo=repo, n=issue)
 
 
-def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str, imports: list[dict] | None = None) -> str:
-    """The designer's screens, top of each at a readable size, with the Screens board's zoom; each opens in Review the screens."""
+def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str, imports: list[dict] | None = None,
+                notes: list[dict] | None = None, csrf: str = "") -> str:
+    """The designer's screens on the canvas the full design page and the Screens board share: pan, zoom and the notes as pins. A screen
+    opens large in Review the screens; the Note tool drops a note on the canvas and comes back to the ticket."""
+    from . import canvas as CV, review as RV
     shots = [f for f in files if views.mockup_ok(f)]
     linked = views.import_links(imports)
     if not shots and not linked:
@@ -605,14 +608,17 @@ def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str, i
     read = f'<a href="{views.doc_url(repo, issue, "designer")}">Read design</a>' if "designer" in docs else ""
     body = ""
     if shots:
-        figs = "".join(f'<figure class="dz-shot{" dz-narrow" if 0 < f.get("width", 0) < views.NARROW else ""}"><a href="/ticket/review?{esc(_qs(repo=repo, n=issue, img="mockup:" + f["repo"] + ":" + f["path"]))}" '
-                       f'aria-label="Open {esc(views.mockup_name(f["path"]))} to review"><img src="{esc(views.mockup_src(f))}" alt="{esc(f["path"])}" '
-                       f'loading="lazy"></a><figcaption>{esc(views.mockup_name(f["path"]))}</figcaption></figure>' for f in shots)
+        imgs = [{"key": f"mockup:{f['repo']}:{f['path']}", "src": views.mockup_src(f), "label": f["path"]} for f in shots]
+        widths = {f"mockup:{f['repo']}:{f['path']}": f.get("width", 0) for f in shots}
+        keys = set(widths)
+        opened = [(k, x) for k, x in CV.numbered(notes or []) if x["image"] in keys]
         n = len(shots)
-        more = (f'<span class="muted sd-fine">{n} screen{"s" if n != 1 else ""}</span>'
-                f'<a class="dz-open" href="{esc(design_url(repo, issue))}">Open on a canvas →</a>')
-        body = (views.zoom_buttons("dz", extra=more) + f'<div class="dz" id="dz" data-z="2" tabindex="0" aria-label="Design screens">'
-                f'<div class="dz-row">{figs}</div></div><p class="muted sd-fine dz-hint">The top of each screen. Click one to see all of it and mark what should change.</p>')
+        more = f'<a class="pz-open" href="{esc(design_url(repo, issue))}">{CV.OPEN_ICON}Open full canvas</a>'
+        body = (CV.canvas("dz", "Design screens", RV.design_rows(imgs, widths, lambda k: RV.url(repo, issue, k)), opened,
+                          CV.scope_hidden(repo, issue, csrf), "ticket", extra=more)
+                + f'<p class="muted sd-fine pz-hint">{n} screen{"s" if n != 1 else ""}'
+                + (f' · {len(opened)} open note{"" if len(opened) == 1 else "s"}' if opened else "")
+                + '. Drag to move around, Ctrl and scroll or pinch to zoom. Click a screen to open it large and mark what should change.</p>')
     return (f'<section class="sd-card sd-design" aria-labelledby="d-h"><div class="sd-cardhead"><h3 id="d-h">Design output</h3>'
             f'<span class="sd-links">{read}{prs_link}</span></div>{body}{linked}</section>')
 
@@ -657,7 +663,7 @@ def phone_journey(r: dict, files: list, docs) -> str:
             extra = ""
         if sid == "designer" and files:
             extra += (f'<div class="mockups">{"".join(views.mockup_img(f) for f in files)}</div>'
-                      + (f'<div class="sd-fine"><a href="{esc(design_url(repo, n))}">Open on a canvas →</a></div>' if any(views.mockup_ok(f) for f in files) else ""))
+                      + (f'<div class="sd-fine"><a href="{esc(design_url(repo, n))}">Open full canvas →</a></div>' if any(views.mockup_ok(f) for f in files) else ""))
         items += (f'<li class="sd-pj {state}"><span class="sd-n {state}">{i}</span><div><div class="sd-row"><b class="sd-pjl">{esc(label)}</b>'
                   f'<span class="mono sd-fine">{esc(time_s)}</span></div>' + (f'<div class="sd-word {state}">{esc(note)}</div>' if note else "") + f'{extra}</div></li>')
     return f'<section class="sd-phj" aria-labelledby="pj-h"><h3 id="pj-h" class="lab">Journey</h3><ol>{items}</ol></section>'
@@ -676,7 +682,7 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, c
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
     card = outcome_card(r["outcome_full"], repo, n, r.get("when") or 0) if r["state"] == "done" and r.get("outcome_full") else ""
     return (card + journey_card(r["stations"], r.get("verify"), now) + phone_journey(r, files, docs) + needs_html + _tiles(j, r["state"])
-            + prs_html(r["prs"], fix_rounds, csrf, repo) + design_html(files, repo, n, docs, design_link, r.get("design_imports")) + steps_html(j, repo, n, docs)
+            + prs_html(r["prs"], fix_rounds, csrf, repo) + design_html(files, repo, n, docs, design_link, r.get("design_imports"), r.get("review_notes"), csrf) + steps_html(j, repo, n, docs)
             + activity_html(events, now))
 
 
@@ -783,7 +789,7 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
         design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>'
                               for u in sorted({f.get("pr") for f in files if f.get("pr")}) if views.GH_URL.match(u))
         body = (failed_html or failed_card(r, fix_rounds, now)) + journey_card(r["stations"], r.get("verify"), now, stats_line(j)) \
-            + phone_journey(r, files, docs) + needs_html + design_html(files, repo, n, docs, design_link, r.get("design_imports"))
+            + phone_journey(r, files, docs) + needs_html + design_html(files, repo, n, docs, design_link, r.get("design_imports"), r.get("review_notes"), csrf)
         history = history_html(j, repo, n, docs, events, now)
     else:
         body = live_part(r, files, docs, events, fix_rounds, now, csrf, needs_html)

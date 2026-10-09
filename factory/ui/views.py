@@ -89,13 +89,6 @@ def mockup_name(path: str) -> str:
 NARROW = 800                                     # a screen narrower than this (pixels) is a phone's: it is drawn narrower than a desktop one
 
 
-def zoom_buttons(target: str, levels=(("1", "Small"), ("2", "Medium"), ("3", "Large")), on: str = "2", extra: str = "") -> str:
-    """The Small / Medium / Large buttons of a canvas of screens (app.js sets data-z on the element with id `target`)."""
-    return (f'<div class="cv-zoom" role="group" aria-label="Zoom" data-for="{esc(target)}"><span class="muted">Zoom</span>'
-            + "".join(f'<button type="button" data-zoom="{z}" aria-pressed="{"true" if z == on else "false"}">{t}</button>' for z, t in levels)
-            + extra + "</div>")
-
-
 def mockup_img(f) -> str:
     """The stored preview image of a recorded design file, inline (served by the UI itself, behind the login)."""
     if not designfiles.record_ok(f) or "/previews/" not in f["path"] or not f["path"].endswith(".png"):
