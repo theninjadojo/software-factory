@@ -12,7 +12,7 @@ Releases are automatic. To release:
    (the `.env` template), `setup.sh`, `update.sh`, `install.sh`, `update-native.sh` and the worker files.
 3. On every other merge to `main` the same workflow exits within seconds: the tag for that `VERSION` already exists.
 
-From the UI: **Settings > Releases** opens a `release/vX.Y.Z` pull request that bumps `VERSION` (patch, minor or major above the highest of `main` and the latest release), and **Merge and release** merges it, which starts the build. It needs a GitHub token that can write to `[updates] repo`. A pull request whose checks passed also has a **Merge** button on its ticket page.
+From the UI: **Settings > Updates and releases** opens a `release/vX.Y.Z` pull request that bumps `VERSION` (patch, minor or major above the highest of `main` and the latest release), and **Merge and release** merges it, which starts the build. It needs a GitHub token that can write to `[updates] repo`. A pull request whose checks passed also has a **Merge** button on its ticket page.
 
 Pushing a tag by hand (`git tag v0.3.0 && git push origin v0.3.0`) still works and runs the same release; the tag must match `VERSION`.
 If a release run fails before it publishes, fix the cause and re-run the workflow (nothing is tagged until the release is created).

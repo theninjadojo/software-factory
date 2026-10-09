@@ -52,7 +52,7 @@ SIDE_GROUPS = [
     ("Keeping you in the loop", [("telegram", "Telegram", "/telegram"), ("slack", "Slack", "/slack"), ("chat", "Ticket chat", "/settings?section=chat"),
                                  ("screens", "Screens", "/settings?section=screens")]),
     ("Running the factory", [("credentials", "Credentials", "/credentials"), ("labels", "Labels", "/settings?section=labels"), ("health", "Health alerts", "/settings?section=health"),
-                             ("release", "Releases", "/release"), ("updates", "Updates", "/updates"), ("update_check", "Update checks", "/settings?section=update_check"),
+                             ("updates", "Updates and releases", "/updates"),
                              ("backup", "Backup", "/backup")]),
 ]
 SIDE_TOP = [("home", "Overview", "/settings"), ("general", "General", "/settings?section=general")]

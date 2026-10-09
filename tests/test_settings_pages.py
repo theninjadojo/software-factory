@@ -40,6 +40,8 @@ class SettingsPages(AdminCase):
     def test_every_section_renders_with_a_breadcrumb_and_its_own_title(self):
         cookie, _ = self.session()
         for section, (title, _) in S.SECTIONS.items():
+            if section == "update_check":                # its page is /updates (see test_merge_release)
+                continue
             s, _, html = self.req("GET", f"/settings?section={section}", cookie=cookie)
             self.assertEqual(s, 200, section)
             self.assertIn('<nav class="crumb" aria-label="Breadcrumb"><a href="/settings">Settings</a>', html, section)
@@ -106,7 +108,8 @@ class SettingsPages(AdminCase):
         self.assertIn('<div class="side-g cur"><span class="side-h">Before a pull request is done</span>', side)
         self.assertIn('<span class="sdot off" aria-hidden="true"></span>Code review<span class="sstate off">Off</span>', side)
         for section in S.SECTIONS:                       # every section is reachable from the menu (Workers through its own page)
-            self.assertIn('href="/workers"' if section == "workers" else f'href="/settings?section={section}"', side, section)
+            want = 'href="/workers"' if section == "workers" else 'href="/updates"' if section == "update_check" else f'href="/settings?section={section}"'
+            self.assertIn(want, side, section)
 
     def test_the_home_finds_single_settings_and_says_what_needs_you(self):
         cookie, _ = self.session()

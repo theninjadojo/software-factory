@@ -128,7 +128,7 @@ def features(cfg, slack_conn=None) -> list[Feature]:
         F("health", "run", "Health alerts", "Telegram alerts when disk, memory, polling or runs go wrong.",
           *_onoff(cfg.health.enabled), ("Telegram",), "/settings?section=health", "Health alerts"),
         F("update_check", "run", "Update checks", "A banner when a newer release is out.",
-          *_onoff(cfg.updates.check), ("Everywhere",), "/settings?section=update_check", "Update checks"),
+          *_onoff(cfg.updates.check), ("Everywhere",), "/updates", "Update checks"),
         F("backup", "run", "Backup", "Download the database and settings, or restore them.", "", "info", ("Settings",), "/backup", "Backup"),
     ]
 

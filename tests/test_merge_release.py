@@ -84,7 +84,7 @@ class Releases(AdminCase):
 
     def test_page_offers_versions_above_the_highest_of_main_and_latest_release(self):
         cookie, _ = self.session()
-        s, _, html = self.req("GET", "/release", cookie=cookie)
+        s, _, html = self.req("GET", "/updates", cookie=cookie)
         self.assertEqual(s, 200)
         self.assertIn("0.20.2", html)
         self.assertIn('action="/release/bump"', html)
@@ -105,3 +105,48 @@ class Releases(AdminCase):
         self.gh.get_pr.return_value = {"state": "open", "head": {"ref": "release/v0.21.0", "sha": "s"}}
         self.post(cookie, csrf, "/release/merge", {"n": "9"})
         self.gh.merge_pr.assert_called_once()
+
+    def test_one_page_holds_updates_release_and_check_settings(self):
+        cookie, _ = self.session()
+        s, _, html = self.req("GET", "/updates", cookie=cookie)
+        self.assertEqual(s, 200)
+        for part in ("Running version and updates", "Publish a release", "Update checks"):
+            self.assertIn(f"<h2>{part}</h2>", html)
+        self.assertIn('data-src="/updates/status"', html)
+        self.assertIn('action="/updates/check"', html)
+        self.assertIn('name="updates.repo"', html)
+        self.assertEqual(html.count('name="updates.repo"'), 1)
+        self.assertIn("<h1>Updates and releases</h1>", html)
+        self.assertIn('href="/updates"', html)                                            # the one menu entry
+        for old in ('href="/release"', 'href="/settings?section=update_check"'):
+            self.assertNotIn(old, html)
+
+    def test_a_github_failure_leaves_the_update_controls_in_place(self):
+        self.gh.open_pulls.side_effect = urllib.error.URLError("down")
+        cookie, _ = self.session()
+        s, _, html = self.req("GET", "/updates", cookie=cookie)
+        self.assertEqual(s, 200)
+        self.assertIn("Release information could not be loaded", html)
+        self.assertIn('action="/updates/check"', html)
+        self.assertIn('name="updates.check"', html)
+
+    def test_the_old_pages_redirect_to_the_fixed_path(self):
+        cookie, _ = self.session()
+        for path in ("/release", "/release?next=//evil.example", "/settings?section=update_check"):
+            s, h, _ = self.req("GET", path, cookie=cookie)
+            self.assertEqual((s, h["Location"]), (303, "/updates"), path)
+
+    def test_actions_return_to_the_merged_page_and_still_need_csrf(self):
+        cookie, csrf = self.session()
+        self.assertEqual(self.post(cookie, csrf, "/release/bump", {"kind": "minor"})[1]["Location"], "/updates")
+        self.assertEqual(self.post(cookie, csrf, "/release/merge", {"n": "x"})[1]["Location"], "/updates")
+        for path in ("/release/bump", "/release/merge", "/updates/check", "/updates/apply", "/updates/auto"):
+            self.assertEqual(self.req("POST", path, "kind=minor&n=9", cookie=cookie)[0], 403, path)
+
+    def test_saving_the_check_settings_returns_to_the_merged_page(self):
+        cookie, csrf = self.session()
+        s, h, _ = self.post(cookie, csrf, "/settings/save", [("section", "update_check"), ("updates.repo", "o/r")])
+        self.assertEqual((s, h["Location"]), (303, "/updates"))
+        s, _, html = self.post(cookie, csrf, "/settings/save", [("section", "update_check"), ("updates.repo", "not a repo")])
+        self.assertEqual(s, 422)
+        self.assertIn("Publish a release", html)
