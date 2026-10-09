@@ -105,6 +105,8 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
 ### You will need
 
 - A Linux host with **Docker and the compose plugin** (or Podman for the native install), plus `curl` and `python3`.
+- `sudo` on that host, once: setup creates `/srv/factory` for the factory's data. Without it, set `FACTORY_HOME` to a folder you own
+  (for example `FACTORY_HOME=$HOME/shikumi-data`).
 - A **GitHub account for the factory** (a bot account is best, so PRs aren't authored as you) with write access to your
   repos, and a **fine-grained token** for it: Contents, Issues and Pull requests *read and write*, Metadata *read*; add
   **Actions** *read* for the CI feedback (Commit statuses *read* is optional; the Checks permission is not needed). No Workflows, no Administration.
@@ -149,6 +151,7 @@ docker compose run --rm -e FACTORY_CONFIG=/etc/factory/config.toml orchestrator 
 ```
 
 Open the UI at http://127.0.0.1:8787 (remote access: [docs/ui.md](docs/ui.md)) and follow [docs/first-ticket.md](docs/first-ticket.md).
+Something not working? See [docs/troubleshooting.md](docs/troubleshooting.md).
 When the dry-run log looks right, tick the box and press **Go live** on the home screen (it is one click back to dry run).
 
 ### Updating
