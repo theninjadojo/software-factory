@@ -37,7 +37,11 @@ say "Directories under $HOME_DIR"
 # sudo only when this user cannot write there (the containers run as uid 1000, so that user must own the folders)
 S=""; mkdir -p "$HOME_DIR" 2>/dev/null && [ -w "$HOME_DIR" ] || S=sudo
 $S mkdir -p "$HOME_DIR"/{secrets,state,work,run}
-[ "$(id -u)" = 1000 ] || $S chown -R 1000:1000 "$HOME_DIR"
+# fix the owner whenever something under there is not uid 1000's (also when we ARE uid 1000: a folder left over from an
+# earlier run as root, or made by the engine, would otherwise stay unwritable for the containers)
+if [ -n "$(find "$HOME_DIR" ! -user 1000 -print -quit 2>/dev/null)" ]; then
+  if ! chown -R 1000:1000 "$HOME_DIR" 2>/dev/null; then sudo chown -R 1000:1000 "$HOME_DIR"; fi
+fi
 $S chmod 700 "$HOME_DIR/secrets"
 
 say "Config"
