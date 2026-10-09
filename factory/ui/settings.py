@@ -272,6 +272,10 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("chat.effort", "Chat effort", "select", choices=EFFORTS),
         Field("chat.max_per_hour", "Messages per ticket per hour", "int", lo=1, hi=1000),
         Field("chat.max_parallel", "Chats at once", "int", "Their own lane, on top of Agents at once.", lo=1, hi=20),
+        Field("chat.factory_enabled", "Enable factory chat", "bool",
+              "Ask about every ticket and the settings on the Factory chat page (/chat). Read-only: it changes nothing. Uses the chat model "
+              "and harness above; each reply is a model run.", group="Factory chat"),
+        Field("chat.factory_max_per_hour", "Factory chat messages per hour", "int", "All admins together.", lo=1, hi=1000, group="Factory chat"),
         Field("chat.harness", "Chat agent harness", "select", choices=("claude-code",), adv=True),
         Field("chat.max_turns", "Max turns per reply", "int", lo=1, hi=1000, adv=True),
         Field("chat.timeout_seconds", "Reply timeout (seconds)", "int", lo=10, hi=10000, adv=True),

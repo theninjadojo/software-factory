@@ -466,6 +466,12 @@ def run_chat(cfg: Config, repo: str, issue: dict, route: Route, comments: list, 
     return _quick_run(cfg, route, f"chat-{num}", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
 
 
+def run_factory_chat(cfg: Config, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
+    """One reply of the factory chat (factory.factorychat): the prompt carries the orchestrator's redacted snapshot of the tickets and
+    settings; the run is the same sealed, repository-less sandbox as a ticket chat reply, with the [chat] limits."""
+    return _quick_run(cfg, route, "factory-chat", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
+
+
 def run_interview(cfg: Config, draft_id: int, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
     """One reply of a new-project interview (factory.newproject), in the same sealed, repository-less sandbox as a chat reply."""
     np = cfg.new_projects
