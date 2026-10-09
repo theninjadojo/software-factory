@@ -1,18 +1,31 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Shikumi</title>
 <style>
+@font-face{font-family:"Space Grotesk";src:url(../../site/assets/space-grotesk-latin.woff2) format("woff2");font-weight:300 700}
+@font-face{font-family:"JetBrains Mono";src:url(../../site/assets/jetbrains-mono-latin.woff2) format("woff2");font-weight:100 800}
 html,body{margin:0;width:1280px;height:640px;overflow:hidden}
-body{background:#14161c;color:#f3f4f6;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column;justify-content:center;padding:0 96px;box-sizing:border-box}
-h1{font-size:120px;margin:0;letter-spacing:-2px}
-h1 span{color:#8b93a7;font-weight:400;font-size:64px;margin-left:24px}
-p{font-size:44px;margin:16px 0 56px;color:#d1d5db}
-.row{display:flex;align-items:center;gap:16px;font-size:30px}
-.row b{background:#232733;border:2px solid #3b4256;border-radius:14px;padding:14px 24px;font-weight:600}
-.row i{color:#8b93a7;font-style:normal}
-small{position:absolute;bottom:40px;left:96px;font-size:26px;color:#8b93a7}
-</style></head><body>
-<h1>Shikumi<span>仕組み</span></h1>
-<p>Label an issue. Sandboxed agents ship the PR.</p>
-<div class="row"><b>Issue</b><i>→</i><b>Analyse</b><i>→</i><b>Design</b><i>→</i><b>Build</b><i>→</i><b>Pull request</b></div>
-<small>No network. No credentials. A person reviews every PR.</small>
+body{position:relative;background:#12161a;color:#e8edf0;font-family:"Space Grotesk",system-ui,sans-serif;display:flex;flex-direction:column;justify-content:center;padding:0 88px;box-sizing:border-box}
+body::before{content:"";position:absolute;inset:0;background:
+radial-gradient(700px 360px at 30% 0,rgba(242,169,59,.18),transparent 70%),
+linear-gradient(#2d363d 1px,transparent 1px) 0 0/48px 48px,
+linear-gradient(90deg,#2d363d 1px,transparent 1px) 0 0/48px 48px;
+opacity:.5;-webkit-mask:linear-gradient(#000 20%,transparent 100%)}
+body>*{position:relative}
+.brand{display:flex;align-items:center;gap:22px}
+.brand svg{width:84px;height:84px}
+h1{font-size:112px;margin:0;letter-spacing:-3px;line-height:1}
+h1 span{color:#f2a93b;font-family:"JetBrains Mono",monospace;font-weight:500;font-size:34px;letter-spacing:.2em;margin-left:18px;vertical-align:middle}
+p{font-size:46px;margin:26px 0 46px;line-height:1.15;letter-spacing:-.5px}
+p em{font-style:normal;color:#f2a93b}
+.row{display:flex;align-items:center;gap:14px;font-size:27px}
+.row b{background:#1b2126;border:2px solid #3b464e;border-radius:12px;padding:12px 22px;font-weight:600}
+.row b.you{border-style:dashed;border-color:#8fa8ff;color:#8fa8ff}
+.row i{width:26px;border-top:3px dashed #f2a93b}
+small{position:absolute;bottom:38px;left:88px;right:88px;display:flex;justify-content:space-between;font:24px "JetBrains Mono",monospace;color:#a9b5bd}
+</style></head>
+<body>
+<div class="brand"><svg viewBox="0 0 32 32" fill="none" stroke="#f2a93b" stroke-width="2.4" stroke-linejoin="round" aria-hidden="true"><path d="M5 25V10l6 5 5-8 5 8 6-5v15z"/></svg><h1>Shikumi<span>仕組み</span></h1></div>
+<p>Label a GitHub issue. Sandboxed AI agents<br><em>open the pull request.</em></p>
+<div class="row"><b>Issue</b><i></i><b>Analyse</b><i></i><b>Design</b><i></i><b>Build</b><i></i><b class="you">You review</b></div>
+<small><span>No network · No credentials · You merge</span><span>Open source · Self-hosted</span></small>
 </body></html>

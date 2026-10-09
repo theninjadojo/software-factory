@@ -1,5 +1,8 @@
 # Shikumi (仕組み)
 
+**Open-source, self-hosted AI coding agents that turn labelled GitHub issues into reviewed pull requests**, sandboxed so that a
+prompt-injected agent cannot do harm. Built on Claude Code; Codex and Gemini are experimental.
+
 *Shikumi* is Japanese for a mechanism, a way of building a system so that it works. Label a GitHub issue and sandboxed AI agents analyse it, design it, plan it, build it and open pull requests, with a
 person kept in the loop on Telegram or Slack.
 
