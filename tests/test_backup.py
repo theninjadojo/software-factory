@@ -103,7 +103,12 @@ class Download(BackupCase):
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             self.assertEqual(set(z.namelist()), {"manifest.json", "factory.db", "config.toml"})      # no secrets/, no ui-auth.json
             self.assertNotIn(b"ghp_NOTINTHEBACKUP", b"".join(z.read(n) for n in z.namelist()))
-        self.assertEqual(list((self.state / B.TMP_BACKUP).iterdir()), [])
+        tmp = self.state / B.TMP_BACKUP
+        for _ in range(200):                # the handler removes its work dir and records the backup after the response is sent
+            if not any(tmp.iterdir()) and B.last_backup(self.state):
+                break
+            time.sleep(0.01)
+        self.assertEqual(list(tmp.iterdir()), [])
         self.assertIsNotNone(B.last_backup(self.state))
 
     def test_a_backup_taken_while_the_orchestrator_writes_is_consistent(self):
