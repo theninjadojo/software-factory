@@ -13,14 +13,14 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, factorychat, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import judges
 from . import recommend
 from . import questions as Q
 from . import db as dbm
 from .classifier import Classification, RuleClassifier
-from .config import Config, Route, chain, load, project_for, project_info, resource_warning
+from .config import Config, Route, chain, load, load_raw, project_for, project_info, resource_warning
 from .events import event_enabled
 from .github import GitHub
 from .jev import JevClassifier
@@ -449,6 +449,43 @@ def interview_lane(cfg: Config) -> None:
     _lane("interview", lambda: np.enabled, newproject.claim, lambda db, turn: interview_answer(cfg, db, turn),
           lambda db, turn: newproject.settle(db, turn["id"], "failed", "The reply could not be written. Try again."),
           cfg.db_path, np.max_parallel, np.check_seconds)
+
+
+def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
+    """Answer one claimed factory chat message with a read-only run (no repository, no GitHub token). The agent sees only the redacted
+    snapshot of the tickets and settings built here; nothing in its reply is acted on."""
+    if cfg.dry_run:
+        return factorychat.settle(db, turn["id"], "refused", "The factory is in dry-run, so no reply was written.")
+    secrets = factorychat.secrets_of(cfg)
+    try:
+        raw = load_raw(config_path)
+    except Exception:
+        log.exception("factory chat: could not read the settings")
+        raw = None
+    now = time.time()
+    snap, cut = factorychat.snapshot(db, raw, cfg, now, secrets)
+    prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets)
+    route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
+    run_id, sink = begin_run("factory-chat", "factory", {"number": 0, "title": "Factory chat"}, route), {}     # 0: never a ticket on the board
+    res = runner.run_factory_chat(cfg, route, prompt, sink)
+    end_run(run_id, res, sink)
+    if res.status == "stage":
+        factorychat.add_reply(db, turn, res.output, run_id, secrets, now, cut)
+        emit("chat", "replied in the factory chat", None, None, run_id)
+    elif res.status == "rate-limited":
+        factorychat.settle(db, turn["id"], "failed", "The model is rate limited. Try again later.")
+        if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+            alert("Rate limited during a factory chat reply; pausing.", event="rate_limit")
+    else:
+        log.warning("factory chat: turn %s: %s %s", turn["id"], res.status, res.detail[:300])
+        factorychat.settle(db, turn["id"], "failed", "The reply could not be written. Try again.")
+
+
+def factory_chat_lane(cfg: Config, config_path: str) -> None:
+    """The factory chat's own lane: one shared conversation, so one reply at a time, in order."""
+    _lane("factory-chat", lambda: cfg.chat.factory_enabled, factorychat.claim, lambda db, turn: factory_chat_answer(cfg, config_path, db, turn),
+          lambda db, turn: factorychat.settle(db, turn["id"], "failed", "The reply could not be written. Try again."),
+          cfg.db_path, 1, cfg.chat.check_seconds)
 
 
 def _lane(name: str, enabled, claim, answer, fail, db_path: str, max_parallel: int, check_seconds: int) -> None:
@@ -1974,6 +2011,7 @@ def main() -> None:
         stranded = dbm.mark_interrupted(conn)
         chat.mark_interrupted(conn)
         newproject.mark_interrupted(conn)
+        factorychat.mark_interrupted(conn)
         emit("startup", f"orchestrator started ({'dry-run' if cfg.dry_run else 'LIVE'}), {len(cfg.repos)} repo(s)"
                         + (f"; {stranded} run(s) were interrupted by the restart" if stranded else ""))
         if restored:
@@ -2002,6 +2040,8 @@ def main() -> None:
         threading.Thread(target=chat_lane, args=(cfg, gh), daemon=True, name="chat-lane").start()
     if not args.once and cfg.new_projects.enabled:
         threading.Thread(target=interview_lane, args=(cfg,), daemon=True, name="interview-lane").start()
+    if not args.once and cfg.chat.factory_enabled:
+        threading.Thread(target=factory_chat_lane, args=(cfg, args.config), daemon=True, name="factory-chat-lane").start()
     if not args.once and not cfg.dry_run:
         recover(cfg, gh)
     while True:
