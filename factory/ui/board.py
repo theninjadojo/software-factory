@@ -248,6 +248,8 @@ def ticket_extras(db, repo: str, issue: int, j: dict) -> tuple[list, list, list,
     """(design preview files, the stages with a stored document, the ticket's recent events, whether it has images) for its detail."""
     design_runs = [s["run_id"] for s in j["steps"] if s["kind"] == "run" and s.get("stage") == "designer"]
     files = [f for fs in dbm.design_files_for_runs(db, design_runs).values() for f in fs] if design_runs else []
+    widths = dbm.mockup_widths(db, files)
+    files = [{**f, "width": widths.get((f["repo"], f["path"]), 0)} for f in files]
     try:
         events = [dict(zip(("ts", "kind", "message"), x)) for x in
                   db.execute("SELECT ts, kind, message FROM events WHERE repo=? AND issue=? ORDER BY id DESC LIMIT 60", (repo, issue))]
@@ -547,13 +549,27 @@ def prs_html(prs: list[dict], fix_rounds: int, csrf: str = "", repo: str = "") -
                'the fix rounds and the merge state.</p>') + '</section>')
 
 
+def design_url(repo: str, issue: int) -> str:
+    return "/ticket/design?" + _qs(repo=repo, n=issue)
+
+
 def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str, imports: list[dict] | None = None) -> str:
-    imgs = "".join(views.mockup_img(f) for f in files)
+    """The designer's screens, top of each at a readable size, with the Screens board's zoom; each opens in Review the screens."""
+    shots = [f for f in files if views.mockup_ok(f)]
     linked = views.import_links(imports)
-    if not imgs and not linked:
+    if not shots and not linked:
         return ""
     read = f'<a href="{views.doc_url(repo, issue, "designer")}">Read design</a>' if "designer" in docs else ""
-    body = f'<div class="mockups">{imgs}</div>' if imgs else ""
+    body = ""
+    if shots:
+        figs = "".join(f'<figure class="dz-shot{" dz-narrow" if 0 < f.get("width", 0) < views.NARROW else ""}"><a href="/ticket/review?{esc(_qs(repo=repo, n=issue, img="mockup:" + f["repo"] + ":" + f["path"]))}" '
+                       f'aria-label="Open {esc(views.mockup_name(f["path"]))} to review"><img src="{esc(views.mockup_src(f))}" alt="{esc(f["path"])}" '
+                       f'loading="lazy"></a><figcaption>{esc(views.mockup_name(f["path"]))}</figcaption></figure>' for f in shots)
+        n = len(shots)
+        more = (f'<span class="muted sd-fine">{n} screen{"s" if n != 1 else ""}</span>'
+                f'<a class="dz-open" href="{esc(design_url(repo, issue))}">Open on a canvas →</a>')
+        body = (views.zoom_buttons("dz", extra=more) + f'<div class="dz" id="dz" data-z="2" tabindex="0" aria-label="Design screens">'
+                f'<div class="dz-row">{figs}</div></div><p class="muted sd-fine dz-hint">The top of each screen. Click one to see all of it and mark what should change.</p>')
     return (f'<section class="sd-card sd-design" aria-labelledby="d-h"><div class="sd-cardhead"><h3 id="d-h">Design output</h3>'
             f'<span class="sd-links">{read}{prs_link}</span></div>{body}{linked}</section>')
 
@@ -597,7 +613,8 @@ def phone_journey(r: dict, files: list, docs) -> str:
         else:
             extra = ""
         if sid == "designer" and files:
-            extra += f'<div class="mockups">{"".join(views.mockup_img(f) for f in files)}</div>'
+            extra += (f'<div class="mockups">{"".join(views.mockup_img(f) for f in files)}</div>'
+                      + (f'<div class="sd-fine"><a href="{esc(design_url(repo, n))}">Open on a canvas →</a></div>' if any(views.mockup_ok(f) for f in files) else ""))
         items += (f'<li class="sd-pj {state}"><span class="sd-n {state}">{i}</span><div><div class="sd-row"><b class="sd-pjl">{esc(label)}</b>'
                   f'<span class="mono sd-fine">{esc(time_s)}</span></div>' + (f'<div class="sd-word {state}">{esc(note)}</div>' if note else "") + f'{extra}</div></li>')
     return f'<section class="sd-phj" aria-labelledby="pj-h"><h3 id="pj-h" class="lab">Journey</h3><ol>{items}</ol></section>'

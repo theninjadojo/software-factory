@@ -376,6 +376,22 @@ def mockup_image(db, repo: str, path: str) -> bytes | None:
     return bytes(row[0]) if row else None
 
 
+def mockup_widths(db, files) -> dict[tuple[str, str], int]:
+    """{(repo, path): width in pixels} of stored previews, read from each PNG's header (bytes 16-19), so a page can size phone and desktop
+    screens apart without loading the images."""
+    keys = list(dict.fromkeys((f["repo"], f["path"]) for f in files))
+    out: dict[tuple[str, str], int] = {}
+    for i in range(0, len(keys), 200):
+        part = keys[i:i + 200]
+        try:
+            rows = db.execute("SELECT repo, path, substr(png, 17, 4) FROM mockup_images WHERE " + " OR ".join(["(repo=? AND path=?)"] * len(part)),
+                              [x for k in part for x in k]).fetchall()
+        except sqlite3.OperationalError:
+            return out
+        out.update({(r, p): int.from_bytes(bytes(w), "big") for r, p, w in rows if w and len(w) == 4})
+    return out
+
+
 def design_source(db, repo: str, path: str) -> str | None:
     """The stored canvas file (repo, path), or None."""
     try:

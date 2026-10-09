@@ -25,12 +25,13 @@
   document.addEventListener("change", function (e) { var f = e.target.closest("form.nd-form"); if (f) count(f); });
   document.addEventListener("input", function (e) { var f = e.target.closest("form.nd-form"); if (f) count(f); });
 
-  // --- The canvas of a Playwright run's screens: the zoom buttons set how big the screens are (CSS does the rest).
+  // --- A canvas of screens (a Playwright run's, a ticket's design): the zoom buttons set how big the screens are (CSS does the rest).
+  // The live refresh leaves data-z and the buttons' aria-pressed alone (skipAttr), so the chosen zoom stays.
   document.addEventListener("click", function (e) {
-    var b = e.target.closest("[data-zoom]"), cv = document.querySelector(".cv");
-    if (!b || !cv) return;
+    var b = e.target.closest("[data-zoom]"), g = b && b.closest("[data-for]"), cv = g && document.getElementById(g.getAttribute("data-for"));
+    if (!cv) return;
     cv.setAttribute("data-z", b.getAttribute("data-zoom"));
-    var all = document.querySelectorAll("[data-zoom]");
+    var all = g.querySelectorAll("[data-zoom]");
     for (var i = 0; i < all.length; i++) all[i].setAttribute("aria-pressed", all[i] === b ? "true" : "false");
   });
 
@@ -372,8 +373,9 @@
     if (a.nodeType !== b.nodeType) return false;
     return a.nodeType !== 1 || (a.nodeName === b.nodeName && a.id === b.id && a.getAttribute("data-row") === b.getAttribute("data-row"));
   }
-  function skipAttr(tag, name, form) {
+  function skipAttr(tag, name, form, el) {
     if (name === "open") return tag === "details" || tag === "dialog";
+    if (name === "data-z" || (name === "aria-pressed" && el.hasAttribute("data-zoom"))) return true;
     if (name === "begin") return /^(animate|animatemotion|animatetransform|set)$/i.test(tag);
     return form && /^(value|checked|selected)$/.test(name);
   }
@@ -382,12 +384,12 @@
     var i, name;
     for (i = c.attributes.length - 1; i >= 0; i--) {
       name = c.attributes[i].name;
-      if (n.hasAttribute(name) || skipAttr(tag, name, form)) continue;
+      if (n.hasAttribute(name) || skipAttr(tag, name, form, c)) continue;
       c.removeAttribute(name);
     }
     for (i = 0; i < n.attributes.length; i++) {
       name = n.attributes[i].name;
-      if (skipAttr(tag, name, form) || c.getAttribute(name) === n.attributes[i].value) continue;
+      if (skipAttr(tag, name, form, c) || c.getAttribute(name) === n.attributes[i].value) continue;
       c.setAttribute(name, n.attributes[i].value);
     }
     if (tag === "input" && !form) c.value = n.getAttribute("value") || "";

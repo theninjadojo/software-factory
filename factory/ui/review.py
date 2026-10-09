@@ -7,6 +7,7 @@ import time
 import urllib.error
 from urllib.parse import urlencode
 
+from .. import db as dbm
 from .. import reviewnotes as RN
 from .. import scenarios as SC
 from .. import screenboard as SB
@@ -424,3 +425,47 @@ def board_issue(h, form, csrf: str) -> None:
         msg += f" It was not started: {L._github_error(e)}"
     L.needs_forget(repo, n)
     _back(h, csrf, repo, n, "", msg)
+
+
+def design_body(repo: str, n: int, imgs: list[dict], notes: list[dict], widths: dict | None = None) -> str:
+    """A ticket's design screens (the latest design run's previews) whole, on one canvas with the Screens board's zoom. Click one to
+    mark it up in Review the screens."""
+    shots = [i for i in imgs if i["key"].startswith("mockup:")]
+    count: dict = {}
+    for x in notes:
+        if x["sent"] is None:
+            count[x["image"]] = count.get(x["image"], 0) + 1
+    head = (f'<p>{views.ticket_link(repo, n)} · <strong>Design output</strong> <span class="muted">· {len(shots)} screen{"s" if len(shots) != 1 else ""} · '
+            f'{sum(count.get(i["key"], 0) for i in shots)} open notes</span></p>')
+    if not shots:
+        return head + '<p class="muted">No design screens yet. They appear here once the designer has rendered its mockups.</p>'
+    zoom = views.zoom_buttons("cv", (("1", "Small"), ("2", "Medium"), ("3", "Large"), ("4", "Actual size")),
+                              extra=f'<a class="dz-open" href="{esc(url(repo, n))}">Review the screens</a>')
+    cells = ""
+    for i in shots:
+        c = count.get(i["key"], 0)
+        badge = f' <span class="rv-count" title="Open notes">{c}</span>' if c else ""
+        name = views.mockup_name(i["key"].rpartition(":")[2])
+        narrow = 0 < (widths or {}).get(i["key"], 0) < views.NARROW
+        cells += (f'<figure class="cv-shot{" cv-phone" if narrow else ""}"><a href="{esc(url(repo, n, i["key"]))}" aria-label="Mark up {esc(name)}"><img src="{esc(i["src"])}" '
+                  f'alt="{esc(i["label"])}" loading="lazy"></a><figcaption>{esc(name)}{badge}</figcaption></figure>')
+    return (head + zoom + f'<div class="cv dz-canvas" id="cv" data-z="2" tabindex="0" aria-label="Design screens of #{int(n)}"><div class="cv-row">{cells}</div></div>'
+            '<p class="muted">Each screen is shown whole. Click one to open it in Review the screens: drag over an area and write what should change.</p>')
+
+
+def design_get(h, q: dict, csrf: str) -> None:
+    try:
+        repo, n = _ticket(h, q.get("repo", ""), q.get("n", ""))
+    except L.Refused:
+        return h._send(404, "no such ticket", "text/plain")
+    db = h.app.ro_db()
+    imgs, notes, widths = [], [], {}
+    if db is not None:
+        try:
+            imgs, notes = RN.images(db, repo, n), RN.notes(db, repo, n)
+            mocks = {i["key"]: (m.group(1), m.group(2)) for i in imgs if (m := RN.MOCKUP_KEY.fullmatch(i["key"]))}
+            got = dbm.mockup_widths(db, [{"repo": r, "path": p} for r, p in mocks.values()])
+            widths = {k: got.get(v, 0) for k, v in mocks.items()}
+        finally:
+            db.close()
+    h._send(200, views.page(f"Design output · #{n}", design_body(repo, n, imgs, notes, widths), "/ticket/design", csrf, wide=True))
