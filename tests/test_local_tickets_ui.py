@@ -63,6 +63,20 @@ class LocalTickets(AdminCase):
         self.assertNotIn("Open on GitHub", html)
         self.assertNotIn(f"github.com/{REPO}/issues/{n}", html)
 
+    def test_an_open_ticket_the_factory_stopped_on_needs_a_person_and_is_not_shipped(self):
+        # L-53, L-54, L-55 and L-64 on the VM: the chain stopped after the analyst and the board called them Shipped
+        from factory import db as dbm
+        self.create()
+        n = tracker.LOCAL_BASE + 1
+        dbm.finish_run(self.db, dbm.start_run(self.db, "stage", REPO, n, "Fix the footer", "claude-code", "sonnet", "medium", stage="analyst"),
+                       "stage", "analyst document ready")
+        (row,) = [r for r in board.ticket_rows(self.db) if r["issue"] == n]
+        self.assertEqual(row["state"], "needs")
+        self.assertEqual(row["why"], "Analyst finished; choose the next step")
+        self.store().set_state(REPO, n, "closed")
+        (row,) = [r for r in board.ticket_rows(self.db) if r["issue"] == n]
+        self.assertEqual(row["state"], "done")                                    # closed is done
+
     def test_comment_edit_close_and_reopen(self):
         self.create()
         n = tracker.LOCAL_BASE + 1

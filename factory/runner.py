@@ -55,7 +55,7 @@ API_ERROR = re.compile(r"API Error: 5\d\d|overloaded_error|\bapi_error\b|interna
 
 @dataclass
 class RunResult:
-    status: str          # "pr" | "stage" | "no-change" | "rejected" | "failed" | "rate-limited" | "needs-person" (merge only) | "cancelled" (the ticket was closed)
+    status: str          # "pr" | "stage" | "no-change" | "rejected" | "failed" | "rate-limited" | "needs-person" (a merge, or a stage whose auto chain stopped for a person) | "cancelled" (the ticket was closed)
     detail: str
     pr_url: str | None = None
     output: str = ""      # a role agent's document (status "stage")

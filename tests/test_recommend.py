@@ -101,12 +101,13 @@ class Chain(unittest.TestCase):
 
     def test_a_recommended_build_waits_for_a_person_and_says_how_to_start_it(self):
         gh = self.finish("# Analysis\n\n**Recommended next stage:** implement. One field.")
-        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+        self.assertIn("a person starts builds", self.comment_text(gh))          # it stops, says why, and asks (auto stays on)
         self.assertIn("implement: apply `factory:ready`", self.comment_text(gh))
 
     def test_needs_human_and_a_missing_line_stop_the_chain(self):
-        for output in ("# Analysis\n\nRecommended next stage: needs-human", "# Analysis\n\nno recommendation"):
-            self.assertNotIn(("add", ("factory:auto",)), self.finish(output).calls, output)
+        for output, why in (("# Analysis\n\nRecommended next stage: needs-human", "the analyst's document asks for a person"),
+                            ("# Analysis\n\nno recommendation", "no next step was chosen")):
+            self.assertIn(why, self.comment_text(self.finish(output)), output)       # stopped, and the ticket says why
 
     def test_open_questions_stop_the_chain_whatever_the_document_recommends(self):
         output = "# Analysis\n\nRecommended next stage: architect\n\n" + block(q(cls="needs-person"))
@@ -140,8 +141,8 @@ class Auto(unittest.TestCase):
     def test_a_read_only_recommendation_is_run(self):
         fake, conn = self.route("**Recommended next stage:** architect. Schema change.")
         self.assertEqual(fake.call_args.kwargs["role"], "architect")
-        self.assertEqual(self.decision(conn)[0], "run:stage")
-        self.assertIn("the last stage's document recommends architect", self.decision(conn)[1])
+        self.assertEqual(self.decision(conn)[0], "human")             # after the architect: "# Doc" names no next step, so it asks
+        self.assertIn("no next step was chosen", self.decision(conn)[1])
 
     def test_design_is_run_even_though_the_labels_confidence_is_low(self):
         fake, _ = self.route("Recommended next stage: design", confidence=0.4)

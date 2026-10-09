@@ -224,11 +224,20 @@ def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -
     state = ticket_state(st, need is not None, prs)
     if loc and state == "done" and loc["state"] == "open" and not j["steps"] and not prs:
         state = "new"                           # an open local ticket nothing has run on yet
+    idle = bool(loc and state == "done" and loc["state"] == "open" and not prs
+                and any(s["kind"] == "run" and s.get("run_kind") != "chat" for s in j["steps"]))
+    if idle:                                    # open, nothing running, nothing asked, nothing shipped: the factory stopped and a
+        state = "needs"                         # person picks the next step (it is not done until it is closed or merged)
     at = current(st)
     last = max([s["finished"] or s["started"] for s in j["steps"]] + [p.get("updated") or 0 for p in prs] + [t.get("decided_at") or 0])
     return {"repo": t["repo"], "issue": int(t["issue"]), "title": (loc or {}).get("title") or title or (need or {}).get("title") or t.get("title")
             or f"Ticket {display(int(t['issue']))}",
-            "state": state, "closed": bool(loc and loc["state"] == "closed"), "stations": st, "at": at, "when": last, "why": _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need}
+            "state": state, "closed": bool(loc and loc["state"] == "closed"), "stations": st, "at": at, "when": last,
+            "why": _idle_why(at) if idle else _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need}
+
+
+def _idle_why(at) -> str:
+    return f'{LABEL.get(at or "", "The last step")} finished; choose the next step'
 
 
 def row_for(db, repo: str, issue: int, needs_rows=None, titles: dict | None = None, now: float | None = None) -> dict:

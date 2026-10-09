@@ -148,7 +148,7 @@ class Flows(unittest.TestCase):
             fake, conn = self.run_poll(gh, FakeClf(**kw))
             self.assertEqual(fake.call_count, 1, kw)
             self.assertIn(fake.call_args.kwargs["role"], ("analyst", "designer", "architect"))
-            self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "run:stage")
+            self.assertIn(conn.execute("select outcome from decisions").fetchone()[0], ("run:stage", "human"))   # human: asked after, not before
 
     def test_auto_can_be_set_to_ask_before_stages_too(self):
         from dataclasses import replace
@@ -172,7 +172,7 @@ class Flows(unittest.TestCase):
             fake, conn = self.run_poll(gh, FakeClf(**kw))
             self.assertEqual(fake.call_count, 1, kw)
             self.assertEqual(fake.call_args.kwargs["role"], "analyst", kw)
-            self.assertEqual(conn.execute("select outcome from decisions").fetchone()[0], "run:stage")
+            self.assertIn(conn.execute("select outcome from decisions").fetchone()[0], ("run:stage", "human"))   # human: asked after, not before
 
     def test_a_confident_build_is_unaffected_and_confirm_stages_still_asks(self):
         from dataclasses import replace
@@ -253,13 +253,24 @@ class SeqClf(FakeClf):
 
 
 class Chaining(unittest.TestCase):
-    def go(self, calls, cfg=CFG, labels=("factory:auto",), label="factory:auto"):
-        gh = FakeGH({label: [issue(labels=list(labels))]})
+    def go(self, calls, cfg=CFG, labels=("factory:auto",), label="factory:auto", output="# Doc", comments=()):
+        gh = FakeGH({label: [issue(labels=list(labels))]}, comments=list(comments))
         clf = SeqClf(*calls)
-        with mock.patch.object(m.runner, "run_task", return_value=RunResult("stage", "ok", output="# Doc")), tempfile.TemporaryDirectory() as d:
+        self.conn = dbm.connect(":memory:")
+        with mock.patch.object(m.runner, "run_task", return_value=RunResult("stage", "ok", output=output)), tempfile.TemporaryDirectory() as d:
             from dataclasses import replace
-            m.poll_once(replace(cfg, db_path=d + "/f.db"), gh, dbm.connect(":memory:"), clf)
+            m.poll_once(replace(cfg, db_path=d + "/f.db"), gh, self.conn, clf)
         return gh, clf
+
+    def latest(self):
+        return self.conn.execute("select outcome, detail from decisions order by decided_at desc").fetchone()
+
+    def assert_asks(self, gh, reason):
+        """The chain stopped and says so: the auto gate's "needs a person" (label kept, decision recorded) with the reason."""
+        outcome, detail = self.latest()
+        self.assertEqual(outcome, "human")
+        self.assertIn(reason, detail)
+        self.assertIn(("add", ("factory:auto",)), gh.calls)
 
     FIRST = dict(stage="analyze", needs_human=True, confidence=0.2, stage_confidence=0.3)
 
@@ -272,17 +283,64 @@ class Chaining(unittest.TestCase):
         gh, _ = self.go([self.FIRST, dict(stage="implement", needs_human=False)])
         self.assertIn(("add", ("factory:auto",)), gh.calls)
 
-    def test_it_stops_when_the_document_leaves_questions_for_a_person(self):
+    def test_it_stops_and_asks_when_the_classifier_says_a_person_is_needed(self):
         gh, _ = self.go([self.FIRST, dict(stage="design", needs_human=True)])
-        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+        self.assert_asks(gh, "the classifier thinks a person is needed")
+        self.assertIn("suggested stage=design", self.latest()[1])          # the tray's "Run designer" button
 
-    def test_it_stops_when_the_classifier_names_no_next_step(self):
+    def test_it_stops_and_asks_when_the_classifier_names_no_next_step(self):
         gh, _ = self.go([self.FIRST, dict(stage=None, needs_human=False)])
-        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+        self.assert_asks(gh, "no next step was chosen")
+
+    def test_it_stops_and_asks_when_the_document_asks_for_a_person(self):
+        gh, _ = self.go([self.FIRST, dict(stage="design", needs_human=False)], output="# Doc\n\nRecommended next stage: needs-human")
+        self.assert_asks(gh, "the analyst's document asks for a person")
+
+    def test_it_stops_and_asks_when_the_document_recommends_a_build(self):
+        gh, _ = self.go([self.FIRST, dict(stage=None, needs_human=False)], output="# Doc\n\nRecommended next stage: implement")
+        self.assert_asks(gh, "a person starts builds")
+
+    def test_it_stops_and_asks_when_the_next_step_check_fails(self):
+        class Boom(SeqClf):
+            def classify(self, *a, **k):
+                if self.n:
+                    raise RuntimeError("down")
+                return super().classify(*a, **k)
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        self.conn = dbm.connect(":memory:")
+        with mock.patch.object(m.runner, "run_task", return_value=RunResult("stage", "ok", output="# Doc")), tempfile.TemporaryDirectory() as d:
+            from dataclasses import replace
+            m.poll_once(replace(CFG, db_path=d + "/f.db"), gh, self.conn, Boom(self.FIRST))
+        self.assert_asks(gh, "the check for the next step failed")
+
+    def test_the_documents_recommendation_outranks_the_classifiers_needs_a_person(self):
+        # L-64 on the VM: the analyst recommended design, Jev said "needs a person" from a short summary, and the chain stopped
+        gh, _ = self.go([self.FIRST, dict(stage="design", needs_human=True)], output="# Doc\n\nRecommended next stage: design")
+        self.assertIn(("add", ("factory:auto",)), gh.calls)
+        self.assertNotEqual(self.latest()[0], "human")
+
+    def test_a_stage_a_person_has_just_answered_goes_on_whatever_the_classifier_says(self):
+        from factory import questions as Q
+        asked = Q.stored([Q.Question("q1", "Which label?", (("a", "Save"), ("b", "Keep")), "a", "Matches the forms.", Q.PERSON)])
+        comments = [{"user": {"login": "bot"}, "body": f"<!-- factory:stage=analyst -->\n{asked}\n# Doc"},
+                    {"user": {"login": "bot"}, "body": Q.answers_comment("analyst", Q.read_stored(asked)[0], {"q1": ("option", "a")}, "factory UI")}]
+        gh, _ = self.go([dict(stage="design", needs_human=True)], labels=("factory:analyze",), label="factory:analyze", comments=comments)
+        self.assertIn(("add", ("factory:auto",)), gh.calls)
+        self.assertNotEqual(self.latest()[0], "human")
+
+    def test_the_classifier_reads_the_new_document_and_its_answers_first(self):
+        long_doc = "# Doc\n" + "filler line\n" * 400 + "Recommended next stage: design"
+        humans = [{"user": {"login": "alice"}, "body": f"comment {i}"} for i in range(12)]
+        _, clf = self.go([self.FIRST, dict(stage="design", needs_human=False)], output=long_doc, comments=humans)
+        seen = clf.seen[1]["comments"]
+        self.assertTrue(seen[0].startswith("(just completed: the analyst document)"))
+        self.assertIn("Recommended next stage: design", seen[0])             # the end survives the classifier's per-item limit
+        self.assertLessEqual(len(seen[0]), 1500)
 
     def test_an_explicit_stage_label_never_chains(self):
         gh, _ = self.go([dict(stage="design", needs_human=False)], labels=("factory:analyze",), label="factory:analyze")
         self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+        self.assertEqual(self.latest()[0], "run:stage")                       # a person ran one stage; the board shows it idle
 
     def test_chaining_can_be_turned_off(self):
         from dataclasses import replace

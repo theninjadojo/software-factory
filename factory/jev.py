@@ -66,10 +66,13 @@ QUESTIONS = {
     },
     "needs_human": {
         "type": "noul",
-        "instructions": "Does this issue need a person before an engineer could act on it?",
+        "instructions": ("Does this issue need a person before an engineer could act on it? Judge the ticket as it stands now: the "
+                         "discussion can hold stage documents the factory wrote and the answers people gave to their questions, and "
+                         "a question a person has already answered no longer needs a person."),
         "criteria": {
-            "true": "Ambiguous, underspecified, needs a product or design decision, credentials, or access outside the repo.",
-            "false": "Clear and actionable from the repository alone.",
+            "true": "Still ambiguous or underspecified after the documents and answers in the discussion, or needs a product or "
+                    "design decision nobody has made yet, credentials, or access outside the repo.",
+            "false": "Clear and actionable from the repository, the stage documents and the answers already given.",
         },
     },
 }

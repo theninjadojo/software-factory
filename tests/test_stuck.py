@@ -104,7 +104,8 @@ class NeverBack(unittest.TestCase):
         gh = FakeGH({"factory:auto": [issue(labels=["factory:auto", "stage:designed"])]})
         fake, _ = poll(gh, Steps(["architect", "analyze"]))
         self.assertEqual(fake.call_args.kwargs["role"], "architect")
-        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+        self.assertEqual(fake.call_count, 1)                           # no analyst after the architect: it asks a person instead
+        self.assertIn("comes before a stage already done", next(c[1] for c in gh.calls if c[0] == "comment"))
 
 
 class Outcomes(unittest.TestCase):

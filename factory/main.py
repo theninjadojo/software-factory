@@ -1,5 +1,6 @@
 import argparse
 import calendar
+import dataclasses
 import json
 import logging
 import os
@@ -17,7 +18,7 @@ from . import depdetect
 from . import recommend
 from . import questions as Q
 from . import db as dbm
-from .classifier import RuleClassifier
+from .classifier import Classification, RuleClassifier
 from .config import Config, Route, chain, load, project_for, project_info, resource_warning
 from .events import event_enabled
 from .github import GitHub
@@ -602,6 +603,63 @@ def next_hint(cfg: Config, c) -> str | None:
     return None
 
 
+_NO_STAGE = Classification("chore", "medium", needs_human=True, confidence=0.0)     # buttons when no classifier answer is known
+
+
+def chain_stop(cfg: Config, role, nxt, rec: str | None, done) -> str:
+    """Why an auto chain stops after `role`'s document, in words a person reads on the ticket; '' when it goes on. Open questions
+    and a proposed split are the caller's (they have their own way of asking)."""
+    if nxt is None:
+        return "the check for the next step failed"
+    if rec == "needs-human":
+        return f"the {role.name}'s document asks for a person"
+    if nxt.needs_human:
+        return "the classifier thinks a person is needed before the next step"
+    if recommend.build_waits(nxt):
+        return f"the {role.name}'s document recommends a build, and a person starts builds"
+    if not (nxt.stage in STAGE_TO_ROLE or nxt.stage == "implement"):
+        return "no next step was chosen"
+    if behind(cfg, STAGE_TO_ROLE.get(nxt.stage or ""), done):
+        return f"the next step chosen ({nxt.stage}) comes before a stage already done"
+    return ""
+
+
+def ask_person(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, role, nxt, reason: str) -> None:
+    """A stopped auto chain waits for a person the way the auto gate's "needs a person" does: the auto label stays on, and the
+    decision (with the suggested stage, for the Run button) is recorded under the ticket's newest update, so the next poll leaves
+    it alone until a person acts or comments. Run, Build and Skip clear the label."""
+    num = issue["number"]
+    gh.add_labels(repo, num, [cfg.auto_label])
+    try:
+        updated = gh.get_issue(repo, num).get("updated_at") or f"{issue['updated_at']}+asked"
+    except Exception:
+        updated = f"{issue['updated_at']}+asked"
+    stage = (nxt.stage if nxt else None) or "none"
+    if conn is not None:
+        dbm.record(conn, repo, num, updated, "human", f"after the {role.name}; suggested stage={stage}; {reason}")
+    emit("decision", f"needs a person: {reason}", repo, num)
+    log.info("%s#%d chain stopped after the %s: %s", repo, num, role.name, reason)
+
+
+def excerpt(text: str, size: int = 1400) -> str:
+    """The start and the end of a document within `size` characters: a stage document's summary is at the top and its
+    recommended next stage at the bottom, and a classifier that only sees the start misses the recommendation."""
+    text = text.strip()
+    if len(text) <= size:
+        return text
+    tail = size // 3
+    return text[:size - tail - 5] + "\n[…]\n" + text[-tail:]
+
+
+def next_step_context(stage: str, doc: str, answers: str) -> list[str]:
+    """What the classifier reads first when it picks the step after `stage`: the document just written and how its questions
+    were settled. They go before the people's comments, which the classifier only reads the first ten of."""
+    out = [f"(just completed: the {stage} document) " + excerpt(doc)]
+    if answers:
+        out.append("(the open questions and how each was settled: a question answered here no longer needs a person) " + excerpt(answers))
+    return out
+
+
 NO_MOCKUPS = ("No design mockups were produced (the repository has no Claude Design canvases to follow, or the ticket has no "
               "user-facing screens).")
 MOCKUPS_OFF = "Design mockups are turned off for this project, so only the document above was produced."
@@ -658,7 +716,8 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
     comments = human_comments(gh, repo, num)
     before = question_state(gh, repo, num)
     # This stage asked and has now been answered: it is revising its own document, and the chain goes on from the revision.
-    chain = chain or any(st.stage == role.name and st.answers and not st.pending() for st in before)
+    answered = any(st.stage == role.name and st.answers and not st.pending() for st in before)
+    chain = chain or answered
     review = None
     if role.name == "designer" and conn is not None:      # a person's notes on the screens go to the designer
         try:
@@ -691,30 +750,37 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         earlier = [q for st in before if st.stage != role.name for q in st.pending()]    # still unanswered from another stage
         settled = (f"(every open question was a safe default; the recommendations were auto-accepted)\n"
                    + Q.summary([Q.StageQuestions(role.name, qs)]) + "\n\n" if qs and not pending else "")
-        hint, go_on = None, False
+        hint, nxt, rec = None, None, recommend.parse(doc)
+        done_now = stages_done(cfg, labels)
         try:                                            # ask Jev what should happen next, now that this stage is done
+            answers_now = Q.summary(before + ([Q.StageQuestions(role.name, qs)] if qs else []))
             nxt = classifier.classify(issue["title"], issue.get("body") or "", labels,
-                                      comments + ["(just completed) " + (settled + doc)[:3000]],
-                                      project_info(project_for(cfg, repo), repo), stages_done(cfg, labels))
-            nxt, _ = pick_stage(cfg, nxt, stages_done(cfg, labels), len(project_for(cfg, repo).repos) > 1,
-                                cfg.mockups.request_label in labels)
-            nxt = recommend.apply(cfg, nxt, doc, stages_done(cfg, labels))     # a classifier that names no stage: the document's own line
+                                      next_step_context(role.name, settled + doc, answers_now) + comments,
+                                      project_info(project_for(cfg, repo), repo), done_now)
+            nxt, _ = pick_stage(cfg, nxt, done_now, len(project_for(cfg, repo).repos) > 1, cfg.mockups.request_label in labels)
+            if nxt.needs_human and (answered or (rec in recommend.WORDS.values() and not qs)):
+                # The stage's agent read the code, the ticket and a person's answers, and named the next stage; the classifier's
+                # "needs a person" comes from a short summary of the same ticket, so it does not outrank that. A stage that
+                # auto-accepted safe defaults assumed things on its own: there the classifier keeps its veto.
+                nxt = dataclasses.replace(nxt, needs_human=False)
+            nxt = recommend.apply(cfg, nxt, doc, done_now)     # a classifier that names no stage: the document's own line
             hint = next_hint(cfg, nxt)
-            # Keep going only when nothing needs a person and the classifier named a real next step. A needs-a-person question
-            # always stops the chain; with only safe defaults the classifier still has to agree (a second opinion that can only
-            # stop it). The re-applied label goes through the normal auto gate, which still asks before a build it is unsure
-            # about. Stages already done are never chosen again, so a chain always ends.
-            go_on = bool(chain and cfg.auto_chain and not pending and not earlier and not nxt.needs_human
-                         and not recommend.build_waits(nxt)         # a document's "implement" is shown to a person, never started
-                         and (nxt.stage in STAGE_TO_ROLE or nxt.stage == "implement")
-                         and not behind(cfg, STAGE_TO_ROLE.get(nxt.stage or ""), stages_done(cfg, labels)))
         except Exception:
             log.exception("next-stage suggestion failed")
+        # Every stage run ends one of three ways: the chain goes on (the auto label is re-applied), it waits for a person and says
+        # why (open questions, a split, or chain_stop's reason, recorded as "needs a person" with buttons), or it failed. A chain
+        # that stops without saying why leaves an open ticket nobody is told about.
+        stop = chain_stop(cfg, role, nxt, rec, done_now) if chain and cfg.auto_chain else "not an auto run"
         if proposal:
-            go_on, hint = False, "a person's decision on the proposed split"
+            stop, hint = "split", "a person's decision on the proposed split"
             doc += split.section(proposal)
         if pending or earlier:
-            hint = "a person's answer to the open questions " + ", ".join(q.id for q in pending + earlier)
+            stop, hint = "questions", "a person's answer to the open questions " + ", ".join(q.id for q in pending + earlier)
+        go_on = not stop
+        ask = stop not in ("", "split", "questions", "not an auto run")
+        if ask:                                         # the ticket says why it stopped, and what the classifier would do next
+            hint = stop + (f"; suggested next: {h}" if nxt and (h := next_hint(cfg, dataclasses.replace(nxt, needs_human=False))) else "")
+            res = dataclasses.replace(res, status="needs-person", detail=f"{res.detail}; waiting for a person: {stop}")
         url = gh.comment(repo, num, stage_comment(role, route, doc, hint, res.files, res.notes, qs, role.design_files))
         gh.add_labels(repo, num, [role.done_label])
         gh.remove_label(repo, num, working)
@@ -728,10 +794,15 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             dbm.set_questions(conn, repo, num, role.name, len(pending) + len(earlier))
         if go_on:
             gh.add_labels(repo, num, [cfg.auto_label])             # picked up on the next poll, like any auto request
+        if ask:
+            ask_person(cfg, gh, conn, repo, issue, role, nxt, stop)
         done = f"{role.name.title()} done: {repo}#{num}\n{url}" + (f"\n{len(res.files)} design file(s): {res.pr_url}" if res.files else "")
         if pending:                                     # one message per ticket, asking only about what needs a person
             text, buttons = question_message(cfg, repo, num, pending)
             alert(done + "\n\n" + text, buttons, event="needs_human")
+        elif ask:
+            alert(f"{done}\nNeeds a person: {stop}" + (suggestion(nxt) if nxt else ""),
+                  human_buttons(cfg, repo, num, nxt or _NO_STAGE, done_now), event="needs_human")
         else:
             assumed = "".join(f"\n{q.id}. {Q.describe(q, None)}" for q in qs or [])
             alert(done + ("\nContinuing automatically: " + (hint or "next stage") + assumed if go_on else (f"\nWaiting for you: {hint}" if hint else "")),
@@ -1067,7 +1138,8 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
                     res = dispatch_stage(cfg, gh, classifier, repo, issue, role, chain=back, conn=db)
                 else:
                     res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=db)
-                dbm.record(db, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved from chat; {res.detail}; {res.pr_url or ''}")
+                if res.status != "needs-person":        # else ask_person's record is the ticket's latest decision
+                    dbm.record(db, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved from chat; {res.detail}; {res.pr_url or ''}")
             start(cfg, conn, repo, num, role.name if role else "build", approved, gh)
         except Exception:
             log.exception("approval failed for %s#%s", repo, num)
@@ -1244,7 +1316,8 @@ def confirm_triage(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: 
 
             def approved(db, role=role):
                 res = dispatch_stage(cfg, gh, classifier, repo, issue, role, chain=True, conn=db)
-                dbm.record(db, repo, num, issue["updated_at"] + "+triage", f"run:{res.status}", f"comment triage confirmed; {res.detail}")
+                if res.status != "needs-person":        # else ask_person's record is the ticket's latest decision
+                    dbm.record(db, repo, num, issue["updated_at"] + "+triage", f"run:{res.status}", f"comment triage confirmed; {res.detail}")
             start(cfg, conn, repo, num, role.name, approved, gh)
         elif row["decision"] == "followup":
             body = triage.FOLLOWUP_HEAD.format(ref=tracker.ref(repo, num)) + row["body"]
@@ -1335,14 +1408,16 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
         return None
     labels = [lb["name"] for lb in issue.get("labels", [])]
     done = stages_done(cfg, labels)
-    seen_by_classifier, open_questions, outputs = human_comments(gh, repo, num), False, {}
+    seen_by_classifier, open_questions, outputs = [], False, {}
     if kind == "auto":                                  # earlier stage documents (and the open questions in them) inform the next call
-        outputs = stage_outputs(gh, repo, num)
-        seen_by_classifier += [f"({k} document written by the factory) {v[:2500]}" for k, v in outputs.items()]
+        outputs = stage_outputs(gh, repo, num)          # first: the classifier reads only the first ten items of the discussion
+        seen_by_classifier += [f"({k} document written by the factory) {excerpt(v)}" for k, v in outputs.items()]
         asked = question_state(gh, repo, num)
         open_questions = any(st.pending() for st in asked)
         if (settled := Q.summary(asked)):
-            seen_by_classifier.append("(the open questions and how each was settled) " + settled[:2500])
+            seen_by_classifier.append("(the open questions and how each was settled: a question answered here no longer needs a person) "
+                                      + excerpt(settled))
+    seen_by_classifier += human_comments(gh, repo, num)
     c = classifier.classify(issue["title"], issue.get("body") or "", labels, seen_by_classifier,
                             project_info(project_for(cfg, repo), repo), done)
     summary = f"cls={c.kind}/{c.complexity}/human={c.needs_human}/conf={c.confidence:.2f}/stage={c.stage}"
@@ -1407,7 +1482,8 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
             return None
         def stage_job(db, role=role):
             res = dispatch_stage(cfg, gh, classifier, repo, issue, role, c if kind == "auto" else None, label, chain=(kind == "auto"), conn=db)
-            dbm.record(db, repo, num, updated, f"run:{res.status}", f"{detail}; {res.detail}")
+            if res.status != "needs-person":            # else ask_person's record is the ticket's latest decision
+                dbm.record(db, repo, num, updated, f"run:{res.status}", f"{detail}; {res.detail}")
             log.info("%s#%d stage %s: %s", repo, num, role.name, res.status)
         start(cfg, conn, repo, num, role.name, stage_job, gh)
         return None
