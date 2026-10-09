@@ -6,7 +6,7 @@ Releases are automatic. To release:
 
 1. Change `VERSION` to the new number (for example `0.3.0`) in a PR and merge it to `main`. It must be higher than every existing tag
    (the workflow refuses otherwise).
-2. That is all. The `release` workflow (`.github/workflows/release.yml`) runs on the merge: it tests the code, builds and pushes five images to
+2. That is all. The `release` workflow (`.github/workflows/release.yml`) runs on the merge: it runs the whole test workflow (unit, browser and image tests), and only if that passes it builds and pushes five images to
    `ghcr.io/<owner>/shikumi`, `shikumi-agent`, `shikumi-render`, `shikumi-screens` and `shikumi-android` (tagged `v0.3.0` and `latest`), creates
    the tag `v0.3.0` at that commit, and publishes a GitHub Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `env.example`
    (the `.env` template), `setup.sh`, `update.sh`, `install.sh`, `update-native.sh` and the worker files.

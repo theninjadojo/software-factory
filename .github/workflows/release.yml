@@ -1,7 +1,9 @@
 name: release
-# Releases itself: merge a change to VERSION on main and this workflow tests, publishes the images to GitHub's container registry, and
-# creates the tag and the GitHub Release (with the files an install needs). Pushing a tag like v0.2.0 by hand still works (it must match VERSION).
-# On any other merge to main it exits in seconds: the tag for that VERSION already exists. See docs/releasing.md.
+# Releases itself: merge a change to VERSION on main and this workflow runs the whole test workflow (test.yml: unit, browser, images).
+# Only if that passes does it publish the images to GitHub's container registry and create the tag and the GitHub Release (with the files
+# an install needs). Pushing a tag like v0.2.0 by hand still works (it must match VERSION).
+# On any other merge to main it exits in seconds: the tag for that VERSION already exists (test.yml still runs on its own push trigger).
+# See docs/releasing.md.
 on:
   push:
     branches: [main]
@@ -10,16 +12,16 @@ concurrency:
   group: release
   cancel-in-progress: false
 permissions:
-  contents: write
-  packages: write
+  contents: read
 jobs:
-  release:
+  decide:
     # GitHub-hosted: this repository is public, and a self-hosted runner on it could be reached from a fork's pull request.
     runs-on: ubuntu-24.04
+    outputs:
+      go: ${{ steps.v.outputs.go }}
+      tag: ${{ steps.v.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      # The five images need more room than the runner has free: drop preinstalled toolchains the build does not use.
-      - run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - name: Decide what to release
         id: v
         run: |
@@ -32,19 +34,33 @@ jobs:
           # a release from main must be higher than every version already tagged
           python3 scripts/release_guard.py "$TAG" "$GITHUB_REF_TYPE"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"; echo "go=true" >> "$GITHUB_OUTPUT"
-      # The runner's own python3 (3.12); see test.yml.
-      - if: steps.v.outputs.go == 'true'
-        run: python3 -m unittest discover -s tests
-      - if: steps.v.outputs.go == 'true'
-        uses: docker/login-action@v3
+
+  test:
+    needs: decide
+    if: needs.decide.outputs.go == 'true'
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  release:
+    needs: [decide, test]
+    if: needs.decide.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      # The five images need more room than the runner has free: drop preinstalled toolchains the build does not use.
+      - run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push the images
-        if: steps.v.outputs.go == 'true'
         run: |
-          OWNER="${GITHUB_REPOSITORY_OWNER,,}"; TAG="${{ steps.v.outputs.tag }}"
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"; TAG="${{ needs.decide.outputs.tag }}"
           build() {  # name, dockerfile, context
             docker build -t "ghcr.io/$OWNER/$1:$TAG" -t "ghcr.io/$OWNER/$1:latest" -f "$2" "$3"
             docker push "ghcr.io/$OWNER/$1:$TAG"; docker push "ghcr.io/$OWNER/$1:latest"
@@ -55,10 +71,9 @@ jobs:
           build shikumi-screens sandbox/screens/Dockerfile sandbox/screens
           build shikumi-android sandbox/android/Dockerfile sandbox/android     # for verification workers (docs/workers.md)
       - name: Create the release
-        if: steps.v.outputs.go == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.v.outputs.tag }}
+          RELEASE_TAG: ${{ needs.decide.outputs.tag }}
         run: |
           mkdir dist
           cp docker-compose.yml config.example.toml VERSION scripts/setup.sh scripts/update.sh scripts/install.sh deploy/update-native.sh dist/

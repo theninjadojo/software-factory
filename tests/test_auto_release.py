@@ -35,7 +35,13 @@ class Workflow(unittest.TestCase):
         self.assertIn('tags: ["v*"]', text)
         self.assertIn("cancel-in-progress: false", text)
         self.assertIn("already released: nothing to do", text)
-        self.assertEqual(text.count("steps.v.outputs.go == 'true'"), 4)       # every step after the decision is conditional
+        # the tests run (test.yml, called) before anything is published, and only when there is something to release
+        self.assertIn("uses: ./.github/workflows/test.yml", text)
+        self.assertIn("needs: [decide, test]", text)
+        self.assertEqual(text.count("if: needs.decide.outputs.go == 'true'"), 2)       # the test and the release jobs
+        self.assertIn("workflow_call:", (ROOT / ".github" / "workflows" / "test.yml").read_text())
+        write = text.index("contents: write")
+        self.assertGreater(write, text.index("  release:\n"))                           # the write token belongs to the release job only
 
     def test_no_workflow_runs_on_a_self_hosted_runner(self):
         # The repository is public: a fork's pull request can change any workflow, so none may run on a self-hosted runner.
