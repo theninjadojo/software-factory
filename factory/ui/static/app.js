@@ -643,8 +643,8 @@
       .catch(function () {});
   }
   setInterval(tick, 5000);
-  function chatTick() {          // the ticket chat or a new-project interview while a reply is awaited: the panel replaces itself (its form is hidden meanwhile)
-    var box = document.querySelector(".sd-chat[data-pending=\"1\"], .np-draft[data-pending=\"1\"]");
+  function chatTick() {          // the ticket chat, the factory chat or a new-project interview while a reply is awaited: the panel replaces itself (its form is hidden meanwhile)
+    var box = document.querySelector(".sd-chat[data-pending=\"1\"], .np-draft[data-pending=\"1\"], .fc-chat[data-pending=\"1\"]");
     if (!box || document.hidden) return;
     get(box.getAttribute("data-src")).then(function (html) { if (html !== null && box.isConnected) box.outerHTML = html; }).catch(function () {});
   }
