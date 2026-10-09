@@ -195,8 +195,12 @@ class AutoResolve(unittest.TestCase):
             self.assertEqual(conn.execute("select pending from open_questions").fetchone()[0], 1)
 
     def test_the_classifier_can_still_stop_a_safe_chain(self):
-        gh, _, _ = run_stage(doc(q()), [FIRST, dict(stage="architect", needs_human=True)])
-        self.assertNotIn(("add", ("factory:auto",)), gh.calls)
+        # the stage assumed safe defaults on its own, so the classifier's "needs a person" still stops it: visibly, with buttons
+        gh, _, conn = run_stage(doc(q()), [FIRST, dict(stage="architect", needs_human=True)])
+        outcome, detail = conn.execute("select outcome, detail from decisions order by decided_at desc").fetchone()
+        self.assertEqual(outcome, "human")
+        self.assertIn("the classifier thinks a person is needed", detail)
+        self.assertIn(("add", ("factory:auto",)), gh.calls)             # kept on, like the auto gate's own "needs a person"
 
     def test_a_malformed_block_falls_back_to_the_classifier(self):
         gh, _, _ = run_stage("# Doc\n```factory-questions\n{broken\n```\n", [FIRST, NEXT])
