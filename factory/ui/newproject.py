@@ -9,7 +9,6 @@ import sqlite3
 from .. import newproject as N
 from .. import pause
 from ..sanitize import md_render
-from . import forms
 from . import labels as L
 from . import views
 from .views import ago, badge, csrf_field, esc
@@ -39,14 +38,9 @@ def _read(h, fn):
 def _page(h, title: str, body: str, csrf: str, status: int = 200) -> None:
     shown = L.flash_pop(csrf)
     msg, kind = shown if shown else (None, "ok")
-    try:
-        cfg = h.app.cfg()
-    except Exception:  # noqa: BLE001 - the menu then shows no state markers
-        cfg = None
-    crumb = ('<nav class="crumb" aria-label="Breadcrumb"><a href="/settings">Settings</a> <span aria-hidden="true">›</span> '
-             f'{esc(forms.section_group(KEY))}</nav>')
-    h._send(status, views.page(title, f"{crumb}<h1>{esc(title)}</h1>{body}{forms.related(KEY)}", "/settings", csrf, flash=msg, flash_kind=kind,
-                               side=forms.side_list(KEY, cfg), bare=True))
+    # A main-screen page (the Factory and Tickets headers link here), so no Settings menu; the intro links to its settings.
+    crumb = '<nav class="crumb" aria-label="Breadcrumb"><a href="/">Factory</a></nav>'
+    h._send(status, views.page(title, f"{crumb}<h1>{esc(title)}</h1>{body}", "/", csrf, flash=msg, flash_kind=kind, bare=True))
 
 
 def _back(h, csrf: str, where: str, msg: str, kind: str = "ok") -> None:
