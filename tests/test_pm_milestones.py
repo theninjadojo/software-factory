@@ -192,6 +192,11 @@ class Views(unittest.TestCase):
         self.assertIn("Not planned yet", out)
         self.assertIn("Loose end", out)
         self.assertIn("view=chart", out)
+        plan.add_milestone(self.c, "Shop", ENROL)
+        empty = roadmap.page(SHOP, roadmap.model(self.c, [], "Shop", ["o/a", "o/b"]), None, "tok")
+        self.assertIn("No tickets yet", empty)
+        self.assertNotIn("0 of 0 done", empty)
+        self.assertNotIn("rp-track", empty)
         self.assertIn("rm-w35", out)                                             # 1 of 3, as a width class: no style attributes
         self.assertNotIn("style=", out)
 
