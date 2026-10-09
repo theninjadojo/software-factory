@@ -55,8 +55,8 @@ def _send_page(h, status: int, title: str, body: str, active: str, csrf: str, fl
     key = section or active.lstrip("/")
     side = forms.side_list(key, cfg)
     bare = False
-    if title == "Settings" and key in S.SECTIONS or key in ("projects", "labels"):
-        name = S.SECTIONS[key][0] if key in S.SECTIONS else key.title()
+    if title == "Settings" and key in S.SECTIONS or key in ("projects", "labels", "updates"):
+        name = "Updates and releases" if key == "updates" else S.SECTIONS[key][0] if key in S.SECTIONS else key.title()
         group = forms.section_group(key)
         crumb = (f'<nav class="crumb" aria-label="Breadcrumb"><a href="/settings">Settings</a>'
                  + (f' <span aria-hidden="true">›</span> {views.esc(group)}' if group else "") + "</nav>")
@@ -121,6 +121,8 @@ def settings_get(h, q: dict, csrf: str) -> None:
         body = FT.home(h.app.cfg(), csrf, q.get("show", ""), q.get("q", ""), _status_json(h, "slack_connection", "null"))
         return _send_page(h, 200, "Settings", body, "/settings", csrf, FLASH.get(q.get("ok", "")), section="home")
     section = q.get("section")
+    if section == "update_check":
+        return h._redirect("/updates")
     if section == "labels":
         return _send_page(h, 200, "Settings", forms.labels_page(h.app.cfg()), "/settings", csrf, FLASH.get(q.get("ok", "")), section="labels")
     if section != "projects" and section not in S.SECTIONS:
@@ -179,7 +181,12 @@ def settings_save(h, form, csrf: str) -> None:
     except S.SettingsError as e:
         if section not in S.SECTIONS:
             return h._send(404, "no such section", "text/plain")
+        if section == "update_check":
+            return updates_page(h, csrf, 422, " · ".join(e.messages), "bad", submitted=form)
         return _send_page(h, 422, "Settings", render_settings(h, section, csrf, submitted=form), "/settings", csrf, " · ".join(e.messages), "bad", section=section)
+    if section == "update_check":
+        L.flash_set(csrf, FLASH["saved"])
+        return h._redirect("/updates")
     h._redirect(f"/settings?section={section}&ok=saved")
 
 
@@ -733,10 +740,22 @@ def smells_delete(h, form, csrf: str) -> None:
 
 
 # ------------------------------------------------------------------ updates
+def updates_page(h, csrf: str, status: int = 200, flash=None, kind: str = "ok", submitted=None) -> None:
+    """Running version and updates, Publish a release, Update checks: one page. The release part never fails the others."""
+    base, eff = _files(h)
+    body = (f'<section class="card"><h2>Running version and updates</h2>{UP.page_body(h.app.cfg(), h.app.state_dir(), csrf)}</section>'
+            f'<section class="card"><h2>Publish a release</h2>{REL.release_body(h, csrf)}</section>'
+            f'<section class="card"><h2>Update checks</h2>{forms.settings_form("update_check", eff, base, csrf, submitted)}</section>')
+    _send_page(h, status, "Updates and releases", body, "/updates", csrf, flash, kind, section="updates")
+
+
 def updates_get(h, q: dict, csrf: str) -> None:
     shown = L.flash_pop(csrf)
-    _send_page(h, 200, "Updates", UP.page_body(h.app.cfg(), h.app.state_dir(), csrf), "/updates", csrf,
-               shown[0] if shown else None, shown[1] if shown else "ok", section="updates")
+    updates_page(h, csrf, 200, shown[0] if shown else None, shown[1] if shown else "ok")
+
+
+def release_redirect(h, q: dict, csrf: str) -> None:
+    h._redirect("/updates")                 # a fixed path: nothing from the request is forwarded
 
 
 def updates_status(h, q: dict, csrf: str) -> None:
@@ -843,7 +862,7 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
     h._redirect("/backup?ok=restore")
 
 
-GET = {"/release": REL.release_get, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/machines/server": server_machine_get, "/workers/machine": worker_machine_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
+GET = {"/release": release_redirect, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/machines/server": server_machine_get, "/workers/machine": worker_machine_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/roadmap": RM.get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/tickets/review": TRV.review_get, "/fragment/chat": CH.fragment_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/results": SB.results_get, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get, **TS.GET, **NP.GET}
 POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/settings/projects/detect": projects_detect, "/settings/projects/deps": projects_deps, "/classify/test": classify_test,

@@ -1,10 +1,10 @@
-"""Settings > Releases: bump VERSION of the factory's own repository, and merge that bump to kick off the release build.
+"""The release half of Settings > Updates and releases: bump VERSION of the factory's own repository, and merge that bump to kick off the release build.
 Nothing is pushed to main: a bump is a pull request on a release/ branch, and merging it is what the release workflow reacts to."""
 import urllib.error
 
 from .. import updates, version
 from . import integrations as I
-from .labels import NO_TOKEN, _github_error, flash_pop, flash_set
+from .labels import NO_TOKEN, _github_error, flash_set
 from .views import csrf_field, esc
 
 BRANCH = "release/v"
@@ -25,11 +25,6 @@ def _gh(h):
     return GitHub(token) if token else None
 
 
-def _send(h, status, body, csrf, flash=None, kind="ok"):
-    from .admin import _send_page
-    _send_page(h, status, "Releases", body, "/release", csrf, flash, kind, section="release")
-
-
 def _latest(h, repo: str, gh) -> tuple[str, str]:
     """(highest of VERSION on the default branch and the latest release tag, default branch)."""
     base = gh.default_branch(repo)
@@ -39,33 +34,33 @@ def _latest(h, repo: str, gh) -> tuple[str, str]:
     return top, base
 
 
-def release_get(h, q: dict, csrf: str) -> None:
+def release_body(h, csrf: str) -> str:
+    """The "Publish a release" part of the Updates page. A GitHub failure is shown here and nowhere else: the page still renders."""
     cfg = h.app.cfg()
     repo = cfg.updates.repo
     gh = _gh(h)
-    shown = flash_pop(csrf) or (None, "ok")
-    head = (f'<p>Running <strong>{esc(version.current())}</strong>. Releases come from <code>{esc(repo)}</code>: merging a change to its <code>VERSION</code> file '
+    head = (f'<p>Releases come from <code>{esc(repo)}</code>: merging a change to its <code>VERSION</code> file '
             'runs the release workflow, which tests, builds and publishes the images and creates the GitHub Release.</p>')
     if gh is None:
-        return _send(h, 200, head + f'<p class="muted">{esc(NO_TOKEN)}</p>', csrf)
+        return head + f'<p class="muted">{esc(NO_TOKEN)}</p>'
     try:
         top, base = _latest(h, repo, gh)
         pulls = gh.open_pulls(repo, BRANCH)
     except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
-        return _send(h, 502, head, csrf, _github_error(e), "bad")
+        return head + f'<p class="bad-text" role="alert"><span aria-hidden="true">✕</span> Release information could not be loaded: {esc(_github_error(e))} Updates above still work.</p>'
     rows = ""
     for p in pulls:
         n = int(p["number"])
         rows += (f'<tr><td><a href="{esc(p["html_url"])}" rel="noopener noreferrer" target="_blank">#{n}</a></td><td>{esc(p["title"])}</td><td>'
                  f'<form method="post" action="/release/merge" class="inline">{csrf_field(csrf)}<input type="hidden" name="n" value="{n}">'
                  f'<button aria-label="Merge and release #{n}">Merge and release</button></form></td></tr>')
-    waiting = ('<h2>Waiting to be released</h2><table class="stack"><thead><tr><th>PR</th><th>Title</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>"
+    waiting = ('<h3>Waiting to be released</h3><table class="stack"><thead><tr><th>PR</th><th>Title</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>"
               if rows else "")
     opts = "".join(f'<option value="{k}">{esc(t)}{" → " + esc(bump(top, k) or "") if top else ""}</option>' for k, t in KINDS.items())
-    form = (f'<h2>Bump the version</h2><p class="muted">Latest on <code>{esc(base)}</code> or released: <strong>{esc(top or "unknown")}</strong>.</p>'
+    form = (f'<h3>Bump the version</h3><p class="muted">Latest on <code>{esc(base)}</code> or released: <strong>{esc(top or "unknown")}</strong>.</p>'
             f'<form method="post" action="/release/bump" class="field">{csrf_field(csrf)}<label>Kind of change<select name="kind">{opts}</select></label>'
             '<button>Open the version PR</button></form>' if top else '<p class="muted">Could not read VERSION from the repository.</p>')
-    _send(h, 200, head + waiting + form, csrf, shown[0], shown[1])
+    return head + waiting + form
 
 
 def bump_post(h, form, csrf: str) -> None:
@@ -112,4 +107,4 @@ def merge_post(h, form, csrf: str) -> None:
 
 def _back(h, csrf: str, msg: str, kind: str = "ok") -> None:
     flash_set(csrf, msg, kind)
-    h._redirect("/release")
+    h._redirect("/updates")
