@@ -396,6 +396,74 @@ class Page(unittest.TestCase):
 
 
 
+class History(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        TR.ensure_tables(self.db)
+        self.db.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY, output TEXT)")
+        self.db.execute("INSERT INTO runs VALUES (7, ?)", (block([built(1)], "# Review\n\nI checked <script>.\n"),))
+        self.old = TR.request(self.db, "o/r", "github", 1.0)
+        TR.set_status(self.db, self.old, "running", "reading 4 ticket(s)", 4, 7)
+        TR.store(self.db, self.old, "o/r", [TR.Proposal(1, "built", None, ("a.py",), "r")], items(1, 2, 3, 4))
+        TR.set_status(self.db, self.old, "done", "1 recommendation(s) from 4 ticket(s)", 4, 7)
+
+    def test_every_review_is_kept_and_can_be_opened(self):
+        from factory.ui import ticketreview as TRV
+        new = TR.request(self.db, "o/r", "github", 100.0)
+        TR.store(self.db, new, "o/r", [TR.Proposal(2, "duplicate", 3, (), "same")], items(1, 2, 3, 4))
+        TR.set_status(self.db, new, "done", "1 recommendation(s) from 4 ticket(s)", 4)
+        self.assertEqual([r["id"] for r in TR.reviews(self.db, ["o/r"])], [new, self.old])
+        latest = TRV.page(CFG, self.db, "o/r", "tok", now=200.0)
+        self.assertIn(f"Review #{new} of o/r", latest)
+        self.assertIn(f'review={self.old}"', latest)
+        self.assertIn(">Merge<", latest)
+        older = TRV.page(CFG, self.db, "o/r", "tok", now=200.0, rid=str(self.old))
+        self.assertIn(f"Review #{self.old} of o/r", older)
+        self.assertIn("see Out of date", older)
+        self.assertIn("Out of date <b class=\"mono\">1</b>", older)
+        self.assertIn("superseded by a newer review", TRV.page(CFG, self.db, "o/r", "tok", now=200.0, rid=str(self.old), view="outdated"))
+
+    def test_the_write_up_is_shown_escaped_without_the_block(self):
+        from factory.ui import ticketreview as TRV
+        out = TRV.page(CFG, self.db, "o/r", "tok", now=200.0)
+        self.assertIn("What the agent found", out)
+        self.assertIn("I checked &lt;script&gt;", out)
+        self.assertNotIn("factory-ticket-review", out)
+        self.assertIn('href="/runs/7"', out)
+
+    def test_waiting_and_running_say_what_is_going_on(self):
+        from dataclasses import replace
+        from factory.ui import ticketreview as TRV
+        rid = TR.request(self.db, "o/r", "github", 100.0)
+        out = TRV.page(CFG, self.db, "o/r", "tok", now=130.0)
+        self.assertIn("Waiting to start.", out)
+        self.assertIn('id="live" data-src="/tickets/review/live"', out)
+        self.assertIn("The factory is paused", TRV.page(CFG, self.db, "o/r", "tok", now=130.0, paused=True))
+        self.assertIn("dry-run", TRV.page(replace(CFG, dry_run=True), self.db, "o/r", "tok", now=130.0))
+        TR.set_status(self.db, rid, "running", "reading 4 ticket(s)", 4, 7)
+        out = TRV.live(CFG, self.db, "o/r", "tok", 160.0)
+        self.assertIn("Running for 60s.", out)
+        self.assertIn("reading 4 ticket(s) and the code", out)
+        self.assertIn("Watch the run", out)
+
+    def test_a_review_with_nothing_found_says_so(self):
+        from factory.ui import ticketreview as TRV
+        rid = TR.request(self.db, "o/r", "github", 100.0)
+        TR.set_status(self.db, rid, "done", "no open tickets to review")
+        self.assertIn("Done: there were no tickets to review.", TRV.page(CFG, self.db, "o/r", "tok", now=130.0))
+        rid = TR.request(self.db, "o/r", "github", 140.0)
+        TR.set_status(self.db, rid, "done", "0 recommendation(s) from 4 ticket(s)", 4, 7)
+        out = TRV.page(CFG, self.db, "o/r", "tok", now=150.0)
+        self.assertIn("Done: no recommendations from 4 ticket(s).", out)
+        self.assertIn("<details class=\"tr-doc\" open>", out)
+
+    def test_an_unknown_or_foreign_review_falls_back_to_the_latest(self):
+        from factory.ui import ticketreview as TRV
+        other = TR.request(self.db, "x/y", "github", 50.0)
+        for rid in (str(other), "999", "abc", "1" * 12):
+            self.assertIn(f"Review #{self.old} of o/r", TRV.page(CFG, self.db, "o/r", "tok", now=60.0, rid=rid))
+        self.assertNotIn("x/y", TRV.page(CFG, self.db, "o/r", "tok", now=60.0))
+
 class FollowUps(unittest.TestCase):
     def test_tickets_whose_prs_are_all_merged_are_left_out(self):
         class G:
