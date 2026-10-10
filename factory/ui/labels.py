@@ -41,7 +41,7 @@ NO_TOKEN = "Save a GitHub token on the Credentials page first."
 # the server per session (never taken from the URL), so a link cannot make the page say something.
 _flash: dict = {}
 _flash_lock = threading.Lock()
-BACK = re.compile(r"^/(?:\?(?:station|need|view)=[a-z]{1,12}(?:&(?:station|need|view)=[a-z]{1,12}){0,2}|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?|ticket\?repo=[\w.%-]{1,150}&n=\d{1,9}|roadmap(?:\?[\w=&%.:/+-]{0,300})?)?$")
+BACK = re.compile(r"^/(?:\?(?:station|need|view)=[a-z]{1,12}(?:&(?:station|need|view)=[a-z]{1,12}){0,2}|needs(?:\?need=[a-z]{1,12})?|tickets(?:\?[\w=&%.:/#+-]{0,300})?|ticket\?repo=[\w.%-]{1,150}&n=\d{1,9}(?:&[\w=&%.:/+-]{0,300})?|roadmap(?:\?[\w=&%.:/+-]{0,300})?)?$")
 
 
 def flash_set(csrf: str, msg: str, kind: str = "ok") -> None:
@@ -867,6 +867,46 @@ def start(h, form, csrf: str) -> None:
         return _done(h, form, csrf, _github_error(e), "bad")
     log.info("tickets: %s on %s#%d from the UI", "approved " + action if approval_for(cfg, action) else "started " + action, repo, n)
     _done(h, form, csrf, FLASH["skipped" if action == "skip" else "started"])
+
+
+def send_back(h, form, csrf: str) -> None:
+    """Send a ticket back to a stage that has already run: it queues the `redirect:<stage>` approval (the one a confirmed chat
+    proposal writes), and the factory takes off that stage's done label and every later one, so they run again. The ticket is
+    re-read first: the stage must be done, the ticket open, not running and with nothing else queued."""
+    cfg = h.app.cfg()
+    try:
+        repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
+    except Refused as e:
+        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
+    role = next((r for r in cfg.roles if r.name == form.get("stage", "")), None)
+    gh = _gh_for(h, cfg, n)
+    if gh is None:
+        return _done(h, form, csrf, NO_TOKEN, "bad")
+    try:
+        if role is None:
+            raise Refused("That stage is not configured.")
+        issue = gh.get_issue(repo, n)
+        if "pull_request" in issue:
+            return h._send(404, "no such issue", "text/plain")
+        names = set(_names(issue))
+        if issue.get("state") != "open":
+            raise Refused("The ticket is closed. Reopen it first.")
+        if any(x == "factory:working" or x.startswith("factory:working-") for x in names):
+            raise Refused("The factory is working on it. Send it back once this run finishes or fails.")
+        if (repo, n) in _approved(h):
+            raise Refused("Another decision is already queued for this ticket. Try again once the factory has handled it.")
+        if role.done_label not in names:
+            raise Refused(f"The {role.name} stage has not run on this ticket yet, so there is nothing to send it back to.")
+        h.app.add_approval(repo, n, f"redirect:{role.name}")
+        needs_forget(repo, n)
+    except Refused as e:
+        return _done(h, form, csrf, str(e), "bad")
+    except (urllib.error.URLError, OSError) as e:
+        log.warning("tickets: send back %s#%d to %s failed", repo, n, role.name if role else "?")
+        return _done(h, form, csrf, _github_error(e), "bad")
+    log.info("tickets: %s#%d sent back to %s from the UI", repo, n, role.name)
+    _done(h, form, csrf, f"Queued: {tracker.display(n)} goes back to the {role.name} stage at the factory's next poll, "
+                         "and the stages after it run again.")
 
 
 _recent: dict = {}          # (repo, title) -> time of the last create, so a double click makes one issue

@@ -15,6 +15,7 @@ NOT_AVAILABLE = "The factory has no action that does this. Nothing was changed."
 NEEDS_TOKEN = "Save a GitHub token on the Credentials page to move GitHub tickets."
 RUNNING = "The factory is working on it. Nothing can start until this run finishes or fails."
 ASKING = "It is waiting for an answer. Answer it on the card or the ticket page, and the run carries on."
+QUEUED = "A move is already queued. The factory takes it at its next poll, within a minute; then you can move it again."
 ICON = {**board.ICON, "auto": board.ICON["route"], "conflicts": "M6 3v18M18 3v6a6 6 0 0 1-6 6H6", "close": "M5 12l5 5 9-10",
         "reopen": "M4 12a8 8 0 1 0 3-6.2M4 4v5h5"}
 CHEVRON = '<svg class="kb-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>'
@@ -56,11 +57,15 @@ def starts_for(row: dict, cfg, has_token: bool) -> tuple[str, list[tuple[str, st
         return RUNNING, []
     if here == "needs":
         return ASKING, []
+    if row.get("queued"):
+        return QUEUED, []
     again = here in ("failed", "prs")
     out = [("auto", "Auto", "Runs it again. The factory picks where to start" if again else "The factory reads it and picks the route", "")]
     for r in cfg.roles:
-        done = row["stations"].get(r.name) == "done"
-        out.append((r.name, L.VERBS.get(r.name, r.name.capitalize()), f"Starts at the {r.name.capitalize()} stage", "already done" if done else ""))
+        if row["stations"].get(r.name) == "done":            # it ran: send the ticket back there, and the stages after it run again
+            out.append((f"redirect:{r.name}", f"Back to {r.name.capitalize()}", f"{r.name.capitalize()} and every later stage run again", ""))
+        else:
+            out.append((r.name, L.VERBS.get(r.name, r.name.capitalize()), f"Starts at the {r.name.capitalize()} stage", ""))
     if again:
         out.append(("build", "Build", "Builds again without the earlier stages", ""))
     if here == "prs" and cfg.review.enabled:
@@ -111,7 +116,50 @@ def _ask(action: str, word: str, n: str, pm: bool = False) -> tuple[str, str]:
         return f"Review the pull request for {n}?", "Run review"
     if action == "conflicts":
         return f"Resolve the merge conflicts on the pull request for {n}?", "Resolve conflicts"
+    if action.startswith("redirect:"):
+        stage = action.split(":", 1)[1].capitalize()
+        return (f"Send {n} back to {stage}? {stage} and every stage after it run again. The earlier documents stay. Its open pull "
+                "requests stay open for you to close, and the factory stops watching them.", f"Send back to {stage}")
     return f"Start {n} with {word}? It starts at the {action.capitalize()} stage.", f"Start with {word}"
+
+
+def start_form(action: str, row: dict, csrf: str, back: str, button: str) -> str:
+    """The confirmation's form: a send-back posts the stage to /tickets/send-back, anything else names its action to /tickets/start."""
+    if action.startswith("redirect:"):
+        return _form("/tickets/send-back", row, csrf, back, f'<input type="hidden" name="stage" value="{esc(action.split(":", 1)[1])}">', button)
+    return _form("/tickets/start", row, csrf, back, f'<input type="hidden" name="action" value="{esc(action)}">', button)
+
+
+AT_STATION = {"auto": "route", "build": "build", "review": "review", "conflicts": "pr"}
+
+
+def stage_picker(row: dict, cfg, csrf: str, back: str, has_token: bool) -> str:
+    """The ten stations as a grid in the ticket's Journey: a station the ticket can be sent to opens the same confirmation as the
+    Move menu (back to a stage that ran, start at one that has not, build or review again); the stations the factory moves
+    the ticket through by itself are shown, not offered. Nothing at all while it runs or waits for an answer: the note says why."""
+    if not csrf:
+        return ""
+    n = ref(row["repo"], row["issue"], short=True)
+    note, starts = starts_for(row, cfg, has_token)
+    by = {}
+    for action, word, say, why in starts:
+        sid = action.split(":", 1)[1] if action.startswith("redirect:") else AT_STATION.get(action, action)
+        if not why and sid not in by:
+            by[sid] = (action, word, say)
+    cells = ""
+    for i, (sid, label) in enumerate(board.STATIONS, 1):
+        state = row["stations"].get(sid, "none")
+        num = f'<span class="mono sd-stn">{i:02d}</span><strong>{esc(label)}</strong>'
+        if sid in by:
+            action, word, say = by[sid]
+            ask, button = _ask(action, word, n, cfg.pm.enabled)
+            cells += (f'<details class="sd-sta {state}" data-sta="{esc(sid)}"><summary>{num}<span class="sd-sts">{esc(word)}</span></summary>'
+                      f'<div class="sd-staconf" role="group" aria-label="{esc(word)}"><p>{esc(ask)}</p>{start_form(action, row, csrf, back, button)}</div></details>')
+        else:
+            cells += f'<div class="sd-sta off {state}" aria-disabled="true">{num}<span class="sd-sts">The factory moves it</span></div>'
+    head = (f'<p class="muted sd-fine fd-note">{esc(note)}</p>' if note else
+            '<p class="muted sd-fine fd-note">Pick a stage to send the ticket there. The factory moves it through the others by itself.</p>')
+    return f'<div class="sd-picker">{head}<div class="sd-stas" role="group" aria-label="Send {esc(n)} to a stage">{cells}</div></div>'
 
 
 def menu(row: dict, cfg, csrf: str, back: str, has_token: bool, label: str = "") -> str:
@@ -125,8 +173,9 @@ def menu(row: dict, cfg, csrf: str, back: str, has_token: bool, label: str = "")
             rows += _off(action, word, why)
             continue
         ask, button = _ask(action, word, n, cfg.pm.enabled)
-        form = _form("/tickets/start", row, csrf, back, f'<input type="hidden" name="action" value="{esc(action)}">', button)
-        rows += _choice(action, "working", word, say, "wait" if action == "auto" else "run", ask, form)
+        form = start_form(action, row, csrf, back, button)
+        rows += _choice(action.split(":", 1)[-1] if action.startswith("redirect:") else action, "working", word, say,
+                        "wait" if action == "auto" or action.startswith("redirect:") else "run", ask, form)
     start = ""
     if row["state"] != "done":
         start = ('<section class="kb-sec"><p class="kb-grp">Start' + (" <span>· moves it to Working</span>" if rows else "") + "</p>"

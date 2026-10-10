@@ -1652,3 +1652,23 @@ p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
   .sd-topbar .sd-chips { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; } .sd-topbar .sd-chip { flex:none; } .sd-barend { flex-wrap:nowrap; }
   .sd-topbar .sd-search input { width:120px; } .sd-topbar { gap:10px; } .sd-topbar .sd-chip { padding:0 8px; }
 }
+
+/* the message about what an action did stays in sight while the page keeps its place */
+main > [data-flash] { position:sticky; top:8px; z-index:40; box-shadow:0 8px 24px rgba(0,0,0,.45); } main > [data-flash].settled { position:static; box-shadow:none; }
+
+/* a ticket's Journey: the stations to send it to */
+.fd-hint { color:var(--blue); font-size:13px; }
+.sd-picker { margin:0 0 16px; }
+.sd-stas { position:relative; display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:8px; }
+.sd-stas:has(.sd-sta[open]) { padding-bottom:132px; }
+.sd-sta > summary, .sd-sta.off { display:flex; flex-direction:column; align-items:flex-start; gap:3px; min-height:68px; padding:9px 10px; box-sizing:border-box; border:1px solid var(--line); background:var(--head); list-style:none; }
+.sd-sta > summary { cursor:pointer; } .sd-sta > summary::-webkit-details-marker { display:none; }
+.sd-sta > summary:hover, .sd-sta[open] > summary { border-color:var(--blue); background:#1d2433; } .sd-sta[open] > summary { box-shadow:0 0 0 1px var(--blue); }
+.sd-sta.off { opacity:.55; } .sd-sta strong { font-size:14px; } .sd-stn { font-size:11px; color:#7f8b93; }
+.sd-sts { font-size:12px; color:var(--blue); } .sd-sta.off .sd-sts { color:var(--muted); }
+.sd-sta.done > summary strong::after, .sd-sta.done.off strong::after { content:" ✓"; color:var(--good); } .sd-sta.run strong { color:var(--accent); } .sd-sta.fail strong { color:var(--bad); }
+.sd-staconf { position:absolute; left:0; right:0; bottom:0; display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; min-height:112px; padding:14px 16px; box-sizing:border-box; border:1px solid var(--blue); background:#1d2433; }
+.sd-staconf p { flex:1 1 360px; margin:0; line-height:1.45; } .sd-staconf .kb-form button { flex:none; padding:0 18px; }
+@media (max-width:760px) {
+  .sd-sta.off { display:none; } .sd-stas { grid-template-columns:repeat(2, minmax(0, 1fr)); } .sd-stas:has(.sd-sta[open]) { padding-bottom:220px; } .sd-staconf { min-height:204px; }
+}

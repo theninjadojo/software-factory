@@ -183,7 +183,7 @@ def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | N
                 if len(items) > PRIMARY else f"<nav aria-label=Main>{links}</nav>")
     if side:
         body = f'<div class="with-side">{side}<div class="side-body">{body}</div></div>'
-    note = f'<div class="flash {esc(flash_kind)}" role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
+    note = f'<div class="flash {esc(flash_kind)}" data-flash role="{"alert" if flash_kind == "bad" else "status"}">{esc(flash)}</div>' if flash else ""
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
             f'<meta name="color-scheme" content="dark"><title>{esc(title)} · Shikumi</title>{ICON}<link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/town.css"></head><body>'
             f'<header><a class="brand" href="/">{BRAND}Software factory</a>{nav_html}'

@@ -302,6 +302,53 @@
       .catch(function () { fail("Couldn’t reach the factory. Nothing was changed that we know of. Try again."); });
   });
 
+  // --- Tickets keep their place across an action. A form that posts from Tickets or a ticket's page comes back to this exact
+  // address (filters, search, project and the open ticket), and the scroll position and the open parts are put back. The
+  // server still checks where it may send you back to. The message about what was done stays in sight for a few seconds.
+  var KEEP = "sf-keep", here = location.pathname + location.search;
+  function keepable() { return location.pathname === "/tickets" || location.pathname === "/ticket"; }
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (!keepable() || !f || (f.method || "").toLowerCase() !== "post") return;
+    var back = f.querySelector('input[name="back"]');
+    if (back && back.value.charAt(0) === "/") back.value = here;       // only an address; some forms name a place by a word
+    var open = Array.prototype.map.call(document.querySelectorAll("details.sd-fold[open]"), function (d) { return d.getAttribute("data-fold"); });
+    var list = document.querySelector(".sd-list");
+    try { sessionStorage.setItem(KEEP, JSON.stringify({ url: here, y: window.scrollY, open: open, list: list ? list.scrollTop : 0, at: Date.now() })); } catch (err) {}
+  }, true);
+  (function () {
+    var k = null;
+    try { k = JSON.parse(sessionStorage.getItem(KEEP) || "null"); sessionStorage.removeItem(KEEP); } catch (err) {}
+    if (!k || k.url !== here || Date.now() - k.at > 120000) return;
+    Array.prototype.forEach.call(document.querySelectorAll("details.sd-fold"), function (d) {
+      if (k.open.indexOf(d.getAttribute("data-fold")) >= 0) d.open = true;
+    });
+    var list = document.querySelector(".sd-list");
+    if (list) list.scrollTop = k.list || 0;
+    window.scrollTo(0, k.y || 0);
+  })();
+  Array.prototype.forEach.call(document.querySelectorAll("[data-flash]"), function (f) {
+    setTimeout(function () { f.classList.add("settled"); }, 8000);
+  });
+
+  document.addEventListener("toggle", function (e) {      // a canvas measured while its part was folded: fit it the first time it opens
+    var d = e.target;
+    if (!d.classList || !d.classList.contains("sd-fold") || !d.open || d.hasAttribute("data-fitted")) return;
+    var fit = d.querySelector('[data-pz-zoom="fit"]');
+    if (!fit) return;
+    d.setAttribute("data-fitted", "");
+    var imgs = Array.prototype.filter.call(d.querySelectorAll(".pz img"), function (i) { return !i.complete; }), left = imgs.length;
+    function go() { requestAnimationFrame(function () { fit.click(); }); }
+    if (!left) return go();                                  // the screens load once they show: fit when the last one has its size
+    imgs.forEach(function (i) { function one() { if (--left === 0) go(); } i.addEventListener("load", one, { once: true }); i.addEventListener("error", one, { once: true }); });
+  }, true);
+  document.addEventListener("toggle", function (e) {      // one station's confirmation at a time
+    var d = e.target;
+    if (!d.classList || !d.classList.contains("sd-sta") || !d.open) return;
+    Array.prototype.forEach.call(document.querySelectorAll(".sd-sta[open]"), function (o) { if (o !== d) o.open = false; });
+    var b = d.querySelector(".sd-staconf button"); if (b) b.focus({ preventScroll: true });
+  }, true);
+
   // --- A ticket's folded parts: Expand all / Collapse all. The small menus (More, Filters, the page's settings, Move) close on a
   // click elsewhere or Escape.
   var MENUS = ".sd-menu[open], .tk-line[open], .kb-menu-btn[open]";
