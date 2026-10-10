@@ -464,10 +464,10 @@ def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf
         out_line = f'<span class="sd-why muted">Outcome: {esc(r["outcome"])}</span>' if r.get("outcome") else ""
         items += (f'<a class="sd-pick{" on" if on else ""}" href="{esc(ticket_url(r, flt, q, at, project))}"{" aria-current=page" if on else ""}>'
                   f'<span class="sd-row"><span class="mono muted">{esc(views.ref(r["repo"], r["issue"], short=True))}</span>'
-                  f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}</span>'
+                  f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}'
+                  f'<span class="mono muted sd-at" title="{esc("At " + LABEL[r["at"]] if r["at"] else "Not started")}">{esc(ago(r["when"], now) if r["when"] else "")}</span></span>'
                   f'<span class="sd-title">{esc(r["title"])}</span><span class="sd-why muted">{esc(r["why"])}</span>'
-                  f"{out_line}{progress(r['stations'])}"
-                  f'<span class="mono muted sd-at">{esc("At " + LABEL[r["at"]] if r["at"] else "Not started")} · {esc(ago(r["when"], now) if r["when"] else "")}</span></a>')
+                  f"{out_line}{progress(r['stations'])}</a>")
         need = r.get("need") or {}
         if need.get("acts") and not need.get("st") and csrf:
             from . import labels as L
@@ -488,29 +488,18 @@ def filters_html(c: dict, flt: str, q: str, at: str, order: str, repos=(), proje
     sort_opts = opt("latest", "Latest activity", order) + opt("oldest", "Oldest waiting", order) + opt("priority", "Priority", order)
     pick_project = (f'<label class="sd-lab sd-project">Project <select name="project" aria-label="Filter tickets by project">'
                     f'{opt("", "All projects", project)}{"".join(opt(v, w, project) for v, w in projects)}</select></label>') if projects else ""
+    used = sum(1 for x in (project, at, order != "latest") if x)
+    count = f' <b class="mono sd-fcount">{used}</b>' if used else ""
     return (f'<div class="sd-filters" role="search"><nav class="sd-chips" aria-label="Filter by state">{chips}</nav><span class="sd-grow"></span>'
             f'<form method="get" action="/tickets" class="sd-form" data-autosubmit>'
-            f'<input type="hidden" name="stage" value="{esc(flt)}">{pick_project}'
+            f'<input type="hidden" name="stage" value="{esc(flt)}">'
+            f'<label class="sd-search"><span class="sr">Search tickets</span><input type="search" name="q" value="{esc(q)}" placeholder="Search" title="Search by number or title"></label>'
+            f'<details class="sd-menu sd-fmenu"><summary>Filters{count}{MORE_ICON}</summary><div class="sd-menul" role="group" aria-label="Filters">{pick_project}'
             f'<label class="sd-lab">Station <select name="at">{station_opts}</select></label>'
-            f'<label class="sd-lab">Sort <select name="sort">{sort_opts}</select></label>'
-            f'<label class="sd-search"><span class="sr">Search tickets</span><input type="search" name="q" value="{esc(q)}" placeholder="Search number or title"></label>'
+            f'<label class="sd-lab">Sort <select name="sort">{sort_opts}</select></label></div></details>'
             f'<button class="secondary sd-apply">Apply</button></form></div>')
 
 
-def _tiles(j: dict, state: str) -> str:
-    st, tk, models = j["status"], j["tokens"], j["models"]
-    sub = {"needs": "waiting for you", "working": "agents at work", "failed": "see the failed step", "prs": "pull request open", "new": "nothing has run yet", "done": "finished"}[state]
-    if state == "needs" and j.get("waiting"):
-        sub = (plain(j["waiting"].get("message")) or sub)[:60]
-    tin, tout = tk["in"], tk["out"]
-    mods = ", ".join(sorted(models)) or "—"
-    return ('<div class="sd-tiles">'
-            f'<div class="sd-tile"><span class="lab">Status</span><b class="sd-word {TICKET_TONE[state]} big">{esc(TICKET_WORD[state])}</b><span class="muted">{esc(sub)}</span></div>'
-            f'<div class="sd-tile"><span class="lab">{"Time so far" if st == "running" else "Total time"}</span><b class="mono">{esc(secs(j["seconds"]))}</b>'
-            f'<span class="muted">{len(j["steps"])} steps</span></div>'
-            f'<div class="sd-tile"><span class="lab">Tokens</span><b class="mono">{esc(tok((tin or 0) + (tout or 0)) if tin is not None or tout is not None else "—")}</b>'
-            f'<span class="muted">{esc(tok(tin))} in · {esc(tok(tout))} out</span></div>'
-            f'<div class="sd-tile"><span class="lab">Agents</span><b class="sd-agents">{esc(mods)}</b><span class="muted">{esc(" · ".join(f"{n}× {m}" for m, n in sorted(models.items())))}</span></div></div>')
 
 
 def _bar(s: dict, t0: float, span: float) -> str:
@@ -571,25 +560,48 @@ def steps_html(j: dict, repo: str, issue: int, docs=()) -> str:
             f'<tbody>{rows}</tbody></table></div></section>')
 
 
-def prs_html(prs: list[dict], fix_rounds: int, csrf: str = "", repo: str = "") -> str:
+PR_WORD = {"passed": "Checks passed", "failed": "Checks failing", "closed": "Closed"}
+
+
+def _pr_name(p: dict, repo: str) -> str:
+    return ("" if p["repo"] == repo else p["repo"].split("/")[-1] + " ") + f'#{int(p["number"])}'
+
+
+def _pr_tone(status: str) -> str:
+    return "done" if status in ("passed", "closed") else "fail" if status == "failed" else "run"
+
+
+def prs_fold(prs: list[dict], fix_rounds: int, csrf: str = "", repo: str = "") -> str:
+    """Pull requests folded to one row: each one's checks in a few words, and how many passed, fail or still run."""
+    if not prs:
+        return views.fold("prs", "Pull requests", "No pull request yet", prs_list(prs, fix_rounds, csrf, repo), head_id="pr-h")
+    words = [f'{_pr_name(p, repo)} {("merged" if p.get("summary") == "merged" else PR_WORD.get(p.get("status") or "", "Checks running").lower())}' for p in prs]
+    tally: dict = {}
+    for p in prs:
+        tally[_pr_tone(p.get("status") or "watching")] = tally.get(_pr_tone(p.get("status") or "watching"), 0) + 1
+    meta = "".join(f'<span class="sd-word {t}">{n} {w}</span>' for t, w in (("done", "done"), ("run", "running"), ("fail", "failing")) if (n := tally.get(t)))
+    return views.fold("prs", "Pull requests", esc(" · ".join(words)), prs_list(prs, fix_rounds, csrf, repo), meta, head_id="pr-h")
+
+
+
+
+def prs_list(prs: list[dict], fix_rounds: int, csrf: str = "", repo: str = "") -> str:
     rows = ""
     for p in prs:
         status = p.get("status") or "watching"
-        tone = "done" if status in ("passed", "closed") else "fail" if status == "failed" else "run"
+        tone = _pr_tone(status)
         url = f'https://github.com/{p["repo"]}/pull/{int(p["number"])}'
-        name = ("" if p["repo"] == repo else p["repo"].split("/")[-1] + " ") + f'#{int(p["number"])}'
+        name = _pr_name(p, repo)
         link = f'<a class="mono" href="{esc(url)}" rel="noopener noreferrer" target="_blank">{esc(name)} ↗</a>' if views.REPO.match(p["repo"]) else esc(name)
         merge = (f'<form method="post" action="/prs/merge" class="inline">{views.csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(p["repo"])}">'
                  f'<input type="hidden" name="n" value="{int(p["number"])}"><button aria-label="Merge pull request #{int(p["number"])}" '
                  'title="Merges this pull request on GitHub with a merge commit">Merge</button></form>'
                  if csrf and status == "passed" and views.REPO.match(p["repo"]) else "")
         rows += (f'<li class="sd-prrow">{link}<span class="sd-prt">{esc(p.get("title") or p["repo"])}</span>'
-                 f'<span class="sd-word {tone}">{esc({"passed": "Checks passed", "failed": "Checks failing", "closed": "Closed"}.get(status, "Checks running"))}</span>'
+                 f'<span class="sd-word {tone}">{esc(PR_WORD.get(status, "Checks running"))}</span>'
                  f'<span class="muted">{esc(views.pr_round_line(p, fix_rounds))}</span>{merge}</li>')
-    body = f'<ul class="sd-prs">{rows}</ul>' if rows else ""
-    return (f'<section class="sd-card" aria-labelledby="pr-h"><h3 id="pr-h">Pull requests and checks</h3>{body}'
-            + ("" if rows else '<p class="muted sd-fine">No pull request yet. When a build opens one, it appears here with its checks, '
-               'the fix rounds and the merge state.</p>') + '</section>')
+    return (f'<ul class="sd-prs">{rows}</ul>' if rows else '<p class="muted sd-fine">No pull request yet. When a build opens one, it appears '
+            'here with its checks, the fix rounds and the merge state.</p>')
 
 
 def design_url(repo: str, issue: int) -> str:
@@ -623,6 +635,19 @@ def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str, i
             f'<span class="sd-links">{read}{prs_link}</span></div>{body}{linked}</section>')
 
 
+def design_fold(files: list[dict], repo: str, issue: int, docs, prs_link: str, imports: list[dict] | None = None,
+                notes: list[dict] | None = None, csrf: str = "") -> str:
+    """The design output folded to one row: how many screens, open notes and linked designs."""
+    card = design_html(files, repo, issue, docs, prs_link, imports, notes, csrf)
+    shots = sum(1 for f in files if views.mockup_ok(f))
+    keys = {f"mockup:{f['repo']}:{f['path']}" for f in files if views.mockup_ok(f)}
+    opened = sum(1 for x in notes or [] if x.get("image") in keys)
+    linked = len(imports or [])
+    parts = ([f'{shots} screen{"s" if shots != 1 else ""}'] if shots else []) + ([f'{opened} open note{"s" if opened != 1 else ""}'] if opened else []) \
+        + ([f'{linked} linked design{"s" if linked != 1 else ""}'] if linked else []) + [f'Draft PR #{u.rsplit("/", 1)[-1]}' for u in sorted({f.get("pr") for f in files if f.get("pr")}) if views.GH_URL.match(u)]
+    return views.fold("design", "Design output", esc(" · ".join(parts)), card, tone="fd-design")
+
+
 def activity_html(events: list[dict], now: float) -> str:
     if not events:
         return ""
@@ -636,6 +661,50 @@ def activity_html(events: list[dict], now: float) -> str:
                     + (f' <span class="muted">· {len(g)} times since {esc(ago(g[-1]["ts"], now))}</span>' if len(g) > 1 else "") + "</li>"
                     for g in groups[:8])
     return f'<section class="sd-activity" aria-labelledby="ev-h"><h3 id="ev-h">Activity</h3><ul>{items}</ul></section>'
+
+
+def activity_fold(events: list[dict], now: float) -> str:
+    """The activity folded to one row: the newest event and how many there are."""
+    if not events:
+        return ""
+    newest = events[0]
+    summary = f'{esc(ago(newest["ts"], now))} · {esc(views.clip(plain(newest.get("message")), 140))}'
+    return views.fold("activity", "Activity", summary, activity_html(events, now), f'<span class="mono muted">{len(events)} event{"s" if len(events) != 1 else ""}</span>')
+
+
+def steps_fold(j: dict, repo: str, issue: int, docs=()) -> str:
+    """The step table folded to one row: the step that runs (or waits) now, else the last one, and the totals."""
+    steps = j["steps"]
+    if not steps:
+        return ""
+    now_s = next((s for s in reversed(steps) if s["state"] in ("running", "waiting")), None)
+    s = now_s or steps[-1]
+    label, note = _step_label(s)
+    head = "Now" if now_s else "Last"
+    summary = esc(f'{head}: {label}' + (f', {note}' if note else "") + (f' · {secs(s["seconds"])}' if secs(s["seconds"]) != "—" else ""))
+    runs = sum(1 for x in steps if x["kind"] == "run")
+    meta = f'<span class="mono muted">{len(steps)} step{"s" if len(steps) != 1 else ""} · {runs} run{"s" if runs != 1 else ""}</span>'
+    return views.fold("steps", "Steps", summary, steps_html(j, repo, issue, docs), meta)
+
+
+def journey_line(r: dict) -> str:
+    """Where the ticket is and its numbers, in one line: the station, time, tokens, runs and models."""
+    j, at = r["journey"], r.get("at")
+    tin, tout = j["tokens"]["in"], j["tokens"]["out"]
+    runs = sum(1 for s in j["steps"] if s["kind"] == "run")
+    parts = [f'At {LABEL[at]}' if at else "Not started"]
+    parts += [secs(j["seconds"]) + (" so far" if j["status"] == "running" else "")] if secs(j["seconds"]) != "—" else []
+    parts += [f'{tok((tin or 0) + (tout or 0))} tokens'] if tin is not None or tout is not None else []
+    parts += [f'{runs} run{"" if runs == 1 else "s"}' + (f' on {", ".join(sorted(j["models"]))}' if j["models"] else "")] if runs else []
+    return " · ".join(parts)
+
+
+def journey_fold(r: dict, files: list, docs, now: float) -> str:
+    """The journey folded to one row: the ten stations as a bar and the numbers; open it for the floor's strip (a phone: the list)."""
+    body = (f'<p class="muted sd-fine fd-note">The same stations as the Factory floor</p>{strip(r["stations"], r.get("verify"), now)}'
+            + phone_journey(r, files, docs))
+    summary = f'{progress(r["stations"])}<span class="mono fd-line">{esc(journey_line(r))}</span>'
+    return views.fold("journey", "Journey", summary, body, head_id="j-h", tone="fd-journey")
 
 
 def phone_journey(r: dict, files: list, docs) -> str:
@@ -669,9 +738,6 @@ def phone_journey(r: dict, files: list, docs) -> str:
     return f'<section class="sd-phj" aria-labelledby="pj-h"><h3 id="pj-h" class="lab">Journey</h3><ol>{items}</ol></section>'
 
 
-def journey_card(st: dict, verify: dict | None = None, now: float | None = None, foot: str = "") -> str:
-    return (f'<section class="sd-card sd-journey" aria-labelledby="j-h"><div class="sd-cardhead"><h3 id="j-h">Journey</h3>'
-            f'<span class="muted sd-fine">The same stations as the Factory floor</span></div>{strip(st, verify, now)}{foot}</section>')
 
 
 def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, csrf: str = "", needs_html: str = "") -> str:
@@ -681,9 +747,9 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, c
     design_prs = sorted({f.get("pr") for f in files if f.get("pr")})
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
     card = outcome_card(r["outcome_full"], repo, n, r.get("when") or 0) if r["state"] == "done" and r.get("outcome_full") else ""
-    return (card + journey_card(r["stations"], r.get("verify"), now) + phone_journey(r, files, docs) + needs_html + _tiles(j, r["state"])
-            + prs_html(r["prs"], fix_rounds, csrf, repo) + design_html(files, repo, n, docs, design_link, r.get("design_imports"), r.get("review_notes"), csrf) + steps_html(j, repo, n, docs)
-            + activity_html(events, now))
+    return (card + needs_html + journey_fold(r, files, docs, now) + prs_fold(r["prs"], fix_rounds, csrf, repo)
+            + design_fold(files, repo, n, docs, design_link, r.get("design_imports"), r.get("review_notes"), csrf) + steps_fold(j, repo, n, docs)
+            + activity_fold(events, now))
 
 
 X_ICON = '<svg class="sd-x" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
@@ -749,57 +815,66 @@ def rounds_used(p: dict, limit: int) -> str:
     return f'{n} of {limit} fix round{"" if limit == 1 else "s"} used' if n else "no fix round used"
 
 
-def stats_line(j: dict) -> str:
-    tin, tout = j["tokens"]["in"], j["tokens"]["out"]
-    runs = sum(1 for s in j["steps"] if s["kind"] == "run")
-    parts = ([secs(j["seconds"])] if secs(j["seconds"]) != "—" else []) + ([f'{tok((tin or 0) + (tout or 0))} tokens ({tok(tin)} in, {tok(tout)} out)'] if tin is not None or tout is not None else [])
-    parts += [f'{runs} run{"" if runs == 1 else "s"}' + (f' on {", ".join(sorted(j["models"]))}' if j["models"] else "")] if runs else []
-    return f'<p class="mono muted sd-stats">{esc(" · ".join(parts))}</p>'
 
 
-def history_html(j: dict, repo: str, issue: int, docs, events, now: float) -> str:
-    """The step table and the activity, folded away: on a failed ticket the card above already says what matters."""
-    steps, runs = j["steps"], sum(1 for s in j["steps"] if s["kind"] == "run")
-    if not steps and not events:
+
+
+MORE_ICON = '<svg class="sd-mi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>'
+
+
+def ticket_links(r: dict, files: list[dict], docs, images: bool) -> tuple[str, str]:
+    """(the links shown in the ticket's header, the rest for its More menu): GitHub and the first pull request stay in sight."""
+    repo, n = r["repo"], r["issue"]
+    ext = ' rel="noopener noreferrer" target="_blank"'
+    prs = [f'<a href="https://github.com/{esc(p["repo"])}/pull/{int(p["number"])}"{ext}>PR #{int(p["number"])} ↗</a>'
+           for p in r["prs"] if views.REPO.match(p["repo"])]
+    prs += [f'<a href="{esc(u)}"{ext}>Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>'
+            for u in sorted({f.get("pr") for f in files if f.get("pr")}) if views.GH_URL.match(u)]
+    shown = ([] if is_local(int(n)) else [f'<a href="{esc(f"https://github.com/{repo}/issues/{n}")}"{ext}>Open on GitHub ↗</a>']) + prs[:1]
+    more = (prs[1:] + [f'<a href="/labels/issue?{esc(_qs(repo=repo, n=n))}">Edit labels</a>']
+            + [f'<a href="{views.doc_url(repo, n, s)}">Read {esc(views.DOC_NOUN[s])}</a>' for s in docs]
+            + ([f'<a href="/ticket/images?{esc(_qs(repo=repo, n=n))}">View images</a>',
+                f'<a href="/ticket/review?{esc(_qs(repo=repo, n=n))}">Review the screens</a>'] if images else []))
+    return "".join(shown), "".join(more)
+
+
+def more_menu(links: str, label: str = "More") -> str:
+    """A small menu of links under a button, for what a person needs now and then."""
+    if not links:
         return ""
-    return (f'<details class="sd-card sd-history"><summary><span class="sd-hist-t">Run history</span><span class="mono muted">'
-            f'{len(steps)} steps · {runs} runs' + (f' · {esc(secs(j["seconds"]))}' if secs(j["seconds"]) != "—" else "")
-            + f'</span></summary>{steps_html(j, repo, issue, docs)}{activity_html(events, now)}</details>')
+    return (f'<details class="sd-menu"><summary>{esc(label)}{MORE_ICON}</summary>'
+            f'<div class="sd-menul" role="group" aria-label="{esc(label)}">{links}</div></details>')
+
+
+FOLD_ALL = ('<div class="sd-foldall"><button type="button" class="link" data-fold-all="1">Expand all</button>'
+            '<button type="button" class="link" data-fold-all="0">Collapse all</button></div>')
 
 
 def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_rounds: int, now: float, live: bool, images: bool = False,
-                local_html: str = "", handling: str = "", close_html: str = "", csrf: str = "", failed_html: str = "") -> str:
-    """local_html: a local ticket's own card (description, comments, edit); it has no GitHub page to link to. close_html: Close for a
-    GitHub ticket (a local ticket's card has its own). handling: how the
-    settings apply to this ticket (features.ticket_handling)."""
+                local_html: str = "", handling: str = "", close_html: str = "", csrf: str = "", failed_html: str = "", move: str = "") -> str:
+    """local_html: a local ticket's own parts (description, comments, chat, priority…), folded; it has no GitHub page to link to.
+    close_html: Close for a GitHub ticket (a local ticket's card has its own). handling: how the settings apply to this ticket
+    (features.ticket_handling). move: the Start or move menu (kanban.menu), always at hand in the header.
+    Everything but what needs a person and what went wrong is folded to one row that says what is inside."""
     repo, n, j = r["repo"], r["issue"], r["journey"]
-    gh = f"https://github.com/{repo}/issues/{n}"
-    prs = "".join(f'<a href="https://github.com/{esc(p["repo"])}/pull/{int(p["number"])}" rel="noopener noreferrer" target="_blank">PR #{int(p["number"])} ↗</a>'
-                  for p in r["prs"] if views.REPO.match(p["repo"]))
-    prs += "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>'
-                   for u in sorted({f.get("pr") for f in files if f.get("pr")}) if views.GH_URL.match(u))
-    links = ("" if is_local(int(n)) else f'<a href="{esc(gh)}" rel="noopener noreferrer" target="_blank">Open on GitHub ↗</a>') + (f'{prs}'
-             f'<a href="/labels/issue?{esc(_qs(repo=repo, n=n))}">Edit labels</a>'
-             + "".join(f'<a href="{views.doc_url(repo, n, s)}">Read {esc(views.DOC_NOUN[s])}</a>' for s in docs)
-             + (f'<a href="/ticket/images?{esc(_qs(repo=repo, n=n))}">View images</a>'
-                f'<a href="/ticket/review?{esc(_qs(repo=repo, n=n))}">Review the screens</a>' if images else ""))
-    history = ""
+    shown, more = ticket_links(r, files, docs, images)
     if r["state"] == "failed":
-        # what went wrong first; the journey with its numbers in one line; the run history folded away below the ticket itself
+        # what went wrong first; then the journey with its numbers in one line; the rest folded
         design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>'
                               for u in sorted({f.get("pr") for f in files if f.get("pr")}) if views.GH_URL.match(u))
-        body = (failed_html or failed_card(r, fix_rounds, now)) + journey_card(r["stations"], r.get("verify"), now, stats_line(j)) \
-            + phone_journey(r, files, docs) + needs_html + design_html(files, repo, n, docs, design_link, r.get("design_imports"), r.get("review_notes"), csrf)
-        history = history_html(j, repo, n, docs, events, now)
+        body = ((failed_html or failed_card(r, fix_rounds, now)) + needs_html + journey_fold(r, files, docs, now)
+                + design_fold(files, repo, n, docs, design_link, r.get("design_imports"), r.get("review_notes"), csrf)
+                + steps_fold(j, repo, n, docs) + activity_fold(events, now))
     else:
         body = live_part(r, files, docs, events, fix_rounds, now, csrf, needs_html)
     if live and j["status"] in ("running", "waiting", "queued"):
         body = f'<div id="live" data-src="/fragment/ticket">{body}</div>'
     return (f'<article class="sd-detail" aria-label="Ticket {esc(display(int(n)))}">'
-            f'<div class="sd-dhead"><div class="sd-row"><span class="mono muted">{esc(views.ref(repo, n))}</span>'
-            f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span></div>'
-            f'<h2>{esc(r["title"])}</h2><div class="sd-links">{links}</div></div>'
-            + body + local_html + history + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + handling + "</article>")
+            f'<div class="sd-dhead"><div class="sd-dtitle"><div class="sd-row"><span class="mono muted">{esc(views.ref(repo, n))}</span>'
+            f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}</div>'
+            f'<h2>{esc(r["title"])}</h2></div><div class="sd-links">{move}{shown}{more_menu(more)}</div></div>'
+            + FOLD_ALL + '<div class="sd-folds">' + body + local_html + handling + "</div>"
+            + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + "</article>")
 
 
 SUMMARY_LINE = re.compile(r"^\s*(?:\*\*)?Summary:?(?:\*\*)?:?\s*(.+)$", re.I | re.M)
@@ -820,12 +895,13 @@ def doc_gist(text: str) -> str:
 
 def summary_card(db, repo: str, issue: int, docs, files: list[dict]) -> str:
     """What the stages that already ran concluded, one line each, so a person can decide Build or Skip without reading the documents."""
-    rows = ""
+    rows, first = "", ""
     for stage in docs:
         d = dbm.stage_doc(db, repo, issue, stage)
         gist = doc_gist(d["output"]) if d else ""
         if not gist:
             continue
+        first = first or f'{LABEL.get(stage, stage.title())}: {gist}'
         extra = ""
         if stage == "designer":
             n = sum(1 for f in files if f.get("preview"))
@@ -835,8 +911,9 @@ def summary_card(db, repo: str, issue: int, docs, files: list[dict]) -> str:
                  f'<a href="{views.doc_url(repo, issue, stage)}">Read {esc(views.DOC_NOUN[stage])}</a></li>')
     if not rows:
         return ""
-    return (f'<section class="sd-card sd-summary" aria-labelledby="sum-h"><div class="sd-cardhead"><h3 id="sum-h">What the stages found</h3></div>'
-            f'<ul class="sd-sumlist">{rows}</ul></section>')
+    n = rows.count("<li>")
+    return views.fold("found", "What the stages found", esc(views.clip(first, 160)), f'<ul class="sd-sumlist">{rows}</ul>',
+                      f'<span class="mono muted">{n} stage{"s" if n != 1 else ""}</span>', head_id="sum-h")
 
 
 def why_part(row: dict) -> tuple[str, str]:
@@ -932,14 +1009,19 @@ def _switch(project: str) -> str:
     return kanban.switch("list", project)
 
 
+DIALOG = re.compile(r"<noscript>.*?</noscript>|<dialog\b.*?</dialog>", re.S)
+
+
 def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: str, q: str, at: str, order: str, detail: str, new_ticket: str, now: float,
-                 csrf: str = "", settings: str = "", project: str = "", projects=(), unknown: bool = False, github: bool = True) -> str:
+                 csrf: str = "", settings: str = "", project: str = "", projects=(), unknown: bool = False, github: bool = True, more_new: str = "") -> str:
     """settings: the strip of settings that shape this page (features.tickets_strip). rows are already narrowed to project
-    (a configured name or STANDALONE; "" is all); projects are the switcher's choices; unknown: the asked-for project is gone."""
+    (a configured name or STANDALONE; "" is all); projects are the switcher's choices; unknown: the asked-for project is gone.
+    more_new: the header's other ways in (Import, Review tickets, New project), behind a More button; their popups stay outside
+    the menu, so closing the menu does not hide an open one."""
+    popups = "".join(DIALOG.findall(more_new))
+    more = more_menu(DIALOG.sub("", more_new)) + popups if more_new else ""
     shown = pick(rows, flt, at, q, order)
     sel = (sel_row["repo"], sel_row["issue"]) if sel_row else None
-    crumb = (f'<p class="sd-crumb muted">Tickets <span aria-hidden="true">/</span> <span class="mono">{esc(views.ref(sel_row["repo"], sel_row["issue"], short=True))}</span></p>'
-             if sel_row and explicit else "")
     back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at, project=project))}">← All tickets</a></p>'     # shown on a phone while a ticket is open
     note = ""
     if project in dict(projects):
@@ -952,9 +1034,10 @@ def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: st
     if not github:
         note = ('<p class="muted sd-scope" role="status">GitHub issues are off. Showing local tickets and GitHub work that is still running. '
                 '<a href="/settings">Turn on Work from GitHub issues</a></p>') + note
-    return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead">{crumb}<div class="sd-h1row"><h1>Tickets</h1>{new_ticket}</div>'
-            '<p class="muted sd-lede">Everything about a ticket in one place: what it needs from you, where it is on the floor, every run, and its pull requests and checks.</p></div>'
-            + settings + phone_needs(rows, csrf) + _switch(project) + filters_html(counts(rows), flt, q, at, order, project=project, projects=projects) + note
+    # One row: the title, Board | List, the state chips, search and Filters, the page's settings and the New buttons.
+    return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead sd-topbar"><h1>Tickets</h1>{_switch(project)}'
+            + filters_html(counts(rows), flt, q, at, order, project=project, projects=projects)
+            + f'<div class="sd-barend">{settings}{new_ticket}{more}</div></div>' + phone_needs(rows, csrf) + note
             + f'<div class="sd-split"><section class="sd-list" aria-label="Ticket list">{list_html(shown, sel, flt, q, at, now, csrf, project)}</section>'
             + (detail or '<div class="sd-detail sd-none"><p class="muted">Pick a ticket to see its journey.</p></div>') + "</div>"
             + f'<template id="ld-detail"><div class="sd-detail sd-loading">{loader("Loading the ticket from GitHub")}</div></template></div>')

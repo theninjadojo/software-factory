@@ -587,26 +587,37 @@ class Handler(BaseHTTPRequestHandler):
                         if sel["state"] == "failed":
                             acts, latest = LT.failed_extras(cfg, issue, sel["repo"], csrf, back, decision, approved)
                             failed = board.failed_card(sel, cfg.ci.fix_rounds, now, acts, latest)
-                    local = PC.card(cfg, db, sel["repo"], sel["issue"], [x["name"] for x in issue["labels"]] if issue else None,
-                                    issue["body"] if issue else "", csrf, back) + local
-                    local += SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back) + CH.card(cfg, db, sel["repo"], sel["issue"], csrf, back)
-                    local += RA.card(db, sel["repo"], sel["issue"], csrf, back)
+                    # each part folded to one row that says what is inside; review follow-ups wait for a person, so they stay open
+                    if issue is not None:
+                        said = len(issue["comment_list"])
+                        local = views.fold("local", "Ticket", views.esc(LT._preview(issue["body"], 160) or "No description."), local,
+                                           views.badge(issue["state"], "" if issue["state"] == "closed" else "good")
+                                           + f' <span class="mono muted">{said} comment{"" if said == 1 else "s"}</span>')
+                    prio = board.PRIO_WORD.get(sel.get("priority", "normal"), "Normal")
+                    who = {"you": "pinned by you", "pm": "set by the project manager", "label": "from a priority label"}.get(sel.get("prio_src", ""), "nobody set one yet")
+                    local = CH.folded(cfg, db, sel["repo"], sel["issue"], csrf, back) + local + views.fold(
+                        "priority", "Priority", views.esc(f"{prio} · {who}"),
+                        PC.card(cfg, db, sel["repo"], sel["issue"], [x["name"] for x in issue["labels"]] if issue else None, issue["body"] if issue else "", csrf, back))
+                    local += views.fold("linked", "Linked tickets", "Split from or into other tickets", SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back))
+                    local = views.fold("followups", "Review follow-ups", "The reviewer proposed follow-up work", RA.card(db, sel["repo"], sel["issue"], csrf, back), tone="fd-ask",
+                                       open_=True) + local
+                    move = kanban.menu(sel, cfg, csrf, back, L.has_token(self), label="Move") if csrf else ""
                     decided = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])) or {}
                     close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
                                                                           sel["state"] in ("working", "needs"))
                     detail = board.detail_html(sel, needs_html, files, docs, events, cfg.ci.fix_rounds, now, explicit, images,
-                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close, csrf, failed)
+                                               local, features.ticket_handling(cfg, sel["repo"], sel["issue"], decided.get("detail", "")), close, csrf, failed, move)
                 if path == "/fragment/detail":
                     return self._send(200, detail)
         finally:
             db.close()
-        new = (L.new_ticket_form(cfg, cfg.repos[0], csrf) + L.import_form(cfg, cfg.repos[0], csrf)) if cfg.repos else ""
-        new += TRV.link(cfg, project, csrf)
-        new += '<a class="btn secondary" href="/projects/new">New project</a>' if csrf else ""
+        new = L.new_ticket_form(cfg, cfg.repos[0], csrf) if cfg.repos else ""
+        more_new = (L.import_form(cfg, cfg.repos[0], csrf) if cfg.repos else "") + TRV.link(cfg, project, csrf)
+        more_new += '<a class="btn secondary" href="/projects/new">New project</a>' if csrf else ""
         shown = L.flash_pop(csrf)
         title = f"{display(int(sel['issue']))} · Tickets" if explicit and sel else "Tickets"
         strip = features.tickets_strip(cfg, csrf, q.get("ask") == "local")
-        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip, project, projects, bool(asked and projects and not project), gh_on), path, csrf, wide=True,
+        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip, project, projects, bool(asked and projects and not project), gh_on, more_new), path, csrf, wide=True,
                                           badges=badges, bare=True, flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
 
     def _get(self, path: str, q: dict, csrf: str) -> None:

@@ -1,4 +1,5 @@
 """The Factory and Tickets screens (board.py): the station model, belts and crates, the list's filters, a ticket's detail."""
+import re
 import time
 import unittest
 
@@ -212,12 +213,30 @@ class Detail(unittest.TestCase):
         r["journey"] = journey(WAITING, "waiting")
         files = [{"repo": REPO, "path": "docs/design/previews/factory-5-x.png", "url": f"https://github.com/{REPO}/blob/{'a' * 40}/docs/design/previews/factory-5-x.png",
                   "pr": f"https://github.com/{REPO}/pull/77"}]
-        html = board.detail_html(r, "<section>NEEDS</section>", files, ["analyst", "designer"], [{"ts": time.time() - 30, "message": "Design <done>"}], 2, time.time(), True)
-        order = [html.index(x) for x in ('id="j-h"', "NEEDS", 'class="sd-tiles"', 'id="pr-h"', 'id="d-h"', "Steps in order", 'id="ev-h"')]
-        self.assertEqual(order, sorted(order))
+        html = board.detail_html(r, "<section>NEEDS</section>", files, ["analyst", "designer"], [{"ts": time.time() - 30, "message": "Design <done>"}], 2, time.time(), True,
+                                 move="<MOVE>")
+        order = [html.index(x) for x in ("<MOVE>", "NEEDS", 'id="j-h"', 'id="pr-h"', 'data-fold="design"', "Steps in order", 'id="ev-h"')]
+        self.assertEqual(order, sorted(order))                         # Move in the header; what needs a person before the folded parts
         for needle in ("Draft PR #77", "PR #9", "Checks failing", "Read design", 'id="live" data-src="/fragment/ticket"', "Design &lt;done&gt;", "/runs/1"):
             self.assertIn(needle, html)
         self.assertNotIn("style=", html)
+
+    def test_every_part_but_what_needs_a_person_is_folded_with_a_summary(self):
+        r = row(5, "needs", board.stations(journey(WAITING, "waiting")), "Checkout", at="designer", steps=WAITING,
+                prs=[{"repo": REPO, "number": 9, "status": "failed", "rounds": 1, "title": "Fix"}])
+        r["journey"] = journey(WAITING, "waiting")
+        html = board.detail_html(r, "<section>NEEDS</section>", [], ["analyst", "designer"], [{"ts": time.time() - 30, "message": "Design <done>"}], 2, time.time(), False)
+        folds = re.findall(r'<details class="sd-fold[^"]*" data-fold="(\w+)"( open)?>', html)
+        self.assertEqual([k for k, _ in folds], ["journey", "prs", "steps", "activity"])
+        self.assertFalse(any(o for _, o in folds))                      # all folded to start with
+        summary = lambda key: re.search(rf'data-fold="{key}".*?<span class="fd-s">(.*?)</span>(?:<span class="fd-m">|</summary>)', html).group(1)
+        self.assertIn("#9 checks failing", summary("prs"))
+        self.assertIn("At Designer · 1m 00s · 2.4k tokens · 2 runs on sonnet", summary("journey"))
+        self.assertIn("Now: Needs you, 2 open question(s) from the designer", summary("steps"))
+        self.assertIn("Design &lt;done&gt;", summary("activity"))
+        self.assertIn('data-fold-all="1"', html)                          # Expand all / Collapse all
+        self.assertIn('class="sd-menu"', html)                            # the rarer links behind More
+        self.assertNotIn('<section>NEEDS</section></div></details>', html)
 
     def test_the_phone_journey_lists_every_station_with_the_mockups_in_design(self):
         r = row(5, "needs", board.stations(journey(WAITING, "waiting")), steps=WAITING)
