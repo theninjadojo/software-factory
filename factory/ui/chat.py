@@ -87,7 +87,7 @@ def card(cfg, db, repo: str, n: int, csrf: str, back: str) -> str:
     turns = "".join(_turn_html(t) + (_proposal_html(t, hidden, back) if t["author"] == "agent" and t["id"] == last_open else "")
                     for t in rows) or '<p class="muted">Nothing yet. Ask about this ticket: replies come in seconds and change nothing.</p>'
     form = ('<p class="muted">Waiting for the reply…</p>' if waiting else
-            f'<form method="post" action="/tickets/chat/send" class="field">{hidden}<input type="hidden" name="back" value="{esc(back)}">'
+            f'<form method="post" action="/tickets/chat/send" class="field chat-form">{hidden}<input type="hidden" name="back" value="{esc(back)}">'
             f'<label>Message<textarea name="text" rows="3" required maxlength="{C.MAX_TEXT}"></textarea></label>'
             "<button>Send</button></form>") if cfg.chat.enabled else '<p class="muted">Ticket chat is switched off.</p>'
     return (f'<section class="sd-card sd-chat" aria-labelledby="chat-h" data-src="/fragment/chat?repo={esc(quote(repo, safe=""))}&amp;n={int(n)}"'
