@@ -7,7 +7,9 @@ done (green), running (amber, the belt moves and crates ride it), waiting for a 
 failed (red) or not reached (dim). The Floor shows where every open ticket is; a ticket shows its own route.
 
 Every text is escaped; colours, placement and motion are CSS classes (the page policy forbids inline styles)."""
+import json
 import re
+import sqlite3
 import time
 from urllib.parse import urlencode
 
@@ -192,6 +194,7 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
         worked = []
     worked += [{"repo": r, "issue": n, "title": None, "detail": "", "decided_at": 0} for r, n in by_ticket]
     worked += LT.rows(db)                       # every local ticket, started or not: the factory's database is its only home
+    waiting = queued_for_slot(db)
     seen, out = set(), []
     for t in base + worked + [{"repo": r, "issue": n, "title": nr.get("title"), "detail": "", "decided_at": nr.get("at") or 0} for (r, n), nr in need.items()]:
         key = (t["repo"], t["issue"])
@@ -199,7 +202,7 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
             continue
         seen.add(key)
         out.append(_one(db, t, by_ticket.get(key, []), need.get(key), titles.get(key), now,
-                       needs_rows is not None or (not github and not is_local(int(t["issue"])))))
+                       needs_rows is not None or (not github and not is_local(int(t["issue"]))), waiting.get(key)))
     if not github:
         out = [r for r in out if is_local(r["issue"]) or r["state"] == "working"]
     heads = dbm.doc_heads(db, [(r["repo"], r["issue"]) for r in out if r["state"] == "done"])
@@ -213,9 +216,21 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
     return out
 
 
-def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -> dict:
+def queued_for_slot(db) -> dict:
+    """(repo, issue) -> {kind, reason}: the labelled tickets the orchestrator's last poll left waiting (for a free agent, or for
+    their blockers), from the pool status it writes every poll."""
+    try:
+        raw = dbm.get_status(db).get("pool")
+        items = json.loads(raw["value"]).get("queued") or [] if raw else []
+    except (sqlite3.Error, ValueError, TypeError, AttributeError):
+        return {}
+    return {(q["repo"], q["issue"]): q for q in items if isinstance(q, dict) and isinstance(q.get("issue"), int) and isinstance(q.get("repo"), str)}
+
+
+def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False, queued: dict | None = None) -> dict:
     """known: GitHub has been read, so a ticket is waiting for a person only if it says so (the database's record of questions
-    asked or a person called can be out of date: answered on GitHub, or the issue closed)."""
+    asked or a person called can be out of date: answered on GitHub, or the issue closed). queued: the orchestrator holds the
+    ticket's start label and starts it once an agent is free (or its blockers close), so it waits for no one."""
     j = dbm.journey(db, t["repo"], int(t["issue"]), now)
     st = stations(j, prs)
     loc = LT.info(db, t["repo"], int(t["issue"])) if is_local(int(t["issue"])) else None
@@ -232,13 +247,16 @@ def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False) -
                 and any(s["kind"] == "run" and s.get("run_kind") != "chat" for s in j["steps"]))
     if idle:                                    # open, nothing running, nothing asked, nothing shipped: the factory stopped and a
         state = "needs"                         # person picks the next step (it is not done until it is closed or merged)
+    lined_up = bool(queued and need is None and state != "working" and not (loc and loc["state"] == "closed"))
+    if lined_up:                                # a start label is on and the next run is lined up: nothing for a person to pick
+        state, idle = "working", False
     at = current(st)
     last = max([s["finished"] or s["started"] for s in j["steps"]] + [p.get("updated") or 0 for p in prs] + [t.get("decided_at") or 0])
     return {"repo": t["repo"], "issue": int(t["issue"]), "title": (loc or {}).get("title") or title or (need or {}).get("title") or t.get("title")
             or f"Ticket {display(int(t['issue']))}",
             "state": state, "closed": bool(loc and loc["state"] == "closed"), "stations": st, "at": at, "when": last,
-            "why": _idle_why(at) if idle else _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need,
-            "decision": t.get("outcome") or "", "detail": t.get("detail") or ""}
+            "why": _idle_why(at) if idle else _queued_why(queued) if lined_up else _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need,
+            "decision": t.get("outcome") or "", "detail": t.get("detail") or "", "lined_up": lined_up}
 
 
 def outcome_of(r: dict, head) -> dict:
@@ -267,6 +285,11 @@ def outcome_card(o: dict, repo: str, issue: int, at: float = 0) -> str:
             f'<div class="sd-outlinks muted sd-fine">{when}{links}</div></section>')
 
 
+def _queued_why(q: dict) -> str:
+    what = LABEL.get(q.get("kind") or "", "The next run")
+    return f'{what} queued: {q.get("reason") or "waiting for a free agent"}'
+
+
 def _idle_why(at) -> str:
     return f'{LABEL.get(at or "", "The last step")} finished; choose the next step'
 
@@ -282,7 +305,7 @@ def row_for(db, repo: str, issue: int, needs_rows=None, titles: dict | None = No
         prs, dec = [], {}
     return _one(db, {"repo": repo, "issue": issue, "title": dec.get("title"), "detail": dec.get("detail") or "", "outcome": dec.get("outcome") or "",
                      "decided_at": 0}, prs, need, (titles or {}).get((repo, issue)), now,
-                needs_rows is not None)
+                needs_rows is not None, queued_for_slot(db).get((repo, issue)))
 
 
 def ticket_extras(db, repo: str, issue: int, j: dict) -> tuple[list, list, list, bool]:
@@ -692,7 +715,7 @@ def journey_line(r: dict) -> str:
     j, at = r["journey"], r.get("at")
     tin, tout = j["tokens"]["in"], j["tokens"]["out"]
     runs = sum(1 for s in j["steps"] if s["kind"] == "run")
-    parts = [f'At {LABEL[at]}' if at else "Not started"]
+    parts = [r["why"] if r.get("lined_up") else f'At {LABEL[at]}' if at else "Not started"]     # queued: why it has not started yet
     parts += [secs(j["seconds"]) + (" so far" if j["status"] == "running" else "")] if secs(j["seconds"]) != "—" else []
     parts += [f'{tok((tin or 0) + (tout or 0))} tokens'] if tin is not None or tout is not None else []
     parts += [f'{runs} run{"" if runs == 1 else "s"}' + (f' on {", ".join(sorted(j["models"]))}' if j["models"] else "")] if runs else []
