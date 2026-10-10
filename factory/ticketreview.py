@@ -329,33 +329,76 @@ def orient(found: list[Proposal], by: dict) -> list[Proposal]:
     return out
 
 
+REVIEW_COLS = ("id", "repo", "sources", "scope", "status", "detail", "tickets", "run_id", "created", "finished")
+
+
 def latest(db, repo: str) -> dict | None:
     try:
-        r = db.execute("SELECT id, sources, status, detail, tickets, created FROM ticket_reviews WHERE repo=? ORDER BY id DESC LIMIT 1", (repo,)).fetchone()
+        r = db.execute(f"SELECT {', '.join(REVIEW_COLS)} FROM ticket_reviews WHERE repo=? ORDER BY id DESC LIMIT 1", (repo,)).fetchone()
     except sqlite3.OperationalError:
         return None
-    return dict(zip(("id", "sources", "status", "detail", "tickets", "created"), r)) if r else None
+    return dict(zip(REVIEW_COLS, r)) if r else None
 
 
-VIEWS = {"waiting": ("proposed", "queued", "failed"), "applied": ("applied",), "dismissed": ("rejected",)}
-
-
-def counts(db, repo: str) -> dict:
-    """{view: how many proposals it shows}."""
+def review(db, rid: int) -> dict | None:
     try:
-        got = dict(db.execute("SELECT status, COUNT(*) FROM review_proposals WHERE repo=? GROUP BY status", (repo,)).fetchall())
+        r = db.execute(f"SELECT {', '.join(REVIEW_COLS)} FROM ticket_reviews WHERE id=?", (int(rid),)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return dict(zip(REVIEW_COLS, r)) if r else None
+
+
+def reviews(db, repos, limit: int = 20) -> list[dict]:
+    """The latest reviews of these repositories, newest first, each with how many recommendations it made."""
+    repos = list(repos)
+    if not repos:
+        return []
+    try:
+        rows = db.execute(f"SELECT {', '.join('r.' + c for c in REVIEW_COLS)}, (SELECT COUNT(*) FROM review_proposals p WHERE p.review_id=r.id) "
+                          f"FROM ticket_reviews r WHERE r.repo IN ({','.join('?' * len(repos))}) ORDER BY r.id DESC LIMIT ?",
+                          (*repos, limit)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [dict(zip(REVIEW_COLS + ("found",), r)) for r in rows]
+
+
+def write_up(db, run_id) -> str:
+    """The agent's document of a review run, without the machine-read block at its end. Untrusted: render it escaped."""
+    if not run_id:
+        return ""
+    try:
+        r = db.execute("SELECT output FROM runs WHERE id=?", (int(run_id),)).fetchone()
+    except sqlite3.OperationalError:
+        return ""
+    return BLOCK.sub("", r[0] or "").strip() if r else ""
+
+
+VIEWS = {"waiting": ("proposed", "queued", "failed"), "applied": ("applied",), "dismissed": ("rejected",), "outdated": ("stale",)}
+
+
+def _where(repo: str, rid) -> tuple[str, tuple]:
+    return ("repo=? AND review_id=?", (repo, int(rid))) if rid else ("repo=?", (repo,))
+
+
+def counts(db, repo: str, rid=None) -> dict:
+    """{view: how many proposals it shows}, of one review or of every review of the repository."""
+    where, args = _where(repo, rid)
+    try:
+        got = dict(db.execute(f"SELECT status, COUNT(*) FROM review_proposals WHERE {where} GROUP BY status", args).fetchall())
     except sqlite3.OperationalError:
         got = {}
     return {v: sum(got.get(s, 0) for s in sts) for v, sts in VIEWS.items()}
 
 
-def proposals(db, repo: str, view: str = "waiting") -> list[dict]:
-    """One view's proposals, newest review first: waiting for a person (or being applied, or failed), applied, or dismissed."""
+def proposals(db, repo: str, view: str = "waiting", rid=None) -> list[dict]:
+    """One view's proposals, newest review first: waiting for a person (or being applied, or failed), applied, dismissed, or out
+    of date (a newer review replaced it, or the ticket changed). Of one review when rid is given."""
     sts = VIEWS.get(view, VIEWS["waiting"])
+    where, args = _where(repo, rid)
     try:
         rows = db.execute("SELECT id, issue, title, verdict, target, evidence, reason, note, status, detail, warn FROM review_proposals "
-                          f"WHERE repo=? AND status IN ({','.join('?' * len(sts))}) ORDER BY review_id DESC, issue LIMIT 200",
-                          (repo, *sts)).fetchall()
+                          f"WHERE {where} AND status IN ({','.join('?' * len(sts))}) ORDER BY review_id DESC, issue LIMIT 200",
+                          (*args, *sts)).fetchall()
     except sqlite3.OperationalError:
         return []
     return [{"id": a, "issue": b, "title": c, "verdict": d, "target": e, "evidence": json.loads(f), "reason": g, "note": h, "status": s, "detail": x,

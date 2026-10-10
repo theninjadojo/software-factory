@@ -1731,6 +1731,7 @@ def ticket_review_job(cfg: Config, gh: GitHub, conn, rid: int, repo: str, source
     route = Route(tr.harness, tr.model, tr.effort)
     stand_in = {"number": 0, "title": f"Ticket review: {len(items)} ticket(s)", "body": "", "updated_at": ""}
     run_id, sink = begin_run("ticket-review", repo, stand_in, route, None, "ticket-review"), {}
+    ticketreview.set_status(conn, rid, "running", "; ".join([f"reading {len(items)} ticket(s) and the code", *notes]), len(items), run_id)
     res = runner.run_task(cfg, gh, repo, stand_in, route, role="ticket-review", sink=sink, backlog=pm.backlog_items(items, tr.body_chars))
     end_run(run_id, res, sink)
     allowed = {r.repo for r in project_for(cfg, repo).repos if r.repo in cfg.repos} | {repo}     # where a split's tickets may go
