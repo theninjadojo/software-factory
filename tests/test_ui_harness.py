@@ -81,7 +81,7 @@ class HarnessPage(AdminCase):
     def test_roles_can_pick_a_harness(self):
         cookie, csrf = self.session()
         self.post(cookie, csrf, "/harnesses/save", self.form())
-        form = {"section": "roles", "auto.label": "factory:auto"}
+        form = {"section": "roles", "auto.label": "factory:auto", "split.notes_label": "factory:notes"}
         for name, label, done, model, eff in (("analyst", "factory:analyze", "stage:analysed", "sonnet", "medium"),
                                               ("designer", "factory:design", "stage:designed", "sonnet", "medium"),
                                               ("architect", "factory:architect", "stage:architected", "opus", "high")):
@@ -95,7 +95,7 @@ class HarnessPage(AdminCase):
         cookie, csrf = self.session()
         self.assertIn("Write design mockup files", self.req("GET", "/settings?section=roles", cookie=cookie)[2])
         self.assertTrue(next(r for r in self.cfg().roles if r.name == "designer").design_files)          # on by default
-        form = {"section": "roles", "auto.label": "factory:auto"}
+        form = {"section": "roles", "auto.label": "factory:auto", "split.notes_label": "factory:notes"}
         for name, label, done, model, eff in (("analyst", "factory:analyze", "stage:analysed", "sonnet", "medium"),
                                               ("designer", "factory:design", "stage:designed", "sonnet", "medium"),
                                               ("architect", "factory:architect", "stage:architected", "opus", "high")):
