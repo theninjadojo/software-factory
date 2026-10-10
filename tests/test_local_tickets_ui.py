@@ -299,6 +299,27 @@ class Board(LocalTickets):
         self.post(self.cookie, self.csrf, "/tickets/close", f)
         self.assertEqual(self.store().issue(REPO, n)["state"], "closed")
 
+    def test_a_ticket_goes_back_to_a_stage_that_ran_and_comes_back_to_the_same_place(self):
+        self.create()
+        n = tracker.LOCAL_BASE + 1
+        role = self.cfg().roles[0]
+        back = f"/ticket?repo={quote(REPO, safe='')}&n={n}&stage=prs&q=address&project=Shop"
+        f = {"repo": REPO, "n": str(n), "back": back, "stage": role.name}
+        s, h, _ = self.post(self.cookie, self.csrf, "/tickets/send-back", f)
+        self.assertEqual((s, h["Location"]), (303, back))                       # the page's filters and search come back with it
+        self.assertEqual(self.db.execute("SELECT action FROM approvals").fetchall(), [])     # it has not run there: nothing queued
+        self.assertIn("has not run on this ticket yet", self.req("GET", back, cookie=self.cookie)[2])
+        self.store().add_labels(REPO, n, [role.done_label])
+        self.post(self.cookie, self.csrf, "/tickets/send-back", {**f, "stage": "nope"})
+        self.assertEqual(self.db.execute("SELECT action FROM approvals").fetchall(), [])     # only a configured stage
+        s, h, _ = self.post(self.cookie, self.csrf, "/tickets/send-back", f)
+        self.assertEqual(self.db.execute("SELECT action FROM approvals").fetchall(), [(f"redirect:{role.name}",)])
+        self.assertIn(f"goes back to the {role.name} stage", self.req("GET", back, cookie=self.cookie)[2])
+        self.post(self.cookie, self.csrf, "/tickets/send-back", f)              # a second one waits for the first
+        self.assertEqual(len(self.db.execute("SELECT action FROM approvals").fetchall()), 1)
+        s, h, _ = self.post(self.cookie, self.csrf, "/tickets/send-back", {**f, "back": "https://evil.example/"})
+        self.assertEqual(h["Location"], "/tickets")                              # never anywhere else
+
     def test_build_is_never_started_from_the_board_and_github_numbers_still_need_a_token(self):
         self.create()
         n = tracker.LOCAL_BASE + 1
@@ -329,9 +350,24 @@ class Board(LocalTickets):
         self.assertEqual((note, [a for a, _, _, why in starts if not why]), ("", ["auto", *names]))
         failed = {**new, "state": "failed", "stations": {**st, names[0]: "done", "review": "fail"}}
         offered = {a: why for a, _, _, why in kanban.starts_for(failed, cfg, False)[1]}
-        self.assertEqual((offered[names[0]], offered["build"]), ("already done", ""))      # a finished stage is shown, not offered
+        self.assertEqual((offered[f"redirect:{names[0]}"], offered["build"]), ("", ""))   # a finished stage: send it back there
+        self.assertNotIn(names[0], offered)                                               # ...not start it again from scratch
+        ask, button = kanban._ask(f"redirect:{names[0]}", "", "L-1")
+        self.assertIn("every stage after it run again", ask)
+        self.assertEqual(button, f"Send back to {names[0].capitalize()}")
+        form = kanban.start_form(f"redirect:{names[0]}", {"repo": "o/r", "issue": 5}, "tok", "/tickets", button)
+        self.assertIn('action="/tickets/send-back"', form)
+        self.assertIn(f'name="stage" value="{names[0]}"', form)
+        picker = kanban.stage_picker({**failed, "repo": "o/r"}, cfg, "tok", "/tickets", False)
+        self.assertIn(f'data-sta="{names[0]}"', picker)                       # the stage that ran: send it back there
+        self.assertIn('data-sta="build"', picker)                              # build again
+        self.assertIn('class="sd-sta off none" aria-disabled="true"><span class="mono sd-stn">01</span><strong>Poll</strong>', picker)
+        self.assertEqual(picker.count('<details class="sd-sta'), len(names) + 2)   # each stage, Auto (at Route) and Build
+        self.assertEqual(kanban.stage_picker({**failed, "repo": "o/r"}, cfg, "", "/tickets", False), "")   # no session, no picker
         running = {**new, "state": "working", "stations": {**st, "build": "run"}}
         self.assertEqual(kanban.starts_for(running, cfg, False), (kanban.RUNNING, []))
+        self.assertIn(kanban.RUNNING, kanban.stage_picker({**running, "repo": "o/r"}, cfg, "tok", "/tickets", True))
+        self.assertNotIn("<details", kanban.stage_picker({**running, "repo": "o/r"}, cfg, "tok", "/tickets", True))
         self.assertEqual(kanban.starts_for({**new, "issue": 12}, cfg, False), (kanban.NEEDS_TOKEN, []))
         self.assertIn(kanban.BLOCKED.strip(), kanban._ask("auto", "Auto", "L-1", pm=True)[0])          # the PM may hold a build
         self.assertNotIn(kanban.BLOCKED.strip(), kanban._ask("analyst", "Analyze", "L-1", pm=True)[0])

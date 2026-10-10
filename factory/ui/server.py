@@ -575,6 +575,8 @@ class Handler(BaseHTTPRequestHandler):
                     sel["outcome_full"] = board.outcome_of(sel, dbm.doc_heads(db, [(sel["repo"], sel["issue"])]).get((sel["repo"], sel["issue"])))
                 back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}" + (f"&project={quote(project, safe='')}" if project else "")
                 needs_html = (board.summary_card(db, sel["repo"], sel["issue"], docs, files) if sel["need"] else "") + board.needs_card(sel["need"], csrf, back)
+                sel["queued"] = (sel["repo"], sel["issue"]) in L._approved(self)       # a move waits for the factory: offer no other
+                sel["picker"] = kanban.stage_picker(sel, cfg, csrf, back, L.has_token(self))
                 if path == "/fragment/ticket":
                     return self._send(200, board.live_part(sel, files, docs, events, cfg.ci.fix_rounds, now, csrf, needs_html))
                 if cold:
@@ -601,7 +603,7 @@ class Handler(BaseHTTPRequestHandler):
                     local += views.fold("linked", "Linked tickets", "Split from or into other tickets", SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back))
                     local = views.fold("followups", "Review follow-ups", "The reviewer proposed follow-up work", RA.card(db, sel["repo"], sel["issue"], csrf, back), tone="fd-ask",
                                        open_=True) + local
-                    move = kanban.menu(sel, cfg, csrf, back, L.has_token(self), label="Move") if csrf else ""
+                    move = kanban.menu(sel, cfg, csrf, back, L.has_token(self), label="Move to stage") if csrf else ""
                     decided = L._decisions(self, sel["repo"]).get((sel["repo"], sel["issue"])) or {}
                     close = "" if is_local(sel["issue"]) else L.close_form(sel["repo"], {"number": sel["issue"], "title": sel["title"]}, csrf, back,
                                                                           sel["state"] in ("working", "needs"))

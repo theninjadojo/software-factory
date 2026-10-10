@@ -701,10 +701,12 @@ def journey_line(r: dict) -> str:
 
 def journey_fold(r: dict, files: list, docs, now: float) -> str:
     """The journey folded to one row: the ten stations as a bar and the numbers; open it for the floor's strip (a phone: the list)."""
-    body = (f'<p class="muted sd-fine fd-note">The same stations as the Factory floor</p>{strip(r["stations"], r.get("verify"), now)}'
+    picker = r.get("picker") or ""
+    body = (picker + f'<p class="muted sd-fine fd-note">The same stations as the Factory floor</p>{strip(r["stations"], r.get("verify"), now)}'
             + phone_journey(r, files, docs))
     summary = f'{progress(r["stations"])}<span class="mono fd-line">{esc(journey_line(r))}</span>'
-    return views.fold("journey", "Journey", summary, body, head_id="j-h", tone="fd-journey")
+    meta = '<span class="fd-hint">Send it to a stage</span>' if "<details" in picker else ""
+    return views.fold("journey", "Journey", summary, body, meta, head_id="j-h", tone="fd-journey")
 
 
 def phone_journey(r: dict, files: list, docs) -> str:
