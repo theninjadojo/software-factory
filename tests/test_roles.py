@@ -394,14 +394,22 @@ class HumanPrompt(unittest.TestCase):
     def test_the_prompt_offers_the_recommended_stage_first(self):
         c = Classification("feature", "high", True, 0.44, "jev", stage="architect", stage_confidence=0.8)
         b = m.human_buttons(CFG, "o/r", 5, c)
-        self.assertEqual([x[0] for x in b], ["Run architect", "Build anyway (medium)", "Skip"])
+        self.assertEqual([x[0] for x in b], ["Run architect", "Run analyst", "Run designer", "Build anyway (medium)", "Skip"])
         self.assertEqual(b[0][1], "stage:architect|o/r|5")
         c2 = Classification("bug", "low", True, 0.4, "jev", stage="implement")
-        self.assertEqual([x[0] for x in m.human_buttons(CFG, "o/r", 5, c2)], ["Run (medium)", "Skip"])            # nothing else to recommend
-        self.assertEqual([x[0] for x in m.human_buttons(CFG, "o/r", 5, c, done=["architect"])], ["Run (medium)", "Skip"])
+        self.assertEqual([x[0] for x in m.human_buttons(CFG, "o/r", 5, c2)],                                       # nothing recommended: every
+                         ["Run analyst", "Run designer", "Run architect", "Run (medium)", "Skip"])                  # stage is still offered
+        self.assertEqual([x[0] for x in m.human_buttons(CFG, "o/r", 5, c, done=["analyst", "architect"])], ["Run designer", "Run (medium)", "Skip"])
         long_repo = "o" * 40 + "/" + "r" * 40
         self.assertTrue(all(len(x[1].encode()) <= 64 for x in m.human_buttons(CFG, long_repo, 12345, c)))
         self.assertIn("Jev suggests: architect first", m.suggestion(c))
+
+    def test_the_ui_offers_every_stage_not_yet_done_before_build(self):
+        from factory.ui import labels as L
+        acts = L.human_actions(CFG, {CFG.roles[0].done_label}, {"detail": "auto; cls=feature; stage=design"})
+        self.assertEqual([a for a, _, _ in acts], ["stage:designer", "stage:architect", "build", "skip"])
+        acts = L.human_actions(CFG, set(), {"detail": "auto; cls=bug; stage=implement"})       # build recommended: the stages are still there
+        self.assertEqual([a for a, _, _ in acts], ["stage:analyst", "stage:designer", "stage:architect", "build", "skip"])
 
     def test_run_architect_from_telegram_runs_the_stage_not_a_build(self):
         import time
