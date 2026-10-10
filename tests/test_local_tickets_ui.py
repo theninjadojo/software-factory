@@ -77,6 +77,26 @@ class LocalTickets(AdminCase):
         (row,) = [r for r in board.ticket_rows(self.db) if r["issue"] == n]
         self.assertEqual(row["state"], "done")                                    # closed is done
 
+    def test_a_ticket_queued_for_a_free_agent_is_working_not_waiting_for_a_person(self):
+        # L-11 and L-13 on the VM: answers put factory:architect back on, every agent was busy, and the ticket said
+        # "Architect finished; choose the next step" with no buttons (its start label was already on)
+        import json
+        from factory import db as dbm
+        self.create()
+        n = tracker.LOCAL_BASE + 1
+        dbm.finish_run(self.db, dbm.start_run(self.db, "stage", REPO, n, "Fix the footer", "claude-code", "opus", "high", stage="architect"),
+                       "stage", "architect document ready")
+        dbm.set_status(self.db, "pool", json.dumps({"max": 2, "draining": False,
+                                                    "queued": [{"repo": REPO, "issue": n, "kind": "architect", "title": "Fix the footer"}]}))
+        (row,) = [r for r in board.ticket_rows(self.db) if r["issue"] == n]
+        self.assertEqual((row["state"], row["why"]), ("working", "Architect queued: waiting for a free agent"))
+        self.assertEqual(board.row_for(self.db, REPO, n)["state"], "working")
+        self.assertTrue(board.journey_line(row).startswith("Architect queued: waiting for a free agent"))
+        self.assertIn("Architect queued: waiting for a free agent", self.page(n)[2])     # the page's own "queued" (a Move) is another key
+        dbm.set_status(self.db, "pool", json.dumps({"max": 2, "draining": False, "queued": []}))
+        (row,) = [r for r in board.ticket_rows(self.db) if r["issue"] == n]
+        self.assertEqual(row["state"], "needs")                                   # the next poll started nothing: a person picks
+
     def test_comment_edit_close_and_reopen(self):
         self.create()
         n = tracker.LOCAL_BASE + 1
