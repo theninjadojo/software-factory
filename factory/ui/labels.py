@@ -189,10 +189,12 @@ def actions_for(cfg, issue: dict, decision: dict | None = None, approved: bool =
 
 
 def human_actions(cfg, names: set, decision: dict) -> list[tuple[str, str, str | None]]:
-    """The same choices the Telegram prompt offers: the recommended stage first, then build, then skip (a None label)."""
+    """The same choices the Telegram prompt offers: the recommended stage first, then the other stages not yet done, then build,
+    then skip (a None label)."""
     m = re.search(r"stage=(\w+)", decision.get("detail") or "")
     pick = next((r for r in cfg.roles if r.name == STAGE_TO_ROLE.get(m.group(1) if m else "") and r.done_label not in names), None)
-    acts = [(f"stage:{pick.name}", f"Run {pick.name}", pick.label)] if pick else []
+    rest = [r for r in cfg.roles if r is not pick and r.done_label not in names]
+    acts = [(f"stage:{r.name}", f"Run {r.name}", r.label) for r in ([pick] if pick else []) + rest]
     return acts + [("build", "Build anyway" if pick else "Build", cfg.trigger_label), ("skip", "Skip", None)]
 
 

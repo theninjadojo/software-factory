@@ -162,9 +162,11 @@ def picked(route, c) -> str:
 
 def human_buttons(cfg: Config, repo: str, num: int, c, done=()) -> list:
     """What a person can do with a ticket the classifier is unsure about. If it recommended a stage (analyst, designer or
-    architect) that is the first button: 'Run' used to mean only 'build', which skipped the recommendation."""
+    architect) that is the first button: 'Run' used to mean only 'build', which skipped the recommendation.
+    The other stages not yet done follow it, so a person can send the ticket to any stage before choosing to build."""
     role = next((r for r in cfg.roles if r.name == STAGE_TO_ROLE.get(c.stage or "") and r.name not in done), None)
-    out = ([(f"Run {role.name}", f"stage:{role.name}|{repo}|{num}")] if role else [])
+    rest = [r for r in cfg.roles if r is not role and r.name not in done]
+    out = [(f"Run {r.name}", f"stage:{r.name}|{repo}|{num}") for r in ([role] if role else []) + rest]
     out += [("Build anyway (medium)" if role else "Run (medium)", f"run|{repo}|{num}"), ("Skip", f"skip|{repo}|{num}")]
     return [b for b in out if len(b[1].encode()) <= 64]          # Telegram rejects callback data over 64 bytes (Slack allows more, but one message serves both)
 
