@@ -55,6 +55,14 @@ QUESTIONS = {
                          "or the needed earlier stages are done: build it.",
         },
     },
+    "changes_ui": {
+        "type": "noul",
+        "instructions": "Will resolving this ticket change what users see or do?",
+        "criteria": {
+            "true": "It changes screens, layout, styling, flows, navigation or the text users read.",
+            "false": "Users see no difference: backend, data, tooling, docs, or a fix that leaves every screen as it was.",
+        },
+    },
     "effort": {
         "type": "score",
         "instructions": "How much careful step-by-step reasoning will resolving this ticket require?",
@@ -118,8 +126,10 @@ def parse_answers(answers: dict, labels: set[str], aliases: dict | None = None) 
     if st and st.get("type") == "choice" and st.get("choice") in STAGES:      # tolerant: routing never depends on it
         stage, stage_conf = st["choice"], float(st["confidence"])
         scores["stage"] = [stage, stage_conf]
+    u = answers.get("changes_ui")
+    ui = float(u["noul"]) > 0.5 if u and u.get("type") == "noul" else None     # tolerant, like the stage: only adds a designer
     return Classification(kind, level, needs_human=p > 0.5, confidence=min(confs), effort=effort_from_score(float(e["score"])),
-                          stage=stage, stage_confidence=stage_conf, scores=scores)
+                          stage=stage, stage_confidence=stage_conf, ui=ui, scores=scores)
 
 
 def build_state(title: str, body: str, labels: list[str], comments: list[str] | None, project: dict | None = None,

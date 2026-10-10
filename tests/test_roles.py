@@ -113,6 +113,18 @@ class Flows(unittest.TestCase):
         fake, _ = self.run_poll(gh, FakeClf(stage="implement", complexity="high"), result=RunResult("pr", "ok", "http://pr"))
         self.assertIsNone(fake.call_args.kwargs.get("role"))
 
+    def test_auto_designs_before_building_a_change_users_will_see(self):
+        for stage in ("implement", "architect"):
+            gh = FakeGH({"factory:auto": [issue(labels=["factory:auto", "stage:analysed"])]})
+            fake, _ = self.run_poll(gh, FakeClf(stage=stage, ui=True))
+            self.assertEqual(fake.call_args.kwargs["role"], "designer")
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto", "stage:analysed", "stage:designed"])]})
+        _, conn = self.run_poll(gh, FakeClf(stage="implement", ui=True), result=RunResult("pr", "ok", "http://pr"))
+        self.assertIn("route=", conn.execute("select detail from decisions").fetchone()[0])   # designed already: the build route
+        gh = FakeGH({"factory:auto": [issue(labels=["factory:auto"])]})
+        fake, _ = self.run_poll(gh, FakeClf(stage="implement", ui=False), result=RunResult("pr", "ok", "http://pr"))
+        self.assertIsNone(fake.call_args.kwargs.get("role"))           # nothing users see: no designer
+
     def test_an_explicit_ready_label_on_a_high_ticket_still_builds(self):
         gh = FakeGH({"factory:ready": [issue(labels=["factory:ready"])]})
         fake, _ = self.run_poll(gh, FakeClf(stage="implement", complexity="high"), result=RunResult("pr", "ok", "http://pr"))
