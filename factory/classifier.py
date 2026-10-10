@@ -25,6 +25,7 @@ class Classification:
     effort: str | None = None   # low/medium/high when the classifier chose it; else the routing row decides
     stage: str | None = None             # analyze/design/architect/implement: the recommended next stage
     stage_confidence: float | None = None
+    ui: bool | None = None               # the change alters what users see or do (screens, layout, flows, copy); None: not asked
     scores: dict | None = field(default=None, compare=False)   # per-answer [choice, confidence] (kind, size, human, stage); {"missing": [...]} from labels
 
     def __post_init__(self):

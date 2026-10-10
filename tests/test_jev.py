@@ -26,6 +26,12 @@ class T(unittest.TestCase):
     def test_needs_human(self):
         self.assertTrue(parse_answers(answers(noul=0.95), set()).needs_human)
 
+    def test_changes_ui_is_optional(self):
+        self.assertIsNone(parse_answers(answers(), set()).ui)
+        for p, want in ((0.9, True), (0.2, False)):
+            self.assertIs(parse_answers({**answers(), "changes_ui": {"type": "noul", "noul": p}}, set()).ui, want)
+        self.assertIsNone(parse_answers({**answers(), "changes_ui": {"type": "choice", "choice": "yes"}}, set()).ui)
+
     def test_kind_label_overrides_model(self):
         self.assertEqual(parse_answers(answers(kind="feature"), {"bug"}).kind, "bug")
 
@@ -55,7 +61,7 @@ class T(unittest.TestCase):
         seen = {}
         def post(b): seen.update(b); return {"answers": answers(), "usage": {"cost": 0.00002}}
         c = JevClassifier("k", model="typesafe/jev-1.13", post=post).classify("title", "body", ["x"], ["a comment"])
-        self.assertEqual(set(seen["questions"]), {"kind", "tier", "effort", "stage", "needs_human"})
+        self.assertEqual(set(seen["questions"]), {"kind", "tier", "effort", "stage", "changes_ui", "needs_human"})
         self.assertEqual(seen["state"]["discussion"], ["a comment"])
         self.assertEqual(c.source, "typesafe/jev-1.13")
 
