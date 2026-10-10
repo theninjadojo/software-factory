@@ -14,7 +14,7 @@ from .. import pause, tracker
 from ..sanitize import md_render
 from . import labels as L
 from . import localtickets as LT
-from .views import ago, csrf_field, esc
+from .views import ago, clip, csrf_field, esc, fold
 
 log = logging.getLogger("factory.ui")
 HOUR = 3600
@@ -94,6 +94,25 @@ def card(cfg, db, repo: str, n: int, csrf: str, back: str) -> str:
             f' data-pending="{1 if waiting else 0}"><div class="sd-cardhead"><h3 id="chat-h">Chat about this ticket</h3>'
             '<span class="muted">Kept in the factory only. Later stages see it as context.</span></div>'
             f'<div class="chat-turns">{turns}</div>{form}</section>')
+
+
+def folded(cfg, db, repo: str, n: int, csrf: str, back: str) -> str:
+    """The chat folded to one row: the newest message and how many there are. It opens by itself while a reply is awaited or a
+    proposal waits for a person; the panel inside refreshes itself as before."""
+    inner = card(cfg, db, repo, n, csrf, back)
+    if not inner:
+        return ""
+    rows = C.turns(db, repo, n) if db is not None else []
+    waiting = any(t["author"] == "person" and t["status"] in ("pending", "running") for t in rows)
+    proposal = any(t["proposal"] and t["proposal_state"] == "open" for t in rows)
+    if rows:
+        last = rows[-1]
+        summary = f'{"Assistant" if last["author"] == "agent" else "You"} · {ago(last["created"])}: {clip(last["body"], 140)}'
+    else:
+        summary = "Nothing yet. Ask about this ticket" if cfg.chat.enabled else "Ticket chat is switched off"
+    meta = (('<span class="sd-word wait">Proposal</span>' if proposal else "") + ('<span class="sd-word run">Waiting for a reply</span>' if waiting else "")
+            + (f'<span class="mono muted">{len(rows)} message{"s" if len(rows) != 1 else ""}</span>' if rows else ""))
+    return fold("chat", "Chat", esc(summary), inner, meta, open_=waiting or proposal)
 
 
 def fragment_get(h, q: dict, csrf: str) -> None:

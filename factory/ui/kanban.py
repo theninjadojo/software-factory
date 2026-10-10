@@ -114,8 +114,9 @@ def _ask(action: str, word: str, n: str, pm: bool = False) -> tuple[str, str]:
     return f"Start {n} with {word}? It starts at the {action.capitalize()} stage.", f"Start with {word}"
 
 
-def menu(row: dict, cfg, csrf: str, back: str, has_token: bool) -> str:
-    """The card's menu: Start (Auto, each stage and the reruns /tickets/start accepts) and Move (Done, or Reopen)."""
+def menu(row: dict, cfg, csrf: str, back: str, has_token: bool, label: str = "") -> str:
+    """The card's menu: Start (Auto, each stage and the reruns /tickets/start accepts) and Move (Done, or Reopen). label: a
+    button with that word instead of the card's ⋯ (the ticket page's header), so a ticket can be moved from its own page too."""
     n = ref(row["repo"], row["issue"], short=True)
     note, starts = starts_for(row, cfg, has_token)
     rows = ""
@@ -146,8 +147,9 @@ def menu(row: dict, cfg, csrf: str, back: str, has_token: bool) -> str:
     if not start and not move:
         move = '<p class="kb-note">Closed. Its ticket page has everything it did.</p>'
     move = f'<section class="kb-sec"><p class="kb-grp">Move</p>{move}</section>'
-    return (f'<details class="kb-menu"><summary aria-label="Start or move {esc(n)}"><svg viewBox="0 0 24 24" aria-hidden="true">'
-            '<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></summary>'
+    face = (f'{esc(label)}<svg class="sd-mi" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>' if label else
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>')
+    return (f'<details class="kb-menu{" kb-menu-btn" if label else ""}"><summary aria-label="Start or move {esc(n)}">{face}</summary>'
             f'<div class="kb-opts" role="group" aria-label="Start or move {esc(n)}"><p class="kb-opth">{esc(n)}: start or move</p>{start}{move}</div></details>')
 
 
@@ -207,14 +209,14 @@ def _column(col: str, rows: list[dict], cfg, csrf: str, back: str, project: str,
 
 def switch(view: str, project: str, projects=()) -> str:
     """The Board | List switch (and the project filter on the board), keeping the project."""
-    on = lambda v: ' class="sd-chip on" aria-current="page"' if view == v else ' class="sd-chip"'
+    on = lambda v: ' class="on" aria-current="page"' if view == v else ""
     opt = lambda v, w: f'<option value="{esc(v)}"{" selected" if v == project else ""}>{esc(w)}</option>'
     pick = (f'<form method="get" action="/tickets" class="sd-form" data-autosubmit><input type="hidden" name="view" value="board">'
             f'<label class="sd-lab sd-project">Project <select name="project" aria-label="Filter tickets by project">{opt("", "All projects")}'
             f'{"".join(opt(v, w) for v, w in projects)}</select></label><button class="secondary sd-apply">Apply</button></form>') if projects and view == "board" else ""
-    return (f'<div class="sd-filters"><nav class="sd-chips" aria-label="Tickets view">'
+    return (f'<nav class="sd-views" aria-label="Tickets view">'
             f'<a{on("board")} href="/tickets?{esc(board._qs(view="board", project=project))}">Board</a>'
-            f'<a{on("list")} href="/tickets?{esc(board._qs(project=project))}">List</a></nav>{pick}</div>')
+            f'<a{on("list")} href="/tickets?{esc(board._qs(project=project))}">List</a></nav>{pick}')
 
 
 def board_page(rows: list[dict], cfg, csrf: str, project: str, projects, has_token: bool, now: float, github: bool) -> str:
@@ -228,6 +230,5 @@ def board_page(rows: list[dict], cfg, csrf: str, project: str, projects, has_tok
                 '<p class="muted">Add a ticket and it appears here as a card.</p></div>')
     else:
         grid = '<div class="kb-board">' + "".join(_column(c, rows, cfg, csrf, back, project, has_token, now) for c in COLUMNS) + "</div>"
-    return ('<div class="sd-page kb-page"><div class="sd-pagehead"><div class="sd-h1row"><h1>Tickets</h1></div></div>'
-            + switch("board", project, projects) + note
+    return ('<div class="sd-page kb-page"><div class="sd-pagehead sd-topbar"><h1>Tickets</h1>' + switch("board", project, projects) + "</div>" + note
             + '<p class="kb-alert" role="alert" data-kb-alert hidden></p>' + grid + "</div>")

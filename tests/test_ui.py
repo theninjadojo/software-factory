@@ -492,7 +492,8 @@ class JourneyPage(UiCase):
         self.assertLess(html.index("What went wrong"), html.index('id="j-h">Journey'))      # a failed ticket says what failed first
         self.assertIn('<span class="sd-check bad">', html)                      # the failing check, in full
         self.assertIn("2 runs on opus, sonnet", html)                           # the numbers in one line under the journey
-        self.assertIn('<details class="sd-card sd-history">', html)             # the run history is folded away
+        self.assertIn('<details class="sd-fold" data-fold="steps">', html)     # the run history is folded away
+        self.assertIn('class="kb-menu kb-menu-btn"', html)                      # Move, always at hand in the header
         self.assertNotIn("<b>x</b>", html)                                     # the decision text is escaped
         self.assertNotIn("style=", html)                                       # the CSP forbids inline styles
         self.assertNotIn('id="live"', html)                                    # a finished ticket does not poll

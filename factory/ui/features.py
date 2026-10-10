@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 from ..tracker import display
 from .integrations import SECRETS, secret_status
-from .views import badge, csrf_field, esc
+from .views import badge, csrf_field, esc, fold
 
 # key -> (name, what turning it on does, what turning it off does). The only settings /settings/feature may change.
 SWITCHES = {
@@ -232,11 +232,13 @@ def tickets_strip(cfg, csrf: str, ask: bool = False) -> str:
     line = (f'Tickets live in {esc(live_in)} · Build label <code>{esc(cfg.trigger_label)}</code> · '
             f'{esc(_n(len(cfg.schedules), "schedule"))}')
     cells = "".join(f'<div class="ft-cell"><span class="ft-lab">{esc(k)}</span><span>{v}</span></div>' for k, v in items)
-    return (f'<details class="tk-line" id="tk-settings"{" open" if ask else ""}><summary><span class="muted">{line}</span>'
-            f'<span class="tk-line-more">Settings for this page</span></summary>'
+    gear = ('<svg class="tk-gear" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/>'
+            '<path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>')
+    return (f'<details class="tk-line" id="tk-settings"{" open" if ask else ""}><summary title="Settings for this page">{gear}'
+            f'<span class="sr">Settings for this page</span></summary><div class="tk-pop"><p class="muted tk-sum">{line}</p>'
             f'<section class="ft-strip card" aria-label="The settings that shape Tickets"><div class="ft-cells">{cells}</div>'
             + (f'<div class="ft-strip-acts">{sw}</div>' if sw else "")
-            + '<p class="ft-foot muted">The settings that shape Tickets. <a href="/settings">All settings</a></p></section></details>')
+            + '<p class="ft-foot muted">The settings that shape Tickets. <a href="/settings">All settings</a></p></section></div></details>')
 
 
 def factory_strip(cfg, paused, csrf: str) -> str:
@@ -283,6 +285,8 @@ def ticket_handling(cfg, repo: str, issue: int, detail: str = "") -> str:
             ("Code review", badge("on", "good") if cfg.review.enabled else badge("off", "warn")),
             ("Merge conflicts", badge("on", "good") if cfg.conflicts.enabled else badge("off", "warn"))]
     dl = "".join(f'<div class="ft-row"><dt>{esc(k)}</dt><dd>{v}</dd></div>' for k, v in rows)
-    return (f'<section class="sd-card ft-handling" aria-labelledby="hd-h"><div class="sd-cardhead"><h3 id="hd-h">How {esc(display(int(issue)))} is handled</h3></div>'
-            f'<dl>{dl}</dl><p class="muted sd-fine">These apply to every ticket of this size. '
-            '<a href="/settings?section=routing">Models by ticket size</a> · <a href="/settings?section=roles">Stage agents</a> · <a href="/settings#f-ci">Checks</a></p></section>')
+    line = " · ".join([f"Size {tier or 'medium'}"] + ([f"{route.model} · {route.effort}"] if route else [])
+                      + [f"CI fixes up to {cfg.ci.fix_rounds}" if cfg.ci.enabled else "CI fixes off", "review on" if cfg.review.enabled else "review off"])
+    card = (f'<dl class="ft-handling">{dl}</dl><p class="muted sd-fine">These apply to every ticket of this size. '
+            '<a href="/settings?section=routing">Models by ticket size</a> · <a href="/settings?section=roles">Stage agents</a> · <a href="/settings#f-ci">Checks</a></p>')
+    return fold("handling", f"How {display(int(issue))} is handled", esc(line), card, head_id="hd-h")

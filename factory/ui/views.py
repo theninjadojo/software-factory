@@ -441,6 +441,26 @@ def events_page(events: list[dict], kind: str, older: int | None) -> str:
     return bar + body + more
 
 
+FOLD_CHEVRON = '<svg class="fd-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>'
+
+
+def fold(key: str, title: str, summary: str, body: str, meta: str = "", open_: bool = False, head_id: str = "", tone: str = "") -> str:
+    """One part of a ticket's page folded to a single row: its title, a one-line summary (html, escaped by the caller) and a few
+    chips (meta, html); open it for the whole part. Nothing when there is no body. The live refresh leaves a person's open or
+    closed alone (app.js morph)."""
+    if not body:
+        return ""
+    hid = f' id="{esc(head_id)}"' if head_id else ""
+    return (f'<details class="sd-fold{" " + tone if tone else ""}" data-fold="{esc(key)}"{" open" if open_ else ""}><summary>{FOLD_CHEVRON}'
+            f'<span class="fd-t"{hid}>{esc(title)}</span><span class="fd-s">{summary}</span>'
+            + (f'<span class="fd-m">{meta}</span>' if meta else "") + f'</summary><div class="fd-b">{body}</div></details>')
+
+
+def clip(text: str, n: int) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
 DOC_LABEL = {"analyst": "Analysis", "designer": "Design", "architect": "Architecture"}
 DOC_NOUN = {"analyst": "analysis", "designer": "design", "architect": "architecture"}
 

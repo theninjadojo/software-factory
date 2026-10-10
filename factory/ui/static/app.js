@@ -302,6 +302,25 @@
       .catch(function () { fail("Couldn’t reach the factory. Nothing was changed that we know of. Try again."); });
   });
 
+  // --- A ticket's folded parts: Expand all / Collapse all. The small menus (More, Filters, the page's settings, Move) close on a
+  // click elsewhere or Escape.
+  var MENUS = ".sd-menu[open], .tk-line[open], .kb-menu-btn[open]";
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-fold-all]");
+    if (b) {
+      var open = b.getAttribute("data-fold-all") === "1", art = b.closest("article") || document;
+      Array.prototype.forEach.call(art.querySelectorAll("details.sd-fold"), function (d) { d.open = open; });
+      return;
+    }
+    Array.prototype.forEach.call(document.querySelectorAll(MENUS), function (m) { if (!m.contains(e.target)) m.open = false; });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    Array.prototype.forEach.call(document.querySelectorAll(".sd-menu[open], .tk-line[open]"), function (m) {
+      m.open = false; var s = m.querySelector("summary"); if (s) s.focus();
+    });
+  });
+
   // --- Board: dropping a card on a column opens the card's menu at that column: Working shows its start choices, Done its close
   // confirmation. The button in the menu is the confirmation (the ordinary form post), so a drop never changes anything by itself,
   // and a column the factory fills by itself says so. One menu is open at a time; closing it also folds its choice back up.
