@@ -1091,6 +1091,7 @@ html[data-snow="melting"] .gd-grass { animation:gd-melt 12s linear forwards; }
 .fm[data-shops="wait"] :is(.pk-t-coffee, .pk-t-fuel) .tw-lit { animation:none; fill:#8fa8ff; }
 .chat-turn { margin:0 0 14px; padding:10px 14px; border:1px solid var(--line); } .chat-turn p { margin:0 0 6px; } .chat-agent { background:var(--panel); border-left:3px solid var(--text); }
 .chat-text { white-space:pre-wrap; overflow-wrap:anywhere; } .chat-proposal { margin:0 0 14px; padding:10px 14px; border:1px dashed var(--line); }
+.chat-form { margin:14px 0 0; } .chat-form > label { display:block; font-weight:600; margin:0 0 .6rem; } .chat-form textarea { display:block; width:100%; max-width:none; margin-top:.25rem; resize:vertical; font:15px/1.45 var(--sans); }
 .at-zone { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem; padding:.75rem; border:1px dashed var(--line2); } .at-zone label { margin:0; } .at-zone.drag { border-style:solid; border-color:var(--blue); }
 .at-hint { font-size:.9rem; } .at-list { list-style:none; margin:.5rem 0 0; padding:0; display:grid; gap:.4rem; } .at-list:empty { display:none; }
 .at-row { display:flex; align-items:center; gap:.7rem; padding:.4rem; border:1px solid var(--line); background:var(--panel2); } .at-txt { display:grid; min-width:0; flex:1; } .at-txt .muted { font-size:.8rem; }
