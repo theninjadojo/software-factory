@@ -98,6 +98,14 @@ class GitHub:
         raw = got["items"]
         return raw, len(raw) == per_page, int(got.get("total_count", len(raw)))
 
+    def unmoved_issues(self, repo: str, page: int = 1, per_page: int = 100) -> tuple[list[dict], bool]:
+        """One page of the open issues not yet moved to the local tracker (label tracker.MOVED_LABEL), oldest first, for the
+        automatic import. The query is fixed here; only `repo` comes from the caller, and it is a configured repository."""
+        term = f'repo:{repo} is:issue is:open -label:"factory:moved"'
+        got = self._get("/search/issues?" + urllib.parse.urlencode({"q": term, "per_page": per_page, "page": page, "sort": "created", "order": "asc"}))
+        raw = got["items"]
+        return raw, len(raw) == per_page
+
     def count_issues(self, repo: str, state: str = "open", label: str = "") -> int:
         return self.search_page(repo, "", state, 1, 1, label=label)[2]
 

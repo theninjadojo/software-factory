@@ -31,9 +31,11 @@ class AdminCase(UiCase):
              "github.trigger_label": cfg.trigger_label, "github.repos": "\n".join(["your-org/standalone-service"]),
              "github.poll_seconds": str(cfg.github_poll_seconds), "local.max_attachment_mb": str(cfg.attach_max_mb),
              "local.max_attachments": str(cfg.attach_max_files), "local.max_attachments_total_mb": str(cfg.attach_max_total_mb),
-             "board.done_days": str(cfg.board_done_days)}
+             "board.done_days": str(cfg.board_done_days), "local.auto_import_seconds": str(cfg.local_auto_import_seconds)}
         if cfg.github_issues_enabled:
             f["github.issues_enabled"] = "1"                                              # a checked box is sent; an unchecked one is not
+        if cfg.local_auto_import_close:
+            f["local.auto_import_close"] = "1"
         f.update(over)
         pairs = list(f.items()) + [("github.trusted_permissions", p) for p in ("admin", "maintain", "write")]
         if f.pop("dry_run_on", True) is not False:

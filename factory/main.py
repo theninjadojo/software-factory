@@ -1803,6 +1803,25 @@ def github_poll_due(cfg: Config, conn) -> bool:
     return True
 
 
+def auto_import_due(cfg: Config, conn) -> bool:
+    """The automatic import reads GitHub at most every local.auto_import_seconds. Stamped before the work, so a failing pass is
+    not retried at every poll."""
+    now = time.time()
+    last = float(dbm.get_status(conn).get("last_auto_import", {}).get("value") or 0)
+    if now - last < cfg.local_auto_import_seconds - 1:
+        return False
+    dbm.set_status(conn, "last_auto_import", str(now))
+    return True
+
+
+def maybe_auto_import(cfg: Config, gh: GitHub, conn) -> None:
+    """Queue trusted authors' GitHub issues for import (tracker.auto_queue): only when switched on, with GitHub issues off and local
+    tickets on, live, with a token, not paused, and due."""
+    if (cfg.local_auto_import and cfg.local_enabled and not cfg.github_issues_enabled and not cfg.dry_run and gh.token
+            and not pause.paused(Path(cfg.db_path).parent) and auto_import_due(cfg, conn)):
+        tracker.auto_queue(cfg, gh, conn, emit)
+
+
 def stop_closed(cfg: Config, gh: GitHub, conn) -> None:
     """Stop the work on a ticket that was closed (from the UI or on GitHub) while a job runs for it. The issue state is the signal:
     the job kills its container and publishes nothing, and its queued worker checks are cancelled."""
@@ -1822,6 +1841,7 @@ def stop_closed(cfg: Config, gh: GitHub, conn) -> None:
 
 
 warned_no_tickets: list[bool] = []
+warned_auto_import: list[bool] = []
 
 
 def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
@@ -1832,7 +1852,14 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     if not cfg.github_issues_enabled and not cfg.local_enabled and not warned_no_tickets:
         warned_no_tickets.append(True)
         log.warning("github.issues_enabled and local.enabled are both off: the factory has no tickets to work on")
+    if cfg.local_auto_import and (cfg.github_issues_enabled or not cfg.local_enabled) and not warned_auto_import:
+        warned_auto_import.append(True)
+        log.warning("local.auto_import works only with local.enabled on and github.issues_enabled off: nothing is imported automatically")
     if cfg.local_enabled and not cfg.dry_run:                  # an import reads one GitHub issue by number, so it works with GitHub issues off
+        try:
+            maybe_auto_import(cfg, gh, conn)
+        except Exception:
+            log.exception("automatic import of GitHub issues failed")      # never stops the poll
         try:
             tracker.process_imports(cfg, gh, conn, frozenset(label for _, label in triggers(cfg)), emit)
         except Exception:
