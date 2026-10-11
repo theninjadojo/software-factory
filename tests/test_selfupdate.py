@@ -129,7 +129,8 @@ class Page(UiCase):
         self.known()
         html = self.get()[2]
         self.assertIn("v9.9.9</strong> is available", html)
-        self.assertIn("cannot update itself from here", html)
+        self.assertIn("This Docker install cannot update itself from here", html)
+        self.assertIn("<code>./scripts/update.sh</code>", html)
         self.assertNotIn(">Update to v9.9.9<", html)
         self.assertNotIn("Update by itself", html)
         self.assertIn('href="/updates"', html)                                           # in the settings list
