@@ -6,11 +6,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}\.html$")
 BACKGROUND = (255, 255, 255)
 MAX_W, MAX_H = 1600, 6000
+MARGIN = 24
 
 
 def crop_on_white(img: Image.Image) -> Image.Image:
@@ -21,7 +22,15 @@ def crop_on_white(img: Image.Image) -> Image.Image:
     if not box:
         raise ValueError("nothing was drawn")
     base = Image.new("RGBA", img.size, BACKGROUND + (255,))
-    return Image.alpha_composite(base, img).convert("RGB").crop(box)
+    flat = Image.alpha_composite(base, img).convert("RGB")
+    if box != (0, 0) + img.size:
+        return flat.crop(box)
+    # The design paints the whole window (a body colour or min-height:100vh): trim the empty page colour, keeping MARGIN around the content.
+    content = ImageChops.difference(flat, Image.new("RGB", flat.size, flat.getpixel((0, 0)))).getbbox()
+    if not content:                                     # one flat colour: nothing to tell content from page
+        return flat
+    left, top, right, bottom = content
+    return flat.crop((max(0, left - MARGIN), max(0, top - MARGIN), min(flat.width, right + MARGIN), min(flat.height, bottom + MARGIN)))
 
 
 def main() -> int:
