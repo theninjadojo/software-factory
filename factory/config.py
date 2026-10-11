@@ -614,6 +614,9 @@ class Config:
     github_poll_seconds: int = 0                # how often GitHub is read (0: every poll); local tickets are handled every poll
     github_issues_enabled: bool = True          # GitHub issues are read and acted on (absent: on so old configs keep working; the example sets false)
     local_enabled: bool = False                # the local ticket tracker and the GitHub import
+    local_auto_import: bool = False             # with GitHub issues off: import trusted authors' open GitHub issues on a slow schedule
+    local_auto_import_seconds: int = 3600       # how often that import reads GitHub
+    local_auto_import_close: bool = True        # close the GitHub issue once it is copied
     attach_max_mb: int = 5                      # local ticket attachments: the largest file,
     attach_max_files: int = 5                   # the most files on one ticket,
     attach_max_total_mb: int = 20               # and the most megabytes on one ticket
@@ -862,6 +865,20 @@ def _local_enabled(loc: dict) -> bool:
     v = loc.get("enabled", False)
     if not isinstance(v, bool):
         raise ValueError("local.enabled must be true or false")
+    return v
+
+
+def _local_flag(loc: dict, key: str, default: bool) -> bool:
+    v = loc.get(key, default)
+    if not isinstance(v, bool):
+        raise ValueError(f"local.{key} must be true or false")
+    return v
+
+
+def _auto_import_seconds(loc: dict) -> int:
+    v = loc.get("auto_import_seconds", 3600)
+    if isinstance(v, bool) or not isinstance(v, int) or not 600 <= v <= 86400:
+        raise ValueError("local.auto_import_seconds must be a whole number of seconds from 600 to 86400")
     return v
 
 
@@ -1302,6 +1319,9 @@ def parse(raw: dict) -> Config:
         github_poll_seconds=_github_poll(gh, int(g["poll_seconds"])),
         github_issues_enabled=_github_issues_enabled(gh),
         local_enabled=_local_enabled(raw.get("local", {})),
+        local_auto_import=_local_flag(raw.get("local", {}), "auto_import", False),
+        local_auto_import_seconds=_auto_import_seconds(raw.get("local", {})),
+        local_auto_import_close=_local_flag(raw.get("local", {}), "auto_import_close", True),
         attach_max_mb=_attach_limit(raw.get("local", {}), "max_attachment_mb", 5, 50),
         attach_max_files=_attach_limit(raw.get("local", {}), "max_attachments", 5, 20),
         attach_max_total_mb=_attach_limit(raw.get("local", {}), "max_attachments_total_mb", 20, 200),

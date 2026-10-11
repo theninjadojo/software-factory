@@ -106,6 +106,14 @@ installs used). For the Docker install, `FACTORY_WORKERS=1 ./scripts/setup.sh` d
 - Tokens expire: a GitHub token that lapses shows up as failed runs and Telegram alerts.
 - Local tickets can carry attachments (Settings → General sets the size and count limits). They live in the `local_attachments` table,
   so a backup holds them and grows with them; restoring such a backup into an older version drops them silently.
+- Automatic import (`[local] auto_import`, off by default; only with `[github] issues_enabled = false`): every
+  `auto_import_seconds` (default 3600) the orchestrator searches each configured repository for open issues without
+  `factory:moved` (at most 5 pages of 100, oldest first) and queues those whose author has one of `trusted_permissions`, at most
+  25 waiting at once; they are then moved like an Import, and closed unless `auto_import_close = false`. Before turning it on,
+  look at the open issues: the first runs move the whole backlog. It is skipped in dry run, without a token and while paused.
+  A skipped issue is kept in `local_import_skips` and checked again after 24 hours; to check them all again at the next pass, run
+  `DELETE FROM local_import_skips` (their `import:refused` events are sent again). The time of the last pass is the status key
+  `last_auto_import`.
 - Pictures in GitHub issues (`[issue_images]`, on by default): before each run the orchestrator copies the pictures of a GitHub
   issue (body and comments, at most `max_images`) into the agents' `/task/attachments/` as `issue-<n>.png|jpg|gif`. It fetches only
   from GitHub's own image hosts, without credentials. A picture that cannot be read is skipped and the agent is told so. Moving an

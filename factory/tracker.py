@@ -23,6 +23,9 @@ FACTORY_AUTHOR, UI_ACTOR, IMPORTED = "@factory", "ui", "imported"
 FACTORY_ACTOR = "factory"
 TRUSTED_ACTORS = frozenset({UI_ACTOR, FACTORY_ACTOR})
 MAX_BULK = 25
+AUTO_PAGES = 5                  # the automatic import reads at most this many pages (100 issues each) per repository and pass
+AUTO_RECHECK = 24 * 3600        # an issue it skipped is checked again after this long
+AUTO_NONE_STOP = 3              # permission lookups answering 'none' in one pass before it stops
 MOVED_COMMENT = "Moved to the factory's local tracker as {ref}.{link} This issue is no longer watched by the factory."
 RUNNING = ("running", "queued", "starting")
 
@@ -102,6 +105,9 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS import_requests (
             repo TEXT NOT NULL, gh_number INTEGER NOT NULL, close INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL,
             PRIMARY KEY (repo, gh_number));
+        CREATE TABLE IF NOT EXISTS local_import_skips (
+            repo TEXT NOT NULL, gh_number INTEGER NOT NULL, author TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL,
+            checked REAL NOT NULL, PRIMARY KEY (repo, gh_number));
     """)
     db.commit()
 
@@ -444,6 +450,61 @@ def process_imports(cfg, gh: GitHub, db, triggers: frozenset, emit) -> None:
         if done:
             db.execute("DELETE FROM import_requests WHERE repo=? AND gh_number=?", (repo, num))
             db.commit()
+
+
+def auto_queue(cfg, gh: GitHub, db, emit) -> int:
+    """The automatic import (`local.auto_import`, with GitHub issues off): queue the open, unmoved GitHub issues of the configured
+    repositories whose author is a person with one of `trusted_permissions`, oldest first, at most MAX_BULK waiting at once.
+    process_imports then moves them. Any other author is skipped (fails closed, 'none' included, whatever caused it) with one
+    `import:refused` event and checked again after AUTO_RECHECK. A network failure records nothing: the next pass retries.
+    Returns how many were queued."""
+    ensure_tables(db)
+    room = MAX_BULK - db.execute("SELECT COUNT(*) FROM import_requests").fetchone()[0]
+    now, perms, nones, queued = time.time(), {}, 0, 0
+    for repo in cfg.repos:
+        for page in range(1, AUTO_PAGES + 1):
+            if room <= 0:
+                return queued
+            items, more = gh.unmoved_issues(repo, page)
+            for i in items:
+                num = int(i["number"])
+                if room <= 0 or refusal(db, repo, i) or db.execute(
+                        "SELECT 1 FROM import_requests WHERE repo=? AND gh_number=?", (repo, num)).fetchone():
+                    continue
+                skip = db.execute("SELECT checked FROM local_import_skips WHERE repo=? AND gh_number=?", (repo, num)).fetchone()
+                if skip and now - skip[0] < AUTO_RECHECK:
+                    continue
+                user = i.get("user") or {}
+                login = user.get("login") or ""
+                if user.get("type") != "User" or not login:
+                    why = "Its author is a bot or unknown."
+                else:
+                    if (repo, login) not in perms:
+                        try:
+                            perms[repo, login] = gh.permission(repo, login)
+                        except OSError as e:
+                            log.warning("auto-import: could not check %s's permission (%s); retried next time", login, type(e).__name__)
+                            return queued
+                        nones += perms[repo, login] == "none"
+                    perm = perms[repo, login]
+                    why = None if perm in cfg.trusted_permissions else f"Its author is not trusted (permission '{perm}')."
+                if why is None:
+                    db.execute("DELETE FROM local_import_skips WHERE repo=? AND gh_number=?", (repo, num))
+                    db.execute("INSERT OR IGNORE INTO import_requests VALUES (?,?,?,?)", (repo, num, int(cfg.local_auto_import_close), now))
+                    room, queued = room - 1, queued + 1
+                elif skip:
+                    db.execute("UPDATE local_import_skips SET author=?, reason=?, checked=? WHERE repo=? AND gh_number=?",
+                               (login, why, now, repo, num))
+                else:
+                    db.execute("INSERT INTO local_import_skips VALUES (?,?,?,?,?)", (repo, num, login, why, now))
+                    emit("import:refused", f"{repo}#{num} was not moved: {why}", repo, num)
+                db.commit()
+                if nones >= AUTO_NONE_STOP:             # GitHub refusing lookups (a rate limit?): stop before more issues are skipped
+                    log.warning("auto-import: %d permission lookups gave 'none'; stopped until the next pass", nones)
+                    return queued
+            if not more:
+                break
+    return queued
 
 
 def backfill_images(cfg, gh: GitHub, db, repos: list[str], apply: bool, out=print) -> int:

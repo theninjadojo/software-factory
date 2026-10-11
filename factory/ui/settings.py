@@ -105,11 +105,18 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               choices=("admin", "maintain", "write", "triage"), group="Labels"),
         Field("github.repos", "Standalone repositories", "repos", "owner/name, one per line. Repos of a project (see Projects) are added automatically.", group="Where tickets come from"),
         Field("github.issues_enabled", "Work from GitHub issues", "bool",
-              "Off: GitHub issues are not read or acted on (no polling, approvals, schedules, sub-issues or Import). Running jobs finish. "
+              "Off: GitHub issues are not read or acted on (no polling, approvals, schedules or sub-issues; Import still works). Running jobs finish. "
               "Pull requests and CI still use GitHub. Turn on local tickets or nothing has tickets to work on.", group="Where tickets come from"),
         Field("local.enabled", "Keep tickets in the factory", "bool",
               "On: tickets can live in the factory's own database (L-1, L-2 ...) instead of GitHub issues. New ticket offers both, and Import "
               "moves GitHub issues across. Pull requests still go to GitHub.", group="Where tickets come from"),
+        Field("local.auto_import", "Import GitHub issues automatically", "bool",
+              "Only with GitHub issues off and local tickets on. On a slow schedule, open GitHub issues whose author has one of the roles in "
+              "Who may apply labels are copied here with their labels; other authors' issues are skipped. The first runs move the "
+              "whole open backlog, 25 at a time.", group="Where tickets come from"),
+        Field("local.auto_import_close", "Close GitHub issues after importing them", "bool",
+              "On (default): the copied GitHub issue is closed. Off: it stays open, marked factory:moved, and is not imported again.",
+              group="Where tickets come from"),
         Field("subtasks.enabled", "Mirror pipeline steps as GitHub sub-issues", "bool",
               "Each stage of a ticket also shows as a sub-issue on GitHub. Off by default: it adds writes and notifications.", group="Where tickets come from"),
         Field("local.max_attachment_mb", "Largest attachment (MB)", "int", "Files attached to a local ticket.", lo=1, hi=50, adv=True),
@@ -120,6 +127,8 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("github.poll_seconds", "Read GitHub every (seconds)", "int",
               "Local tickets are handled at every poll; GitHub issues can be read less often to spare API calls. "
               "The same as the poll interval reads GitHub at every poll.", lo=5, hi=86400, adv=True),
+        Field("local.auto_import_seconds", "Import GitHub issues every (seconds)", "int",
+              "How often the automatic import reads GitHub (default 3600).", lo=600, hi=86400, adv=True),
     ]),
     "routing": ("Models by ticket size", _routing_fields()),
     "roles": ("Stage agents", _role_fields()),     # the harness choices are filled in by fields_for()
@@ -434,7 +443,7 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     return {"auto.label": "factory:auto", "routing.low.fallback_models": [], "routing.medium.fallback_models": [], "routing.high.fallback_models": [],
             "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
-            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "local.max_attachment_mb": 5, "local.max_attachments": 5, "local.max_attachments_total_mb": 20, "board.done_days": 7, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
+            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "local.auto_import": False, "local.auto_import_seconds": 3600, "local.auto_import_close": True, "local.max_attachment_mb": 5, "local.max_attachments": 5, "local.max_attachments_total_mb": 20, "board.done_days": 7, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
 def canon(key: str, v):
