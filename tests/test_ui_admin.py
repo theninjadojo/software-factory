@@ -799,4 +799,4 @@ class SettingsLayout(UiCase):
         _, _, html = self.req("GET", "/settings?section=general", cookie=cookie)
         self.assertIn("Save changes", html)
         self.assertIn("Changes apply the next time the factory is idle", html)
-        self.assertEqual(html.count('class="srow'), 14)
+        self.assertEqual(html.count('class="srow'), 17)
