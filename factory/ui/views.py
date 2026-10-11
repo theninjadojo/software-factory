@@ -143,6 +143,11 @@ def pr_links(urls: str) -> str:
     return " ".join(gh_link(u, "#" + u.rsplit("/", 1)[-1]) for u in (urls or "").split() if GH_URL.match(u))
 
 
+def live_pr(p: dict) -> bool:
+    """A watched PR that still counts as open for its ticket: a superseded one is left behind (cleanup.py closes it)."""
+    return (p.get("status") or "") not in ("closed", "superseded")
+
+
 def csrf_field(csrf: str) -> str:
     return f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
 
@@ -331,7 +336,7 @@ def events_list(events: list[dict]) -> str:
 
 
 def prs_summary_line(prs: list[dict]) -> str:
-    open_ = [p for p in prs if p["status"] != "closed"]
+    open_ = [p for p in prs if live_pr(p)]
     if not open_:
         return ""
     return (f'<p class="summary">{len(open_)} open · {sum(p["status"] == "passed" for p in open_)} passing · '

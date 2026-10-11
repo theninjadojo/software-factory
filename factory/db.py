@@ -3,7 +3,7 @@ import sqlite3
 import threading
 import time
 
-from . import waves
+from . import cleanup, waves
 from . import captures, chat, factorychat, scenarios, designfiles, jobs, newproject, plan, reviewnotes, reviewactions, scanner, schedules, screenboard, split, ticketreview, tracker, triage
 from .render import png_ok
 
@@ -127,6 +127,7 @@ def connect(path: str) -> sqlite3.Connection:
     split.ensure_tables(db)
     reviewactions.ensure_tables(db)
     waves.ensure_tables(db)
+    cleanup.ensure_tables(db)
     scenarios.ensure_tables(db)
     return db
 
@@ -290,7 +291,7 @@ def design_prs(db, repo: str, issue: int) -> set[tuple[str, int]]:
 
 def supersede_prs(db, issue_repo: str, issue_num: int, keep=frozenset()) -> list[tuple[str, int]]:
     """A ticket was sent back to an earlier stage, so its open factory PRs (except those in keep) are no longer watched for CI
-    or merge conflicts: a new PR will follow. The rows stay ('superseded'); the PRs themselves are left for a person to close."""
+    or merge conflicts: a new PR will follow. The rows stay ('superseded'); cleanup.py closes the PRs once the ticket's build has merged."""
     args = (issue_repo, issue_num)
     found = {(r, n) for r, n in db.execute("SELECT repo, number FROM prs WHERE issue_repo=? AND issue_num=? "
                                            "AND status NOT IN ('closed', 'superseded')", args)}

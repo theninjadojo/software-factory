@@ -14,7 +14,7 @@ import time
 from urllib.parse import urlencode
 
 from .. import db as dbm
-from .. import plan
+from .. import cleanup, plan
 from .. import questions as Q
 from .. import why as W
 from ..tracker import display, is_local
@@ -124,7 +124,7 @@ def ticket_state(st: dict, needs: bool, prs: list[dict]) -> str:
         return "working"
     if "fail" in st.values():
         return "failed"
-    if any((p.get("status") or "") != "closed" for p in prs):
+    if any(views.live_pr(p) for p in prs):
         return "prs"
     return "done"
 
@@ -252,11 +252,13 @@ def _one(db, t: dict, prs: list, need, title, now: float, known: bool = False, q
         state, idle = "working", False
     at = current(st)
     last = max([s["finished"] or s["started"] for s in j["steps"]] + [p.get("updated") or 0 for p in prs] + [t.get("decided_at") or 0])
+    tidy = cleanup.summary(db, t["repo"], int(t["issue"])) if state == "done" else ""    # Done does not wait for it
+    why = _idle_why(at) if idle else _queued_why(queued) if lined_up else _why(state, j, prs, need, t, at, now)
     return {"repo": t["repo"], "issue": int(t["issue"]), "title": (loc or {}).get("title") or title or (need or {}).get("title") or t.get("title")
             or f"Ticket {display(int(t['issue']))}",
             "state": state, "closed": bool(loc and loc["state"] == "closed"), "stations": st, "at": at, "when": last,
-            "why": _idle_why(at) if idle else _queued_why(queued) if lined_up else _why(state, j, prs, need, t, at, now), "journey": j, "prs": prs, "need": need,
-            "decision": t.get("outcome") or "", "detail": t.get("detail") or "", "lined_up": lined_up}
+            "why": f"{why} · {tidy}" if tidy else why, "journey": j, "prs": prs, "need": need,
+            "decision": t.get("outcome") or "", "detail": t.get("detail") or "", "lined_up": lined_up, "cleanup": tidy}
 
 
 def outcome_of(r: dict, head) -> dict:
@@ -272,8 +274,8 @@ def outcome_line(r: dict, head) -> str:
     return "" if o["tone"] == "warn" else OC.preview(o["sentence"] or o["reason"])
 
 
-def outcome_card(o: dict, repo: str, issue: int, at: float = 0) -> str:
-    """The Outcome card at the top of a Done ticket: headline, the document's sentence, why it is Done, and links."""
+def outcome_card(o: dict, repo: str, issue: int, at: float = 0, tidy: str = "") -> str:
+    """The Outcome card at the top of a Done ticket: headline, the document's sentence, why it is Done, its leftover PRs' cleanup, and links."""
     links = "".join(f'<a href="https://github.com/{esc(repo)}/pull/{int(n)}" rel="noopener noreferrer" target="_blank" '
                     f'aria-label="Pull request {int(n)}, opens GitHub">PR #{int(n)} ↗</a>' for n in o["prs"]) if views.REPO.match(repo) else ""
     if o["stage"] in views.DOC_NOUN:
@@ -282,6 +284,7 @@ def outcome_card(o: dict, repo: str, issue: int, at: float = 0) -> str:
     sentence = f'<p class="sd-outsent">{esc(o["sentence"])}</p>' if o["sentence"] else ""
     return (f'<section class="sd-card sd-outcome {esc(o["tone"])}" aria-labelledby="out-h"><h3 id="out-h" class="lab">Outcome</h3>'
             f'<b class="sd-outhead">{esc(o["headline"])}</b>{sentence}<p class="sd-why muted">{esc(o["reason"])}</p>'
+            + (f'<p class="sd-why muted">Cleanup: {esc(tidy)}</p>' if tidy else "") +
             f'<div class="sd-outlinks muted sd-fine">{when}{links}</div></section>')
 
 
@@ -348,7 +351,7 @@ def _why(state: str, j: dict, prs: list, need, t: dict, at, now: float) -> str:
         why = (f[-1].get("message") or "") if f else ""
         return f'{LABEL.get(at or "", "A step")} failed' + (f": {_clip(plain(why), 90)}" if why else "")
     if state == "prs" and prs:
-        p = next(p for p in prs if (p.get("status") or "") != "closed")
+        p = next(p for p in prs if views.live_pr(p))
         return f'PR #{int(p["number"])} · {CI_WORD.get(p.get("status") or "", "checks pending")}'
     detail = plain((t.get("detail") or "").rsplit(";", 1)[-1])
     return detail[:90] or ("Merged" if prs else "Finished")
@@ -380,7 +383,7 @@ def _clip(text: str, n: int) -> str:
 
 
 def _open_pr(r: dict) -> bool:
-    return any((p.get("status") or "") != "closed" for p in r["prs"])
+    return any(views.live_pr(p) for p in r["prs"])
 
 
 _TAG = re.compile(r"\s*\(?cls=[\w/.=,:-]*\)?|\s*\[dry-run\]")
@@ -771,7 +774,7 @@ def live_part(r: dict, files: list, docs, events, fix_rounds: int, now: float, c
     repo, n, j = r["repo"], r["issue"], r["journey"]
     design_prs = sorted({f.get("pr") for f in files if f.get("pr")})
     design_link = "".join(f'<a href="{esc(u)}" rel="noopener noreferrer" target="_blank">Draft PR #{esc(u.rsplit("/", 1)[-1])} ↗</a>' for u in design_prs if views.GH_URL.match(u))
-    card = outcome_card(r["outcome_full"], repo, n, r.get("when") or 0) if r["state"] == "done" and r.get("outcome_full") else ""
+    card = outcome_card(r["outcome_full"], repo, n, r.get("when") or 0, r.get("cleanup") or "") if r["state"] == "done" and r.get("outcome_full") else ""
     return (card + needs_html + journey_fold(r, files, docs, now) + prs_fold(r["prs"], fix_rounds, csrf, repo)
             + design_fold(files, repo, n, docs, design_link, r.get("design_imports"), r.get("review_notes"), csrf) + steps_fold(j, repo, n, docs)
             + activity_fold(events, now))
@@ -1280,7 +1283,7 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
     last = d["status"].get("last_poll_ok", {}).get("value")
     seen = f"last poll {ago(float(last), now)}" if last else "no poll yet"
     line += f" · Not reporting, {seen}" if floor._stale(d, now) else f" · Healthy, {seen}"
-    open_prs = [p for p in d["prs"] if p["status"] != "closed"]
+    open_prs = [p for p in d["prs"] if views.live_pr(p)]
     checks = sum(p["status"] == "watching" for p in open_prs)
     failing = sum(p["status"] == "failed" for p in open_prs)
     today = [r for r in d["recent"] if (r.get("finished") or r["started"]) > now - 86400]
