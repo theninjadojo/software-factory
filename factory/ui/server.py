@@ -59,6 +59,19 @@ STORAGE_SHIM = (b"<script>(function(){function S(){var d={};return{getItem:funct
                 b"setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},"
                 b"get length(){return Object.keys(d).length}}}['localStorage','sessionStorage'].forEach(function(n){try{window[n].length}catch(e){"
                 b"Object.defineProperty(window,n,{value:S(),configurable:true})}})})();</script>")
+# The Mermaid diagram frame (/diagram-frame) draws agent-written diagram text. Like a report it is sandboxed without allow-same-origin, so it is
+# an opaque origin: no cookies, no access to this site's pages. Stricter than a report: only its own two scripts, no eval, no network, no images.
+# Its bytes are fixed; nothing from the request is reflected.
+DIAGRAM_DIR = Path(__file__).parent / "vendor"
+DIAGRAM_HEADERS = {
+    "Content-Security-Policy": "sandbox allow-scripts; default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; "
+                               "connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'",
+    "X-Frame-Options": "SAMEORIGIN",
+}
+DIAGRAM_HTML = (b'<!doctype html><html><head><meta charset="utf-8"><title>Diagram</title><style>html,body{margin:0;background:transparent}'
+                b'#d{display:inline-block}</style></head><body><div id="d"></div>'
+                b'<script src="/diagram-frame/mermaid.min.js"></script><script src="/diagram-frame/frame.js"></script></body></html>')
+DIAGRAM_FILES = {"/diagram-frame/mermaid.min.js": ("mermaid.min.js", "public, max-age=86400"), "/diagram-frame/frame.js": ("frame.js", "no-cache")}
 
 
 def sandboxed_report(html: bytes) -> bytes:
@@ -67,7 +80,7 @@ def sandboxed_report(html: bytes) -> bytes:
     return html[:i + 6] + STORAGE_SHIM + html[i + 6:] if i >= 0 else STORAGE_SHIM + html
 HEADERS = {
     "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; "
-                               "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+                               "form-action 'self'; base-uri 'none'; frame-ancestors 'none'; frame-src 'self'",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store",
 }
 
@@ -459,6 +472,14 @@ class Handler(BaseHTTPRequestHandler):
                 if name in STATIC and f.is_file():
                     return self._send(200, f.read_bytes(), STATIC[name], {"Cache-Control": "no-cache"})
                 return self._send(404, "not found", "text/plain")
+            if path == "/diagram-frame":
+                return self._send(200, DIAGRAM_HTML, extra={**DIAGRAM_HEADERS, "Cache-Control": "no-cache"})
+            if path in DIAGRAM_FILES:
+                name, cache = DIAGRAM_FILES[path]
+                f = DIAGRAM_DIR / name                      # a fixed name from the table, never from the request
+                if f.is_file():
+                    return self._send(200, f.read_bytes(), "application/javascript; charset=utf-8", {**DIAGRAM_HEADERS, "Cache-Control": cache})
+                return self._send(404, "not found", "text/plain", DIAGRAM_HEADERS)
             if path == "/healthz":
                 return self._send(200, "ok", "text/plain")
             if path == "/login":

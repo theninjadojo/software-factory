@@ -48,22 +48,32 @@ def _cells(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def md_render(text: str) -> tuple[str, list[tuple[str, str]]]:
+MAX_DIAGRAM = 20000
+
+
+def md_render(text: str, diagrams: bool = False) -> tuple[str, list[tuple[str, str]]]:
     """A document as HTML and its headings as (anchor id, text). A small subset of Markdown (headings, paragraphs, bold, code,
     fences, lists, tables, github.com links). The text is untrusted: it is escaped before anything is added, raw HTML is shown as
-    text, images are never rendered, and a link is made only for an https://github.com URL. Document headings start at h2."""
+    text, images are never rendered, and a link is made only for an https://github.com URL. Document headings start at h2.
+    diagrams: a fence tagged `mermaid` is marked (data-diagram, fixed values only) for the page to draw in a sandboxed frame; the text is escaped as ever."""
     lines, out, heads = text.replace("\r\n", "\n").split("\n"), [], []
     i = 0
     while i < len(lines):
         line = lines[i]
         if line.lstrip().startswith("```"):
+            is_diagram = diagrams and line.lstrip()[3:].strip().lower() == "mermaid"
             i += 1
             code = []
             while i < len(lines) and not lines[i].lstrip().startswith("```"):
                 code.append(lines[i])
                 i += 1
             i += 1                                          # the closing fence; an unclosed one runs to the end
-            out.append(f'<pre tabindex="0"><code>{html.escape(chr(10).join(code))}</code></pre>')
+            body = chr(10).join(code)
+            if is_diagram and body.strip():
+                mark = "too-large" if len(body) > MAX_DIAGRAM else "mermaid"
+                out.append(f'<pre tabindex="0" class="mm-src" data-diagram="{mark}"><code>{html.escape(body)}</code></pre>')
+            else:
+                out.append(f'<pre tabindex="0"><code>{html.escape(body)}</code></pre>')
         elif not line.strip():
             i += 1
         elif (m := HEADING.fullmatch(line.strip())):

@@ -159,3 +159,9 @@ factory's database, like a queued approval.
 Everything is checked on the server like the Tickets page's answers: the repository must be configured, ticket numbers are validated,
 and each ticket's questions are re-read from GitHub, so a page that is out of date cannot record a stale answer.
 The page refreshes itself, but never while a popup is open, a field is focused, or an option is chosen.
+
+## Mermaid diagrams in stage documents
+
+A fence tagged `mermaid` in a stage document (not the run page) is drawn as a diagram. The server (`md_render(..., diagrams=True)`) keeps the escaped source in `<pre class="mm-src" data-diagram="mermaid">` (`too-large` over 20,000 characters); `app.js` wraps each in a card with Show source / Copy source and loads `<iframe sandbox="allow-scripts" src="/diagram-frame">`. The frame is an opaque origin with its own headers (`DIAGRAM_HEADERS` in `server.py`: no network, no eval, no images, only its own scripts), runs Mermaid with `securityLevel: "strict"` and the dark theme, and tells the page only a clamped size or a short error; the SVG never enters the page. The page waits 5 s; on any failure the source stays with a note. The page CSP gains only `frame-src 'self'`.
+
+The library itself is **not in the repository yet**: `factory/ui/vendor/mermaid.min.js` (a pinned Mermaid 11.x `dist/mermaid.min.js`, with its MIT licence and checksum recorded here) must be added by a maintainer with network access. Until then the route answers 404 and every diagram shows its source with "Diagram not drawn".
