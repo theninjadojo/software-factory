@@ -94,8 +94,10 @@ def page_body(cfg, state_dir, csrf: str, run=None) -> str:
         apply = (f'<form method="post" action="/updates/apply" class="inline">{csrf_field(csrf)}<input type="hidden" name="tag" value="{esc(got["tag"])}">'
                  f'<button>Update to {esc(got["tag"])}</button></form>')
     elif got:
-        apply = ('<p class="muted">This install cannot update itself from here. On the host run <code>./scripts/update.sh</code> '
-                 '(Docker) or <code>update-native.sh</code> (systemd).</p>')
+        apply = ('<p class="muted">This Docker install cannot update itself from here: the UI has no access to restart the factory\'s containers. '
+                 'On the host, in the install folder, run <code>./scripts/update.sh</code>. It pauses the factory, pulls the new images, restarts, and '
+                 'rolls back by itself if they do not start. Your config, credentials and data are kept. '
+                 'A native (systemd) install updates from here, or with <code>update-native.sh</code>.</p>')
     else:
         apply = ""
     explain = ('<p class="muted">An update downloads the release (with the token the factory already has for the repository), runs its tests first, '
