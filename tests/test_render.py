@@ -227,3 +227,34 @@ class CropOnWhite(unittest.TestCase):
         self.assertNotIn((255, 0, 255), set(out.getdata()))
         with self.assertRaises(ValueError):
             mod.crop_on_white(Image.new("RGBA", (40, 40), (0, 0, 0, 0)))
+
+
+class CropFullPageBackground(unittest.TestCase):
+    def mod(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow is only in the render image")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("render_container", Path(__file__).resolve().parent.parent / "sandbox" / "render" / "render.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod, Image
+
+    def test_a_page_colour_over_the_whole_window_is_trimmed_to_the_content_plus_margin(self):
+        mod, Image = self.mod()
+        img = Image.new("RGBA", (400, 1000), (240, 235, 255, 255))
+        for x in range(50, 150):
+            for y in range(40, 100):
+                img.putpixel((x, y), (18, 52, 86, 255))
+        out = mod.crop_on_white(img)
+        self.assertEqual(out.size, (100 + 2 * mod.MARGIN, 60 + 2 * mod.MARGIN))
+        self.assertEqual(out.getpixel((0, 0)), (240, 235, 255))
+        self.assertEqual(out.getpixel((mod.MARGIN, mod.MARGIN)), (18, 52, 86))
+
+    def test_margin_is_clamped_to_the_image_and_a_flat_page_is_kept(self):
+        mod, Image = self.mod()
+        img = Image.new("RGBA", (200, 300), (240, 235, 255, 255))
+        img.putpixel((5, 5), (0, 0, 0, 255))
+        self.assertEqual(mod.crop_on_white(img).size, (6 + mod.MARGIN, 6 + mod.MARGIN))
+        self.assertEqual(mod.crop_on_white(Image.new("RGBA", (200, 300), (240, 235, 255, 255))).size, (200, 300))

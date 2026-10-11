@@ -260,7 +260,7 @@ def design_files_rules(design_dir: str, requested: bool = False) -> str:
         "external resource is the Google Fonts stylesheet the existing files already use (draw icons and shapes with CSS or inline "
         "<svg>); at most three files of 150 KB each. Show the realistic states that matter (for example default, empty, error) as "
         "separate frames in one file or as separate files. When the screen is responsive, also make a phone version as its own file "
-        "(name it `...-mobile`) laid out in a frame 390 px wide, beside the 1440 px wide desktop one. Do not modify, rename or delete any existing file. Your final answer is still "
+        "(name it `...-mobile`) laid out in a frame 390 px wide, beside the 1440 px wide desktop one. Do not give `body` or `html` a full-height background or `min-height:100vh`: colour a wrapper that fits its content, because empty page colour is kept in the preview. Do not modify, rename or delete any existing file. Your final answer is still "
         "only the document; end it with one line `Design files: <the paths you created>` (or `Design files: none` if the ticket has no "
         "user-facing screens)."
     ) + (SCREENS_REQUESTED if requested else "")
