@@ -512,7 +512,7 @@ def doc_page(repo: str, issue: int, stage: str, have: list[str], doc: dict | Non
     if not text:
         return head + ('<p class="muted">No document recorded for this stage yet.</p><p class="muted">The stage has not run, or its output was not kept.</p>'
                        f'{notice}<p><a href="{esc(back)}">← Back to questions</a></p>')
-    body, heads = md_render(text)
+    body, heads = md_render(text, diagrams=True)
     meta = " · ".join(x for x in (esc(DOC_LABEL[stage]), f'<a href="/runs/{int(doc["id"])}">run #{int(doc["id"])}</a>' if doc else "",
                                   esc(ago(doc["started"])) if doc else "", esc(source)) if x)
     imgs = "".join(mockup_img(f) for f in previews or [])

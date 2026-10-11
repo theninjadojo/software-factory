@@ -836,4 +836,54 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.focus();
   });
+
+  // --- Mermaid diagrams in stage documents: the server marks a fence (pre.mm-src) and keeps its escaped text. Each is drawn by Mermaid
+  // inside a sandboxed frame (/diagram-frame, opaque origin); the SVG never enters this page. Any failure leaves the source showing.
+  var MM_MAX = 20000, MM_WAIT = 5000, MM_NOLOAD = "Diagram not drawn: the diagram viewer did not load. The source is below.", mmFrames = {}, mmN = 0;
+  function mmEl(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text) n.textContent = text; return n; }
+  function mmCard(pre) {
+    var id = ++mmN, src = pre.textContent, card = mmEl("div", "mm-diagram"), head = mmEl("div", "mm-head"), btns = mmEl("div", "mm-btns");
+    var note = mmEl("p", "mm-note muted"), view = mmEl("div", "mm-view"), toggle = mmEl("button", "", "Show source"), copy = mmEl("button", "", "Copy source");
+    var drawn = false, showing = false;
+    toggle.type = copy.type = "button"; toggle.hidden = true; note.setAttribute("role", "status");
+    head.appendChild(mmEl("span", "mm-label", "Diagram · Mermaid")); btns.appendChild(toggle); btns.appendChild(copy); head.appendChild(btns);
+    pre.parentNode.insertBefore(card, pre);
+    card.appendChild(head); card.appendChild(note); card.appendChild(view); card.appendChild(pre);
+    function sync() {
+      toggle.hidden = !drawn; view.hidden = showing; pre.hidden = drawn && !showing;
+      toggle.textContent = showing ? "Show diagram" : "Show source";
+    }
+    function say(msg, bad) { note.textContent = msg; note.className = "mm-note" + (bad ? " mm-bad" : " muted"); }
+    function fail(msg, bad) { drawn = false; delete mmFrames[id]; view.textContent = ""; say(msg, bad); sync(); }
+    toggle.addEventListener("click", function () { showing = !showing; sync(); });
+    copy.addEventListener("click", function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(src).then(function () { say("Copied"); });
+    });
+    if (pre.getAttribute("data-diagram") !== "mermaid" || src.length > MM_MAX) return fail("This diagram is too large to draw here (over 20,000 characters). The source is below.");
+    say("Drawing diagram…");
+    var f = mmEl("iframe", "mm-frame"), scroll = mmEl("div", "mm-scroll"), timer = setTimeout(function () { fail(MM_NOLOAD); }, MM_WAIT);
+    f.setAttribute("sandbox", "allow-scripts"); f.title = "Diagram";
+    f.setAttribute("aria-label", "Diagram: " + src.split("\n")[0].slice(0, 80) + ". The full source is below the diagram.");
+    scroll.tabIndex = 0; scroll.appendChild(f); view.appendChild(scroll);
+    mmFrames[id] = {
+      win: null,
+      msg: function (m) {
+        if (m.t === "mm-ready") return f.contentWindow.postMessage({ t: "mm-render", id: id, src: src }, "*");
+        clearTimeout(timer);
+        if (m.t === "mm-error") fail("Could not draw this diagram. " + String(m.msg || "").slice(0, 200) + " Showing the source instead.", true);
+        else if (m.t === "mm-done") {
+          f.style.height = Math.max(40, Math.min(+m.h || 0, 480)) + 16 + "px"; f.style.width = Math.max(40, Math.min(+m.w || 0, 4000)) + 16 + "px";
+          drawn = true; view.classList.add("mm-on"); say(""); sync();
+        } else fail(MM_NOLOAD);
+      }
+    };
+    f.src = "/diagram-frame"; mmFrames[id].win = f.contentWindow;
+  }
+  window.addEventListener("message", function (e) {
+    var m = e.data;
+    if (!m || typeof m.t !== "string" || e.origin !== "null") return;
+    for (var k in mmFrames) if (mmFrames[k].win === e.source && (m.id === undefined || m.id === +k)) return mmFrames[k].msg(m);
+  });
+  var mmPres = document.querySelectorAll(".docview pre.mm-src");
+  for (var mi = 0; mi < mmPres.length; mi++) mmCard(mmPres[mi]);
 })();

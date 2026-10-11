@@ -301,6 +301,40 @@ class StageDocuments(UiCase):
         self.assertIn(f'href="/ticket/doc?repo={self.REPO}&amp;n=5&amp;stage=designer" target="_blank" rel="noopener"', out)
         self.assertNotIn("/ticket/doc", L.question_form("evil/../x", 5, Q.StageQuestions("designer", [q]), "csrf"))
 
+    def test_mermaid_fence_is_marked_only_when_asked_and_stays_escaped(self):
+        from factory.sanitize import md_render
+        doc = "```mermaid\nflowchart TD\n  A[<script>x</script>] --> B<img src=x onerror=y>\n```\n\n```python\nprint(1)\n```\n\n```mermaid\n```\n"
+        plain, _ = md_render(doc)
+        self.assertNotIn("data-diagram", plain)
+        out, _ = md_render(doc, diagrams=True)
+        self.assertEqual(out.count("data-diagram"), 1)               # only the non-empty mermaid fence
+        self.assertIn('<pre tabindex="0" class="mm-src" data-diagram="mermaid">', out)
+        for bad in ("<script", "<img"):
+            self.assertNotIn(bad, out)
+        big, _ = md_render("```mermaid\n" + "a" * 20001 + "\n```", diagrams=True)
+        self.assertIn('data-diagram="too-large"', big)
+
+
+class DiagramFrame(UiCase):
+    def test_frame_is_sandboxed_without_same_origin_and_the_page_only_adds_frame_src(self):
+        from factory.ui.server import HEADERS
+        self.assertTrue(HEADERS["Content-Security-Policy"].endswith("frame-ancestors 'none'; frame-src 'self'"))
+        self.assertEqual(HEADERS["X-Frame-Options"], "DENY")
+        for path in ("/diagram-frame", "/diagram-frame/frame.js"):
+            st, h, _ = self.req("GET", path)
+            self.assertEqual(st, 200, path)
+            csp = h["Content-Security-Policy"]
+            self.assertIn("sandbox allow-scripts;", csp)
+            self.assertIn("connect-src 'none'", csp)
+            self.assertIn("script-src 'self'", csp)
+            for bad in ("allow-same-origin", "unsafe-eval", "script-src 'unsafe-inline'", "allow-forms", "allow-popups"):
+                self.assertNotIn(bad, csp)
+            self.assertEqual(h["X-Frame-Options"], "SAMEORIGIN")
+
+    def test_frame_serves_only_fixed_files(self):
+        for bad in ("/diagram-frame/../server.py", "/diagram-frame/..%2fserver.py", "/diagram-frame/other.js", "/diagram-frame/"):
+            self.assertEqual(self.req("GET", bad)[0], 404, bad)
+
 
 class ImportantEvents(UiCase):
     def test_important_view_hides_routine_events_and_everything_keeps_all(self):
