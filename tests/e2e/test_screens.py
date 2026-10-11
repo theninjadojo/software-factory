@@ -13,6 +13,7 @@ STICKS_OUT = """() => {
   for (const el of document.querySelectorAll('main *, header *')) {
     const r = el.getBoundingClientRect(), st = getComputedStyle(el);
     if (!r.width || st.visibility === 'hidden' || st.position === 'fixed') continue;
+    if (el.closest('details:not([open])') && !el.closest('summary')) continue;  // a closed <details> body is not shown, though newer Chromium still lays it out
     if (r.right <= w + 1 && r.left >= -1) continue;
     let p = el.parentElement, scrolls = false;
     while (p && p !== document.body) { const o = getComputedStyle(p).overflowX; if (o === 'auto' || o === 'scroll' || o === 'hidden') { scrolls = true; break; } p = p.parentElement; }
