@@ -353,6 +353,13 @@ class ConflictsCfg:
 
 
 @dataclass(frozen=True)
+class CleanupCfg:
+    """Close a ticket's leftover factory PRs (design mockups, superseded PRs) once every build PR of the ticket has merged. Only
+    PRs the factory recorded for that ticket; closed, never a branch deleted. Done does not wait for it. Off: a person closes them."""
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class ScheduleCfg:
     """A scheduled job: on `every` (6h, 2d, 1w) or `cron` (UTC, five fields), fetch `source`, save a snapshot and open a ticket
     on `repo`. `labels` default to the auto label, so the classifier picks the next stage and only builds what it is sure about;
@@ -581,6 +588,7 @@ class Config:
     auto_confirm_stages: bool = False    # True: also ask a person before auto runs a read-only stage (analyst, designer, architect)
     ci: CiCfg = field(default_factory=CiCfg)
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
+    cleanup: CleanupCfg = field(default_factory=CleanupCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
     split: SplitCfg = field(default_factory=SplitCfg)
@@ -1170,6 +1178,9 @@ def parse(raw: dict) -> Config:
     conflicts = ConflictsCfg(**raw.get("conflicts", {}))
     if conflicts.max_attempts < 0 or not conflicts.label.strip():
         raise ValueError("conflicts.max_attempts must be 0 or more and conflicts.label must not be empty")
+    cleanup = CleanupCfg(**raw.get("cleanup", {}))
+    if not isinstance(cleanup.enabled, bool):
+        raise ValueError("cleanup.enabled must be true or false")
     review = ReviewCfg(**_tuples(raw.get("review", {})))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
@@ -1288,6 +1299,7 @@ def parse(raw: dict) -> Config:
         screens=screens,
         workers=workers,
         conflicts=conflicts,
+        cleanup=cleanup,
         review=review,
         mockups=mockups,
         split=split_cfg,

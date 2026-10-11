@@ -23,8 +23,9 @@ def _transient(e: Exception) -> bool:
 
 
 class GitHub:
-    """Small GitHub client. Writes are limited to: comments, labels, pull requests, and the step sub-issues the
-    factory creates itself (fixed title prefix, no labels or assignees), and confirmed follow-up tickets (no labels or assignees)."""
+    """Small GitHub client. Writes are limited to: comments, labels, pull requests (closed only through close_pr, never a branch
+    deleted), and the step sub-issues the factory creates itself (fixed title prefix, no labels or assignees), and confirmed
+    follow-up tickets (no labels or assignees)."""
 
     def __init__(self, token: str | None):
         self.token = token
@@ -291,6 +292,19 @@ class GitHub:
         if out.get("errors"):
             raise RuntimeError(f"markPullRequestReadyForReview failed: {out['errors']}")
         return True
+
+    def close_pr(self, repo: str, number: int) -> str:
+        """Close a PR the factory recorded as a leftover: closed | gone (already closed or merged) | refused (not on a factory/
+        branch of this repository, so a fork's or a person's PR is never touched). Re-read first; the branch is kept."""
+        pr = self.get_pr(repo, number)
+        if pr.get("state") != "open" or pr.get("merged"):
+            return "gone"
+        head = pr.get("head") or {}
+        if (not (head.get("ref") or "").startswith("factory/")
+                or ((head.get("repo") or {}).get("full_name") or "").lower() != repo.lower()):
+            return "refused"
+        self._req("PATCH", f"/repos/{repo}/pulls/{int(number)}", {"state": "closed"})
+        return "closed"
 
     def create_issue(self, repo: str, title: str, body: str) -> dict:
         """Only for step sub-issues: the title must carry the factory prefix, and labels/assignees cannot be set."""

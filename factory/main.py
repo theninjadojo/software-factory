@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, conflicts, designfiles, designlinks, factorychat, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, factorychat, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import judges
 from . import recommend
@@ -122,14 +122,14 @@ SUPERSEDED_NOTE = "(Written before the ticket was sent back to the {stage} stage
 REDIRECT_COMMENT = ("Sent back to the {stage} stage {source}. The steps from there on run again. The earlier documents "
                     "and answers are kept, and the next agents see them as possibly outdated.")
 SUPERSEDED_PR = ("This pull request is superseded: its ticket was sent back to the {stage} stage, and a new pull request will follow. "
-                 "The factory no longer watches it. A person can close it, or keep it if it is still useful.")
+                 "The factory no longer watches it, and closes it once the ticket's build has merged (unless cleanup is off); a person can close it sooner.")
 
 
 def redirect(cfg: Config, gh: GitHub, conn, repo: str, num: int, role, source: str = "from the factory admin UI") -> None:
     """Send a ticket back to a stage (a person's choice in the admin UI, or a comment triage a person confirmed). The done labels of that stage and every later one come off,
     with the build's, so the stages run again and the auto chain can go forward from there (router.behind no longer stops it).
     Nothing is deleted: documents, answers, runs and design files stay, and a marker comment makes stage_outputs pass the earlier
-    documents on as possibly outdated. The ticket's open factory PRs for the steps being redone stay open for a person to close;
+    documents on as possibly outdated. The ticket's open factory PRs for the steps being redone stay open (cleanup.py closes them once the build has merged);
     the factory stops watching them. Trigger labels are cleared by the caller (process_approvals)."""
     names = [r.name for r in cfg.roles]
     redo = names[names.index(role.name):]
@@ -1959,6 +1959,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
                     lambda *a: run_fix(cfg, gh, *a), ci_submit(cfg, conn))
         conflicts.watch(cfg, gh, conn, lambda text, event="conflict": alert(text, event=event))
         waves.tick(cfg, gh, conn, lambda text, event="release": alert(text, event=event), emit, wave_submit(cfg, gh, conn))
+        try:
+            cleanup.tick(cfg, gh, conn, lambda text, event="failure": alert(text, event=event), emit, lambda r, n: pool.busy(jobkey(r, n)))
+        except Exception:
+            log.exception("leftover PR cleanup failed")              # never stops the poll
     if github_due and cfg.github_issues_enabled:            # reads only, so it runs in dry-run too
         try:
             suggest_build_order(cfg, gh, conn)

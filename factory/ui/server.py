@@ -207,7 +207,7 @@ class App:
                 d["status"] = dbm.get_status(db)
                 d["runs"] = dbm.recent_runs(db, 10)
                 d["events"] = dbm.recent_events(db, 15)
-                d["prs"] = [p for p in dbm.watched_prs(db, 20) if p["status"] != "closed"]
+                d["prs"] = [p for p in dbm.watched_prs(db, 20) if views.live_pr(p)]
                 d["running"] = dbm.recent_runs(db, 20, status="running")      # every job in flight, newest first
                 d["recent"] = dbm.recent_runs(db, 200)                        # for each station's numbers today
                 d["decided"] = dict(db.execute("SELECT outcome, COUNT(*) FROM decisions WHERE decided_at > ? GROUP BY outcome", (time.time() - 86400,)))
