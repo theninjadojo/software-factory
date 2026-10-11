@@ -1595,6 +1595,7 @@ p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .tk-gear { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; }
 .tk-pop { position:absolute; right:0; top:calc(100% + 4px); z-index:12; width:min(560px, calc(100vw - 32px)); padding:12px; box-sizing:border-box; background:var(--panel2); border:1px solid var(--line2); box-shadow:0 12px 32px rgba(0,0,0,.5); }
 .tk-pop .ft-strip { margin:0; } .tk-sum { margin:0 0 10px; font-size:13px; }
+.sd-menu:not([open]) > .sd-menul, .tk-line:not([open]) > .tk-pop { display:none; }   /* a closed popover has no box, so it never counts as sticking out */
 
 /* the ticket list: shorter rows */
 .sd-list { gap:6px; } .sd-pick { padding:10px 12px; }
