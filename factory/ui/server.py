@@ -480,6 +480,8 @@ class Handler(BaseHTTPRequestHandler):
                 if f.is_file():
                     return self._send(200, f.read_bytes(), "application/javascript; charset=utf-8", {**DIAGRAM_HEADERS, "Cache-Control": cache})
                 return self._send(404, "not found", "text/plain", DIAGRAM_HEADERS)
+            if path.startswith("/diagram-frame/"):
+                return self._send(404, "not found", "text/plain", DIAGRAM_HEADERS)
             if path == "/healthz":
                 return self._send(200, "ok", "text/plain")
             if path == "/login":
