@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="./support.js"></script>
+</head>
+<body><x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&family=Space+Grotesk:wght@400;500;700&display=swap">
+<style>body{margin:0;background:#12161a;color:#e8edf0;font:15px/1.45 'Space Grotesk',system-ui,sans-serif}</style>
+</helmet>
+<div style="width:1440px;box-sizing:border-box;padding:24px;display:flex;flex-direction:column;gap:24px">
+
+<section style="padding:24px;border:1px dashed #3b464e">
+<div style="color:#f2a93b;font-size:12px;text-transform:uppercase;letter-spacing:.06em">1 · Rendered (inside a sandboxed frame, opaque origin)</div>
+<h1 style="font-size:28px;margin:.4rem 0">Architecture document</h1>
+<p style="color:#a9b5bd;margin:0">The document text stays readable at once; the diagram fills in when ready.</p>
+<div style="background:#1b2126;border:1px solid #2d363d;border-radius:8px;margin:16px 0">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 12px;border-bottom:1px solid #2d363d"><span style="color:#a9b5bd;font-size:13px">Diagram · Mermaid</span>
+<span style="display:flex;gap:8px"><span style="display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border:1px solid #3b464e;border-radius:8px;background:#232a30">Show source</span><span style="display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border:1px solid #3b464e;border-radius:8px;background:#232a30">Copy source</span></span></div>
+<div style="padding:12px;overflow:auto;max-height:30rem" tabindex="0">
+<svg viewBox="0 0 700 150" width="700" height="150" role="img" aria-label="Diagram: flowchart TD">
+<rect x="10" y="55" width="150" height="40" rx="6" fill="#232a30" stroke="#8fa8ff"/><text x="85" y="80" text-anchor="middle" fill="#e8edf0" font-size="13">Open stage document</text>
+<rect x="210" y="55" width="150" height="40" rx="6" fill="#232a30" stroke="#f2a93b"/><text x="285" y="80" text-anchor="middle" fill="#e8edf0" font-size="13">Fence is mermaid?</text>
+<rect x="440" y="15" width="150" height="40" rx="6" fill="#232a30" stroke="#8fa8ff"/><text x="515" y="40" text-anchor="middle" fill="#e8edf0" font-size="13">Frame draws SVG</text>
+<rect x="440" y="95" width="150" height="40" rx="6" fill="#232a30" stroke="#8fa8ff"/><text x="515" y="120" text-anchor="middle" fill="#e8edf0" font-size="13">Code block</text>
+<path d="M160 75H210M360 75L440 35M360 75L440 115" stroke="#a9b5bd" fill="none"/></svg>
+</div></div>
+</section>
+
+<section style="padding:24px;border:1px dashed #3b464e">
+<div style="color:#f2a93b;font-size:12px;text-transform:uppercase;letter-spacing:.06em">2 · Drawing, error, and too large: the source always stays</div>
+
+<div style="background:#1b2126;border:1px solid #2d363d;border-radius:8px;margin:16px 0;padding:12px">
+<div style="color:#a9b5bd;font-size:13px">Diagram · Mermaid</div>
+<div style="color:#a9b5bd;margin:8px 0">Drawing diagram…</div>
+<pre style="margin:0;font:13px/1.45 'JetBrains Mono',monospace;white-space:pre-wrap">flowchart TD
+  A[Open stage document] --&gt; B{Fence is mermaid?}</pre></div>
+
+<div style="background:#1b2126;border:1px solid #2d363d;border-radius:8px;margin:16px 0;padding:12px">
+<div style="color:#a9b5bd;font-size:13px">Diagram · Mermaid</div>
+<div role="status" style="border:1px solid #ff6b5e;border-radius:8px;padding:10px 12px;margin:8px 0">Could not draw this diagram. Parse error on line 3. Showing the source instead.</div>
+<pre style="margin:0;font:13px/1.45 'JetBrains Mono',monospace;white-space:pre-wrap">flowchart TD
+  A[Open --&gt; </pre></div>
+
+<div style="background:#1b2126;border:1px solid #2d363d;border-radius:8px;margin:16px 0;padding:12px">
+<div style="color:#a9b5bd;font-size:13px">Diagram · Mermaid</div>
+<div role="status" style="border:1px solid #a9b5bd;border-radius:8px;padding:10px 12px;margin:8px 0">This diagram is too large to draw here (over 20,000 characters). The source is below.</div>
+<pre style="margin:0;font:13px/1.45 'JetBrains Mono',monospace;white-space:pre-wrap">flowchart TD
+  A1 --&gt; A2 …</pre></div>
+</section>
+</div>
+</x-dc></body></html>
