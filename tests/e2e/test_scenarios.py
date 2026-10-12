@@ -151,6 +151,7 @@ def test_failed_chip_lists_only_failed_runs(page, server, viewport):
 
 def test_ticket_pipeline_links_to_the_stage_document(page, server, viewport):
     page.goto(server.url + f"/ticket?repo={REPO}&n=9")
+    page.get_by_role("article", name="Ticket #").get_by_text("More").click()  # the document links sit in the header's More menu
     page.get_by_role("link", name="Read analysis").first.click()
     expect(page.get_by_text("Looks feasible")).to_be_visible()
     expect(page.get_by_role("link", name=re.compile("Pipeline"))).to_be_visible()
@@ -198,7 +199,8 @@ def test_local_tickets_are_turned_on_from_new_ticket(page, server, viewport):
     strip.get_by_role("button", name="Turn on").click()
     expect(page.locator(".flash")).to_contain_text("Local tickets turned on")
     assert tomllib.loads((server.root / "config.overrides.toml").read_text())["local"]["enabled"] is True
-    page.get_by_text("Settings for this page").click()                  # it opens by itself only when New ticket sent you here
+    if not strip.is_visible():                                          # it opens by itself only when New ticket sent you here
+        page.get_by_title("Settings for this page").click()
     expect(page.get_by_role("region", name="The settings that shape Tickets")).to_contain_text("GitHub and the factory")
     page.get_by_role("button", name="New ticket").click()
     expect(page.get_by_label("Keep it in")).to_be_visible()

@@ -1594,6 +1594,7 @@ p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .tk-line[open] > summary { margin:0; border-color:var(--accent); }
 .tk-gear { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; }
 .tk-pop { position:absolute; right:0; top:calc(100% + 4px); z-index:12; width:min(560px, calc(100vw - 32px)); padding:12px; box-sizing:border-box; background:var(--panel2); border:1px solid var(--line2); box-shadow:0 12px 32px rgba(0,0,0,.5); }
+@media (max-width:1099px) { .tk-pop { right:auto; left:0; } }   /* the bar wraps below 1100px and the gear lands at the left, so the popover opens rightwards, not off the screen */
 .tk-pop .ft-strip { margin:0; } .tk-sum { margin:0 0 10px; font-size:13px; }
 .sd-menu:not([open]) > .sd-menul, .tk-line:not([open]) > .tk-pop { display:none; }   /* a closed popover has no box, so it never counts as sticking out */
 
@@ -1615,6 +1616,7 @@ p.actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .kb-menu-btn > summary:hover, .kb-menu-btn[open] > summary { background:#f7bd62; border-color:#f7bd62; }
 .kb-menu-btn > summary svg { width:14px; height:14px; fill:none; stroke:currentColor; }
 .kb-menu-btn .kb-opts { top:calc(100% + 4px); right:0; left:auto; }
+@media (min-width:761px) and (max-width:1099px) { .kb-menu-btn .kb-opts { right:auto; left:0; } }   /* the header's links wrap here and the button lands at the left */
 .sd-foldall { display:none; } .js .sd-foldall { display:flex; justify-content:flex-end; gap:16px; margin:0 0 6px; font-size:13px; }
 .sd-foldall button.link { color:var(--link); min-height:28px; }
 .sd-folds { display:flex; flex-direction:column; margin:0 0 16px; }
