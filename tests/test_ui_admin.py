@@ -34,8 +34,6 @@ class AdminCase(UiCase):
              "board.done_days": str(cfg.board_done_days), "local.auto_import_seconds": str(cfg.local_auto_import_seconds)}
         if cfg.github_issues_enabled:
             f["github.issues_enabled"] = "1"                                              # a checked box is sent; an unchecked one is not
-        if cfg.local_auto_import_close:
-            f["local.auto_import_close"] = "1"
         f.update(over)
         pairs = list(f.items()) + [("github.trusted_permissions", p) for p in ("admin", "maintain", "write")]
         if f.pop("dry_run_on", True) is not False:
@@ -799,4 +797,4 @@ class SettingsLayout(UiCase):
         _, _, html = self.req("GET", "/settings?section=general", cookie=cookie)
         self.assertIn("Save changes", html)
         self.assertIn("Changes apply the next time the factory is idle", html)
-        self.assertEqual(html.count('class="srow'), 17)
+        self.assertEqual(html.count('class="srow'), 16)

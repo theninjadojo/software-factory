@@ -77,6 +77,8 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
 SQLite (WAL) in the state directory: `runs` (one row per agent run, with output, log tail and the token counts the harness reported: `NULL` when it reports none; claude-code is run with `--output-format json` for this, see `runner.parse_usage`), `events` (the timeline, including `ci:passed`, `ci:failed` and `ci:timed-out` on the ticket for each CI round; `db.journey` builds a ticket's ordered route from runs, decisions and these), `status` (heartbeat), `decisions` (one row per issue state seen, so nothing is processed twice), `approvals`
 (Telegram Run/Skip), `prs` (PRs being watched for CI), `pr_conflicts` (every factory PR, its merge-conflict state and resolution attempts). A lock file ensures one orchestrator at a time.
 
+A ticket imported from GitHub keeps its link in `local_imports` (original issue number to local ticket). `origin.py` uses it to write back to the original: `origin_notes` records the comments already posted (once each), and `origin.tick` closes the original once `cleanup.verdict` says every build PR has merged.
+
 ## Harnesses
 
 A harness is `{image, credential file, command, allowed hosts}`. The sandbox entrypoint runs the command from the harness

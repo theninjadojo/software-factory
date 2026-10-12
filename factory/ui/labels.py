@@ -359,9 +359,7 @@ def import_form(cfg, repo: str, csrf: str) -> str:
             '<label>Issue number<input name="n" inputmode="numeric" maxlength="9"></label>'
             f'<label>Or every open issue with the label<input name="label" maxlength="50"></label>'
             '<label><input type="checkbox" name="all" value="1"> Or every open issue (not pull requests)</label>'
-            '<label><input type="checkbox" name="close" value="1"> Also close the issue on GitHub</label>'
-            '<label><input type="checkbox" name="confirm" value="1"> Confirm closing every issue imported with &ldquo;every open issue&rdquo;</label>'
-            f'<p class="muted">Copies the issue and its comments to a local ticket, then removes its trigger labels on GitHub, labels it <code>{tracker.MOVED_LABEL}</code> and links to the local ticket. At most {tracker.MAX_BULK} issues at a time; submit again for the rest.</p>'
+            f'<p class="muted">Copies the issue and its comments to a local ticket, then removes its trigger labels on GitHub, labels it <code>{tracker.MOVED_LABEL}</code> and links to the local ticket. The issue stays open: the factory comments on it with the pull requests and closes it once they are merged. At most {tracker.MAX_BULK} issues at a time; submit again for the rest.</p>'
             '<button>Import</button></form>')
     return ticket_dialog("im-d", "Import", "Move GitHub issues into the local tracker.", form, "secondary")
 
@@ -1123,11 +1121,7 @@ def import_issues(h, form, csrf: str) -> None:
             return _done(h, form, csrf, _github_error(e), "bad")
         if not numbers:
             return _done(h, form, csrf, "No open issue has that label." if label else "No open issue is left to import.", "bad")
-        if every and form.get("close") == "1" and form.get("confirm") != "1":
-            more = f" (and {left} more after that)" if left else ""
-            return _done(h, form, csrf, f"This would import and close {len(numbers)} open issue(s) of {repo} on GitHub{more}. "
-                         "Nothing was queued: tick the confirmation to go ahead.", "bad")
-    tracker.request_import(cfg.db_path, repo, numbers, form.get("close") == "1")
+    tracker.request_import(cfg.db_path, repo, numbers, False)
     log.info("tickets: queued %d import(s) from %s", len(numbers), repo)
     rest = f" {left} more are left: import again for the next batch." if left else ""
     _done(h, form, csrf, f"Queued {len(numbers)} issue(s) to move. The factory moves them at its next poll.{rest}")

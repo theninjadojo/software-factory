@@ -226,11 +226,12 @@ class Import(Base):
         self.assertIn("L-1", [c for c in gh.calls if c[0] == "comment"][0][2])
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM import_requests").fetchone()[0], 0)
 
-    def test_close_checkbox_closes_the_issue(self):
+    def test_the_original_issue_stays_open_even_if_the_request_asks_to_close_it(self):
         gh = FakeGH({5: issue(5)})
         tracker.request_import(self.path, self.repo, [5], close=True)
         self.run_imports(gh)
-        self.assertIn(("state", 5, "closed"), gh.calls)
+        self.assertNotIn(("state", 5, "closed"), gh.calls)          # origin.tick closes it once the pull requests have merged
+        self.assertEqual(self.db.execute("SELECT step FROM local_imports").fetchone()[0], 3)
 
     def test_refusals_change_nothing(self):
         gh = FakeGH({1: issue(1, pull_request={}), 2: issue(2, labels=("factory:working-design",)), 3: issue(3, state="closed"),
@@ -272,7 +273,7 @@ class Import(Base):
         tracker.request_import(self.path, self.repo, [5], close=True)
         self.run_imports(gh)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM local_tickets").fetchone()[0], 1)
-        self.assertIn(("state", 5, "closed"), gh.calls)
+        self.assertNotIn(("state", 5, "closed"), gh.calls)
 
     def test_taken_lists_moved_and_queued_issues(self):
         gh = FakeGH({5: issue(5)})
@@ -348,13 +349,13 @@ class AutoImport(Base):
         self.assertEqual(q["q"], [f'repo:o/r is:issue is:open -label:"{tracker.MOVED_LABEL}"'])
         self.assertEqual((q["sort"], q["order"], q["page"]), (["created"], ["asc"], ["2"]))
 
-    def test_a_trusted_authors_issue_is_moved_with_its_labels_and_closed(self):
+    def test_a_trusted_authors_issue_is_moved_with_its_labels_and_left_open(self):
         gh = AutoGH([authored(5)], {"alice": "write"})
         self.assertEqual(self.queue(gh), 1)
         self.run_imports(gh)
         self.assertEqual([x["name"] for x in tracker.LocalTracker(self.db).issue(self.repo, L + 1)["labels"]], ["bug"])
         self.assertIn(("add", 5, (tracker.MOVED_LABEL,)), gh.calls)
-        self.assertIn(("state", 5, "closed"), gh.calls)
+        self.assertNotIn(("state", 5, "closed"), gh.calls)
         self.assertEqual([e[0] for e in self.events], ["import"])
 
     def test_untrusted_bot_and_unknown_authors_are_skipped_once_and_never_copied_or_closed(self):

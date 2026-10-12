@@ -202,6 +202,30 @@ class RunTaskEndToEnd(unittest.TestCase):
                 res = runner.run_task(cfg, gh, "o/web", {"number": 6, "title": "t", "body": ""}, cfg.routes["low"])
             self.assertEqual((res.status, [r for r, _, _ in gh.prs], gh.comments), ("pr", ["o/mobile"], []))
 
+    def test_a_pr_for_an_imported_ticket_refs_the_original_issue_and_a_ui_ticket_does_not(self):
+        import dataclasses
+        import os
+        import tempfile
+        from factory import db as dbm, runner, tracker
+        for imported in (True, False):
+            with tempfile.TemporaryDirectory() as t:
+                cfg, gh, bare, p1, p2, g = self._setup(t, lambda w: (w / "web" / "a.txt").write_text("two\n"))
+                cfg = dataclasses.replace(cfg, db_path=os.path.join(t, "f.db"))
+                db = dbm.connect(cfg.db_path)
+                tracker.ensure_tables(db)
+                local = tracker.LOCAL_BASE + 1
+                if imported:
+                    db.execute("INSERT INTO local_imports VALUES ('o/web', 42, ?, 0, 3, 0)", (local,))
+                    db.commit()
+                with p1, p2:
+                    res = runner.run_task(cfg, gh, "o/web", {"number": local, "title": "t", "body": ""}, cfg.routes["low"])
+                self.assertEqual(res.status, "pr", res.detail)
+                body = gh.prs[0][2]
+                self.assertIn("factory ticket L-1 of o/web", body)
+                self.assertEqual("Refs o/web#42" in body, imported)
+                self.assertNotIn(str(local), body)                      # never the reserved number GitHub would link elsewhere
+                self.assertNotIn("Closes", body)
+
     def test_protected_path_in_any_repo_rejects_everything(self):
         import tempfile
         from factory import runner
