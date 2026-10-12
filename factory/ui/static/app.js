@@ -868,7 +868,7 @@
     mmFrames[id] = {
       win: null,
       msg: function (m) {
-        if (m.t === "mm-ready") return f.contentWindow.postMessage({ t: "mm-render", id: id, src: src }, "*");
+        if (m.t === "mm-ready") return f.contentWindow.postMessage({ t: "mm-render", id: id, src: src, width: scroll.clientWidth }, "*");
         clearTimeout(timer);
         if (m.t === "mm-error") fail("Could not draw this diagram. " + String(m.msg || "").slice(0, 200) + " Showing the source instead.", true);
         else if (m.t === "mm-done") {
