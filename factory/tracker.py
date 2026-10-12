@@ -268,7 +268,11 @@ class LocalTracker:
         self.db.commit()
 
     def set_state(self, repo: str, number: int, state: str) -> None:
+        was = self.db.execute("SELECT state FROM local_tickets WHERE repo=? AND number=?", (repo, number)).fetchone()
         self.db.execute("UPDATE local_tickets SET state=? WHERE repo=? AND number=?", (state, repo, number))
+        if was and was[0] != state:                 # who closed or reopened it, and when (evaluate.py counts a person's reopens)
+            self.db.execute("INSERT INTO local_events (repo, number, actor, action, label, at) VALUES (?,?,?,?,?,?)",
+                            (repo, number, self.actor, "reopened" if state == "open" else "closed", "", time.time()))
         self._touch(repo, number)
         self.db.commit()
 
@@ -346,6 +350,12 @@ class Hub(GitHub):
         if self._is_local(issue):
             return self._local().remove_label(repo, issue, label)
         super().remove_label(repo, issue, label)
+
+    def reopens(self, repo: str, issue: int) -> int:
+        if not self._is_local(issue):
+            return super().reopens(repo, issue)
+        from . import evaluate
+        return evaluate.reopens(self._local().db, repo, issue)
 
     def label_actor(self, repo: str, issue: int, label: str) -> str | None:
         return self._local().label_actor(repo, issue, label) if self._is_local(issue) else super().label_actor(repo, issue, label)

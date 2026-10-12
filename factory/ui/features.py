@@ -21,6 +21,9 @@ SWITCHES = {
                        "Pull requests are no longer reviewed by an agent."),
     "conflicts.enabled": ("Merge conflicts", "When a factory pull request conflicts with its base branch, an agent merges the base in and resolves the conflicted files.",
                           "Conflicts are no longer resolved by an agent."),
+    "evaluate.enabled": ("Evaluation", "Once a ticket is finished, an agent with a clean context scores how well each step went and suggests what to change. "
+                         "One ticket at a time, only while the factory has nothing else to do. Each evaluation is a run.",
+                         "Finished tickets are no longer evaluated. The evaluations so far stay on the Evaluate page."),
     "pm.enabled": ("Project manager", "An agent ranks each repository's factory tickets and records blockers; a build waits for its open blockers.",
                    "Tickets are no longer ranked, and builds no longer wait for blockers."),
 }
@@ -117,6 +120,8 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           *_onoff(cfg.chat.enabled), ("A ticket",), "/settings?section=chat", "Ticket chat"),
         F("screens", "loop", "Screens", "Screenshots of each app at every viewport, compared with the approved ones.",
           "Every " + cfg.screens.board_every if cfg.screens.board_every else "On request", "info", ("Screens",), "/settings?section=screens", "Screens"),
+        F("evaluate", "loop", "Evaluation", "Once a ticket is finished, an agent scores how well each step went and suggests what to change.",
+          *_onoff(cfg.evaluate.enabled), ("Evaluate",), "/settings?section=evaluate", "Evaluation", "evaluate.enabled"),
         F("mode", "run", "Mode", "Live: agents run and open pull requests. Dry run: decisions are only logged.",
           *(("Dry run", "off") if cfg.dry_run else ("Live", "on")), ("Factory",), "/?mode=confirm", "Change on the Factory"),
         F("credentials", "run", "Credentials", f"{sum(secrets.values())} of {len(secrets)} set." + ("" if creds_ok else " The factory cannot work without the GitHub token and the Claude credential."),

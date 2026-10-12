@@ -4,7 +4,7 @@ import threading
 import time
 
 from . import cleanup, waves
-from . import captures, chat, factorychat, scenarios, designfiles, jobs, newproject, plan, reviewnotes, reviewactions, scanner, schedules, screenboard, split, ticketreview, tracker, triage
+from . import captures, chat, evaluate, factorychat, scenarios, designfiles, jobs, newproject, plan, reviewnotes, reviewactions, scanner, schedules, screenboard, split, ticketreview, tracker, triage
 from .render import png_ok
 
 _local = threading.local()
@@ -129,6 +129,7 @@ def connect(path: str) -> sqlite3.Connection:
     waves.ensure_tables(db)
     cleanup.ensure_tables(db)
     scenarios.ensure_tables(db)
+    evaluate.ensure_tables(db)
     return db
 
 

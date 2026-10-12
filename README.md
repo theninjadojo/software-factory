@@ -98,6 +98,11 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   a modern stack for the use case, the design patterns and tests set up from day one, and where it deploys (your choice among the
   pattern's targets). You can change any part before accepting. Creating the repositories and the first commit from the accepted
   plan comes next.
+- **Evaluation.** Once a ticket is finished (merged, closed without merging, or failed) and the factory is idle, a read-only
+  agent with a clean context scores how each step went, from 1 to 5: whether the model and the effort fitted the work, whether
+  the step was given enough to go on, how well the ticket was written and how completely it was done. Token use is scored by
+  the factory itself, against the usual for that step. A ticket a person reopened is evaluated again and never scores high for
+  completion. Low scores come with suggestions; nothing is changed by them. Off by default (`[evaluate]`); see the Evaluate page.
 - **Admin UI.** See what is happening and what happened (runs, decisions, PRs and CI, an event timeline), and change settings,
   credentials, Telegram and agent harnesses without editing files. Authenticated, loopback by default. See [docs/ui.md](docs/ui.md).
 - **Other agents.** A harness is `{image, credential, command, hosts}`. Claude Code is built in; Codex and Gemini ship as

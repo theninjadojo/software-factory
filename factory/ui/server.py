@@ -175,6 +175,16 @@ class App:
         finally:
             db.close()
 
+    def request_evaluation(self, repo: str, issue: int) -> None:
+        """Queue an evaluation for the orchestrator: of one finished ticket, or (issue 0) of every finished ticket of the repository
+        that has none yet. The caller has checked the repository is a configured one."""
+        from .. import evaluate
+        db = sqlite3.connect(self.cfg().db_path, timeout=10)
+        try:
+            evaluate.request(db, repo, int(issue), time.time())
+        finally:
+            db.close()
+
     def decide_proposals(self, repo: str, ids: list[int], accept: bool) -> int:
         """Queue (accept) or reject the picked ticket review proposals of a repository for the orchestrator. Returns how many changed."""
         from .. import ticketreview
