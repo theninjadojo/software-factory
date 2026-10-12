@@ -331,6 +331,22 @@ class DiagramFrame(UiCase):
                 self.assertNotIn(bad, csp)
             self.assertEqual(h["X-Frame-Options"], "SAMEORIGIN")
 
+    def test_the_pinned_mermaid_library_is_in_the_repository_and_served(self):
+        # Without it every diagram shows "Diagram not drawn: the diagram viewer did not load". To update: docs/ui.md ("Mermaid diagrams").
+        import hashlib
+        from factory.ui.server import DIAGRAM_DIR
+        lib = DIAGRAM_DIR / "mermaid.min.js"
+        self.assertTrue(lib.is_file(), "factory/ui/vendor/mermaid.min.js is missing")
+        self.assertEqual(hashlib.sha256(lib.read_bytes()).hexdigest(), "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8")   # mermaid 11.17.2
+        self.assertTrue((DIAGRAM_DIR / "mermaid.LICENSE").is_file())
+        st, h, body = self.req("GET", "/diagram-frame/mermaid.min.js")
+        self.assertEqual((st, h["Content-Type"]), (200, "application/javascript; charset=utf-8"))
+        self.assertIn("sandbox allow-scripts;", h["Content-Security-Policy"])
+        self.assertTrue(body.rstrip().endswith('globalThis["mermaid"] = globalThis.__esbuild_esm_mermaid_nm["mermaid"].default;'))   # what frame.js looks for
+
+    def test_frame_is_dark_like_the_page_so_it_is_not_given_a_white_canvas(self):
+        self.assertIn('<meta name="color-scheme" content="dark">', self.req("GET", "/diagram-frame")[2])
+
     def test_frame_serves_only_fixed_files(self):
         for bad in ("/diagram-frame/../server.py", "/diagram-frame/..%2fserver.py", "/diagram-frame/other.js", "/diagram-frame/"):
             self.assertEqual(self.req("GET", bad)[0], 404, bad)

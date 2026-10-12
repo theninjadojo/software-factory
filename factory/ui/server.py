@@ -68,7 +68,8 @@ DIAGRAM_HEADERS = {
                                "connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'",
     "X-Frame-Options": "SAMEORIGIN",
 }
-DIAGRAM_HTML = (b'<!doctype html><html><head><meta charset="utf-8"><title>Diagram</title><style>html,body{margin:0;background:transparent}'
+# color-scheme dark, like the page: a frame whose scheme differs from its parent's gets an opaque white canvas, and the dark theme's light lines vanish on it.
+DIAGRAM_HTML = (b'<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="dark"><title>Diagram</title><style>html,body{margin:0;background:transparent}'
                 b'#d{display:inline-block}</style></head><body><div id="d"></div>'
                 b'<script src="/diagram-frame/mermaid.min.js"></script><script src="/diagram-frame/frame.js"></script></body></html>')
 DIAGRAM_FILES = {"/diagram-frame/mermaid.min.js": ("mermaid.min.js", "public, max-age=86400"), "/diagram-frame/frame.js": ("frame.js", "no-cache")}
