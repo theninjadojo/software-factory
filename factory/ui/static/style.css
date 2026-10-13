@@ -1717,3 +1717,6 @@ main > [data-flash] { position:sticky; top:8px; z-index:40; box-shadow:0 8px 24p
   .ev-pick { flex:1 1 100%; justify-content:space-between; } .ev-pick select { flex:0 1 70%; }
   .ev-tickets td:first-child { display:block; min-width:0; } .ev-lean { flex-basis:100%; text-align:right; } .ev-queue .ev-now, .ev-queue .ev-now button { width:100%; }
 }
+.f-err { color:var(--bad); font-size:13px; margin:.25rem 0 0; } .pj-add { margin:.6rem 0 .2rem; } .pj-add[hidden] { display:none; } .pj-save:disabled { opacity:.5; cursor:not-allowed; } .pj-status { margin-left:.5rem; }
+.pj-form table.stack td:first-child { width:42%; } .pj-form table.stack td input { width:100%; }
+@media (max-width:760px) { .pj-form table.stack td:first-child { width:100%; } }

@@ -22,9 +22,10 @@ CHECK_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 
 
 class SettingsError(Exception):
-    def __init__(self, messages: list[str]):
+    def __init__(self, messages: list[str], fields: dict | None = None):
         super().__init__("; ".join(messages))
         self.messages = messages
+        self.fields = fields or {}                    # form field name -> what is wrong with it, for a form that marks its fields
 
 
 @dataclass(frozen=True)
@@ -736,36 +737,86 @@ def set_parallel(cfg_path: str, state_dir: Path, value: int) -> None:
     _commit(cfg_path, state_dir, new_ov)
 
 
+MAX_PROJECTS, MAX_PROJECT_REPOS = 20, 30
+PROJECT_NAME_RE = re.compile(r"[\w .-]{1,60}")
+_GITHUB_URL = re.compile(r"^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)([^/\s]+)/([^/\s#?]+)", re.I)
+
+
+def repo_slug(text: str) -> str:
+    """What a person typed for a repository, as owner/name: a pasted GitHub address loses its host, its .git and any path after the name."""
+    text = (text or "").strip()
+    m = _GITHUB_URL.match(text)
+    if m:
+        text = f"{m.group(1)}/{m.group(2)}"
+    return text[:-4] if text.endswith(".git") else text
+
+
+def read_projects(form) -> list[dict]:
+    """The projects form as typed, without its empty slots: a row with no repository is dropped (clearing it is how a repository is
+    removed, whatever its role says), and so is a project with no name and no repositories. Field names in check_projects count
+    what is left, not the form's slots."""
+    out = []
+    for i in range(MAX_PROJECTS):
+        rows = [{"repo": repo_slug(form.get(f"p{i}_r{j}_repo") or ""), "role": (form.get(f"p{i}_r{j}_role") or "").strip()} for j in range(MAX_PROJECT_REPOS)]
+        rows = [r for r in rows if r["repo"]]
+        name = (form.get(f"p{i}_name") or "").strip()
+        if name or rows:
+            out.append({"name": name, "description": (form.get(f"p{i}_desc") or "").strip(), "repos": rows})
+    return out
+
+
+def check_projects(projects: list[dict]) -> dict:
+    """What is wrong with read_projects' result: the form field's name -> one sentence. Empty when it can be saved.
+    app.js makes the same checks while the form is filled in; keep the two alike."""
+    bad: dict[str, str] = {}
+    names: dict[str, int] = {}
+    owner: dict[str, tuple[int, str]] = {}
+    for i, p in enumerate(projects):
+        name, label = p["name"], p["name"] or f"project {i + 1}"
+        if not name:
+            bad[f"p{i}_name"] = "Give the project a name."
+        elif not PROJECT_NAME_RE.fullmatch(name):
+            bad[f"p{i}_name"] = "Use a short name: letters, digits, spaces, dot or dash, 60 characters at most."
+        elif name.casefold() in names:
+            bad[f"p{i}_name"] = "Another project already has this name."
+        names.setdefault(name.casefold(), i)
+        if len(p["description"]) > 500:
+            bad[f"p{i}_desc"] = "Keep the description under 500 characters."
+        if not p["repos"]:
+            bad[f"p{i}_r0_repo"] = "Add at least one repository, as owner/name."
+        for j, r in enumerate(p["repos"]):
+            key, repo = f"p{i}_r{j}_repo", r["repo"]
+            if not REPO_RE.match(repo):
+                bad[key] = "Write the repository as owner/name, like your-org/shop-web."
+            elif repo.lower() in owner:
+                at, other = owner[repo.lower()]
+                bad[key] = "This repository is listed twice." if at == i else f"{repo} is in two projects: {other} and {label}."
+            else:
+                owner[repo.lower()] = (i, label)
+            if len(r["role"]) > 300:
+                bad[f"p{i}_r{j}_role"] = "Keep the role under 300 characters."
+    return bad
+
+
 def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
     """The form edits names, descriptions, repos and roles. A repo's other keys (depends_on, publish: set in config.toml) are kept."""
     base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
     extra = {r["repo"]: {k: v for k, v in r.items() if k not in ("repo", "role")}
              for p in deep_merge(base, new_ov).get("projects", []) for r in p.get("repos", []) if isinstance(r, dict)}
+    typed = read_projects(form)
+    bad = check_projects(typed)
+    if bad:
+        raise SettingsError([f"Nothing was saved. Correct the {len(bad)} fields marked below." if len(bad) > 1 else "Nothing was saved. Correct the field marked below."], bad)
     projects = []
-    for i in range(20):
-        name = (form.get(f"p{i}_name") or "").strip()
-        repos = []
-        for j in range(30):
-            repo = (form.get(f"p{i}_r{j}_repo") or "").strip()
-            role = (form.get(f"p{i}_r{j}_role") or "").strip()
-            if repo:
-                repos.append({"repo": repo, "role": role, **extra.get(repo, {})})
-        if not name and not repos:
-            continue
-        if not name or len(name) > 60 or not re.fullmatch(r"[\w .-]+", name):
-            raise SettingsError([f"Project {i + 1}: give it a short name (letters, digits, spaces, dot, dash)."])
-        bad = [r["repo"] for r in repos if not REPO_RE.match(r["repo"])] + [r["repo"] for r in repos if len(r["role"]) > 300]
-        if bad:
-            raise SettingsError([f"Project {name}: invalid repository or role too long: {', '.join(bad[:3])}"])
-        if not repos:
-            raise SettingsError([f"Project {name}: add at least one repository."])
+    for p in typed:
+        repos = [{"repo": r["repo"], "role": r["role"], **extra.get(r["repo"], {})} for r in p["repos"]]
         kept = {x for r in repos for x in (r["repo"], r["repo"].split("/")[-1])}
         for r in repos:                                 # a dependency on a repo removed here goes with it
             if "depends_on" in r:
                 r["depends_on"] = [d for d in r["depends_on"] if d in kept]
                 if not r["depends_on"]:
                     del r["depends_on"]
-        projects.append({"name": name, "description": (form.get(f"p{i}_desc") or "").strip()[:500], "repos": repos})
+        projects.append({"name": p["name"], "description": p["description"], "repos": repos})
     if projects == base.get("projects", []):
         new_ov.pop("projects", None)
     else:

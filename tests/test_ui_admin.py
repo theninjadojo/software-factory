@@ -128,6 +128,35 @@ class Settings(AdminCase):
         self.assertEqual(self.post(cookie, csrf, "/settings/projects", {"p0_name": "", "p0_r0_repo": ""})[0], 303)       # empty = remove all
         self.assertEqual(load(str(self.root / "config.toml")).projects, ())
 
+    def test_a_refused_projects_save_keeps_what_was_typed_and_marks_each_field(self):
+        cookie, csrf = self.session()
+        typed = {"p0_name": "shop", "p0_desc": "A shop", "p0_r0_repo": "your-org/shop-web", "p0_r0_role": "the storefront", "p0_r1_repo": "not a repo",
+                 "p0_r1_role": "api", "p3_name": "empty", "p3_r2_role": "orphan role", "p4_name": "bad/name", "p4_r0_repo": "your-org/shop-web"}
+        s, _, html = self.post(cookie, csrf, "/settings/projects", typed)
+        self.assertEqual(s, 422)
+        self.assertIn("Nothing was saved. Correct the 4 fields marked below.", html)
+        for kept in ('value="A shop"', 'value="the storefront"', 'value="not a repo"', 'value="empty"', 'value="bad/name"'):
+            self.assertIn(kept, html)
+        # empty slots close up, so the second project typed is p1 and the third p2
+        self.assertIn('name="p0_r1_repo" id="p0_r1_repo" placeholder="owner/name" aria-label="Repository 2"  value="not a repo" aria-invalid="true" aria-describedby="p0_r1_repo-err">'
+                      '<p class="f-err" id="p0_r1_repo-err">Write the repository as owner/name, like your-org/shop-web.</p>', html)
+        self.assertIn('id="p1_r0_repo-err">Add at least one repository, as owner/name.', html)
+        self.assertIn('id="p2_name-err">Use a short name', html)
+        self.assertIn('id="p2_r0_repo-err">your-org/shop-web is in two projects: shop and bad/name.', html)
+        self.assertEqual(html.count('class="f-err"'), 4)
+        self.assertEqual(load(str(self.root / "config.toml")).projects[0].name if load(str(self.root / "config.toml")).projects else "", "shop")   # the example's project, untouched
+
+    def test_projects_take_a_pasted_github_address_and_more_than_two_new_repos(self):
+        cookie, csrf = self.session()
+        form = {"p0_name": "Yuki", "p0_r0_repo": "https://github.com/theninjadojo/ninja-packages", "p0_r1_repo": "git@github.com:theninjadojo/yuki-api.git",
+                "p0_r2_repo": "github.com/theninjadojo/yuki-web/tree/main", "p0_r3_repo": "theninjadojo/yuki-docs", "p0_r7_repo": " theninjadojo/yuki-infra "}
+        self.assertEqual(self.post(cookie, csrf, "/settings/projects", form)[0], 303)
+        self.assertEqual([r.repo for r in load(str(self.root / "config.toml")).projects[0].repos],
+                         ["theninjadojo/ninja-packages", "theninjadojo/yuki-api", "theninjadojo/yuki-web", "theninjadojo/yuki-docs", "theninjadojo/yuki-infra"])
+        _, _, html = self.req("GET", "/settings?section=projects", cookie=cookie)
+        self.assertEqual(html.count('name="p0_r'), 14)                       # five repos and two spare rows, each a repository and a role
+        self.assertIn('class="secondary pj-add" data-max="30" hidden>Add repository</button>', html)
+
     def test_alias_rules_and_classifier_tester(self):
         cookie, csrf = self.session()
         form = [("section", "classifier"), ("classifier.backend", "rules"), ("classifier.model", "typesafe/jev-1.13"),

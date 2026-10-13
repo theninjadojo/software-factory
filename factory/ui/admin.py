@@ -106,10 +106,10 @@ def lockfile_state(h, eff: dict) -> str:
     return "ok" if seen else f"asked for {names}, but no worker with the lockfile-update recipe has been seen."
 
 
-def render_settings(h, section: str, csrf: str, submitted=None, tester: str = "", found: dict | None = None) -> str:
+def render_settings(h, section: str, csrf: str, submitted=None, tester: str = "", found: dict | None = None, errors: dict | None = None) -> str:
     base, eff = _files(h)
     if section == "projects":
-        return forms.projects_form(base, eff, csrf, submitted) + forms.build_order(eff, csrf, found, lockfile_state(h, eff), LOCK_SETUP)
+        return forms.projects_form(base, eff, csrf, submitted, errors) + forms.build_order(eff, csrf, found, lockfile_state(h, eff), LOCK_SETUP)
     body = forms.settings_form(section, eff, base, csrf, submitted)
     if section == "classifier":
         body += forms.classifier_tester(csrf, tester)
@@ -197,7 +197,7 @@ def projects_save(h, form, csrf: str) -> None:
     try:
         S.save_projects(h.app.config_path, h.app.state_dir(), form)
     except S.SettingsError as e:
-        return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf, submitted=form), "/settings", csrf, " · ".join(e.messages), "bad", section="projects")
+        return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf, submitted=form, errors=e.fields), "/settings", csrf, " · ".join(e.messages), "bad", section="projects")
     h._redirect("/settings?section=projects&ok=saved")
 
 

@@ -384,19 +384,33 @@ def build_order(eff: dict, csrf: str, found: dict | None = None, lock_state: str
     return "".join(out)
 
 
-def projects_form(base: dict, eff: dict, csrf: str, submitted=None) -> str:
-    projects = list(eff.get("projects", [])) + [{"name": "", "description": "", "repos": []}]
+def _checked(name: str, errors: dict, attrs: str, value: str) -> str:
+    """One text input of the projects form, with what is wrong with it underneath (app.js writes the same markup as you type)."""
+    why = errors.get(name, "")
+    mark = f' aria-invalid="true" aria-describedby="{name}-err"' if why else ""
+    return f'<input name="{name}" id="{name}" {attrs} value="{esc(value)}"{mark}>' + (f'<p class="f-err" id="{name}-err">{esc(why)}</p>' if why else "")
+
+
+def projects_form(base: dict, eff: dict, csrf: str, submitted=None, errors: dict | None = None) -> str:
+    """A refused save shows what was typed (S.read_projects, so the fields line up with S.check_projects' names), not the saved projects."""
+    errors = errors or {}
+    projects = S.read_projects(submitted) if submitted is not None else list(eff.get("projects", []))
+    projects = (projects + [{"name": "", "description": "", "repos": []}])[:S.MAX_PROJECTS]
     out = ['<p class="muted">Repositories that work together are one project: agents get all of them side by side and may change several in one task.</p>',
-           f'<form method="post" action="/settings/projects" class="settings">{csrf_field(csrf)}']
-    for i, p in enumerate(projects[:20]):
-        repos = list(p.get("repos", [])) + [{"repo": "", "role": ""}, {"repo": "", "role": ""}]
+           f'<form method="post" action="/settings/projects" class="settings pj-form">{csrf_field(csrf)}']
+    for i, p in enumerate(projects):
+        repos = (list(p.get("repos", [])) + [{"repo": "", "role": ""}, {"repo": "", "role": ""}])[:S.MAX_PROJECT_REPOS]
         rows = "".join(
-            f'<tr><td data-l="Repository"><input name="p{i}_r{j}_repo" placeholder="owner/name" value="{esc(r["repo"])}"></td>'
-            f'<td data-l="Role"><input name="p{i}_r{j}_role" placeholder="what this repo is for" value="{esc(r.get("role", ""))}" class="wide"></td></tr>' for j, r in enumerate(repos[:30]))
-        out.append(f'<fieldset><legend>{esc(p["name"] or "New project")}</legend><div class="field"><label>Name</label><input name="p{i}_name" value="{esc(p["name"])}"></div>'
-                   f'<div class="field"><label>Description</label><input name="p{i}_desc" value="{esc(p.get("description", ""))}" class="wide"></div>'
-                   f'<table class="stack"><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table></fieldset>')
-    out.append('<button>Save projects</button></form><p class="muted">Leave a project\'s name and repositories empty to remove it.</p>'
+            f'<tr><td data-l="Repository">{_checked(f"p{i}_r{j}_repo", errors, f"""placeholder="owner/name" aria-label="Repository {j + 1}" """, r["repo"])}</td>'
+            f'<td data-l="Role">{_checked(f"p{i}_r{j}_role", errors, f"""placeholder="what this repo is for" maxlength="300" class="wide" aria-label="Role of repository {j + 1}" """, r.get("role", ""))}</td></tr>'
+            for j, r in enumerate(repos))
+        out.append(f'<fieldset data-p="{i}"><legend>{esc(p["name"] or "New project")}</legend>'
+                   f'<div class="field"><label for="p{i}_name">Name</label>{_checked(f"p{i}_name", errors, """maxlength="60" """, p["name"])}</div>'
+                   f'<div class="field"><label for="p{i}_desc">Description</label>{_checked(f"p{i}_desc", errors, """maxlength="500" class="wide" """, p.get("description", ""))}</div>'
+                   f'<table class="stack"><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table>'
+                   f'<button type="button" class="secondary pj-add" data-max="{S.MAX_PROJECT_REPOS}" hidden>Add repository</button></fieldset>')
+    out.append('<button class="pj-save">Save projects</button> <span class="pj-status muted" role="status"></span></form>'
+               '<p class="muted">Paste a repository as owner/name or as its GitHub address. Leave a project\'s name and repositories empty to remove it.</p>'
                '<p class="muted">Starting from nothing? <a href="/projects/new">Start a new project</a>: an agent asks what you want to build '
                'and recommends a pattern with tests, CI and deployment set up.</p>')
     return "".join(out)

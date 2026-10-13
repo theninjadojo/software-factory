@@ -886,4 +886,104 @@
   });
   var mmPres = document.querySelectorAll(".docview pre.mm-src");
   for (var mi = 0; mi < mmPres.length; mi++) mmCard(mmPres[mi]);
+  // --- Settings, Projects: add repository rows, check each field once it has been filled in, and keep Save off while a field is marked.
+  // The server makes the same checks (settings.py check_projects) and has the last word; these save the round trip. Keep the two alike.
+  (function () {
+    var form = document.querySelector("form.pj-form");
+    if (!form) return;
+    var NAME, REPO = /^[\w.-]+\/[\w.-]+$/, URL = /^(?:(?:https?:\/\/)?(?:www\.)?github\.com\/|git@github\.com:)([^\/\s]+)\/([^\/\s#?]+)/i;
+    try { NAME = new RegExp("^[\\p{L}\\p{M}\\p{N}_ .-]{1,60}$", "u"); } catch (e) { NAME = /^[\w .-]{1,60}$/; }
+    var save = form.querySelector(".pj-save"), status = form.querySelector(".pj-status"), seen = {}, all = false;
+    function slug(v) {
+      v = v.trim();
+      var m = URL.exec(v);
+      if (m) v = m[1] + "/" + m[2];
+      return /\.git$/.test(v) ? v.slice(0, -4) : v;
+    }
+    function val(name) { var el = form.elements[name]; return el ? el.value.trim() : ""; }
+    function check() {                          // field name -> what is wrong with it
+      var bad = {}, names = {}, owner = {}, sets = form.querySelectorAll("fieldset[data-p]"), n = 0;
+      for (var s = 0; s < sets.length; s++) {
+        var i = sets[s].getAttribute("data-p"), name = val("p" + i + "_name"), rows = sets[s].querySelectorAll("tbody tr"), repos = 0;
+        for (var j = 0; j < rows.length; j++) {
+          var key = "p" + i + "_r" + j + "_repo", repo = slug(val(key)), role = val("p" + i + "_r" + j + "_role");
+          if (!repo) continue;                    // a row without a repository is not saved
+          repos++;
+          var low = repo.toLowerCase();
+          if (!REPO.test(repo)) bad[key] = "Write the repository as owner/name, like your-org/shop-web.";
+          else if (owner[low]) bad[key] = owner[low].p === i ? "This repository is listed twice." : repo + " is in two projects: " + owner[low].label + " and " + (name || "this one") + ".";
+          else owner[low] = { p: i, label: name || "project " + (n + 1) };
+          if (role.length > 300) bad["p" + i + "_r" + j + "_role"] = "Keep the role under 300 characters.";
+        }
+        if (!name && !repos) continue;          // an empty project is not saved
+        n++;
+        if (!name) bad["p" + i + "_name"] = "Give the project a name.";
+        else if (!NAME.test(name)) bad["p" + i + "_name"] = "Use a short name: letters, digits, spaces, dot or dash, 60 characters at most.";
+        else if (names[name.toLowerCase()]) bad["p" + i + "_name"] = "Another project already has this name.";
+        names[name.toLowerCase()] = true;
+        if (val("p" + i + "_desc").length > 500) bad["p" + i + "_desc"] = "Keep the description under 500 characters.";
+        if (!repos) bad["p" + i + "_r0_repo"] = "Add at least one repository, as owner/name.";
+      }
+      return bad;
+    }
+    function mark(el, why) {
+      var id = el.name + "-err", p = document.getElementById(id);
+      if (!why) {
+        if (p) p.parentNode.removeChild(p);
+        el.removeAttribute("aria-invalid"); el.removeAttribute("aria-describedby");
+        return;
+      }
+      if (!p) { p = document.createElement("p"); p.className = "f-err"; p.id = id; el.parentNode.insertBefore(p, el.nextSibling); }
+      if (p.textContent !== why) p.textContent = why;
+      el.setAttribute("aria-invalid", "true"); el.setAttribute("aria-describedby", id);
+    }
+    function show() {
+      var bad = check(), els = form.querySelectorAll("input[name^=p]"), shown = 0, firstBad = null;
+      for (var i = 0; i < els.length; i++) {
+        var why = all || seen[els[i].name] ? bad[els[i].name] : "";
+        mark(els[i], why);
+        if (why) { shown++; if (!firstBad) firstBad = els[i]; }
+      }
+      save.disabled = shown > 0;
+      status.textContent = shown ? "Correct the " + (shown === 1 ? "field" : shown + " fields") + " marked above to save." : "";
+      return firstBad;
+    }
+    var marked = form.querySelectorAll("[aria-invalid=true]");          // the server refused a save: its marks follow the typing from here on
+    for (var k = 0; k < marked.length; k++) seen[marked[k].name] = true;
+    if (marked.length) all = true;
+    var adds = form.querySelectorAll(".pj-add");
+    for (var a = 0; a < adds.length; a++) adds[a].hidden = false;
+    form.addEventListener("click", function (e) {
+      var b = e.target.closest(".pj-add");
+      if (!b) return;
+      var set = b.closest("fieldset"), body = set.querySelector("tbody"), last = body.lastElementChild, j = body.children.length, i = set.getAttribute("data-p");
+      if (!last || j >= +b.getAttribute("data-max")) return;
+      var tr = last.cloneNode(true), ins = tr.querySelectorAll("input"), old = tr.querySelectorAll(".f-err");
+      for (var o = 0; o < old.length; o++) old[o].parentNode.removeChild(old[o]);
+      for (var x = 0; x < ins.length; x++) {
+        var kind = /_role$/.test(ins[x].name) ? "role" : "repo";
+        ins[x].name = ins[x].id = "p" + i + "_r" + j + "_" + kind;
+        ins[x].value = "";
+        ins[x].removeAttribute("aria-invalid"); ins[x].removeAttribute("aria-describedby");
+        ins[x].setAttribute("aria-label", kind === "role" ? "Role of repository " + (j + 1) : "Repository " + (j + 1));
+      }
+      body.appendChild(tr);
+      if (j + 1 >= +b.getAttribute("data-max")) b.hidden = true;
+      ins[0].focus();
+    });
+    form.addEventListener("change", function (e) {
+      var el = e.target;
+      if (!el.name || !/^p\d/.test(el.name)) return;
+      if (/_repo$/.test(el.name)) el.value = slug(el.value);          // a pasted GitHub address becomes owner/name
+      seen[el.name] = true;
+      show();
+    });
+    form.addEventListener("input", function () { show(); });
+    form.addEventListener("submit", function (e) {
+      all = true;
+      var firstBad = show();
+      if (firstBad) { e.preventDefault(); firstBad.focus(); }
+    });
+    show();
+  })();
 })();
