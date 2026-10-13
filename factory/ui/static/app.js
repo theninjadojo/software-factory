@@ -1031,7 +1031,9 @@
       seen[marked[k].name] = true;
     }
     try { if (!marked.length && localStorage.getItem(FOLD) === "1") sec.open = false; } catch (e) { /* private window: stays open */ }
-    sec.addEventListener("toggle", function () { try { localStorage.setItem(FOLD, sec.open ? "0" : "1"); } catch (e) { /* not remembered */ } });
+    sec.addEventListener("click", function (e) {          // saved at the click, not in the toggle event, which the browser sends a moment later
+      if (e.target.closest("summary") && e.target.closest("summary").parentNode === sec) try { localStorage.setItem(FOLD, sec.open ? "1" : "0"); } catch (x) { /* not remembered */ }
+    });                                                   // (the click comes before the part opens or closes, so an open part is about to be folded)
     var add = sec.querySelector(".sr-add");
     add.hidden = false;
     add.addEventListener("click", function () {
