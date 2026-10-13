@@ -10,6 +10,9 @@ Releases are automatic. To release:
    `ghcr.io/<owner>/shikumi`, `shikumi-agent`, `shikumi-render`, `shikumi-screens` and `shikumi-android` (tagged `v0.3.0` and `latest`), creates
    the tag `v0.3.0` at that commit, and publishes a GitHub Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `env.example`
    (the `.env` template), `setup.sh`, `update.sh`, `install.sh`, `update-native.sh` and the worker files.
+   The release is a draft until every file is uploaded and is published only then (which creates the tag), so it never shows as the latest
+   with files missing. A dropped connection is retried, and `scripts/publish-release.py` can be run again for the same tag: it reuses the
+   release and uploads only the files it does not have yet.
 3. On every other merge to `main` the same workflow exits within seconds: the tag for that `VERSION` already exists.
 
 From the UI: **Settings > Updates and releases** opens a `release/vX.Y.Z` pull request that bumps `VERSION` (patch, minor or major above the highest of `main` and the latest release), and **Merge and release** merges it, which starts the build. It needs a GitHub token that can write to `[updates] repo`. A pull request whose checks passed also has a **Merge** button on its ticket page.
