@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harnesses, harness_for, project_for
-from . import designfiles, issueimages, lockfiles, pool, screens, tracker, verify, waves
+from . import designfiles, issueimages, lockfiles, origin, pool, screens, tracker, verify, waves
 from . import mockups as mockups_mod
 from . import reviewnotes
 from .render import render as preview_render
@@ -409,7 +409,8 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: Harnes
 
 
 def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, title: str, d: Path, names: dict, patches: dict,
-                         env: dict, stamp: str, design_dir: str = designfiles.DEFAULT_DIR, to_repo: bool = True) -> tuple[list, list, str]:
+                         env: dict, stamp: str, design_dir: str = designfiles.DEFAULT_DIR, to_repo: bool = True,
+                         refs: str = "") -> tuple[list, list, str]:
     """Turn the designer's new design/*.dc.html files into a draft PR. Every file is validated twice (the patch may only ADD
     files with the right names, then each file's content is checked); anything that fails is dropped and reported, never
     published. With to_repo=False nothing is committed or pushed: the canvases and their rendered previews come back as records with
@@ -460,10 +461,11 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
         ref = sha if re.fullmatch(r"[0-9a-f]{40}", sha) else branch          # a commit link outlives the branch
         push_factory_branch(base, branch, env)
         pr = gh.create_pr(
-            r, branch, gh.default_branch(r), f"[factory] design mockups for #{num}: {title[:60]}",
-            f"Static design canvases (`.dc.html`, the Claude Design canvas format) written by the designer agent for {home_repo}#{num}. "
+            r, branch, gh.default_branch(r), f"[factory] design mockups for {tracker.display(num)}: {title[:60]}",
+            f"Static design canvases (`.dc.html`, the Claude Design canvas format) written by the designer agent for {tracker.ref(home_repo, num)}. "
             "They are new files only; nothing else changes.\n\nOpen them in Claude Design (design-sync), or merge "
             "this draft to keep them with the repository. Treat them as a first draft.\n\n"
+            + refs
             + "\n".join(f"- `{x}`" + (f" (preview: `{previews[x]}`)" if x in previews else "") for x in paths),
             draft=True)
         urls.append(pr)
@@ -760,7 +762,7 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                 if diffs:
                     try:
                         files, notes, urls = publish_design_files(rn, gh, repo, num, issue["title"], d, names, diffs, env, stamp, design_dir,
-                                                                 role_cfg.design_pr if role_cfg else True)
+                                                                 role_cfg.design_pr if role_cfg else True, origin.refs(cfg, repo, num))
                         result.files, result.notes, result.pr_url = files, "; ".join(notes), urls or None
                     except Exception as e:             # publishing is a bonus: the written document is never lost to it
                         log.exception("design files could not be published")
@@ -899,7 +901,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                       "network to refresh it.\n\n") if released else "")
                 + ("**Worker verification did not pass (an advisory check, or the factory is set to warn only):**\n\n" + FENCE + "\n" + warned[r][-1500:].replace(FENCE, "'" * 3) + "\n" + FENCE + "\n\n" if r in warned else "")
                 + f"Refs {tracker.ref(repo, num)}\n\n"
-                f"<details><summary>Agent's summary (unverified)</summary>\n\n{FENCE}\n{summary}\n{FENCE}\n</details>",
+                + origin.refs(cfg, repo, num)
+                + f"<details><summary>Agent's summary (unverified)</summary>\n\n{FENCE}\n{summary}\n{FENCE}\n</details>",
                 draft=(cfg.review.enabled and cfg.review.auto) or r in touched))   # a draft until reviewed (automatically, or by a person for baselines)
             if r in touched:
                 try:

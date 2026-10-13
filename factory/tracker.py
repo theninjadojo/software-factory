@@ -26,7 +26,8 @@ MAX_BULK = 25
 AUTO_PAGES = 5                  # the automatic import reads at most this many pages (100 issues each) per repository and pass
 AUTO_RECHECK = 24 * 3600        # an issue it skipped is checked again after this long
 AUTO_NONE_STOP = 3              # permission lookups answering 'none' in one pass before it stops
-MOVED_COMMENT = "Moved to the factory's local tracker as {ref}.{link} This issue is no longer watched by the factory."
+MOVED_COMMENT = ("Moved to the factory's local tracker as {ref}.{link} The factory no longer reads this issue. It will post the pull requests "
+                 "here, and close the issue once they are merged.")
 RUNNING = ("running", "queued", "starting")
 
 
@@ -102,6 +103,8 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS local_imports (
             repo TEXT NOT NULL, gh_number INTEGER NOT NULL, local_number INTEGER NOT NULL, close INTEGER NOT NULL DEFAULT 0,
             step INTEGER NOT NULL DEFAULT 0, moved_at REAL NOT NULL, PRIMARY KEY (repo, gh_number));
+        CREATE TABLE IF NOT EXISTS origin_notes (        -- what was already written to an imported ticket's original issue (origin.py)
+            repo TEXT NOT NULL, gh_number INTEGER NOT NULL, kind TEXT NOT NULL, posted REAL NOT NULL, PRIMARY KEY (repo, gh_number, kind));
         CREATE TABLE IF NOT EXISTS import_requests (
             repo TEXT NOT NULL, gh_number INTEGER NOT NULL, close INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL,
             PRIMARY KEY (repo, gh_number));
@@ -433,9 +436,7 @@ def _import_one(cfg, gh: GitHub, db, repo: str, num: int, close: bool, triggers:
         gh.comment(repo, num, MOVED_COMMENT.format(ref=display(number), link=link))
         db.execute("UPDATE local_imports SET step=2 WHERE repo=? AND gh_number=?", (repo, num))
         db.commit()
-    if step < 3:
-        if close:
-            gh.update_issue(repo, num, state="closed")
+    if step < 3:                                # the original stays open: origin.tick closes it once the work has merged
         db.execute("UPDATE local_imports SET step=3 WHERE repo=? AND gh_number=?", (repo, num))
         db.commit()
     emit("import", f"moved {repo}#{num} to local ticket {display(number)}", repo, number)
@@ -500,7 +501,7 @@ def auto_queue(cfg, gh: GitHub, db, emit) -> int:
                     why = None if perm in cfg.trusted_permissions else f"Its author is not trusted (permission '{perm}')."
                 if why is None:
                     db.execute("DELETE FROM local_import_skips WHERE repo=? AND gh_number=?", (repo, num))
-                    db.execute("INSERT OR IGNORE INTO import_requests VALUES (?,?,?,?)", (repo, num, int(cfg.local_auto_import_close), now))
+                    db.execute("INSERT OR IGNORE INTO import_requests VALUES (?,?,?,?)", (repo, num, 0, now))
                     room, queued = room - 1, queued + 1
                 elif skip:
                     db.execute("UPDATE local_import_skips SET author=?, reason=?, checked=? WHERE repo=? AND gh_number=?",

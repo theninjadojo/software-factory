@@ -644,7 +644,7 @@ class Config:
     local_enabled: bool = False                # the local ticket tracker and the GitHub import
     local_auto_import: bool = False             # with GitHub issues off: import trusted authors' open GitHub issues on a slow schedule
     local_auto_import_seconds: int = 3600       # how often that import reads GitHub
-    local_auto_import_close: bool = True        # close the GitHub issue once it is copied
+    local_auto_import_close: bool = True        # no longer used: the original is closed by origin.tick once its PRs merge
     attach_max_mb: int = 5                      # local ticket attachments: the largest file,
     attach_max_files: int = 5                   # the most files on one ticket,
     attach_max_total_mb: int = 20               # and the most megabytes on one ticket

@@ -114,9 +114,6 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               "Only with GitHub issues off and local tickets on. On a slow schedule, open GitHub issues whose author has one of the roles in "
               "Who may apply labels are copied here with their labels; other authors' issues are skipped. The first runs move the "
               "whole open backlog, 25 at a time.", group="Where tickets come from"),
-        Field("local.auto_import_close", "Close GitHub issues after importing them", "bool",
-              "On (default): the copied GitHub issue is closed. Off: it stays open, marked factory:moved, and is not imported again.",
-              group="Where tickets come from"),
         Field("subtasks.enabled", "Mirror pipeline steps as GitHub sub-issues", "bool",
               "Each stage of a ticket also shows as a sub-issue on GitHub. Off by default: it adds writes and notifications.", group="Where tickets come from"),
         Field("local.max_attachment_mb", "Largest attachment (MB)", "int", "Files attached to a local ticket.", lo=1, hi=50, adv=True),
@@ -462,7 +459,7 @@ def default_for(key: str):
         return list(v) if isinstance(v, tuple) else v
     return {"auto.label": "factory:auto", "routing.low.fallback_models": [], "routing.medium.fallback_models": [], "routing.high.fallback_models": [],
             "classifier.backend": "rules", "classifier.model": "typesafe/jev-1.13",
-            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "local.auto_import": False, "local.auto_import_seconds": 3600, "local.auto_import_close": True, "local.max_attachment_mb": 5, "local.max_attachments": 5, "local.max_attachments_total_mb": 20, "board.done_days": 7, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
+            "classifier.kind_aliases": dict(KIND_ALIASES), "telegram.verbosity": "normal", "slack.verbosity": "normal", "local.enabled": False, "local.auto_import": False, "local.auto_import_seconds": 3600, "local.max_attachment_mb": 5, "local.max_attachments": 5, "local.max_attachments_total_mb": 20, "board.done_days": 7, "github.issues_enabled": True, "auto.confirm_stages": False, "auto.chain": True}.get(key)
 
 
 def canon(key: str, v):

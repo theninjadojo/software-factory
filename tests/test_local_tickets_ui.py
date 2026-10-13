@@ -163,16 +163,14 @@ class ImportAll(LocalTickets):
         with mock.patch.object(L, "_gh", return_value=gh):
             return self.post(self.cookie, self.csrf, "/tickets/import", {"repo": REPO, **f})
 
-    def test_every_open_issue_is_queued_in_batches_and_a_close_needs_confirmation(self):
+    def test_every_open_issue_is_queued_in_batches_and_never_closed_at_import(self):
         from unittest import mock
         gh = mock.MagicMock()
         total = tracker.MAX_BULK + 5
         gh.issues.return_value = ([{"number": n, "labels": []} for n in range(1, total + 1)], False)
-        self.submit(gh, all="1", close="1")
-        self.assertEqual(self.queued(), [])                          # not confirmed: nothing queued
-        self.submit(gh, all="1", close="1", confirm="1")
+        self.submit(gh, all="1", close="1")                          # a stale form's close box is ignored
         self.assertEqual(self.queued(), list(range(1, tracker.MAX_BULK + 1)))
-        self.assertEqual(self.db.execute("SELECT MIN(close) FROM import_requests").fetchone()[0], 1)
+        self.assertEqual(self.db.execute("SELECT MAX(close) FROM import_requests").fetchone()[0], 0)
         self.submit(gh, all="1")                                     # the next batch skips the queued ones
         self.assertEqual(self.queued(), list(range(1, total + 1)))
 

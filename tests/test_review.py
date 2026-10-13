@@ -86,6 +86,22 @@ class AutomaticReview(unittest.TestCase):
         self.assertNotIn("@mallory", body)                                               # sanitized like every agent document
         self.assertIn(("add", ("stage:reviewed",)), gh.calls)
 
+    def test_a_build_for_an_imported_ticket_tells_the_original_issue_once(self):
+        from factory import tracker
+        local = tracker.LOCAL_BASE + 1
+        cfg = replace(REVIEW, dry_run=False)
+        gh, conn = GH(), dbm.connect(":memory:")
+        tracker.ensure_tables(conn)
+        conn.execute("INSERT INTO local_imports VALUES ('o/r', 42, ?, 0, 3, 0)", (local,))
+        conn.commit()
+        fake_run, _ = runner_fake()
+        for _ in range(2):                                               # a second dispatch of the same PRs adds nothing
+            with mock.patch.object(m.runner, "run_task", side_effect=fake_run):
+                m.dispatch(cfg, gh, "o/r", issue(n=local, labels=["factory:ready"]), Route("claude-code", "sonnet", "medium"), conn=conn)
+        told = [b for r, n, b in gh.posted if n == 42]
+        self.assertEqual(len(told), 1)
+        self.assertIn("Opened", told[0])
+
     def test_the_prs_are_marked_ready_only_after_the_review_is_posted(self):
         _, gh, _ = self.run_dispatch()
         self.assertEqual(sorted(gh.ready), [("o/m", 4), ("o/r", 9)])

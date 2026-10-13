@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import judges
 from . import recommend
@@ -607,6 +607,7 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         gh.comment(repo, num, f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else "") + waiting)
         gh.remove_label(repo, num, WORKING)
         if conn is not None:
+            origin.note(cfg, gh, conn, repo, num, f"pr:{res.pr_url}", f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else ""))
             for u in res.pr_url.split():                  # watch each PR's CI; skip anything that is not a PR URL
                 m = PR_URL.match(u)
                 if m:
@@ -626,6 +627,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
         gh.add_labels(repo, num, [FAILED])
         gh.comment(repo, num, f"Factory run did not produce a PR ({res.status}). A person should take a look.")
         gh.remove_label(repo, num, WORKING)
+        if conn is not None:
+            origin.note(cfg, gh, conn, repo, num, f"failed:{res.status}", f"The factory's run did not produce a PR ({res.status}). A person should take a look.")
         alert(f"Run did not produce a PR: {repo}#{num} ({res.status})\n{res.detail[:300]}", event="failure")
     return res
 
@@ -2037,6 +2040,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
             cleanup.tick(cfg, gh, conn, lambda text, event="failure": alert(text, event=event), emit, lambda r, n: pool.busy(jobkey(r, n)))
         except Exception:
             log.exception("leftover PR cleanup failed")              # never stops the poll
+        origin.tick(cfg, gh, conn, lambda r, n: pool.busy(jobkey(r, n)), emit)    # closes the original of each imported ticket once its PRs have merged
     if github_due and cfg.github_issues_enabled:            # reads only, so it runs in dry-run too
         try:
             suggest_build_order(cfg, gh, conn)

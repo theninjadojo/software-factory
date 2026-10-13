@@ -25,7 +25,8 @@ trusted_permissions = ["admin", "maintain", "write"]   # who may apply a trigger
 # auto_import = false          # true (with issues_enabled = false): on a slow schedule, copy open GitHub issues whose author has one of
 #                              # trusted_permissions, with their labels; other authors' issues are skipped and checked again a day later
 # auto_import_seconds = 3600   # how often that import reads GitHub (600 to 86400)
-# auto_import_close = true     # close the GitHub issue once copied; false leaves it open, marked factory:moved
+# auto_import_close = true     # no longer used. An imported issue stays open, marked factory:moved; the factory comments the PRs on it
+#                              # and closes it once they have all merged
 
 # Classification tier -> agent settings. A fixed table: the classifier can only select a row, never write one.
 [routing.low]
