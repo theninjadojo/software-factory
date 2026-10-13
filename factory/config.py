@@ -270,6 +270,25 @@ class TicketReviewCfg:
 
 
 @dataclass(frozen=True)
+class EvaluateCfg:
+    """Evaluation of finished tickets (evaluate.py): once a ticket's work merged, was closed or failed, a read-only agent with a
+    clean context scores how well each step went and suggests what to change. It only reports: nothing is changed by it. It runs
+    one ticket at a time and only while the factory has nothing else to do. Off by default (each evaluation is a run)."""
+    enabled: bool = False
+    max_usage_percent: int = 70           # hold off while the Claude plan's session or week is at least this used
+    settle_minutes: int = 60              # a finished ticket waits this long first, in case more work follows
+    backfill_days: int = 14               # tickets finished longer ago are evaluated only when a person asks
+    low_score: int = 2                    # a score this low or lower needs a suggestion and is listed under What to improve
+    body_chars: int = 6000                # of the ticket's body
+    doc_chars: int = 8000                 # of each run's document
+    max_turns: int = 6
+    timeout_seconds: int = 600
+    model: str = "sonnet"
+    effort: str = "medium"
+    harness: str = "claude-code"
+
+
+@dataclass(frozen=True)
 class ChatCfg:
     """Quick replies about a ticket, outside the label-driven pipeline. A person writes in the admin UI; the orchestrator answers
     with a short read-only run in a sandbox with no repository clone and no GitHub token. The chat can only propose sending the
@@ -597,6 +616,7 @@ class Config:
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
     pm: PmCfg = field(default_factory=PmCfg)
     ticket_review: TicketReviewCfg = field(default_factory=TicketReviewCfg)
+    evaluate: EvaluateCfg = field(default_factory=EvaluateCfg)
     comments: CommentsCfg = field(default_factory=CommentsCfg)
     questions: QuestionsCfg = field(default_factory=QuestionsCfg)
     chat: ChatCfg = field(default_factory=ChatCfg)
@@ -1237,6 +1257,18 @@ def parse(raw: dict) -> Config:
         v = getattr(tr, name)
         if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 100000:
             raise ValueError(f"ticket_review.{name} must be a whole number from 1 to 100000")
+    ev = EvaluateCfg(**raw.get("evaluate", {}))
+    if not isinstance(ev.enabled, bool):
+        raise ValueError("evaluate.enabled must be true or false")
+    if ev.effort not in ("low", "medium", "high"):
+        raise ValueError("evaluate.effort must be low, medium or high")
+    if not isinstance(ev.model, str) or not MODEL_RE.fullmatch(ev.model):
+        raise ValueError("evaluate.model is not a valid model id")
+    for name, lo, hi in (("max_usage_percent", 1, 100), ("settle_minutes", 0, 100000), ("backfill_days", 1, 3650), ("low_score", 1, 4),
+                         ("body_chars", 100, 100000), ("doc_chars", 500, 100000), ("max_turns", 1, 50), ("timeout_seconds", 60, 7200)):
+        v = getattr(ev, name)
+        if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
+            raise ValueError(f"evaluate.{name} must be a whole number from {lo} to {hi}")
     if not isinstance(pm.unblock_label, str) or not pm.unblock_label.strip():
         raise ValueError("pm.unblock_label must not be empty")
     chat = ChatCfg(**raw.get("chat", {}))
@@ -1308,6 +1340,7 @@ def parse(raw: dict) -> Config:
         updates=updates,
         pm=pm,
         ticket_review=tr,
+        evaluate=ev,
         comments=comments,
         questions=questions,
         chat=chat,

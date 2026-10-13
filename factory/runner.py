@@ -512,6 +512,13 @@ def run_interview(cfg: Config, draft_id: int, route: Route, prompt: str, sink: d
     return _quick_run(cfg, route, f"interview-{int(draft_id)}", prompt, np.max_turns, np.timeout_seconds, sink)
 
 
+def run_evaluation(cfg: Config, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
+    """One evaluation of a finished ticket (factory.evaluate): the prompt carries the ticket, the stage documents and the facts; the
+    run is the same sealed, repository-less sandbox as a chat reply, so it starts from a clean context every time."""
+    ev = cfg.evaluate
+    return _quick_run(cfg, route, "evaluate", prompt, ev.max_turns, ev.timeout_seconds, sink)
+
+
 def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: int, timeout: int, sink: dict | None) -> RunResult:
     """A read-only run with no repository: an empty /work, the prompt, and only the agent's text back."""
     rn = cfg.runner

@@ -128,6 +128,12 @@ class GitHub:
         ]
         return actors[-1] if actors else None
 
+    def reopens(self, repo: str, issue: int) -> int:
+        """How often someone other than the factory's own account reopened the issue (from its last 100 events)."""
+        me = self.login()
+        return sum(1 for e in self._get(f"/repos/{repo}/issues/{issue}/events?per_page=100")
+                   if e.get("event") == "reopened" and ((e.get("actor") or {}).get("login") or "") != me)
+
     def permission(self, repo: str, login: str) -> str:
         try:
             return self._get(f"/repos/{repo}/collaborators/{urllib.parse.quote(login)}/permission")["permission"]

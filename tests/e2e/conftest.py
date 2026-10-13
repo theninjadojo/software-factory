@@ -144,6 +144,53 @@ def seed(db) -> None:
     dbm.add_event(db, "alert.error", "something went wrong <script>alert(1)</script>", REPO, 7)      # newest, so it is on the first page
 
 
+def seed_evaluations(db) -> None:
+    """Six finished tickets with their evaluations, for the Evaluate page: merged ones, one a person reopened, one closed without
+    merging and one that failed, with low scores and suggestions on some steps. Not part of seed(): a test asks for it."""
+    from factory import evaluate as E
+    now = time.time()
+    said = {"model": ("Opus was more than this small change needed.", "Route low-complexity tickets to sonnet."),
+            "effort": ("High effort on a two-file change; most of the run was spent re-reading the same files.", "Use medium effort for the architect on small tickets."),
+            "input": ("The ticket named no acceptance criteria, so the analyst had to ask how a retry is counted. " + LONG[:60], "Say in the ticket how the result is checked.")}
+
+    def work(issue, title, kind, stage, status, tokens, model, effort, ago):
+        rid = dbm.start_run(db, kind, REPO, issue, title, "claude-code", model, effort, json.dumps({"complexity": "medium"}), stage)
+        dbm.finish_run(db, rid, status, "falling back to opus" if status == "failed" else "done", output=f"# {stage or kind}\n\nWhat was done.",
+                       usage={"tokens_in": tokens, "tokens_out": tokens // 20, "tokens_cache_read": tokens * 3})
+        db.execute("UPDATE runs SET started=?, finished=? WHERE id=?", (now - ago - 400, now - ago, rid))
+        return rid
+
+    tickets = [(40, "Retry a failed CI fix once more", "merged", 0, 1), (41, "Per-repository budget limits with a deliberately long title that has to wrap on a phone " + LONG, "merged", 1, 3),
+               (42, "Dark mode toggle", "merged", 0, 1), (43, "Export invoices as CSV", "closed", 0, 2), (44, "Rate limit the public API", "failed", 0, 4),
+               (45, "Show 日本語 names 🚀", "merged", 0, 1)]
+    for issue, title, how, reopened, scale in tickets:
+        ids = [work(issue, title, "stage", "analyst", "stage", 40_000 * scale, "sonnet", "medium", 9000),
+               work(issue, title, "stage", "architect", "stage", 90_000 * scale, "opus", "high", 8000)]
+        if how == "failed":
+            ids.append(work(issue, title, "build", None, "failed", 300_000 * scale, "sonnet", "medium", 7500))
+        ids.append(work(issue, title, "build", None, "failed" if how == "failed" else "pr", 400_000 * scale, "sonnet", "medium", 7000))
+        if how != "failed":
+            ids.append(work(issue, title, "review", None, "stage", 60_000, "sonnet", "medium", 6500))
+            dbm.watch_pr(db, REPO, 600 + issue, REPO, issue)
+            dbm.update_pr(db, REPO, 600 + issue, status="closed", summary="merged" if how == "merged" else "closed", rounds=scale - 1)
+        db.execute("INSERT OR REPLACE INTO evaluation_states VALUES (?,?,?,?,?)", (REPO, issue, 1, reopened, now))
+        db.commit()
+    for issue, title, how, reopened, scale in tickets:
+        st, f = E.state(db, REPO, issue), E.facts(db, REPO, issue, now)
+        weak = scale > 1
+        entry = lambda score, k, verdict="": {"score": score, "verdict": verdict, "reason": said[k][0], "suggestion": said[k][1] if score <= 2 else ""}
+        runs = {r["run"]: {"model": entry(2 if r["model"] == "opus" else 4, "model", "lighter" if r["model"] == "opus" else "right"),
+                           "effort": entry(2 if r["effort"] == "high" else 5, "effort", "lighter" if r["effort"] == "high" else "right"),
+                           "input": entry(2 if weak and r["step"] == "analyze" else 4, "input"),
+                           **({"tokens": {"suggestion": "Give the build the architect's file list so it reads less."}} if weak and r["step"] == "implement" else {})}
+                for r in f["runs"]}
+        ticket = {"quality": {"score": 2 if weak else 4, "reason": "The goal is clear but nothing says how the result is checked.",
+                              "suggestion": "Add acceptance criteria and name the screens that change." if weak else ""},
+                  "completion": {"score": 5, "reason": "Everything the ticket asked for was delivered.", "suggestion": "Re-read the ticket before closing." if how != "merged" or reopened else ""}}
+        eid = E.begin(db, st, now - 3600)
+        E.store(db, eid, f, E.cap({"ticket": ticket, "runs": runs}, f), f["runs"][-1]["run"], now - 3000 + issue)
+
+
 class Server:
     def __init__(self, tmp: Path):
         self.root = tmp

@@ -188,6 +188,26 @@ model = "sonnet"
 effort = "medium"
 harness = "claude-code"
 
+# Evaluation: once a ticket is finished (its work merged, it was closed without merging, or its last run failed), a read-only agent
+# with a clean context (a sandbox with no repository) scores how each step went and suggests what to change; the Evaluate page
+# shows the results. It runs one ticket at a time and only while the factory has nothing else to do: no agent working, no ticket
+# waiting for one, and the Claude plan's session and week under max_usage_percent. A ticket is evaluated settle_minutes after its
+# last run; tickets finished more than backfill_days ago only when a person presses Evaluate now. A score of low_score or lower
+# needs a suggestion. Nothing is changed by an evaluation. Off by default (each evaluation is a run).
+[evaluate]
+enabled = false
+max_usage_percent = 70
+settle_minutes = 60
+backfill_days = 14
+low_score = 2
+body_chars = 6000
+doc_chars = 8000
+max_turns = 6
+timeout_seconds = 600
+model = "sonnet"
+effort = "medium"
+harness = "claude-code"
+
 # Ticket chat: a person writes about a ticket in the admin UI and gets a quick reply from a short read-only run in a sandbox with
 # no repository clone and no GitHub token. The conversation stays in the factory's database (it is never posted to GitHub) and
 # later stage runs and reviews see the newest context_turns turns as untrusted data. The chat can only propose sending the ticket

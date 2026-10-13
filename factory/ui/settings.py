@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -278,6 +278,25 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("ticket_review.effort", "Review effort", "select", choices=EFFORTS),
         Field("ticket_review.harness", "Review agent harness", "select", choices=("claude-code",), adv=True),
     ]),
+    "evaluate": ("Evaluation", [
+        Field("evaluate.enabled", "Evaluate finished tickets", "bool",
+              "Once a ticket's work merged, was closed or failed, an agent with a clean context scores how each step went and suggests "
+              "what to change. One ticket at a time, only while the factory has nothing else to do. Each evaluation is a run. See the Evaluate page."),
+        Field("evaluate.max_usage_percent", "Hold off above this plan usage (%)", "int",
+              "No evaluation starts while the Claude plan's session or week is at least this used.", lo=1, hi=100),
+        Field("evaluate.settle_minutes", "Minutes to wait after a ticket's last run", "int", "In case more work follows.", lo=0, hi=100000),
+        Field("evaluate.backfill_days", "Evaluate tickets finished in the last (days)", "int",
+              "Older tickets are evaluated only when you press Evaluate now.", lo=1, hi=3650),
+        Field("evaluate.low_score", "A low score is this or lower", "int",
+              "From 1 to 5. A low score needs a suggestion and is listed under What to improve.", lo=1, hi=4),
+        Field("evaluate.model", "Evaluator model", "text", "sonnet, opus, haiku (or a full model id)."),
+        Field("evaluate.effort", "Evaluator effort", "select", choices=EFFORTS),
+        Field("evaluate.body_chars", "Characters of the ticket body", "int", lo=100, hi=100000, adv=True),
+        Field("evaluate.doc_chars", "Characters of each run's document", "int", lo=500, hi=100000, adv=True),
+        Field("evaluate.max_turns", "Turns per evaluation", "int", lo=1, hi=50, adv=True),
+        Field("evaluate.timeout_seconds", "Seconds per evaluation", "int", lo=60, hi=7200, adv=True),
+        Field("evaluate.harness", "Evaluator harness", "select", choices=("claude-code",), adv=True),
+    ]),
     "design_links": ("Design links", [
         Field("design_links.enabled", "Fetch linked design exports", "bool",
               "Design exports (single HTML files) linked in a ticket are fetched and shown to agents as intent. The UI shows them in a sandboxed tab without scripts."),
@@ -401,7 +420,7 @@ def del_in(d: dict, dotted: str) -> None:
             chain[i - 1].pop(parts[i - 1], None)
 
 
-DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "questions": QuestionsCfg, "ticket_review": TicketReviewCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
+DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "questions": QuestionsCfg, "ticket_review": TicketReviewCfg, "evaluate": EvaluateCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
                       "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg}
 
 

@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, factorychat, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
 from . import depdetect
 from . import judges
 from . import recommend
@@ -1769,6 +1769,76 @@ def maybe_ticket_review(cfg: Config, gh: GitHub, conn) -> None:
         start(cfg, conn, r["repo"], 0, "ticket-review", lambda db, r=r: ticket_review_job(cfg, gh, db, r["id"], r["repo"], r["sources"], r["scope"]))
 
 
+def evaluate_job(cfg: Config, gh: GitHub, conn, eid: int, repo: str, num: int) -> str:
+    """One evaluation of a finished ticket: gather the facts, run the read-only agent with a clean context, store the validated
+    scores (see evaluate.py). Nothing on the ticket is changed."""
+    ev, now = cfg.evaluate, time.time()
+    f = evaluate.facts(conn, repo, num, now)
+    if f is None:                                           # work started on it again since the poll picked it
+        evaluate.drop(conn, eid)
+        return "stage"
+    try:
+        issue = gh.get_issue(repo, num)
+        people = evaluate.people_comments(gh.issue_comments(repo, num), gh.login())
+    except Exception as e:
+        evaluate.fail(conn, eid, f"could not read the ticket ({type(e).__name__})")
+        return "failed"
+    prompt = evaluate.build_prompt(issue, people, f, evaluate.documents(conn, f, ev.doc_chars), ev.body_chars, ev.low_score)
+    route = Route(ev.harness, ev.model, ev.effort)
+    stand_in = {"number": 0, "title": f"Evaluation of {tracker.display(num)}: {issue.get('title', '')}"}       # 0: never a ticket on the board
+    run_id, sink = begin_run("evaluate", repo, stand_in, route, None, "evaluate"), {}
+    evaluate.set_run(conn, eid, run_id)
+    res = runner.run_evaluation(cfg, route, prompt, sink)
+    end_run(run_id, res, sink)
+    found = evaluate.parse(res.output, {r["run"] for r in f["runs"]}) if res.status == "stage" else None
+    if found is None:
+        if res.status == "rate-limited":
+            evaluate.drop(conn, eid)                        # not the ticket's fault: it is taken up again after the pause
+            if pause.set_backoff(Path(cfg.db_path).parent, cfg.runner.rate_limit_backoff_seconds):
+                alert(f"Rate limited during the evaluation of {repo} {tracker.display(num)}; pausing.", event="rate_limit")
+            return res.status
+        evaluate.fail(conn, eid, "the agent did not finish with a valid evaluation" if res.status == "stage" else f"{res.status}: {res.detail[:300]}", run_id)
+        return res.status
+    kept = evaluate.store(conn, eid, f, evaluate.cap(found, f), run_id)
+    emit("evaluate", f"evaluated {repo} {tracker.display(num)}: {kept} score(s)", repo, None, run_id)
+    return "stage"
+
+
+def evaluate_hold(cfg: Config, conn) -> str:
+    """Why no evaluation starts now ("" when one may): evaluations only use what the factory would otherwise leave idle."""
+    if pause.paused(Path(cfg.db_path).parent):
+        return "the factory is paused"
+    if not pool.idle():
+        return "agents are working on tickets"
+    if any(not q.get("reason") for q in queued):
+        return "tickets are waiting for an agent"
+    over = [name for _, name in usage.WINDOWS if (w := (usage.load(conn) or {}).get(name)) and w["used"] >= cfg.evaluate.max_usage_percent]
+    if over:
+        return f"the Claude plan's {' and '.join(over)} is at least {cfg.evaluate.max_usage_percent}% used"
+    return ""
+
+
+def maybe_evaluate(cfg: Config, gh: GitHub, conn) -> None:
+    """Evaluate one finished ticket when the factory has nothing else to do. It runs in the pool under ticket number 0 (shared with
+    the PM and the ticket review). Never in dry-run."""
+    ev = cfg.evaluate
+    if not ev.enabled or cfg.dry_run:
+        return
+    now = time.time()
+    evaluate.expire(conn, now)
+    if cfg.github_issues_enabled:
+        evaluate.refresh_states(gh, conn, cfg.repos, now, ev.backfill_days * 86400)
+    todo = evaluate.candidates(conn, cfg.repos, now, ev.settle_minutes * 60, ev.backfill_days * 86400)
+    evaluate.prune_requests(conn, todo, now)
+    why = evaluate_hold(cfg, conn) if todo else ""
+    dbm.set_status(conn, evaluate.STATUS_KEY, json.dumps({"waiting": len(todo), "why": why, "at": now}))
+    if not todo or why or not pool.can_take(jobkey(todo[0]["repo"], 0)):
+        return
+    t = todo[0]
+    eid = evaluate.begin(conn, t, now)
+    start(cfg, conn, t["repo"], 0, "evaluate", lambda db: evaluate_job(cfg, gh, db, eid, t["repo"], t["issue"]))
+
+
 def report_blocked(cfg: Config, repo: str, now_held: dict) -> None:
     """One event when a ticket becomes blocked or its blockers change, and one alert per cycle of tickets waiting for each other."""
     for k in [k for k in held if k[0] == repo and k[1] not in now_held]:
@@ -1933,6 +2003,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         maybe_ticket_review(cfg, gh, conn)
     except Exception:
         log.exception("ticket review failed")                   # never stops the poll
+    try:
+        maybe_evaluate(cfg, gh, conn)                           # last: only when nothing above took an agent
+    except Exception:
+        log.exception("evaluation failed")                      # never stops the poll
     try:
         if cfg.github_issues_enabled:
             schedules.tick(cfg, gh, conn, time.time(), Path(cfg.db_path).parent, emit, alert)

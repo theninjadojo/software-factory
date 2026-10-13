@@ -1690,3 +1690,30 @@ main > [data-flash] { position:sticky; top:8px; z-index:40; box-shadow:0 8px 24p
 .mm-view:not(.mm-on) .mm-scroll { border:0; }
 .mm-scroll { overflow:auto; max-height:30rem; background:var(--bg); border:1px solid var(--line); border-radius:6px; text-align:center; }
 .mm-frame { border:0; display:block; margin:0 auto; max-width:none; height:0; width:100%; }
+/* Evaluate: scores of finished tickets (factory/ui/evaluate.py) */
+.ev-lede { margin:0 0 16px; max-width:52rem; } .ev-filters { margin:0 0 20px; } .ev-pick { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); min-width:0; } .ev-pick select { min-width:0; max-width:100%; } .ev-none { margin:24px 0; }
+.ev-queue { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px 24px; } .ev-queue > div { flex:1 1 20rem; min-width:0; } .ev-now { margin:0; }
+.ev-score { display:inline-flex; align-items:baseline; gap:1px; font-family:var(--mono); white-space:nowrap; } .ev-score b { font-size:1.05em; font-weight:700; } .ev-score i { font-style:normal; font-size:.8em; color:var(--muted); }
+.ev-score.good b { color:var(--good); } .ev-score.warn b { color:var(--warn); } .ev-score.bad b { color:var(--bad); } .ev-score.none { color:var(--muted); }
+.ev-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin:0 0 8px; }
+.ev-tile { display:flex; flex-direction:column; gap:6px; padding:16px 18px; background:var(--panel); border:1px solid var(--line); min-width:0; }
+.ev-lab { font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); } .ev-val { font-size:28px; line-height:1.1; } .ev-num { font-family:var(--mono); font-weight:700; } .ev-num.bad { color:var(--bad); }
+.ev-fixes, .ev-runs { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:12px; }
+.ev-fix, .ev-run { padding:14px 16px; background:var(--panel); border:1px solid var(--line); } .ev-fix p, .ev-run > p { margin:0 0 8px; }
+.ev-tips { margin:0; padding-left:1.3rem; } .ev-tips li + li { margin-top:4px; } .ev-lean { display:block; font-size:13px; } .tr-head .ev-lean { display:inline; }
+.ev-steps th[scope=row] { text-transform:none; letter-spacing:0; font-size:15px; color:var(--text); font-weight:500; } .ev-steps th[scope=row] .muted { display:block; font-size:13px; font-weight:400; }
+.ev-title { color:var(--text); overflow-wrap:anywhere; } .ev-tickets td:first-child { min-width:14rem; } .ev-tickets .badge { white-space:nowrap; }
+.ev-h1 { font-size:24px; margin:.2rem 0 .6rem; } .ev-h1 .ev-title { font-weight:500; } .ev-outcome { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 16px; }
+.ev-dims { display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:12px; } .ev-ticket { margin:0 0 8px; }
+.ev-dim { padding:12px 14px; background:var(--panel2); border:1px solid var(--line); min-width:0; } .ev-ticket .ev-dim { background:var(--panel); }
+.ev-dim p { margin:0 0 6px; overflow-wrap:anywhere; } .ev-dim p:last-child { margin:0; } .ev-dimhead { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.ev-facts { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); margin:0; background:var(--panel); border:1px solid var(--line); border-width:1px 0 0 1px; }
+.ev-facts div { padding:10px 14px; border:1px solid var(--line); border-width:0 1px 1px 0; } .ev-facts dt { font-size:13px; color:var(--muted); } .ev-facts dd { margin:2px 0 0; font-family:var(--mono); font-size:18px; }
+.ev-runs + p, .ev-runs ~ .ev-now { margin-top:16px; }
+@media (max-width:760px) {
+  .ev-steps thead, .ev-tickets thead { display:none; } .ev-steps tr, .ev-tickets tr { display:block; padding:10px 12px; border-bottom:1px solid var(--line); }
+  .ev-steps th[scope=row], .ev-steps td, .ev-tickets td { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 12px; padding:4px 0; border:0; }
+  .ev-steps td::before, .ev-tickets td:not(:first-child)::before { content:attr(data-label); color:var(--muted); font-size:13px; }
+  .ev-pick { flex:1 1 100%; justify-content:space-between; } .ev-pick select { flex:0 1 70%; }
+  .ev-tickets td:first-child { display:block; min-width:0; } .ev-lean { flex-basis:100%; text-align:right; } .ev-queue .ev-now, .ev-queue .ev-now button { width:100%; }
+}
