@@ -64,8 +64,12 @@ def test_the_part_folds_and_stays_folded(page, server):
     sec.locator("summary").click()
     assert not sec.get_by_label("Repository 1", exact=True).is_visible()
     assert sec.get_by_text("1 repository", exact=True).is_visible()   # folded, it still says how many
+    page.wait_for_function("localStorage.getItem('sf-repos-folded') === '1'")
     page.reload()
     assert not page.locator("details.sr-sec").get_by_label("Repository 1", exact=True).is_visible()
     page.locator("details.sr-sec summary").click()
     assert page.locator("details.sr-sec").get_by_label("Repository 1", exact=True).is_visible()
+    page.wait_for_function("localStorage.getItem('sf-repos-folded') === '0'")
+    page.reload()
+    assert page.locator("details.sr-sec").get_by_label("Repository 1", exact=True).is_visible()          # opened again: stays open
     assert not page.errors
