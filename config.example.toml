@@ -12,6 +12,9 @@ token_file = "/srv/factory/secrets/github_token"   # without a token every trust
 trigger_label = "factory:ready"                    # "build it": agents edit the repos and open PRs
 repos = ["your-org/standalone-service"]            # repos handled on their own; project members below are added automatically
 trusted_permissions = ["admin", "maintain", "write"]   # who may apply a trigger label
+# What a standalone repo is for, one line each, told to the agents and the classifier (Settings, General edits these too):
+# [github.repo_roles]
+# "your-org/standalone-service" = "The billing API. Python, deployed from main."
 # issues_enabled = false  # false: GitHub issues are not read or acted on (no polling, approvals, schedules or sub-issues; Import still works);
 #                           pull requests and CI still use GitHub. Turn the local tracker on below, or set true to work from GitHub issues.
 #                           A config without this line keeps working from GitHub issues.

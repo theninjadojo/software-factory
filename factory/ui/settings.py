@@ -32,7 +32,7 @@ class SettingsError(Exception):
 class Field:
     key: str                 # dotted path in the config
     label: str
-    kind: str                # int float bool text url labellist select checks repos hosts hostlist paths kv models prompt wchecks every viewports
+    kind: str                # int float bool text url labellist select checks repos repolist hosts hostlist paths kv models prompt wchecks every viewports
     help: str = ""
     choices: tuple = ()
     lo: float | None = None
@@ -104,7 +104,8 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("github.trigger_label", "Build label", "text", "Applying it makes the factory build the ticket.", group="Labels"),
         Field("github.trusted_permissions", "Who may apply labels", "checks", "A label counts only if its author has one of these repository roles.",
               choices=("admin", "maintain", "write", "triage"), group="Labels"),
-        Field("github.repos", "Standalone repositories", "repos", "owner/name, one per line. Repos of a project (see Projects) are added automatically.", group="Where tickets come from"),
+        Field("github.repos", "Standalone repositories", "repolist", "Repositories the factory works on one at a time. Repositories of a project (see Projects) are added automatically.",
+              group="Where tickets come from"),
         Field("github.issues_enabled", "Work from GitHub issues", "bool",
               "Off: GitHub issues are not read or acted on (no polling, approvals, schedules or sub-issues; Import still works). Running jobs finish. "
               "Pull requests and CI still use GitHub. Turn on local tickets or nothing has tickets to work on.", group="Where tickets come from"),
@@ -671,15 +672,62 @@ def _store(new_ov: dict, base: dict, key: str, value) -> None:
         set_in(new_ov, key, value)
 
 
-def save_section(cfg_path: str, state_dir: Path, section: str, form: Form) -> list[str]:
-    """Returns human-readable notes (for example 'switched to live'). Raises SettingsError."""
+MAX_REPOS = 100
+
+
+def read_repos(form) -> list[dict]:
+    """The standalone repositories as typed, without the rows whose repository is empty (clearing it is how one is removed).
+    Field names in check_repos count what is left, not the form's rows."""
+    rows = [{"repo": repo_slug(form.get(f"repo{j}") or ""), "role": " ".join((form.get(f"repo{j}_role") or "").split())} for j in range(MAX_REPOS)]
+    return [r for r in rows if r["repo"]]
+
+
+def check_repos(rows: list[dict]) -> dict:
+    """What is wrong with read_repos' result: the form field's name -> one sentence. app.js makes the same checks; keep the two alike."""
+    bad: dict[str, str] = {}
+    seen: set[str] = set()
+    for j, r in enumerate(rows):
+        if not REPO_RE.match(r["repo"]):
+            bad[f"repo{j}"] = "Write the repository as owner/name, like your-org/shop-web."
+        elif r["repo"].lower() in seen:
+            bad[f"repo{j}"] = "This repository is listed twice."
+        seen.add(r["repo"].lower())
+        if len(r["role"]) > 300:
+            bad[f"repo{j}_role"] = "Keep the description under 300 characters."
+    return bad
+
+
+def _save_repos(form: Form, base: dict, eff: dict, access) -> tuple[list[str], dict, dict]:
+    """The repolist field: (the repositories, their descriptions as the override to store, what is wrong per field).
+    access(repos) -> {repo: why the token cannot use it}, asked only about repositories that were not listed before."""
+    rows = read_repos(form)
+    bad = check_repos(rows)
+    if not bad and access:
+        had = {r.lower() for r in effective(eff, "github.repos") or []}
+        refused = access([r["repo"] for r in rows if r["repo"].lower() not in had])
+        bad = {f"repo{j}": refused[r["repo"]] for j, r in enumerate(rows) if r["repo"] in refused}
+    want = {r["repo"]: r["role"] for r in rows if r["role"]}
+    pinned = get_in(base, "github.repo_roles") or {}
+    roles = {k: v for k, v in want.items() if pinned.get(k) != v}
+    roles.update({k: "" for k, v in pinned.items() if v and k not in want})          # cleared here: an empty line hides config.toml's
+    return [r["repo"] for r in rows], roles, bad
+
+
+def save_section(cfg_path: str, state_dir: Path, section: str, form: Form, access=None) -> list[str]:
+    """Returns human-readable notes (for example 'switched to live'). Raises SettingsError.
+    access: asked whether the GitHub token can use newly listed repositories (see _save_repos); None skips the question."""
     if section not in SECTIONS:
         raise SettingsError(["Unknown settings section."])
     base, ov = base_raw(cfg_path), overrides_raw(cfg_path)
     eff = deep_merge(base, ov)
     fields = fields_for(section, eff)
-    values, errors = {}, []
+    values, errors, marked, roles = {}, [], {}, None
     for f in fields:
+        if f.kind == "repolist":
+            values[f.key], roles, marked = _save_repos(form, base, eff, access)
+            if marked:
+                errors.append(f"{f.label}: correct the {'field' if len(marked) == 1 else f'{len(marked)} fields'} marked below.")
+            continue
         try:
             values[f.key] = parse_value(f, form)
         except ValueError as e:
@@ -691,12 +739,14 @@ def save_section(cfg_path: str, state_dir: Path, section: str, form: Form) -> li
             if risky and form.get("confirm__" + f.key) != "1":
                 errors.append(f"{f.label}: tick the confirmation box. {f.danger}")
     if errors:
-        raise SettingsError(errors)
+        raise SettingsError(errors, marked)
     new_ov, notes = copy.deepcopy(ov), []
     for key, value in values.items():
         if value != effective(eff, key):
             notes.append(key)
         _store(new_ov, base, key, value)
+    if roles is not None:
+        set_in(new_ov, "github.repo_roles", roles) if roles else del_in(new_ov, "github.repo_roles")
     if get_in(base, "github.poll_seconds") is None and "github.poll_seconds" in values and values["github.poll_seconds"] == values.get("general.poll_seconds"):
         del_in(new_ov, "github.poll_seconds")          # equal to the poll interval: keep following it
     _commit(cfg_path, state_dir, new_ov)

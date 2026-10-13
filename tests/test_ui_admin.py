@@ -28,7 +28,7 @@ class AdminCase(UiCase):
     def general_form(self, **over):
         cfg = load(str(self.root / "config.toml"))
         f = {"section": "general", "general.poll_seconds": str(cfg.poll_seconds), "general.confidence_threshold": str(cfg.confidence_threshold),
-             "github.trigger_label": cfg.trigger_label, "github.repos": "\n".join(["your-org/standalone-service"]),
+             "github.trigger_label": cfg.trigger_label, "repo0": "your-org/standalone-service",
              "github.poll_seconds": str(cfg.github_poll_seconds), "local.max_attachment_mb": str(cfg.attach_max_mb),
              "local.max_attachments": str(cfg.attach_max_files), "local.max_attachments_total_mb": str(cfg.attach_max_total_mb),
              "board.done_days": str(cfg.board_done_days), "local.auto_import_seconds": str(cfg.local_auto_import_seconds)}
@@ -127,6 +127,68 @@ class Settings(AdminCase):
         self.assertIn("is in two projects", html)
         self.assertEqual(self.post(cookie, csrf, "/settings/projects", {"p0_name": "", "p0_r0_repo": ""})[0], 303)       # empty = remove all
         self.assertEqual(load(str(self.root / "config.toml")).projects, ())
+
+    def test_standalone_repositories_are_rows_with_a_description_and_new_ones_are_checked_with_the_token(self):
+        from factory.config import project_for
+        from factory.ui import integrations as I
+        cookie, csrf = self.session()
+        _, _, html = self.req("GET", "/settings?section=general", cookie=cookie)
+        self.assertIn('<details class="sr-sec" id="s-github.repos" open>', html)
+        self.assertIn('name="repo0" id="repo0" placeholder="owner/name" autocomplete="off" aria-label="Repository 1"  value="your-org/standalone-service"', html)
+        self.assertEqual(html.count('placeholder="owner/name"'), 3)                     # the one listed and two spare rows
+        self.assertNotIn("<textarea id=\"github.repos\"", html)
+        asked = []
+
+        def http(url, token, *a, **k):
+            asked.append(url)
+            return {"ok-org/new-api": (200, {"permissions": {"push": True}}), "ok-org/docs": (200, {"permissions": {"push": False}}),
+                    "ok-org/down": (0, {"error": "timed out"})}.get(url.split("/repos/")[1], (404, {"message": "Not Found"}))
+        with mock.patch.object(I, "read_secret", return_value="ghp_x"), mock.patch.object(I, "_http", side_effect=http):
+            # a pasted address, a repository the token cannot see, and something that is not a repository: nothing is saved, all is kept
+            form = self.general_form(repo0_role="Billing API", repo1="https://github.com/ok-org/new-api", repo1_role="The new API",
+                                     repo4="other-org/secret", repo5="not a repo")
+            s, _, html = self.post(cookie, csrf, "/settings/save", form)
+            self.assertEqual(s, 422)
+            self.assertIn("Standalone repositories: correct the field marked below.", html)
+            self.assertIn('id="repo3-err">Write the repository as owner/name', html)     # empty rows close up: the fourth typed is repo3
+            self.assertEqual(asked, [])                                                    # GitHub is asked only once the list is well formed
+            for kept in ('value="Billing API"', 'value="ok-org/new-api"', 'value="The new API"', 'value="other-org/secret"', 'value="not a repo"'):
+                self.assertIn(kept, html)
+            s, _, html = self.post(cookie, csrf, "/settings/save", self.general_form(repo0_role="Billing API", repo1="ok-org/new-api", repo2="other-org/secret"))
+            self.assertEqual(s, 422)
+            self.assertIn('id="repo2-err">The factory&#x27;s GitHub token cannot see this repository.', html)
+            self.assertEqual([u.split("/repos/")[1] for u in asked], ["ok-org/new-api", "other-org/secret"])   # not the one already listed
+            self.assertEqual(load(str(self.root / "config.toml")).repo_roles, {})
+            # read-only and unreachable ones are saved, and the page says so
+            ok = self.general_form(repo0_role="Billing API", repo1="ok-org/new-api", repo1_role="The new API", repo2="ok-org/docs", repo3="ok-org/down")
+            s, hdrs, _ = self.post(cookie, csrf, "/settings/save", ok)
+            self.assertEqual(s, 303)
+            _, _, html = self.req("GET", "/settings?section=general&ok=saved", cookie=cookie)
+            self.assertIn("The GitHub token can read ok-org/docs but not write to it", html)
+            self.assertIn("Access to ok-org/down could not be checked.", html)
+            cfg = load(str(self.root / "config.toml"))
+            self.assertEqual(cfg.repos[:4], ["your-org/standalone-service", "ok-org/new-api", "ok-org/docs", "ok-org/down"])
+            self.assertEqual(cfg.repo_roles, {"your-org/standalone-service": "Billing API", "ok-org/new-api": "The new API"})
+            self.assertEqual(project_for(cfg, "ok-org/new-api").repos[0].role, "The new API")                 # what the agents are told
+            self.assertIn('value="The new API"', html)
+            asked.clear()
+            # clearing a description and removing a repository; nothing already listed is asked about again
+            self.assertEqual(self.post(cookie, csrf, "/settings/save", self.general_form(repo0_role="", repo1="ok-org/new-api", repo1_role="The new API"))[0], 303)
+            cfg = load(str(self.root / "config.toml"))
+            self.assertEqual((cfg.repos[:2], cfg.repo_roles), (["your-org/standalone-service", "ok-org/new-api"], {"ok-org/new-api": "The new API"}))
+            self.assertEqual(asked, [])
+
+    def test_a_description_set_in_config_toml_can_be_cleared_from_the_ui(self):
+        cookie, csrf = self.session()
+        path = self.root / "config.toml"
+        path.write_text(path.read_text().replace("[github]\n", '[github]\nrepo_roles = { "your-org/standalone-service" = "From the file" }\n', 1))
+        self.assertEqual(load(str(path)).repo_roles, {"your-org/standalone-service": "From the file"})
+        self.assertIn('value="From the file"', self.req("GET", "/settings?section=general", cookie=cookie)[2])
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", self.general_form(repo0_role=""))[0], 303)
+        self.assertEqual(load(str(path)).repo_roles, {})
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", self.general_form(repo0_role="From the file"))[0], 303)
+        self.assertEqual(load(str(path)).repo_roles, {"your-org/standalone-service": "From the file"})
+        self.assertNotIn("repo_roles", self.overrides().get("github", {}))               # back to what the file says: no override kept
 
     def test_a_refused_projects_save_keeps_what_was_typed_and_marks_each_field(self):
         cookie, csrf = self.session()
@@ -826,4 +888,4 @@ class SettingsLayout(UiCase):
         _, _, html = self.req("GET", "/settings?section=general", cookie=cookie)
         self.assertIn("Save changes", html)
         self.assertIn("Changes apply the next time the factory is idle", html)
-        self.assertEqual(html.count('class="srow'), 16)
+        self.assertEqual(html.count('class="srow'), 15)                       # the standalone repositories are their own part (sr-sec), not a row

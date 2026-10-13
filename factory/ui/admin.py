@@ -110,7 +110,7 @@ def render_settings(h, section: str, csrf: str, submitted=None, tester: str = ""
     base, eff = _files(h)
     if section == "projects":
         return forms.projects_form(base, eff, csrf, submitted, errors) + forms.build_order(eff, csrf, found, lockfile_state(h, eff), LOCK_SETUP)
-    body = forms.settings_form(section, eff, base, csrf, submitted)
+    body = forms.settings_form(section, eff, base, csrf, submitted, errors)
     if section == "classifier":
         body += forms.classifier_tester(csrf, tester)
     if section == "questions":
@@ -130,7 +130,9 @@ def settings_get(h, q: dict, csrf: str) -> None:
         return _send_page(h, 200, "Settings", forms.labels_page(h.app.cfg()), "/settings", csrf, FLASH.get(q.get("ok", "")), section="labels")
     if section != "projects" and section not in S.SECTIONS:
         return h._send(404, "no such section", "text/plain")
-    _send_page(h, 200, "Settings", render_settings(h, section, csrf), "/settings", csrf, FLASH.get(q.get("ok", "")), section=section)
+    shown = L.flash_pop(csrf)               # a save that has something to add (a repository the token can only read)
+    _send_page(h, 200, "Settings", render_settings(h, section, csrf), "/settings", csrf, shown[0] if shown else FLASH.get(q.get("ok", "")),
+               shown[1] if shown else "ok", section=section)
 
 
 def mode_set(h, form, csrf: str) -> None:
@@ -179,17 +181,25 @@ def parallel_set(h, form, csrf: str) -> None:
 
 def settings_save(h, form, csrf: str) -> None:
     section = form.get("section", "")
+    notes: list[str] = []
+
+    def access(repos: list[str]) -> dict:          # newly listed repositories: can the stored GitHub token use them?
+        refused, said = I.repo_access(I.read_secret(h.app.cfg(), "github"), repos)
+        notes.extend(said)
+        return refused
     try:
-        S.save_section(h.app.config_path, h.app.state_dir(), section, form)
+        S.save_section(h.app.config_path, h.app.state_dir(), section, form, access)
     except S.SettingsError as e:
         if section not in S.SECTIONS:
             return h._send(404, "no such section", "text/plain")
         if section == "update_check":
             return updates_page(h, csrf, 422, " · ".join(e.messages), "bad", submitted=form)
-        return _send_page(h, 422, "Settings", render_settings(h, section, csrf, submitted=form), "/settings", csrf, " · ".join(e.messages), "bad", section=section)
+        return _send_page(h, 422, "Settings", render_settings(h, section, csrf, submitted=form, errors=e.fields), "/settings", csrf, " · ".join(e.messages), "bad", section=section)
     if section == "update_check":
         L.flash_set(csrf, FLASH["saved"])
         return h._redirect("/updates")
+    if notes:
+        L.flash_set(csrf, "Saved. " + " ".join(notes), "warn")
     h._redirect(f"/settings?section={section}&ok=saved")
 
 

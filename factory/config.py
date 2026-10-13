@@ -594,6 +594,7 @@ class Config:
     repos: list[str]                     # every repo polled: [github].repos plus all project members
     trusted_permissions: frozenset[str]
     routes: dict[str, Route]
+    repo_roles: dict[str, str] = field(default_factory=dict)   # [github.repo_roles]: what a standalone repo is for, told to agents and the classifier
     runner: RunnerCfg = field(default_factory=RunnerCfg)
     telegram_token_file: str | None = None
     telegram_chat_id: int | None = None
@@ -691,7 +692,7 @@ def project_for(cfg: Config, repo: str) -> Project:
     for p in cfg.projects:
         if any(r.repo == repo for r in p.repos):
             return p
-    return Project(name=repo.split("/")[1], repos=(ProjectRepo(repo),))
+    return Project(name=repo.split("/")[1], repos=(ProjectRepo(repo, role=cfg.repo_roles.get(repo, "")),))
 
 
 def project_info(p: Project, issue_repo: str) -> dict:
@@ -880,6 +881,14 @@ def _github_poll(gh: dict, default: int) -> int:
     if isinstance(v, bool) or not isinstance(v, int) or not 5 <= v <= 86400:
         raise ValueError("github.poll_seconds must be a whole number of seconds from 5 to 86400")
     return v
+
+
+def _repo_roles(gh: dict) -> dict[str, str]:
+    """What each standalone repo is for. An empty one is how the UI clears a line that config.toml sets; a repo no longer listed is ignored."""
+    v = gh.get("repo_roles", {})
+    if not isinstance(v, dict) or not all(isinstance(k, str) and isinstance(x, str) and len(x) <= 300 and "\n" not in x for k, x in v.items()):
+        raise ValueError("github.repo_roles must be a table of owner/name = \"one line saying what the repo is for\" (300 characters at most)")
+    return {k: x.strip() for k, x in v.items() if x.strip() and k in gh["repos"]}
 
 
 def _github_issues_enabled(gh: dict) -> bool:
@@ -1314,6 +1323,7 @@ def parse(raw: dict) -> Config:
         token_file=gh.get("token_file"),
         trigger_label=gh["trigger_label"],
         repos=repos,
+        repo_roles=_repo_roles(gh),
         trusted_permissions=frozenset(gh["trusted_permissions"]),
         routes=routes,
         runner=runner_cfg,

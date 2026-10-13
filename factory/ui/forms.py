@@ -184,9 +184,33 @@ def control(f: S.Field, value, submitted=None) -> str:
     return f'<input id="{name}" name="{name}" value="{esc(value)}" autocomplete="off">'
 
 
-def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = True, label: str = "", switch: bool = False) -> str:
+def repos_row(f: S.Field, eff: dict, submitted=None, errors: dict | None = None) -> str:
+    """The standalone repositories: one row each with what it is for, in a part that folds away (app.js adds rows and checks them).
+    A refused save shows what was typed (S.read_repos, so the fields line up with S.check_repos' names)."""
+    errors = errors or {}
+    if submitted is not None:
+        rows = S.read_repos(submitted)
+    else:
+        roles = S.get_in(eff, "github.repo_roles") or {}
+        rows = [{"repo": r, "role": roles.get(r, "")} for r in S.effective(eff, f.key) or []]
+    count = f"{len(rows)} {'repository' if len(rows) == 1 else 'repositories'}" if rows else "none yet"
+    rows = (rows + [{"repo": "", "role": ""}] * 2)[:S.MAX_REPOS]
+    trs = "".join(
+        f'<tr><td data-l="Repository">{_checked(f"repo{j}", errors, f"""placeholder="owner/name" autocomplete="off" aria-label="Repository {j + 1}" """, r["repo"])}</td>'
+        f'<td data-l="What it is for">{_checked(f"repo{j}_role", errors, f"""placeholder="what this repo is for" maxlength="300" aria-label="What repository {j + 1} is for" """, r["role"])}</td></tr>'
+        for j, r in enumerate(rows))
+    return (f'<details class="sr-sec" id="s-{esc(f.key)}" open><summary><span class="sr-title">{esc(f.label)}</span> <span class="muted sr-count">{count}</span></summary>'
+            f'<p class="muted">{esc(f.help)} Paste a repository as owner/name or as its GitHub address; clear one to remove it. '
+            'A repository you add is checked against the GitHub token when you save. The description is told to the agents.</p>'
+            f'<table class="stack sr-list"><thead><tr><th>Repository</th><th>What it is for</th></tr></thead><tbody>{trs}</tbody></table>'
+            f'<button type="button" class="secondary sr-add" data-max="{S.MAX_REPOS}" hidden>Add repository</button></details>')
+
+
+def field_row(f: S.Field, eff: dict, base: dict, submitted=None, row: bool = True, label: str = "", switch: bool = False, errors: dict | None = None) -> str:
     """One setting: its name and what it does on the left, the control on the right (stacked on a phone).
     switch: the section's own on/off, drawn large at the top of the page."""
+    if f.kind == "repolist":
+        return repos_row(f, eff, submitted, errors)
     name = esc(f.key)
     ctl = control(f, effective_value(f, eff, submitted), submitted)
     head = f'<label for="{name}">{esc(label or f.label)}</label>' if f.kind != "checks" else f'<span class="s-lab">{esc(label or f.label)}</span>'
@@ -250,7 +274,7 @@ def _short(label: str) -> str:
     return t[:1].upper() + t[1:]
 
 
-def _rows(fields, eff, base, submitted) -> str:
+def _rows(fields, eff, base, submitted, errors=None) -> str:
     """Fields under their group headings, in order; Advanced ones closed at the end."""
     main, adv = [f for f in fields if not f.adv], [f for f in fields if f.adv]
     out, groups = [], []
@@ -258,7 +282,7 @@ def _rows(fields, eff, base, submitted) -> str:
         if f.group not in groups:
             groups.append(f.group)
     for g in groups:
-        rows = "".join(field_row(f, eff, base, submitted) for f in main if f.group == g)
+        rows = "".join(field_row(f, eff, base, submitted, errors=errors) for f in main if f.group == g)
         out.append(f'<fieldset class="s-group"><legend>{esc(g)}</legend>{rows}</fieldset>' if g else f'<div class="s-group">{rows}</div>')
     if adv:
         names = ", ".join(_short(f.label) for f in adv[:3]) + (" …" if len(adv) > 3 else "")
@@ -304,7 +328,7 @@ def auto_tally(n: int, changed: int) -> str:
             f'({changed * 100 // n}%).</p>')
 
 
-def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None) -> str:
+def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None, errors: dict | None = None) -> str:
     fields = S.fields_for(section, eff)
     intro = f'<p class="s-lede muted">{esc(SECTION_INTRO[section])}</p>' if section in SECTION_INTRO else ""
     head = ""
@@ -314,7 +338,7 @@ def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None
         cards, rest = _matrix(section, fields, eff, base, submitted)
         body = cards + (f'<fieldset class="s-group"><legend>Auto</legend>{_rows(rest, eff, base, submitted)}</fieldset>' if rest else "")
     else:
-        body = _rows(fields, eff, base, submitted)
+        body = _rows(fields, eff, base, submitted, errors)
     return (f'{intro}<form method="post" action="/settings/save" class="settings rows" data-dirty>{csrf_field(csrf)}'
             f'<input type="hidden" name="section" value="{esc(section)}">{head}{body}'
             f'<div class="s-save card"><span class="s-dirty" aria-live="polite">No changes</span><button>Save changes</button></div></form>'

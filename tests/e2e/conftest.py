@@ -217,7 +217,10 @@ def server():
         orig = ghm.GitHub._req
         ghm.GitHub._req = lambda self, method, path, data=None: s.gh.req(self, method, path, data)
         # The Updates page reads VERSION and the latest release straight from GitHub: never the network from a test.
-        offline = (mock.patch.object(ghm.GitHub, "raw_file", return_value=b"0.1.0\n"), mock.patch("factory.updates.fetch_latest", return_value=None))
+        # Nor does saving the repository list ask GitHub about a new one: a test sets server.refused = {repo: why} to have one turned down.
+        s.refused = {}
+        offline = (mock.patch.object(ghm.GitHub, "raw_file", return_value=b"0.1.0\n"), mock.patch("factory.updates.fetch_latest", return_value=None),
+                   mock.patch.object(I, "repo_access", lambda token, repos: ({r: s.refused[r] for r in repos if r in s.refused}, [])))
         for p in offline:
             p.start()
         try:

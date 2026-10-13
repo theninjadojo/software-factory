@@ -811,12 +811,12 @@
     note.textContent = n ? (n === 1 ? "1 change not saved" : n + " changes not saved") : note.dataset.idle;
     note.classList.toggle("on", n > 0);
     var save = form.querySelector(".s-save button");
-    if (save && !save.dataset.saving) save.disabled = n === 0;
+    if (save && !save.dataset.saving) save.disabled = n === 0 || !!form.querySelector(".sr-sec .f-err");      // a marked repository: nothing to save yet
   }
   function onEdit(e) { var f = e.target.closest("form[data-dirty]"); if (f) dirty(f); }
   Array.prototype.forEach.call(document.querySelectorAll("form[data-dirty]"), dirty);
   document.addEventListener("submit", function (e) {
-    var b = e.target.matches && e.target.matches("form[data-dirty]") && e.target.querySelector(".s-save button");
+    var b = !e.defaultPrevented && e.target.matches && e.target.matches("form[data-dirty]") && e.target.querySelector(".s-save button");
     if (b) { b.dataset.saving = "1"; setTimeout(function () { b.disabled = true; b.textContent = "Saving…"; }, 0); }
   });
   document.addEventListener("input", onEdit);
@@ -886,20 +886,35 @@
   });
   var mmPres = document.querySelectorAll(".docview pre.mm-src");
   for (var mi = 0; mi < mmPres.length; mi++) mmCard(mmPres[mi]);
+  // --- Repository fields (Settings: Projects, and the standalone repositories of General): shared by the two parts below.
+  var REPO = /^[\w.-]+\/[\w.-]+$/, GH_ADDRESS = /^(?:(?:https?:\/\/)?(?:www\.)?github\.com\/|git@github\.com:)([^\/\s]+)\/([^\/\s#?]+)/i;
+  function slug(v) {
+    v = v.trim();
+    var m = GH_ADDRESS.exec(v);
+    if (m) v = m[1] + "/" + m[2];
+    return /\.git$/.test(v) ? v.slice(0, -4) : v;
+  }
+  // What is wrong with a field, written under it (forms.py _checked writes the same markup); an empty reason takes it away.
+  function mark(el, why) {
+    var id = el.name + "-err", p = document.getElementById(id);
+    if (!why) {
+      if (p) p.parentNode.removeChild(p);
+      el.removeAttribute("aria-invalid"); el.removeAttribute("aria-describedby");
+      return;
+    }
+    if (!p) { p = document.createElement("p"); p.className = "f-err"; p.id = id; el.parentNode.insertBefore(p, el.nextSibling); }
+    if (p.textContent !== why) p.textContent = why;
+    el.setAttribute("aria-invalid", "true"); el.setAttribute("aria-describedby", id);
+  }
+
   // --- Settings, Projects: add repository rows, check each field once it has been filled in, and keep Save off while a field is marked.
   // The server makes the same checks (settings.py check_projects) and has the last word; these save the round trip. Keep the two alike.
   (function () {
     var form = document.querySelector("form.pj-form");
     if (!form) return;
-    var NAME, REPO = /^[\w.-]+\/[\w.-]+$/, URL = /^(?:(?:https?:\/\/)?(?:www\.)?github\.com\/|git@github\.com:)([^\/\s]+)\/([^\/\s#?]+)/i;
+    var NAME;
     try { NAME = new RegExp("^[\\p{L}\\p{M}\\p{N}_ .-]{1,60}$", "u"); } catch (e) { NAME = /^[\w .-]{1,60}$/; }
     var save = form.querySelector(".pj-save"), status = form.querySelector(".pj-status"), seen = {}, all = false;
-    function slug(v) {
-      v = v.trim();
-      var m = URL.exec(v);
-      if (m) v = m[1] + "/" + m[2];
-      return /\.git$/.test(v) ? v.slice(0, -4) : v;
-    }
     function val(name) { var el = form.elements[name]; return el ? el.value.trim() : ""; }
     function check() {                          // field name -> what is wrong with it
       var bad = {}, names = {}, owner = {}, sets = form.querySelectorAll("fieldset[data-p]"), n = 0;
@@ -925,17 +940,6 @@
         if (!repos) bad["p" + i + "_r0_repo"] = "Add at least one repository, as owner/name.";
       }
       return bad;
-    }
-    function mark(el, why) {
-      var id = el.name + "-err", p = document.getElementById(id);
-      if (!why) {
-        if (p) p.parentNode.removeChild(p);
-        el.removeAttribute("aria-invalid"); el.removeAttribute("aria-describedby");
-        return;
-      }
-      if (!p) { p = document.createElement("p"); p.className = "f-err"; p.id = id; el.parentNode.insertBefore(p, el.nextSibling); }
-      if (p.textContent !== why) p.textContent = why;
-      el.setAttribute("aria-invalid", "true"); el.setAttribute("aria-describedby", id);
     }
     function show() {
       var bad = check(), els = form.querySelectorAll("input[name^=p]"), shown = 0, firstBad = null;
@@ -985,5 +989,81 @@
       if (firstBad) { e.preventDefault(); firstBad.focus(); }
     });
     show();
+  })();
+  // --- Settings, General: the standalone repositories. Add rows, check each one once it has been filled in, and keep Save off while
+  // one is marked. The server makes the same checks (settings.py check_repos) and asks GitHub about a new repository when you save;
+  // what it refused stays marked until that field is changed. The part remembers in this browser whether you folded it.
+  (function () {
+    var sec = document.querySelector("details.sr-sec"), form = sec && sec.closest("form");
+    if (!form) return;
+    var seen = {}, held = {}, FOLD = "sf-repos-folded";
+    function rows() { return sec.querySelectorAll("tbody tr"); }
+    function check() {
+      var bad = {}, had = {}, trs = rows();
+      for (var j = 0; j < trs.length; j++) {
+        var ins = trs[j].querySelectorAll("input"), repo = slug(ins[0].value), low = repo.toLowerCase();
+        if (!repo) continue;                      // a row without a repository is not saved
+        if (!REPO.test(repo)) bad[ins[0].name] = "Write the repository as owner/name, like your-org/shop-web.";
+        else if (had[low]) bad[ins[0].name] = "This repository is listed twice.";
+        had[low] = true;
+        if (ins[1].value.trim().length > 300) bad[ins[1].name] = "Keep the description under 300 characters.";
+      }
+      return bad;
+    }
+    function show() {
+      var bad = check(), els = sec.querySelectorAll("tbody input"), n = 0, first = null;
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i], h = held[el.name], why = seen[el.name] ? bad[el.name] : "";
+        if (h && h.value === el.value) why = h.why;
+        mark(el, why);
+        if (why) { n++; if (!first) first = el; }
+      }
+      var listed = 0, trs = rows();
+      for (var j = 0; j < trs.length; j++) if (slug(trs[j].querySelector("input").value)) listed++;
+      sec.querySelector(".sr-count").textContent = (listed ? listed + (listed === 1 ? " repository" : " repositories") : "none yet") + (n ? " · " + n + " to correct" : "");
+      if (n) sec.open = true;
+      return first;
+    }
+    var marked = sec.querySelectorAll("[aria-invalid=true]");
+    for (var k = 0; k < marked.length; k++) {
+      var p = document.getElementById(marked[k].name + "-err");
+      held[marked[k].name] = { value: marked[k].value, why: p ? p.textContent : "" };
+      seen[marked[k].name] = true;
+    }
+    try { if (!marked.length && localStorage.getItem(FOLD) === "1") sec.open = false; } catch (e) { /* private window: stays open */ }
+    sec.addEventListener("toggle", function () { try { localStorage.setItem(FOLD, sec.open ? "0" : "1"); } catch (e) { /* not remembered */ } });
+    var add = sec.querySelector(".sr-add");
+    add.hidden = false;
+    add.addEventListener("click", function () {
+      var body = sec.querySelector("tbody"), j = body.children.length;
+      if (j >= +add.getAttribute("data-max")) return;
+      var tr = body.lastElementChild.cloneNode(true), ins = tr.querySelectorAll("input"), old = tr.querySelectorAll(".f-err");
+      for (var o = 0; o < old.length; o++) old[o].parentNode.removeChild(old[o]);
+      for (var x = 0; x < ins.length; x++) {
+        ins[x].name = ins[x].id = "repo" + j + (x ? "_role" : "");
+        ins[x].value = ins[x].defaultValue = "";
+        ins[x].removeAttribute("aria-invalid"); ins[x].removeAttribute("aria-describedby");
+        ins[x].setAttribute("aria-label", x ? "What repository " + (j + 1) + " is for" : "Repository " + (j + 1));
+      }
+      body.appendChild(tr);
+      if (j + 1 >= +add.getAttribute("data-max")) add.hidden = true;
+      ins[0].focus();
+    });
+    sec.addEventListener("change", function (e) {
+      var el = e.target;
+      if (!el.name || !/^repo\d/.test(el.name)) return;
+      if (/^repo\d+$/.test(el.name)) el.value = slug(el.value);          // a pasted GitHub address becomes owner/name
+      seen[el.name] = true;
+      show();
+    });
+    sec.addEventListener("input", function () { show(); });
+    form.addEventListener("submit", function (e) {
+      var els = sec.querySelectorAll("tbody input");
+      for (var i = 0; i < els.length; i++) seen[els[i].name] = true;
+      var first = show();
+      if (first) { e.preventDefault(); first.focus(); dirty(form); }
+    });
+    show();
+    dirty(form);
   })();
 })();
