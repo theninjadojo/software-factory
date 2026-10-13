@@ -132,6 +132,34 @@ def check_github(token: str, repos: list[str]) -> dict:
     return {"ok": True, "message": f"Signed in as {user.get('login')}.", "access": access}
 
 
+def repo_access(token: str | None, repos: list[str]) -> tuple[dict, list[str]]:
+    """Can the factory's GitHub token use these repositories? ({repo: why not}, notes about what could not be settled).
+    Only a clear no from GitHub refuses a repository; no token, no network or a rate limit leaves it unchecked and says so."""
+    refused, notes = {}, []
+    if not repos:
+        return refused, notes
+    if not token:
+        return refused, ["No GitHub token is stored yet (Credentials), so access to the new repositories was not checked."]
+    unchecked, readonly, rejected = [], [], False
+    for r in repos[:30]:
+        s, body = _http(f"https://api.github.com/repos/{r}", token)
+        limited = s in (403, 429) and "rate limit" in str(body.get("message", "")).lower()
+        if s == 200:
+            if not body.get("permissions", {}).get("push"):
+                readonly.append(r)
+        elif s in (403, 404) and not limited:
+            refused[r] = "The factory's GitHub token cannot see this repository. Check the name, or give the token access to it."
+        else:
+            unchecked.append(r)
+            rejected = rejected or s == 401
+    unchecked += repos[30:]
+    if readonly:
+        notes.append(f"The GitHub token can read {', '.join(readonly)} but not write to it, so the factory cannot open pull requests there.")
+    if unchecked:
+        notes.append(f"Access to {', '.join(unchecked)} could not be checked" + (" (GitHub rejected the token)." if rejected else "."))
+    return refused, notes
+
+
 def telegram_me(token: str) -> dict:
     s, body = _http(f"https://api.telegram.org/bot{token}/getMe", None)
     if s == 200 and body.get("ok"):
