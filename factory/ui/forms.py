@@ -513,6 +513,41 @@ def credentials_page(cfg, csrf: str, result: str = "") -> str:
             'Saving restarts the orchestrator when it is next idle.</p>' + result + '<div class="cards cred-grid">' + "".join(cards) + "</div>")
 
 
+def api_tokens_card(tokens: list[dict], csrf: str) -> str:
+    """Command-line access: the API tokens (apitokens.py) with Revoke, and the form that makes one. Making one asks for the UI
+    password again, so a borrowed signed-in browser cannot make a token that outlives its session."""
+    rows = "".join(
+        f'<tr><td data-l="Name">{esc(t["name"])}</td><td data-l="Access">{badge("read and write", "warn") if t["scope"] == "write" else badge("read only", "")}</td>'
+        f'<td data-l="Made">{esc(ago(t["created"]))}</td><td data-l="Last used">{esc(ago(t["last_used"])) if t.get("last_used") else "never"}</td>'
+        f'<td data-l=""><form method="post" action="/credentials/api-token/revoke" class="inline">{csrf_field(csrf)}'
+        f'<input type="hidden" name="name" value="{esc(t["name"])}"><button class="secondary" aria-label="Revoke {esc(t["name"])}">Revoke</button></form></td></tr>'
+        for t in tokens)
+    table = (f'<table class="stack ak-list"><thead><tr><th>Name</th><th>Access</th><th>Made</th><th>Last used</th><th></th></tr></thead><tbody>{rows}</tbody></table>'
+             if tokens else '<p class="muted">No tokens yet.</p>')
+    return ('<section class="card ak-card" id="api-tokens" aria-labelledby="ak-h"><h3 id="ak-h">Command-line access</h3>'
+            '<p class="muted">The <code>shikumi</code> command-line client manages tickets on this factory without the browser, with a token of '
+            'its own. Make one per computer, and revoke one you no longer use. A read-only token can look but not change anything. '
+            'See <code>docs/cli.md</code>.</p>' + table +
+            f'<form method="post" action="/credentials/api-token/add" class="ak-add">{csrf_field(csrf)}'
+            '<div class="field"><label for="ak-name">Name</label><input id="ak-name" name="name" required pattern="[a-z0-9][a-z0-9\\-]{0,40}" '
+            'placeholder="my-laptop" autocomplete="off" aria-describedby="ak-name-help"><span class="muted" id="ak-name-help">Lowercase letters, digits and dashes.</span></div>'
+            '<div class="field"><label class="check"><input type="checkbox" name="read_only" value="1"> Read only</label></div>'
+            '<div class="field"><label for="ak-pw">Your UI password</label><input id="ak-pw" type="password" name="password" required autocomplete="current-password"></div>'
+            '<button>Make a token</button></form></section>')
+
+
+def api_token_created(name: str, scope: str, token: str, port: str) -> str:
+    cmd = f"shikumi instance add factory --url http://127.0.0.1:{port}"      # "factory": the client's name for this factory; any name will do
+    return (f'<h2>Token {esc(name)} made</h2><p><strong>Copy it now: it is shown once.</strong> '
+            f'{"It can read and change tickets." if scope == "write" else "It can only read."}</p>'
+            f'<pre class="ak-token">{esc(token)}</pre>'
+            '<p>1. On the computer that will use it, open a tunnel to this host (the UI listens on loopback only):</p>'
+            f'<pre>ssh -N -L {esc(port)}:127.0.0.1:{esc(port)} &lt;user&gt;@&lt;this-host&gt;</pre>'
+            '<p>2. Add this factory to the client, and paste the token when it asks:</p>'
+            f'<pre>{esc(cmd)}</pre><p class="muted">A factory behind HTTPS (a reverse proxy) is added with its own https address instead, and needs no tunnel.</p>'
+            '<p><a href="/credentials#api-tokens">← back to Credentials</a></p>')
+
+
 def slack_page(cfg, eff: dict, csrf: str, unknown: list, conn: dict | None = None, result: str = "") -> str:
     """Slack is set up here from start to finish: create the app from a manifest, paste its two tokens, type /factory in Slack and
     pick yourself, then choose how chatty it is. Nothing needs editing on disk."""

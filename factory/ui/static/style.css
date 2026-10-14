@@ -1740,3 +1740,6 @@ main > [data-flash] { position:sticky; top:8px; z-index:40; box-shadow:0 8px 24p
 .wk-opt { display:flex; gap:.6rem; align-items:flex-start; padding:.55rem 0; border-top:1px solid var(--line); cursor:pointer; font-weight:400; }
 .wk-opt:first-of-type { border-top:0; } .wk-opt input { margin-top:.25rem; flex:none; width:auto; } .wk-opt > span, .wk-desc { display:flex; flex-direction:column; gap:.15rem; min-width:0; } .wk-desc > .muted:first-child { font-size:13px; }
 .wk-what { font-size:14px; } .wk-needs { font-size:13px; } .wk-list { margin:.2rem 0 1rem; padding-left:1.2rem; } .wk-list li { margin:.2rem 0; }
+.ak-card { margin-top:1rem; } .ak-card h3 { margin-top:0; } .ak-list td form { margin:0; }
+.ak-add { max-width:28rem; margin-top:.8rem; } .ak-add .field { margin-bottom:.6rem; } .ak-add input[type=checkbox] { width:auto; }
+.ak-token, .ak-token + p + pre { white-space:pre-wrap; overflow-wrap:anywhere; }

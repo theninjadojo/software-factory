@@ -151,6 +151,37 @@ def workers_add(cfg, name: str) -> int:
     return 0
 
 
+def tokens_cmd(state: Path, args: list[str]) -> int:
+    """API tokens for the command-line client: `tokens add <name> [--read-only]` prints a new token once; `tokens list`; `tokens
+    revoke <name or id>`. Kept hashed in state/api-tokens.json; the UI picks a change up without a restart."""
+    from .ui.apitokens import Store
+    store = Store(state / "api-tokens.json")
+    if args[:1] == ["add"] and len(args) in (2, 3) and args[2:] in ([], ["--read-only"]):
+        try:
+            token = store.add(args[1], "read" if args[2:] else "write")
+        except ValueError as e:
+            print(e)
+            return 1
+        print(f"Token {args[1]} ({'read only' if args[2:] else 'read and write'}). Shown once; give it to `shikumi instance add`:\n{token}")
+        return 0
+    if args == ["list"] or not args:
+        rows = store.list()
+        if not rows:
+            print("No API tokens. Make one with: tokens add <name>")
+        for t in rows:
+            used = time.strftime("%Y-%m-%d %H:%M", time.localtime(t["last_used"])) if t.get("last_used") else "never"
+            print(f"{t['name']:<24} {t['id']}  {t['scope']:<5}  made {time.strftime('%Y-%m-%d', time.localtime(t['created']))}  last used {used}")
+        return 0
+    if args[:1] == ["revoke"] and len(args) == 2:
+        if store.revoke(args[1]):
+            print(f"Revoked {args[1]}.")
+            return 0
+        print(f"No token called {args[1]}.")
+        return 1
+    print("usage: tokens add <name> [--read-only] | tokens list | tokens revoke <name or id>")
+    return 2
+
+
 def schedules_cmd(cfg, args: list[str]) -> int:
     """`schedules` lists each schedule and when it last ran; `schedules run <name>` runs one now (needs the GitHub token, ignores dry_run)."""
     from . import db as dbm, schedules
@@ -284,6 +315,8 @@ def main():
             print("no GitHub token: put it in", cfg.token_file)
             sys.exit(1)
         sys.exit(images_cmd(cfg, GitHub(token), sys.argv[2:]))
+    if cmd == "tokens":
+        sys.exit(tokens_cmd(state, sys.argv[2:]))
     if cmd == "workers" and sys.argv[2:3] == ["add"] and len(sys.argv) == 4:
         sys.exit(workers_add(cfg, sys.argv[3]))
     if cmd == "health":
