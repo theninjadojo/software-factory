@@ -20,8 +20,6 @@ from .. import backup, machines
 from .. import db as dbm
 from .. import designfiles
 from .. import jobs, pause, screenboard, updates, version
-from .. import questions as Q
-from .. import reviewnotes as RN
 from ..config import HealthCfg, load
 from .. import tracker
 from ..tracker import display, is_local
@@ -545,15 +543,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _doc(self, db, repo: str, n: int, stage: str, csrf: str = "") -> str:
         """The stored document first; GitHub (the factory's own stage comment) when it is missing or was cut short."""
-        doc, notice, source = dbm.stage_doc(db, repo, n, stage), "", "Stored output"
-        text = Q.readable(doc["output"]) if doc else ""
-        if not doc or doc["truncated"]:
-            full = L.stage_comment(self, repo, n, stage)
-            if full:
-                text, source = Q.readable(full), "Complete, from GitHub"
-            elif doc:
-                notice = ('<p class="muted"><strong>Warning:</strong> this document was cut short when it was stored, and the full text could not be '
-                          'fetched from GitHub. Open the ticket on GitHub for the rest.</p>')
+        doc, text, source, cut = L.stage_doc_text(self, db, repo, n, stage)
+        notice = ('<p class="muted"><strong>Warning:</strong> this document was cut short when it was stored, and the full text could not be '
+                  'fetched from GitHub. Open the ticket on GitHub for the rest.</p>') if cut else ""
         notice += L.auto_answers(self, repo, n, stage, csrf) if csrf else ""
         return views.doc_page(repo, n, stage, dbm.doc_stages(db, repo, n), doc, text, source, notice, "/needs",
                               dbm.mockup_previews(db, repo, n) if stage == "designer" else ())
@@ -575,18 +567,14 @@ class Handler(BaseHTTPRequestHandler):
             all_rows = board.ticket_rows(db, needs, L.titles_cached(), now, cfg.github_issues_enabled)
             projects = board.project_options(cfg)
             asked = q.get("project") or ""
-            project = asked if asked in {v for v, _ in projects} else ""      # only a configured name (or Standalone) is ever used
+            project = board.chosen_project(cfg, asked)                     # only a configured name (or Standalone) is ever used
             rows = board.in_project(all_rows, cfg, project)
             if path == "/tickets" and q.get("view") == "board":          # any other value of view is the list
                 shown = L.flash_pop(csrf)
                 return self._send(200, views.page("Board · Tickets", kanban.board_page(rows, cfg, csrf, project, projects, L.has_token(self), now, gh_on),
                                                   path, csrf, wide=True, badges=badges, bare=True,
                                                   flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
-            c = board.counts(rows)
-            keys ={k for k, _, _ in board.FILTERS}
-            flt = q.get("stage") if q.get("stage") in keys else ("needs" if c["needs"] else "all")
-            at = q.get("at") if q.get("at") in board.LABEL else ""
-            text, order = (q.get("q") or "").strip()[:100], q.get("sort") if q.get("sort") in ("oldest", "priority") else "latest"
+            flt, at, text, order = board.list_filters(q, rows)
             repo, n = q.get("repo", ""), q.get("n", "")
             explicit = path in ("/ticket", "/fragment/ticket", "/fragment/detail")
             if explicit and not (views.REPO.match(repo) and n.isdigit() and len(n) < 10):
@@ -601,12 +589,7 @@ class Handler(BaseHTTPRequestHandler):
                 sel = shown[0] if shown else None
             detail = ""
             if sel is not None:
-                files, docs, events, images = board.ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
-                sel["design_imports"] = dbm.design_imports(db, sel["repo"], sel["issue"])
-                sel["review_notes"] = RN.notes(db, sel["repo"], sel["issue"], open_only=True)
-                sel["verify"] = board.ticket_verify(db, sel["repo"], sel["issue"])
-                if sel["state"] == "done":
-                    sel["outcome_full"] = board.outcome_of(sel, dbm.doc_heads(db, [(sel["repo"], sel["issue"])]).get((sel["repo"], sel["issue"])))
+                files, docs, events, images = board.enrich(db, sel)
                 back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}" + (f"&project={quote(project, safe='')}" if project else "")
                 needs_html = (board.summary_card(db, sel["repo"], sel["issue"], docs, files) if sel["need"] else "") + board.needs_card(sel["need"], csrf, back)
                 sel["queued"] = (sel["repo"], sel["issue"]) in L._approved(self)       # a move waits for the factory: offer no other
@@ -788,11 +771,10 @@ class Handler(BaseHTTPRequestHandler):
             self.app.sessions.destroy(sid)
             return self._redirect("/login", {"Set-Cookie": "sf_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"})
         if path == "/action/pause":
-            (state / "PAUSED").write_text("")
+            pause.pause_manual(state)
             return self._redirect("/")
         if path == "/action/resume":
-            (state / "PAUSED").unlink(missing_ok=True)
-            (state / "pause_until").unlink(missing_ok=True)
+            pause.resume(state)
             return self._redirect("/")
         route = admin.POST.get(path)
         if route:

@@ -19,6 +19,16 @@ class T(unittest.TestCase):
             (Path(d) / "pause_until").write_text(str(time.time() - 1))
             self.assertIsNone(pause.paused(d))
 
+    def test_a_person_pauses_and_resuming_also_ends_a_backoff(self):
+        with tempfile.TemporaryDirectory() as d:
+            pause.pause_manual(d)
+            self.assertEqual(pause.paused(d), "manual pause")
+            pause.set_backoff(d, 60)
+            pause.resume(d)
+            self.assertIsNone(pause.paused(d))
+            pause.resume(d)                                   # nothing to resume: no error
+            self.assertIsNone(pause.paused(d))
+
     def test_corrupt_pause_file_fails_closed(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pause_until").write_text("garbage")
