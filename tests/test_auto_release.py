@@ -37,11 +37,16 @@ class Workflow(unittest.TestCase):
         self.assertIn("already released: nothing to do", text)
         # the tests run (test.yml, called) before anything is published, and only when there is something to release
         self.assertIn("uses: ./.github/workflows/test.yml", text)
-        self.assertIn("needs: [decide, test]", text)
-        self.assertEqual(text.count("if: needs.decide.outputs.go == 'true'"), 2)       # the test and the release jobs
+        self.assertIn("needs: [decide, test, cli-binary]", text)                        # the release waits for the tests and the client
+        self.assertEqual(text.count("if: needs.decide.outputs.go == 'true'"), 3)       # the test, client and release jobs
         self.assertIn("workflow_call:", (ROOT / ".github" / "workflows" / "test.yml").read_text())
         write = text.index("contents: write")
         self.assertGreater(write, text.index("  release:\n"))                           # the write token belongs to the release job only
+        cli = text[text.index("  cli-binary:\n"):text.index("  release:\n")]
+        self.assertIn("permissions:\n      contents: read", cli)                      # the client is built without the write token
+        self.assertNotIn(": write", cli)
+        self.assertIn("--locked --release --target x86_64-unknown-linux-musl", cli)
+        self.assertIn("grep -qF \"$(cat VERSION)\"", cli)
 
     def test_no_workflow_runs_on_a_self_hosted_runner(self):
         # The repository is public: a fork's pull request can change any workflow, so none may run on a self-hosted runner.
