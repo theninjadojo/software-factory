@@ -2,6 +2,10 @@
 
 - Python 3.12+, standard library only. Please keep it that way: the orchestrator is a small, auditable program, and
   every dependency is attack surface for something that handles untrusted ticket text.
+- The one exception is the command-line client in `cli/` (Rust): it runs on people's own computers and only talks to the factory's
+  API. Nothing outside `cli/` may depend on it. Keep its dependencies few, commit `Cargo.lock`, and run `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings` and `cargo test` in `cli/`. With a change to the API, also run
+  `cd cli && cargo build && cd .. && SHIKUMI_CLI_BIN=$PWD/cli/target/debug/shikumi python3 -m unittest tests.test_cli_e2e`.
 - `python3 -m unittest discover -s tests` must pass. UI changes also need the browser tests (Playwright, desktop and phone) in `tests/e2e`:
   `python3 -m venv .venv && .venv/bin/pip install -r tests/e2e/requirements.txt && .venv/bin/playwright install chromium && .venv/bin/pytest tests/e2e`
   (set `E2E_BROWSER=/usr/bin/chromium` to use a system Chromium). They run against a seeded database and a fake GitHub. Tests never start real containers or touch the network; fake the
