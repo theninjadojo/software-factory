@@ -245,19 +245,19 @@ class SettingsKeepsDependencies(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "config.toml"
             p.write_text(open("config.example.toml").read())
-            form = {"p0_name": "shop", "p0_desc": "x"}
+            form = {"pj": "0", "was": "shop", "p0_name": "shop", "p0_desc": "x"}
             for j, (repo, role) in enumerate([("your-org/shop-web", "web, edited"), ("your-org/shop-packages", "pkgs")]):
                 form[f"p0_r{j}_repo"], form[f"p0_r{j}_role"] = repo, role
             captured = {}
             with mock.patch.object(S, "_commit", lambda path, sd, ov: captured.update(ov)):
-                S.save_projects(str(p), Path(d), form)
+                S.save_project(str(p), Path(d), form)
             repos = captured["projects"][0]["repos"]
             self.assertEqual(repos[0]["depends_on"], ["shop-packages"])
             self.assertEqual(repos[0]["role"], "web, edited")
             self.assertEqual(repos[1]["publish"]["detect"], "release")
             del form["p0_r1_repo"]                                              # the packages repo removed: the dependency goes too
             with mock.patch.object(S, "_commit", lambda path, sd, ov: captured.update(ov)):
-                S.save_projects(str(p), Path(d), form)
+                S.save_project(str(p), Path(d), form)
             self.assertNotIn("depends_on", captured["projects"][0]["repos"][0])
 
 

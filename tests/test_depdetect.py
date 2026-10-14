@@ -82,12 +82,11 @@ class Detect(unittest.TestCase):
 
 
 class Card(unittest.TestCase):
-    def eff(self, **pkg):
-        return {"projects": [{"name": "ln", "repos": [{"repo": "o/pkg", **pkg}, {"repo": "o/web", **({"depends_on": ["pkg"]} if pkg else {})},
-                                                      {"repo": "o/mobile"}]}]}
+    def proj(self, **pkg):
+        return {"name": "ln", "repos": [{"repo": "o/pkg", **pkg}, {"repo": "o/web", **({"depends_on": ["pkg"]} if pkg else {})}, {"repo": "o/mobile"}]}
 
     def test_shows_the_suggestion_with_apply_and_the_lockfile_choice(self):
-        html = forms.build_order(self.eff(), "tok", {"ln": depdetect.detect(FakeGH(), PROJ)})
+        html = forms.build_order(self.proj(), "tok", depdetect.detect(FakeGH(), PROJ))
         self.assertIn("No build order set", html)
         self.assertIn("<strong>Suggested:</strong> pkg publishes packages (web uses 1 of its packages)", html)
         self.assertIn('name="workflow" value="publish.yml"', html)
@@ -97,14 +96,14 @@ class Card(unittest.TestCase):
 
     def test_shows_what_is_set_and_marks_a_finding_already_set(self):
         pub = {"publish": {"detect": "workflow", "workflow": "publish.yml", "packages": ["@o/ui"]}}
-        html = forms.build_order(self.eff(**pub), "tok", {"ln": depdetect.detect(FakeGH(), PROJ)}, "no worker seen. On a worker run: X")
+        html = forms.build_order(self.proj(**pub), "tok", depdetect.detect(FakeGH(), PROJ))
         self.assertIn("<strong>pkg</strong> publishes by the publish.yml workflow, then <strong>web</strong> is built against it.", html)
         self.assertIn("already set", html)
         self.assertNotIn("Suggested:", html)
-        self.assertIn("Lockfile refresh:</strong> no worker seen", html)
 
-    def test_no_projects_no_card(self):
-        self.assertEqual(forms.build_order({}, "tok"), "")
+    def test_the_lockfile_hint_only_when_something_is_missing(self):
+        self.assertIn("Lockfile refresh:</strong> no worker seen", forms.lockfile_hint("no worker seen.", "X"))
+        self.assertEqual((forms.lockfile_hint("", "X"), forms.lockfile_hint("ok", "X")), ("", ""))
 
 
 class Pages(AdminCase):
