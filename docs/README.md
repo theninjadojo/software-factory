@@ -7,6 +7,7 @@ Shikumi is an issue-driven software factory: label a GitHub issue and sandboxed 
 - [Your first ticket](first-ticket.md): a step-by-step walkthrough with what you should see.
 - [Troubleshooting](troubleshooting.md): install, token, UI and first-ticket problems, with what to do.
 - [The admin UI](ui.md): the dashboard, tickets, settings and credentials.
+- [Command-line access](cli.md): tokens for the `shikumi` client, reaching the factory, and the JSON API.
 - [Scheduled jobs](schedules.md): recurring work.
 - [Code-smell scans](scanner.md): automatic scans that file tickets.
 

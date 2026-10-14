@@ -76,6 +76,7 @@ The UI can change what the factory does and what it can reach, so:
 - It needs write access to the config directory, the state directory and the secrets directory. It does **not** need the
   container engine socket or the work directory, and the compose service does not mount them.
 - Anyone who can sign in can replace your credentials, so treat the password like one. Keep it off the open internet.
+- The JSON API under `/api/v1/` (for the `shikumi` command-line client, see [cli.md](cli.md)) takes a bearer token, never the session cookie, and writes only as JSON, so no CSRF field applies and a signed-in browser cannot be made to call it. It does what the Tickets page and the Floor do, with the same functions, and nothing in Settings. Tokens are listed, made and revoked under **Credentials → Command-line access** (making one asks for the password again; it is shown once and stored only as a hash), or with `python3 -m factory.ctl tokens add <name> [--read-only] | list | revoke <name>`.
 
 ## Tickets: start work with a button
 
@@ -103,8 +104,8 @@ By default the UI listens on loopback only. To open it from other machines on a 
 
 Then `systemctl --user daemon-reload && systemctl --user restart factory-ui`. Requests whose `Host` header is not on the list get a
 421, and failed logins are rate-limited per client address. The connection is plain HTTP, so on the LAN the password and session
-cookie are readable by anyone who can sniff that network. Use it only on a network you trust, or put TLS in front (and start the UI
-with `--secure-cookie`). Do not forward the port to the internet.
+cookie (and a command-line client's API token) are readable by anyone who can sniff that network. Use it only on a network you trust,
+or put TLS in front (and start the UI with `--secure-cookie`). Do not forward the port to the internet.
 
 ## The Floor (default page)
 

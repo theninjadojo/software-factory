@@ -23,6 +23,7 @@ log = logging.getLogger("factory.ui")
 FLASH = {
     "saved": "Saved. The factory applies it at its next idle moment (never mid-task).",
     "secret": "Saved. The factory restarts when it is next idle so it picks the credential up.",
+    "token_revoked": "Token revoked. The client that used it is refused from now on.",
     "id": "Chat id saved. Press 'Send a test message' to confirm.",
     "slack_id": "Saved. Slack turns on when the factory is next idle; then press 'Send a test message' to confirm.",
     "slack_token": "Token saved. The factory connects to Slack when it is next idle (it restarts to pick the token up).",
@@ -259,8 +260,43 @@ def classify_test(h, form, csrf: str) -> None:
 
 
 # ------------------------------------------------------------------ credentials
+def _cred(h, csrf: str, result: str = "") -> str:
+    """The Credentials page: the stored secrets, then Command-line access (the API tokens)."""
+    return forms.credentials_page(h.app.cfg(), csrf, result) + forms.api_tokens_card(h.app.api_tokens.list(), csrf)
+
+
+def api_token_add(h, form, csrf: str) -> None:
+    """Make an API token for the command-line client after the UI password is given again (throttled like a login)."""
+    ip = h.client_address[0]
+    if h.app.throttle.blocked(ip):
+        return _send_page(h, 429, "Credentials", _cred(h, csrf), "/credentials", csrf, "Too many wrong passwords. Wait five minutes.", "bad")
+    if not h.app.auth.check(form.get("password", "")):
+        h.app.throttle.fail(ip)
+        time.sleep(0.4)
+        return _send_page(h, 403, "Credentials", _cred(h, csrf), "/credentials", csrf, "That is not the UI password. No token was made.", "bad")
+    h.app.throttle.reset(ip)
+    name, scope = (form.get("name") or "").strip(), "read" if form.get("read_only") == "1" else "write"
+    try:
+        token = h.app.api_tokens.add(name, scope)
+    except ValueError as e:
+        return _send_page(h, 422, "Credentials", _cred(h, csrf), "/credentials", csrf, str(e), "bad")
+    except OSError as e:
+        return _send_page(h, 500, "Credentials", _cred(h, csrf), "/credentials", csrf, f"Could not save the token: {e.strerror}", "bad")
+    log.info("api: token %s (%s) made in the UI", name, scope)
+    port = (h.headers.get("Host") or "").rpartition(":")[2] or "8787"
+    _send_page(h, 200, "Credentials", forms.api_token_created(name, scope, token, port if port.isdigit() else "8787"), "/credentials", csrf)
+
+
+def api_token_revoke(h, form, csrf: str) -> None:
+    name = form.get("name", "")
+    if not h.app.api_tokens.revoke(name):
+        return _send_page(h, 404, "Credentials", _cred(h, csrf), "/credentials", csrf, "There is no such token.", "bad")
+    log.info("api: token %s revoked in the UI", name)
+    h._redirect("/credentials?ok=token_revoked#api-tokens")
+
+
 def credentials_get(h, q: dict, csrf: str) -> None:
-    _send_page(h, 200, "Credentials", forms.credentials_page(h.app.cfg(), csrf), "/credentials", csrf, FLASH.get(q.get("ok", "")))
+    _send_page(h, 200, "Credentials", _cred(h, csrf), "/credentials", csrf, FLASH.get(q.get("ok", "")))
 
 
 def credentials_save(h, form, csrf: str) -> None:
@@ -268,7 +304,7 @@ def credentials_save(h, form, csrf: str) -> None:
     try:
         I.save_secret(cfg, form.get("name", ""), form.get("value", ""), form.get("kind", "subscription"))
     except ValueError as e:
-        return _send_page(h, 400, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, str(e), "bad")
+        return _send_page(h, 400, "Credentials", _cred(h, csrf), "/credentials", csrf, str(e), "bad")
     S.request_restart(h.app.state_dir())
     h._redirect("/credentials?ok=secret")
 
@@ -277,20 +313,20 @@ def credentials_test(h, form, csrf: str) -> None:
     cfg, name = h.app.cfg(), form.get("name", "")
     secret = I.read_secret(cfg, name) if name in I.SECRETS else None
     if not secret:
-        return _send_page(h, 400, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, "Nothing is stored for that credential yet.", "bad")
+        return _send_page(h, 400, "Credentials", _cred(h, csrf), "/credentials", csrf, "Nothing is stored for that credential yet.", "bad")
     if name == "github":
         r = I.check_github(secret, cfg.repos)
         table = ("<table class=stack><thead><tr><th>Repository</th><th>Access</th></tr></thead><tbody>" + "".join(
             f'<tr><td data-l="Repository">{esc(repo)}</td><td data-l="Access">{views.badge(a, "good" if a == "push" else "warn" if a == "read" else "bad")}</td></tr>'
             for repo, a in r.get("access", {}).items()) + "</tbody></table>") if r.get("access") else ""
-        return _send_page(h, 200, "Credentials", forms.credentials_page(cfg, csrf, table), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
+        return _send_page(h, 200, "Credentials", _cred(h, csrf, table), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
     if name == "openrouter":
         r = I.check_openrouter(secret, cfg.jev_model)
-        return _send_page(h, 200, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
+        return _send_page(h, 200, "Credentials", _cred(h, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
     if name in ("slack_bot", "slack_app"):
         r = I.slack_check(secret) if name == "slack_bot" else I.slack_app_check(secret)
-        return _send_page(h, 200, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
-    _send_page(h, 400, "Credentials", forms.credentials_page(cfg, csrf), "/credentials", csrf, "There is no test for that credential.", "bad")
+        return _send_page(h, 200, "Credentials", _cred(h, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
+    _send_page(h, 400, "Credentials", _cred(h, csrf), "/credentials", csrf, "There is no test for that credential.", "bad")
 
 
 # ------------------------------------------------------------------ harnesses
@@ -890,7 +926,7 @@ GET = {"/release": release_redirect, "/updates": updates_get, "/updates/status":
        "/tickets": L.list_get, "/roadmap": RM.get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/ticket/design": RV.design_get, "/tickets/review": TRV.review_get, "/tickets/review/live": TRV.live_get, "/fragment/chat": CH.fragment_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/results": SB.results_get, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get, **TS.GET, **NP.GET, **FC.GET, **EV.GET}
 POST = {"/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/settings/projects/detect": projects_detect, "/settings/projects/deps": projects_deps, "/classify/test": classify_test,
-        "/credentials/save": credentials_save, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/tools/check": tools_check, "/tools/update": tools_update, "/credentials/test": credentials_test,
+        "/credentials/save": credentials_save, "/credentials/api-token/add": api_token_add, "/credentials/api-token/revoke": api_token_revoke, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/tools/check": tools_check, "/tools/update": tools_update, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,
         "/tickets/start": L.start, "/tickets/send-back": L.send_back, "/tickets/create": L.create, "/tickets/close": L.close, "/tickets/local/comment": LT.comment, "/tickets/local/edit": LT.edit, "/tickets/local/state": LT.set_state, "/tickets/local/attachment/delete": LT.attachment_delete, "/tickets/import": L.import_issues, "/tickets/split": SPC.post, "/tickets/review/run": TRV.run_post, "/tickets/review/apply": TRV.apply_post, "/tickets/review/reject": TRV.reject_post, "/tickets/answer": L.answer, "/tickets/answer-all": L.answer_all, "/tickets/priority": PC.priority_post, "/tickets/milestone": PC.milestone_post, "/roadmap/milestones": RM.milestones_post, "/roadmap/feature": RM.feature_post, "/labels/add": L.add, "/labels/remove": L.remove, "/labels/replace": L.replace,
         "/ticket/review-actions/apply": RA.apply_post, "/ticket/review-actions/reject": RA.reject_post, "/tickets/chat/send": CH.send, "/tickets/chat/confirm": CH.confirm, "/tickets/chat/dismiss": CH.dismiss, "/review/add": RV.add, "/review/delete": RV.delete, "/review/send": RV.send, "/screens/refresh": SB.refresh, "/screens/capture": SB.capture, "/screens/captures/save": SB.captures_save, "/screens/save": SB.save, "/screens/delete": SB.delete, "/screens/issue": RV.board_issue, **TS.POST, **NP.POST, **FC.POST, **EV.POST}

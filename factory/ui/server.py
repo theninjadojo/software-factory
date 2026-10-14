@@ -23,7 +23,7 @@ from .. import jobs, pause, screenboard, updates, version
 from ..config import HealthCfg, load
 from .. import tracker
 from ..tracker import display, is_local
-from . import admin, board, features, floor, floorplan, integrations, kanban, views
+from . import admin, api, apitokens, board, features, floor, floorplan, integrations, kanban, views
 from . import chat as CH
 from . import splitcard as SPC
 from . import reviewactions as RA
@@ -77,6 +77,7 @@ def sandboxed_report(html: bytes) -> bytes:
     """A worker's HTML report with STORAGE_SHIM first in its <head> (or first of all, when it has none)."""
     i = html[:4096].lower().find(b"<head>")
     return html[:i + 6] + STORAGE_SHIM + html[i + 6:] if i >= 0 else STORAGE_SHIM + html
+API_HEADERS = {"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'", "Cache-Control": "no-store", "X-Shikumi-Api": str(api.API)}
 HEADERS = {
     "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; "
                                "form-action 'self'; base-uri 'none'; frame-ancestors 'none'; frame-src 'self'",
@@ -93,6 +94,8 @@ class App:
         self.secure_cookie = secure_cookie
         self.sessions, self.throttle = Sessions(), Throttle()
         self.auth = AuthStore(self.state_dir() / "ui-auth.json")
+        self.api_tokens = apitokens.Store(self.state_dir() / "api-tokens.json")
+        self.api_throttle = Throttle(limit=20, window=300)          # wrong API tokens per client address
 
     def cfg(self):
         return load(self.config_path)
@@ -374,6 +377,46 @@ class Handler(BaseHTTPRequestHandler):
                 left -= len(chunk)
         return body
 
+    def _api_send(self, status: int, obj: dict, extra: dict | None = None) -> None:
+        self._send(status, json.dumps(obj), "application/json; charset=utf-8", {**API_HEADERS, **(extra or {})})
+
+    def _api(self, path: str, q: dict) -> None:
+        """The JSON API (api.py). A bearer token only: a session cookie is never looked at here, so no CSRF field is needed and a
+        signed-in browser cannot be made to call it. A write must send JSON. Wrong tokens are throttled per client address."""
+        ip = self.client_address[0]
+        if self.app.api_throttle.blocked(ip):
+            return self._api_send(429, {"error": "Too many wrong tokens. Wait five minutes.", "code": "throttled"}, {"Retry-After": "300"})
+        token = self.app.api_tokens.authenticate(self.headers.get("Authorization"))
+        if token is None:
+            self.app.api_throttle.fail(ip)
+            return self._api_send(401, {"error": "A valid API token is needed (Authorization: Bearer ...).", "code": "unauthorized"},
+                                  {"WWW-Authenticate": 'Bearer realm="shikumi"'})
+        data: dict = {}
+        if self.command == "POST":
+            if not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
+                return self._api_send(415, {"error": "Send JSON (Content-Type: application/json).", "code": "unsupported_type"})
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if n <= 0:
+                return self._api_send(411, {"error": "Content-Length is required.", "code": "length_required"})
+            if n > MAX_BODY:
+                return self._api_send(413, {"error": "The request is too large.", "code": "too_large"})
+            try:
+                data = json.loads(self.rfile.read(n).decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                return self._api_send(400, {"error": "The body is not JSON.", "code": "bad_json"})
+            if not isinstance(data, dict):
+                return self._api_send(400, {"error": "The body must be a JSON object.", "code": "bad_json"})
+        self.app.api_tokens.touch(token)
+        try:
+            status, obj = api.handle(self, "POST" if self.command == "POST" else "GET", path, q, data, token)
+        except Exception:
+            log.exception("api: %s %s failed", self.command, path)
+            status, obj = 500, {"error": "internal error", "code": "internal"}
+        self._api_send(status, obj)
+
     def _length(self, limit: int) -> int | None:
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -493,6 +536,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, "not found", "text/plain", DIAGRAM_HEADERS)
             if path == "/healthz":
                 return self._send(200, "ok", "text/plain")
+            if path == "/api" or path.startswith("/api/"):
+                return self._api(path, q)
             if path == "/login":
                 return self._login(q)
             sid = self._session_id()
