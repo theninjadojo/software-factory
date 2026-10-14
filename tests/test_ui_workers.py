@@ -87,19 +87,30 @@ class WorkersPage(UiCase):
         c = self.root / "config.toml"
         c.write_text(c.read_text().replace("[workers]\nenabled = true", f'[workers]\nenabled = true\ntokens_file = "{tf}"'))
         cookie, csrf = self.session()
-        self.assertIn('action="/workers/add"', self.req("GET", "/workers", cookie=cookie)[2])
-        s, _, html = self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "box", "recipes": "web android"}), cookie=cookie)
+        page = self.req("GET", "/workers", cookie=cookie)[2]
+        self.assertIn('action="/workers/add"', page)
+        for key in ("web", "screens", "android", "ios", "lockfile"):                   # every recipe the setup script ships, each explained
+            self.assertIn(f'name="recipes" value="{key}"', page)
+        self.assertIn('value="web" checked', page)
+        self.assertIn("Checks name it as <code>android-test</code>, <code>android-screens</code>.", page)
+        s, _, html = self.req("POST", "/workers/add", urlencode([("csrf", csrf), ("name", "box"), ("recipes", "web"), ("recipes", "android")]), cookie=cookie)
         self.assertEqual(s, 200)
         name, token = tf.read_text().split()
         self.assertEqual(name, "box")
         self.assertEqual(tf.stat().st_mode & 0o777, 0o600)
         self.assertIn(token, html)
         self.assertIn("FACTORY_URL=http://127.0.0.1:8788", html)
-        self.assertIn("WORKER_RECIPES=&quot;web android&quot;", html)
+        self.assertIn("WORKER_RECIPES=&quot;web android&quot; bash", html)
+        self.assertIn("<strong>Android</strong> (Linux, or a Mac with Docker): Docker or Podman.", html)          # what the machine needs
+        self.assertNotIn("WORKER_IOS_SCHEME", html)
         self.assertNotIn(token, self.req("GET", "/workers", cookie=cookie)[2])       # shown once
-        s, _, html = self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "box"}), cookie=cookie)
+        s, _, html = self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "box", "recipes": "web"}), cookie=cookie)
         self.assertEqual(s, 422)
         self.assertIn("already exists", html)
+        s, _, html = self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "mac", "recipes": "ios"}), cookie=cookie)
+        self.assertEqual(s, 200)                    # iOS cannot be set up without the scheme and project: the command says where they go
+        self.assertIn("WORKER_RECIPES=&quot;ios&quot; WORKER_IOS_SCHEME=&quot;&lt;Xcode scheme&gt;&quot; WORKER_IOS_PROJECT=&quot;&lt;App.xcodeproj&gt;&quot;", html)
+        self.assertIn("Before running it:", html)
 
     def test_add_worker_rejects_bad_input_and_needs_workers_on_and_csrf(self):
         cookie, csrf = self.session()
@@ -107,7 +118,26 @@ class WorkersPage(UiCase):
         self.enable()
         self.assertEqual(self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "Bad Name"}), cookie=cookie)[0], 422)
         self.assertEqual(self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "ok", "recipes": "web; rm -rf /"}), cookie=cookie)[0], 422)
+        for bad in ("winphone", "web, mainframe"):
+            self.assertEqual(self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "ok", "recipes": bad}), cookie=cookie)[0], 422, bad)
+        s, _, html = self.req("POST", "/workers/add", urlencode({"csrf": csrf, "name": "ok"}), cookie=cookie)
+        self.assertEqual(s, 422)
+        self.assertIn("Choose at least one recipe.", html)
         self.assertEqual(self.req("POST", "/workers/add", urlencode({"name": "ok"}), cookie=cookie)[0], 403)
+
+
+class RecipeList(unittest.TestCase):
+    def test_the_picker_offers_what_the_setup_script_ships(self):
+        import re
+        from pathlib import Path
+        from factory.ui import workers as WK
+        script = (Path(__file__).resolve().parents[1] / "scripts" / "setup-worker.sh").read_text()
+        accepted = re.search(r'for r in \$RECIPES; do (.*?) \|\| die', script).group(1)
+        self.assertEqual(set(re.findall(r'"\$r" == (\w+)', accepted)), set(WK.BY_KEY))
+        written = dict(re.findall(r'if "(\w+)" in r:\n(.*?)(?=\nif "|\nopen\()', script, re.S))
+        self.assertEqual(set(written), set(WK.BY_KEY))
+        for key, installs in written.items():                                   # the recipe names checks use
+            self.assertEqual(set(re.findall(r"\[recipes\.([\w-]+)\]", installs)), set(WK.BY_KEY[key].installs), key)
 
 
 class Watch(unittest.TestCase):

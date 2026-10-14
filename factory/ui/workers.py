@@ -6,6 +6,7 @@ import time
 from urllib.parse import quote
 import json
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlencode
 
 from .. import jobs, version, workerupdate
@@ -36,16 +37,64 @@ def api_up(listen: str) -> bool:
         return False
 
 
+class Recipe(NamedTuple):
+    key: str                # what WORKER_RECIPES takes (scripts/setup-worker.sh)
+    title: str
+    installs: tuple         # the recipes it puts in worker.toml: the names checks use
+    runs_on: str
+    what: str
+    needs: str
+
+
+# The recipes this release ships, as the setup script knows them. Keep in step with scripts/setup-worker.sh and docs/workers.md.
+RECIPES = (
+    Recipe("web", "Web tests", ("web-test",), "Linux or Mac",
+           "Installs, builds and tests a web project on the agent's patch before it is pushed, with its Playwright tests when it has them.",
+           "Node.js 18 or newer. The setup gives the worker its own when the machine has none."),
+    Recipe("screens", "Screenshots", ("playwright-screens",), "Linux or Mac",
+           "Runs a project's Playwright suite and keeps a screenshot of every test for the Screens board.",
+           "Node.js 18 or newer, as for web tests. The recipe downloads its own Chromium."),
+    Recipe("android", "Android", ("android-test", "android-screens"), "Linux, or a Mac with Docker",
+           "Builds and tests an Android (Gradle) project in a throwaway container, with screenshots for the Screens board.",
+           "Docker or Podman. The setup builds the factory-android image."),
+    Recipe("ios", "iOS", ("ios-test",), "Mac with Apple Silicon",
+           "Builds and tests an iOS project with Xcode in a throwaway macOS VM.",
+           "Tart and an Xcode VM image (about 30 GB), and the Xcode scheme and project to test: fill them in to the install command."),
+    Recipe("lockfile", "Lockfile refresh", ("lockfile-update",), "Linux or Mac",
+           "Refreshes a repo's lockfile once packages it installs are published, so its CI installs the new version. Runs nothing from the repo.",
+           "Node.js 18 or newer. For private packages, a read-only packages token (WORKER_NPM_TOKEN)."),
+)
+BY_KEY = {r.key: r for r in RECIPES}
+# The iOS recipe cannot be set up without these. The placeholders fail the setup script's own checks until they are replaced.
+IOS_ENV = 'WORKER_IOS_SCHEME="<Xcode scheme>" WORKER_IOS_PROJECT="<App.xcodeproj>" WORKER_IOS_PULL=1 '
+
+
 def install_command(listen: str, token: str, recipes: str = "web") -> str:
     """The one-liner to run on the worker machine. The URL is the tunnel's local end when the API is loopback-only."""
     port = listen.rpartition(":")[2]
-    return f'curl -fsSL {INSTALL_URL} | FACTORY_URL=http://127.0.0.1:{port} WORKER_TOKEN={token} WORKER_RECIPES="{recipes}" bash'
+    ios = IOS_ENV if "ios" in recipes.split() else ""
+    return f'curl -fsSL {INSTALL_URL} | FACTORY_URL=http://127.0.0.1:{port} WORKER_TOKEN={token} WORKER_RECIPES="{recipes}" {ios}bash'
 
 
-def add_form(csrf: str) -> str:
-    return ('<h2>Add a worker</h2><form method="post" action="/workers/add" class="row">' + csrf_field(csrf) +
-            '<label>Name <input name="name" value="my-worker" pattern="[a-z0-9][a-z0-9-]{0,40}" required></label> '
-            '<label>Recipes <input name="recipes" value="web" pattern="[a-z ]{1,60}" title="web, screens, android, ios"></label> '
+def recipe_picker(chosen=("web",)) -> str:
+    """The Recipes drop-down of Add a worker: a check box per recipe, with what it is for, where it runs and what it needs.
+    It works without JavaScript; app.js writes the chosen ones into the closed drop-down."""
+    opts = "".join(
+        f'<label class="wk-opt"><input type="checkbox" name="recipes" value="{r.key}"{" checked" if r.key in chosen else ""} data-title="{esc(r.title)}" '
+        f'aria-labelledby="wk-{r.key}-t" aria-describedby="wk-{r.key}-d">'
+        f'<span><strong id="wk-{r.key}-t">{esc(r.title)}</strong><span id="wk-{r.key}-d" class="wk-desc"><span class="muted">{esc(r.runs_on)}</span>'
+        f'<span class="wk-what">{esc(r.what)}</span><span class="muted wk-needs">Needs: {esc(r.needs)}</span>'
+        f'<span class="muted wk-needs">Checks name it as {", ".join(f"<code>{x}</code>" for x in r.installs)}.</span></span></span></label>'
+        for r in RECIPES)
+    shown = ", ".join(r.title for r in RECIPES if r.key in chosen) or "None chosen"
+    return (f'<details class="wk-pick"><summary aria-label="Recipes: {esc(shown)}"><span class="wk-chosen">{esc(shown)}</span></summary>'
+            f'<div class="wk-menu"><p class="muted">A worker can take several. It runs one job at a time.</p>{opts}</div></details>')
+
+
+def add_form(csrf: str, name: str = "my-worker", chosen=("web",)) -> str:
+    return ('<h2>Add a worker</h2><form method="post" action="/workers/add" class="wk-add">' + csrf_field(csrf) +
+            f'<div class="field"><label for="wk-name">Name</label><input id="wk-name" name="name" value="{esc(name)}" pattern="[a-z0-9][a-z0-9\\-]{{0,40}}" required></div>'
+            '<div class="field"><span class="wk-label" id="wk-recipes">Recipes</span>' + recipe_picker(chosen) + '</div>'
             '<button>Create token and show install command</button></form>')
 
 
@@ -55,11 +104,17 @@ def created_page(cfg, name: str, token: str, recipes: str) -> str:
     status = (badge("running", "good") + f' the worker API answers on <code>{esc(cfg.workers.listen)}</code>.' if up else
               badge("not running", "bad") + f' nothing answers on <code>{esc(cfg.workers.listen)}</code> yet. ' + NOT_RUNNING)
     cmd = install_command(cfg.workers.listen, token, recipes)
+    chosen = [BY_KEY[k] for k in recipes.split() if k in BY_KEY]
+    needs = "".join(f'<li><strong>{esc(r.title)}</strong> ({esc(r.runs_on)}): {esc(r.needs)}</li>' for r in chosen)
+    fill = ('<p><strong>Before running it:</strong> replace <code>&lt;Xcode scheme&gt;</code> and <code>&lt;App.xcodeproj&gt;</code> with your app\'s '
+            '(or use <code>WORKER_IOS_WORKSPACE</code> for a workspace). <code>WORKER_IOS_PULL=1</code> downloads the Xcode image; drop it if the Mac has it.</p>'
+            if any(r.key == "ios" for r in chosen) else "")
     return (f'<h2>Worker {esc(name)} created</h2><p><strong>Copy this now: the token is shown once.</strong></p>'
             f'<p>Worker API: {status}</p>'
+            f'<p>The machine needs:</p><ul class="wk-list">{needs}</ul>'
             f'<p>1. On the worker machine, open a tunnel to this host (the API listens on loopback only):</p>'
             f'<pre>ssh -N -L {esc(port)}:127.0.0.1:{esc(port)} &lt;user&gt;@&lt;this-host&gt;</pre>'
-            f'<p>2. On the worker machine, install and connect it:</p><pre>{esc(cmd)}</pre>'
+            f'<p>2. On the worker machine, install and connect it:</p><pre>{esc(cmd)}</pre>{fill}'
             f'<p class="muted">The worker appears in the list below within seconds of its first poll.</p>'
             '<p><a href="/workers">← back to workers</a></p>')
 

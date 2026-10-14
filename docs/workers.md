@@ -81,7 +81,9 @@ The same way as the factory: a release one-liner, an environment-driven setup sc
    token and prints it once. The admin UI runs the worker API as its own child process while workers are enabled (it starts within seconds of turning
    them on in Settings, and stops when they are turned off), so there is no separate service to install or restart; updating the UI updates it.
    In Docker the `ui` container publishes it on `127.0.0.1:8788` (`FACTORY_WORKERS_BIND` / `FACTORY_WORKERS_PORT` in `.env`).
-   Or from the UI: Settings → Workers → enable, then Workers → **Add a worker**. It creates the token (shown once) and prints the install command for the worker machine.
+   Or from the UI: Settings → Workers → enable, then Workers → **Add a worker**. Pick its recipes from the drop-down (one worker can take
+   several; each says what it is for, where it runs and what the machine needs). It creates the token (shown once) and prints the install
+   command for the worker machine; with iOS chosen, the command has placeholders for the Xcode scheme and project to fill in.
 2. **Make the API reachable** from the worker: it listens on `127.0.0.1:8788`. Use `ssh -L 8788:127.0.0.1:8788 factory-host`, a VPN, or a TLS reverse
    proxy. Never expose it plainly: the token is the only credential.
 3. **Worker machine.** `curl -fsSL https://github.com/theninjadojo/software-factory/releases/latest/download/install-worker.sh | bash`. This downloads
