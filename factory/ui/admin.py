@@ -1,7 +1,6 @@
 """Routes that show or change settings, credentials, Telegram and Slack. All POSTs arrive here already CSRF-checked."""
 import json
 import logging
-import re
 import shutil
 import sqlite3
 import threading
@@ -512,9 +511,12 @@ def workers_add(h, form, csrf: str) -> None:
     cfg = h.app.cfg()
     if not cfg.workers.enabled:
         return _send_page(h, 400, "Workers", '<p class="muted">Turn workers on in Settings first.</p>', "/workers", csrf, kind="bad", section="workers")
-    name, recipes = form.get("name", "").strip(), " ".join(form.get("recipes", "web").split()) or "web"
-    if not re.fullmatch(r"[a-z]+( [a-z]+)*", recipes):
-        return _send_page(h, 422, "Workers", "", "/workers", csrf, "Recipes are words like web, android, ios.", "bad", section="workers")
+    name = form.get("name", "").strip()
+    picked = [x for v in form.getall("recipes") for x in v.replace(",", " ").split()]       # the check boxes (or one "web android" field)
+    if not picked or any(x not in WK.BY_KEY for x in picked):
+        why = "Choose at least one recipe." if not picked else f"Recipes are {', '.join(WK.BY_KEY)}."
+        return _send_page(h, 422, "Workers", "", "/workers", csrf, why, "bad", section="workers")
+    recipes = " ".join(dict.fromkeys(picked))
     try:
         token = add_token(cfg.workers.tokens_file, name)
     except ValueError as e:

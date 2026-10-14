@@ -1007,6 +1007,23 @@
     var here = document.querySelector(".pj-item[data-here]");           // the project just saved, or whose build order was looked for
     if (here && !location.hash) here.scrollIntoView({ block: "start" });
   })();
+  // --- Workers, Add a worker: the Recipes drop-down shows the chosen recipes while closed, and the form needs at least one.
+  (function () {
+    var pick = document.querySelector("details.wk-pick");
+    if (!pick) return;
+    var form = pick.closest("form"), shown = pick.querySelector(".wk-chosen"), boxes = pick.querySelectorAll("input[type=checkbox]");
+    function chosen() {
+      var t = [];
+      for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) t.push(boxes[i].getAttribute("data-title"));
+      shown.textContent = t.length ? t.join(", ") : "None chosen";
+      pick.querySelector("summary").setAttribute("aria-label", "Recipes: " + shown.textContent);
+      boxes[0].setCustomValidity(t.length ? "" : "Choose at least one recipe.");
+    }
+    pick.addEventListener("change", chosen);
+    form.addEventListener("invalid", function (e) { if (e.target.name === "recipes") pick.open = true; }, true);
+    document.addEventListener("click", function (e) { if (pick.open && !pick.contains(e.target)) pick.open = false; });
+    chosen();
+  })();
   // --- Settings, General: the standalone repositories. Add rows, check each one once it has been filled in, and keep Save off while
   // one is marked. The server makes the same checks (settings.py check_repos) and asks GitHub about a new repository when you save;
   // what it refused stays marked until that field is changed. The part remembers in this browser whether you folded it.
