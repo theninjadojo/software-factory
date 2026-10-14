@@ -9,7 +9,9 @@ Releases are automatic. To release:
 2. That is all. The `release` workflow (`.github/workflows/release.yml`) runs on the merge: it runs the whole test workflow (unit, browser and image tests), and only if that passes it builds and pushes five images to
    `ghcr.io/<owner>/shikumi`, `shikumi-agent`, `shikumi-render`, `shikumi-screens` and `shikumi-android` (tagged `v0.3.0` and `latest`), creates
    the tag `v0.3.0` at that commit, and publishes a GitHub Release with `docker-compose.yml`, `config.example.toml`, `VERSION`, `env.example`
-   (the `.env` template), `setup.sh`, `update.sh`, `install.sh`, `update-native.sh` and the worker files.
+   (the `.env` template), `setup.sh`, `update.sh`, `install.sh`, `update-native.sh`, the worker files, and the command-line client
+   `shikumi-cli-x86_64-unknown-linux-musl` with its `.sha256` ([cli.md](cli.md)). The client is built static, with a read-only token,
+   in its own job (`cli-binary`); the release fails if it is not static or does not report this `VERSION`.
    The release is a draft until every file is uploaded and is published only then (which creates the tag), so it never shows as the latest
    with files missing. A dropped connection is retried, and `scripts/publish-release.py` can be run again for the same tag: it reuses the
    release and uploads only the files it does not have yet.

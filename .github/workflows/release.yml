@@ -42,8 +42,36 @@ jobs:
     permissions:
       contents: read
 
-  release:
+  cli-binary:
+    # The command-line client (cli/, docs/cli.md) as one static Linux binary. Built here, with a read-only token, so its dependencies'
+    # build scripts never run where the release's write token is; the release job only uploads what this job checked.
     needs: [decide, test]
+    if: needs.decide.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the static binary
+        working-directory: cli
+        run: |
+          sudo apt-get install -y musl-tools
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          mkdir -p ../out && cp target/x86_64-unknown-linux-musl/release/shikumi ../out/shikumi-cli-x86_64-unknown-linux-musl
+      - name: Check it is static and says this release's version
+        run: |
+          B=out/shikumi-cli-x86_64-unknown-linux-musl
+          file "$B" | tee /dev/stderr | grep -q static
+          "$B" --version | tee /dev/stderr | grep -qF "$(cat VERSION)"
+          (cd out && sha256sum shikumi-cli-x86_64-unknown-linux-musl > shikumi-cli-x86_64-unknown-linux-musl.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shikumi-cli
+          path: out/
+          if-no-files-found: error
+
+  release:
+    needs: [decide, test, cli-binary]
     if: needs.decide.outputs.go == 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -70,12 +98,16 @@ jobs:
           build shikumi-render sandbox/render/Dockerfile sandbox/render
           build shikumi-screens sandbox/screens/Dockerfile sandbox/screens
           build shikumi-android sandbox/android/Dockerfile sandbox/android     # for verification workers (docs/workers.md)
+      - uses: actions/download-artifact@v4          # the command-line client, built and checked by cli-binary
+        with:
+          name: shikumi-cli
+          path: dist
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.decide.outputs.tag }}
         run: |
-          mkdir dist
+          mkdir -p dist
           cp docker-compose.yml config.example.toml VERSION scripts/setup.sh scripts/update.sh scripts/install.sh deploy/update-native.sh dist/
           cp scripts/install-worker.sh scripts/setup-worker.sh scripts/update-worker.sh dist/                      # verification workers
           tar -czf dist/shikumi-worker.tar.gz --exclude=__pycache__ worker sandbox/android
