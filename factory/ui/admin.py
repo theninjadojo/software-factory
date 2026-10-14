@@ -5,6 +5,7 @@ import re
 import shutil
 import sqlite3
 import threading
+import urllib.parse
 from pathlib import Path
 
 from .. import backup as B
@@ -106,10 +107,11 @@ def lockfile_state(h, eff: dict) -> str:
     return "ok" if seen else f"asked for {names}, but no worker with the lockfile-update recipe has been seen."
 
 
-def render_settings(h, section: str, csrf: str, submitted=None, tester: str = "", found: dict | None = None, errors: dict | None = None) -> str:
+def render_settings(h, section: str, csrf: str, submitted=None, tester: str = "", found: dict | None = None, errors: dict | None = None,
+                    open_name: str = "") -> str:
     base, eff = _files(h)
     if section == "projects":
-        return forms.projects_form(base, eff, csrf, submitted, errors) + forms.build_order(eff, csrf, found, lockfile_state(h, eff), LOCK_SETUP)
+        return forms.projects_form(base, eff, csrf, submitted, errors, open_name, found, lockfile_state(h, eff), LOCK_SETUP)
     body = forms.settings_form(section, eff, base, csrf, submitted, errors)
     if section == "classifier":
         body += forms.classifier_tester(csrf, tester)
@@ -131,7 +133,7 @@ def settings_get(h, q: dict, csrf: str) -> None:
     if section != "projects" and section not in S.SECTIONS:
         return h._send(404, "no such section", "text/plain")
     shown = L.flash_pop(csrf)               # a save that has something to add (a repository the token can only read)
-    _send_page(h, 200, "Settings", render_settings(h, section, csrf), "/settings", csrf, shown[0] if shown else FLASH.get(q.get("ok", "")),
+    _send_page(h, 200, "Settings", render_settings(h, section, csrf, open_name=q.get("open", "")), "/settings", csrf, shown[0] if shown else FLASH.get(q.get("ok", "")),
                shown[1] if shown else "ok", section=section)
 
 
@@ -203,12 +205,18 @@ def settings_save(h, form, csrf: str) -> None:
     h._redirect(f"/settings?section={section}&ok=saved")
 
 
+def _projects_back(name: str) -> str:
+    """Back to the Projects page with that project's row open ('' when it was removed)."""
+    return "/settings?section=projects&ok=saved" + (f"&open={urllib.parse.quote(name)}" if name else "")
+
+
 def projects_save(h, form, csrf: str) -> None:
+    """One project's form: added, saved or removed."""
     try:
-        S.save_projects(h.app.config_path, h.app.state_dir(), form)
+        name = S.save_project(h.app.config_path, h.app.state_dir(), form)
     except S.SettingsError as e:
         return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf, submitted=form, errors=e.fields), "/settings", csrf, " · ".join(e.messages), "bad", section="projects")
-    h._redirect("/settings?section=projects&ok=saved")
+    h._redirect(_projects_back(name))
 
 
 def projects_detect(h, form, csrf: str) -> None:
@@ -220,11 +228,11 @@ def projects_detect(h, form, csrf: str) -> None:
     token = I.read_secret(cfg, "github")
     if project is None or not token:
         msg = "Save the project first." if project is None else "Set the GitHub token first (Credentials)."
-        return _send_page(h, 400, "Settings", render_settings(h, "projects", csrf), "/settings", csrf, msg, "bad", section="projects")
+        return _send_page(h, 400, "Settings", render_settings(h, "projects", csrf, open_name=name), "/settings", csrf, msg, "bad", section="projects")
     found = {name: depdetect.detect(GitHub(token), project)}
     n = len(found[name][0])
     msg = f"Found {n} package link{'s' if n != 1 else ''} in {name}." if n else f"No package links found in {name}."
-    _send_page(h, 200, "Settings", render_settings(h, "projects", csrf, found=found), "/settings", csrf, msg, section="projects")
+    _send_page(h, 200, "Settings", render_settings(h, "projects", csrf, found=found, open_name=name), "/settings", csrf, msg, section="projects")
 
 
 def projects_deps(h, form, csrf: str) -> None:
@@ -238,8 +246,9 @@ def projects_deps(h, form, csrf: str) -> None:
         else:
             return h._send(400, "unknown action", "text/plain")
     except S.SettingsError as e:
-        return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf), "/settings", csrf, " · ".join(e.messages), "bad", section="projects")
-    h._redirect("/settings?section=projects&ok=saved")
+        return _send_page(h, 422, "Settings", render_settings(h, "projects", csrf, open_name=form.get("project", "")), "/settings", csrf,
+                          " · ".join(e.messages), "bad", section="projects")
+    h._redirect(_projects_back(form.get("project", "")))
 
 
 def classify_test(h, form, csrf: str) -> None:

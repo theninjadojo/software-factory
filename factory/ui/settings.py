@@ -801,22 +801,24 @@ def repo_slug(text: str) -> str:
     return text[:-4] if text.endswith(".git") else text
 
 
-def read_projects(form) -> list[dict]:
-    """The projects form as typed, without its empty slots: a row with no repository is dropped (clearing it is how a repository is
-    removed, whatever its role says), and so is a project with no name and no repositories. Field names in check_projects count
-    what is left, not the form's slots."""
-    out = []
-    for i in range(MAX_PROJECTS):
-        rows = [{"repo": repo_slug(form.get(f"p{i}_r{j}_repo") or ""), "role": (form.get(f"p{i}_r{j}_role") or "").strip()} for j in range(MAX_PROJECT_REPOS)]
-        rows = [r for r in rows if r["repo"]]
-        name = (form.get(f"p{i}_name") or "").strip()
-        if name or rows:
-            out.append({"name": name, "description": (form.get(f"p{i}_desc") or "").strip(), "repos": rows})
-    return out
+def read_project(form, i: int) -> dict:
+    """One project's form as typed (its fields are p{i}_...), without its empty rows: a row with no repository is dropped (clearing it
+    is how a repository is removed, whatever its role says). Field names in check_projects count what is left, not the form's rows."""
+    rows = [{"repo": repo_slug(form.get(f"p{i}_r{j}_repo") or ""), "role": (form.get(f"p{i}_r{j}_role") or "").strip()} for j in range(MAX_PROJECT_REPOS)]
+    return {"name": (form.get(f"p{i}_name") or "").strip(), "description": (form.get(f"p{i}_desc") or "").strip(),
+            "repos": [r for r in rows if r["repo"]]}
+
+
+def form_slot(form) -> int:
+    """Which project's form was sent: the p{i}_ of its fields."""
+    try:
+        return min(max(int(form.get("pj") or 0), 0), MAX_PROJECTS)
+    except ValueError:
+        return 0
 
 
 def check_projects(projects: list[dict]) -> dict:
-    """What is wrong with read_projects' result: the form field's name -> one sentence. Empty when it can be saved.
+    """What is wrong with a list of read_project results: the form field's name -> one sentence. Empty when it can be saved.
     app.js makes the same checks while the form is filled in; keep the two alike."""
     bad: dict[str, str] = {}
     names: dict[str, int] = {}
@@ -848,30 +850,51 @@ def check_projects(projects: list[dict]) -> dict:
     return bad
 
 
-def save_projects(cfg_path: str, state_dir: Path, form: Form) -> None:
-    """The form edits names, descriptions, repos and roles. A repo's other keys (depends_on, publish: set in config.toml) are kept."""
+def save_project(cfg_path: str, state_dir: Path, form: Form) -> str:
+    """One project's form: the New project form (`was` empty) or a saved project's (`was` its name when the page was drawn), with
+    action=remove to drop it. The form edits the name, description, repos and roles; a repo's other keys (depends_on, publish) and
+    the other projects are kept as they are. Returns the project's name, '' once removed.
+    Refused fields are named p{slot}_..., slot being where the project is drawn on the page (projects_form)."""
     base, new_ov = base_raw(cfg_path), copy.deepcopy(overrides_raw(cfg_path))
-    extra = {r["repo"]: {k: v for k, v in r.items() if k not in ("repo", "role")}
-             for p in deep_merge(base, new_ov).get("projects", []) for r in p.get("repos", []) if isinstance(r, dict)}
-    typed = read_projects(form)
-    bad = check_projects(typed)
+    eff = deep_merge(base, new_ov)
+    projects = copy.deepcopy(eff.get("projects", []))
+    was = (form.get("was") or "").strip()
+    at = next((k for k, p in enumerate(projects) if p.get("name") == was), None) if was else None
+    if was and at is None:
+        raise SettingsError([f"There is no project called {was!r} any more: it was renamed or removed since this page was loaded. Reload the page."])
+    typed = read_project(form, form_slot(form))
+    if form.get("action") == "remove" or (at is not None and not typed["name"] and not typed["repos"]):
+        if at is None:
+            raise SettingsError(["Nothing to remove: this project is not saved yet."])
+        del projects[at]
+        _save_projects_list(cfg_path, state_dir, base, new_ov, projects)
+        return ""
+    if at is None and len(projects) >= MAX_PROJECTS:
+        raise SettingsError([f"{MAX_PROJECTS} projects is the most the factory takes. Remove one first."])
+    others = [{"name": p.get("name", ""), "description": p.get("description", ""),
+               "repos": [{"repo": r if isinstance(r, str) else r.get("repo", ""), "role": "" if isinstance(r, str) else r.get("role", "")} for r in p.get("repos", [])]}
+              for k, p in enumerate(projects) if k != at]
+    slot = at if at is not None else len(projects)
+    last = f"p{len(others)}_"                           # checked after the others, so a clash is marked on the project being saved
+    bad = {f"p{slot}_" + k[len(last):]: why for k, why in check_projects(others + [typed]).items() if k.startswith(last)}
     if bad:
         raise SettingsError([f"Nothing was saved. Correct the {len(bad)} fields marked below." if len(bad) > 1 else "Nothing was saved. Correct the field marked below."], bad)
-    projects = []
-    for p in typed:
-        repos = [{"repo": r["repo"], "role": r["role"], **extra.get(r["repo"], {})} for r in p["repos"]]
-        kept = {x for r in repos for x in (r["repo"], r["repo"].split("/")[-1])}
-        for r in repos:                                 # a dependency on a repo removed here goes with it
-            if "depends_on" in r:
-                r["depends_on"] = [d for d in r["depends_on"] if d in kept]
-                if not r["depends_on"]:
-                    del r["depends_on"]
-        projects.append({"name": p["name"], "description": p["description"], "repos": repos})
-    if projects == base.get("projects", []):
-        new_ov.pop("projects", None)
+    extra = {r["repo"]: {k: v for k, v in r.items() if k not in ("repo", "role")}
+             for p in eff.get("projects", []) for r in p.get("repos", []) if isinstance(r, dict)}
+    repos = [{"repo": r["repo"], "role": r["role"], **extra.get(r["repo"], {})} for r in typed["repos"]]
+    kept = {x for r in repos for x in (r["repo"], r["repo"].split("/")[-1])}
+    for r in repos:                                     # a dependency on a repo removed here goes with it
+        if "depends_on" in r:
+            r["depends_on"] = [d for d in r["depends_on"] if d in kept]
+            if not r["depends_on"]:
+                del r["depends_on"]
+    entry = {**(projects[at] if at is not None else {}), "name": typed["name"], "description": typed["description"], "repos": repos}
+    if at is None:
+        projects.append(entry)
     else:
-        new_ov["projects"] = projects
-    _commit(cfg_path, state_dir, new_ov)
+        projects[at] = entry
+    _save_projects_list(cfg_path, state_dir, base, new_ov, projects)
+    return typed["name"]
 
 
 def save_telegram(cfg_path: str, state_dir: Path, form: Form) -> None:

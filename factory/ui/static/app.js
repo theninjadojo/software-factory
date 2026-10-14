@@ -907,88 +907,105 @@
     el.setAttribute("aria-invalid", "true"); el.setAttribute("aria-describedby", id);
   }
 
-  // --- Settings, Projects: add repository rows, check each field once it has been filled in, and keep Save off while a field is marked.
-  // The server makes the same checks (settings.py check_projects) and has the last word; these save the round trip. Keep the two alike.
+  // --- Settings, Projects: one form per project (New project on top, then a row per saved project). Add repository rows, check each
+  // field once it has been filled in, and keep Save off while a field is marked. A name or repository is compared with the saved
+  // projects (the other rows' saved values), as the server does. The server makes the same checks (settings.py check_projects) and
+  // has the last word; these save the round trip. Keep the two alike.
   (function () {
-    var form = document.querySelector("form.pj-form");
-    if (!form) return;
+    var forms = document.querySelectorAll("form.pj-form");
+    if (!forms.length) return;
     var NAME;
     try { NAME = new RegExp("^[\\p{L}\\p{M}\\p{N}_ .-]{1,60}$", "u"); } catch (e) { NAME = /^[\w .-]{1,60}$/; }
-    var save = form.querySelector(".pj-save"), status = form.querySelector(".pj-status"), seen = {}, all = false;
-    function val(name) { var el = form.elements[name]; return el ? el.value.trim() : ""; }
-    function check() {                          // field name -> what is wrong with it
-      var bad = {}, names = {}, owner = {}, sets = form.querySelectorAll("fieldset[data-p]"), n = 0;
-      for (var s = 0; s < sets.length; s++) {
-        var i = sets[s].getAttribute("data-p"), name = val("p" + i + "_name"), rows = sets[s].querySelectorAll("tbody tr"), repos = 0;
+    function saved(self) {                      // the other saved projects: names and repositories as the page was drawn
+      var names = {}, owner = {};
+      for (var f = 0; f < forms.length; f++) {
+        var was = forms[f].elements.was.value;
+        if (forms[f] === self || !was) continue;
+        names[was.toLowerCase()] = true;
+        var ins = forms[f].querySelectorAll("input[name$=_repo]");
+        for (var r = 0; r < ins.length; r++) if (ins[r].defaultValue.trim()) owner[ins[r].defaultValue.trim().toLowerCase()] = was;
+      }
+      return { names: names, owner: owner };
+    }
+    function wire(form) {
+      var i = form.getAttribute("data-p"), save = form.querySelector(".pj-save"), status = form.querySelector(".pj-status"), seen = {}, all = false;
+      function val(name) { var el = form.elements[name]; return el ? el.value.trim() : ""; }
+      function check() {                        // field name -> what is wrong with it
+        var bad = {}, taken = saved(form), mine = {}, name = val("p" + i + "_name"), rows = form.querySelectorAll("tbody tr"), repos = 0;
         for (var j = 0; j < rows.length; j++) {
           var key = "p" + i + "_r" + j + "_repo", repo = slug(val(key)), role = val("p" + i + "_r" + j + "_role");
-          if (!repo) continue;                    // a row without a repository is not saved
+          if (!repo) continue;                  // a row without a repository is not saved
           repos++;
           var low = repo.toLowerCase();
           if (!REPO.test(repo)) bad[key] = "Write the repository as owner/name, like your-org/shop-web.";
-          else if (owner[low]) bad[key] = owner[low].p === i ? "This repository is listed twice." : repo + " is in two projects: " + owner[low].label + " and " + (name || "this one") + ".";
-          else owner[low] = { p: i, label: name || "project " + (n + 1) };
+          else if (mine[low]) bad[key] = "This repository is listed twice.";
+          else if (taken.owner[low]) bad[key] = repo + " is in two projects: " + taken.owner[low] + " and " + (name || "this one") + ".";
+          mine[low] = true;
           if (role.length > 300) bad["p" + i + "_r" + j + "_role"] = "Keep the role under 300 characters.";
         }
-        if (!name && !repos) continue;          // an empty project is not saved
-        n++;
         if (!name) bad["p" + i + "_name"] = "Give the project a name.";
         else if (!NAME.test(name)) bad["p" + i + "_name"] = "Use a short name: letters, digits, spaces, dot or dash, 60 characters at most.";
-        else if (names[name.toLowerCase()]) bad["p" + i + "_name"] = "Another project already has this name.";
-        names[name.toLowerCase()] = true;
+        else if (taken.names[name.toLowerCase()]) bad["p" + i + "_name"] = "Another project already has this name.";
         if (val("p" + i + "_desc").length > 500) bad["p" + i + "_desc"] = "Keep the description under 500 characters.";
         if (!repos) bad["p" + i + "_r0_repo"] = "Add at least one repository, as owner/name.";
+        return bad;
       }
-      return bad;
-    }
-    function show() {
-      var bad = check(), els = form.querySelectorAll("input[name^=p]"), shown = 0, firstBad = null;
-      for (var i = 0; i < els.length; i++) {
-        var why = all || seen[els[i].name] ? bad[els[i].name] : "";
-        mark(els[i], why);
-        if (why) { shown++; if (!firstBad) firstBad = els[i]; }
+      function show() {
+        var bad = check(), els = form.querySelectorAll("input[name^=p]"), shown = 0, firstBad = null;
+        for (var x = 0; x < els.length; x++) {
+          var why = all || seen[els[x].name] ? bad[els[x].name] : "";
+          mark(els[x], why);
+          if (why) { shown++; if (!firstBad) firstBad = els[x]; }
+        }
+        save.disabled = shown > 0;
+        status.textContent = shown ? "Correct the " + (shown === 1 ? "field" : shown + " fields") + " marked above to save." : "";
+        return firstBad;
       }
-      save.disabled = shown > 0;
-      status.textContent = shown ? "Correct the " + (shown === 1 ? "field" : shown + " fields") + " marked above to save." : "";
-      return firstBad;
-    }
-    var marked = form.querySelectorAll("[aria-invalid=true]");          // the server refused a save: its marks follow the typing from here on
-    for (var k = 0; k < marked.length; k++) seen[marked[k].name] = true;
-    if (marked.length) all = true;
-    var adds = form.querySelectorAll(".pj-add");
-    for (var a = 0; a < adds.length; a++) adds[a].hidden = false;
-    form.addEventListener("click", function (e) {
-      var b = e.target.closest(".pj-add");
-      if (!b) return;
-      var set = b.closest("fieldset"), body = set.querySelector("tbody"), last = body.lastElementChild, j = body.children.length, i = set.getAttribute("data-p");
-      if (!last || j >= +b.getAttribute("data-max")) return;
-      var tr = last.cloneNode(true), ins = tr.querySelectorAll("input"), old = tr.querySelectorAll(".f-err");
-      for (var o = 0; o < old.length; o++) old[o].parentNode.removeChild(old[o]);
-      for (var x = 0; x < ins.length; x++) {
-        var kind = /_role$/.test(ins[x].name) ? "role" : "repo";
-        ins[x].name = ins[x].id = "p" + i + "_r" + j + "_" + kind;
-        ins[x].value = "";
-        ins[x].removeAttribute("aria-invalid"); ins[x].removeAttribute("aria-describedby");
-        ins[x].setAttribute("aria-label", kind === "role" ? "Role of repository " + (j + 1) : "Repository " + (j + 1));
-      }
-      body.appendChild(tr);
-      if (j + 1 >= +b.getAttribute("data-max")) b.hidden = true;
-      ins[0].focus();
-    });
-    form.addEventListener("change", function (e) {
-      var el = e.target;
-      if (!el.name || !/^p\d/.test(el.name)) return;
-      if (/_repo$/.test(el.name)) el.value = slug(el.value);          // a pasted GitHub address becomes owner/name
-      seen[el.name] = true;
+      var marked = form.querySelectorAll("[aria-invalid=true]");          // the server refused a save: its marks follow the typing from here on
+      for (var k = 0; k < marked.length; k++) seen[marked[k].name] = true;
+      if (marked.length) all = true;
+      var add = form.querySelector(".pj-add");
+      add.hidden = false;
+      add.addEventListener("click", function () {
+        var body = form.querySelector("tbody"), last = body.lastElementChild, j = body.children.length;
+        if (!last || j >= +add.getAttribute("data-max")) return;
+        var tr = last.cloneNode(true), ins = tr.querySelectorAll("input"), old = tr.querySelectorAll(".f-err");
+        for (var o = 0; o < old.length; o++) old[o].parentNode.removeChild(old[o]);
+        for (var x = 0; x < ins.length; x++) {
+          var kind = /_role$/.test(ins[x].name) ? "role" : "repo";
+          ins[x].name = ins[x].id = "p" + i + "_r" + j + "_" + kind;
+          ins[x].value = ins[x].defaultValue = "";
+          ins[x].removeAttribute("aria-invalid"); ins[x].removeAttribute("aria-describedby");
+          ins[x].setAttribute("aria-label", kind === "role" ? "Role of repository " + (j + 1) : "Repository " + (j + 1));
+        }
+        body.appendChild(tr);
+        if (j + 1 >= +add.getAttribute("data-max")) add.hidden = true;
+        ins[0].focus();
+      });
+      form.addEventListener("change", function (e) {
+        var el = e.target;
+        if (!el.name || !/^p\d/.test(el.name)) return;
+        if (/_repo$/.test(el.name)) el.value = slug(el.value);          // a pasted GitHub address becomes owner/name
+        seen[el.name] = true;
+        show();
+      });
+      form.addEventListener("input", function () { show(); });
+      form.addEventListener("submit", function (e) {
+        var rm = e.submitter && e.submitter.classList.contains("pj-remove");
+        if (rm) {                               // removing needs no valid fields, only a yes
+          if (!window.confirm("Remove the project “" + e.submitter.getAttribute("data-name") + "”? The factory stops working on its " +
+                              "repositories unless they are also listed on their own (General), and its build order is forgotten.")) e.preventDefault();
+          return;
+        }
+        all = true;
+        var firstBad = show();
+        if (firstBad) { e.preventDefault(); firstBad.focus(); }
+      });
       show();
-    });
-    form.addEventListener("input", function () { show(); });
-    form.addEventListener("submit", function (e) {
-      all = true;
-      var firstBad = show();
-      if (firstBad) { e.preventDefault(); firstBad.focus(); }
-    });
-    show();
+    }
+    for (var f = 0; f < forms.length; f++) wire(forms[f]);
+    var here = document.querySelector(".pj-item[data-here]");           // the project just saved, or whose build order was looked for
+    if (here && !location.hash) here.scrollIntoView({ block: "start" });
   })();
   // --- Settings, General: the standalone repositories. Add rows, check each one once it has been filled in, and keep Save off while
   // one is marked. The server makes the same checks (settings.py check_repos) and asks GitHub about a new repository when you save;

@@ -113,20 +113,54 @@ class Settings(AdminCase):
         self.assertEqual(load(str(self.root / "config.toml")).runner.allow_hosts, ("api.anthropic.com", "registry.npmjs.org"))
         self.assertEqual(self.post(cookie, csrf, "/settings/save", [("section", "runner"), ("runner.memory", "3 gigs")])[0], 422)
 
-    def test_projects_edit_add_remove_and_validation(self):
+    def test_projects_add_edit_remove_one_at_a_time(self):
         cookie, csrf = self.session()
-        proj = {"p0_name": "shop", "p0_desc": "A shop", "p0_r0_repo": "your-org/shop-web", "p0_r0_role": "web", "p0_r1_repo": "your-org/shop-api", "p0_r1_role": "api"}
-        self.assertEqual(self.post(cookie, csrf, "/settings/projects", proj)[0], 303)
+        new = {"pj": "1", "was": "", "p1_name": "blog", "p1_desc": "A blog", "p1_r0_repo": "your-org/blog-web", "p1_r0_role": "web",
+               "p1_r1_repo": "your-org/blog-api", "p1_r1_role": "api"}
+        s, h, _ = self.post(cookie, csrf, "/settings/projects", new)
+        self.assertEqual((s, h["Location"]), (303, "/settings?section=projects&ok=saved&open=blog"))           # back with its row open
         cfg = load(str(self.root / "config.toml"))
-        self.assertEqual([r.repo for r in cfg.projects[0].repos], ["your-org/shop-web", "your-org/shop-api"])
-        self.assertIn("your-org/shop-api", cfg.repos)
-        self.assertEqual(self.post(cookie, csrf, "/settings/projects", {**proj, "p0_r1_repo": "not a repo"})[0], 422)
-        two = {**proj, "p1_name": "other", "p1_r0_repo": "your-org/shop-web", "p1_r0_role": "dup"}
-        s, _, html = self.post(cookie, csrf, "/settings/projects", two)
+        self.assertEqual([p.name for p in cfg.projects], ["shop", "blog"])
+        self.assertEqual([r.repo for r in cfg.projects[1].repos], ["your-org/blog-web", "your-org/blog-api"])
+        self.assertIn("your-org/blog-api", cfg.repos)
+        self.assertEqual(cfg.projects[0].repo("your-org/shop-packages").publish.detect, "release")            # the other project is untouched
+        s, h, _ = self.post(cookie, csrf, "/settings/projects", {"pj": "1", "was": "blog", "p1_name": "journal", "p1_r0_repo": "your-org/blog-web"})
+        self.assertEqual((s, h["Location"]), (303, "/settings?section=projects&ok=saved&open=journal"))
+        cfg = load(str(self.root / "config.toml"))
+        self.assertEqual(([p.name for p in cfg.projects], [r.repo for r in cfg.projects[1].repos]), (["shop", "journal"], ["your-org/blog-web"]))
+        # a clash with another project is marked on the project being saved, wherever it is in the list
+        s, _, html = self.post(cookie, csrf, "/settings/projects", {"pj": "0", "was": "shop", "p0_name": "shop", "p0_r0_repo": "your-org/shop-web",
+                                                                    "p0_r1_repo": "your-org/blog-web"})
         self.assertEqual(s, 422)
-        self.assertIn("is in two projects", html)
-        self.assertEqual(self.post(cookie, csrf, "/settings/projects", {"p0_name": "", "p0_r0_repo": ""})[0], 303)       # empty = remove all
+        self.assertIn('id="p0_r1_repo-err">your-org/blog-web is in two projects: journal and shop.', html)
+        self.assertIn('<details class="pj-item" id="pj-0" open data-here>', html)                              # its row is open on what was typed
+        s, _, html = self.post(cookie, csrf, "/settings/projects", {"pj": "2", "was": "", "p2_name": "Shop", "p2_r0_repo": "your-org/new"})
+        self.assertEqual(s, 422)
+        self.assertIn('id="p2_name-err">Another project already has this name.', html)
+        self.assertEqual(self.post(cookie, csrf, "/settings/projects", {"pj": "1", "was": "journal", "p1_r0_repo": "not a repo"})[0], 422)
+        s, _, html = self.post(cookie, csrf, "/settings/projects", {"pj": "1", "was": "gone", "p1_name": "gone", "p1_r0_repo": "o/r"})
+        self.assertEqual(s, 422)
+        self.assertIn("Reload the page", html)
+        self.assertEqual([p.name for p in load(str(self.root / "config.toml")).projects], ["shop", "journal"])  # none of these saved anything
+        s, h, _ = self.post(cookie, csrf, "/settings/projects", {"pj": "1", "was": "journal", "action": "remove", "p1_name": "journal", "p1_r0_repo": "x"})
+        self.assertEqual((s, h["Location"]), (303, "/settings?section=projects&ok=saved"))
+        self.assertEqual([p.name for p in load(str(self.root / "config.toml")).projects], ["shop"])
+        self.assertEqual(self.post(cookie, csrf, "/settings/projects", {"pj": "0", "was": "shop"})[0], 303)       # emptied = removed
         self.assertEqual(load(str(self.root / "config.toml")).projects, ())
+        self.assertEqual(self.post(cookie, csrf, "/settings/projects", {"pj": "0", "was": "", "action": "remove"})[0], 422)
+
+    def test_the_projects_page_puts_the_new_form_first_and_each_project_in_a_row(self):
+        cookie, csrf = self.session()
+        _, _, html = self.req("GET", "/settings?section=projects", cookie=cookie)
+        self.assertLess(html.index("<h2>New project</h2>"), html.index('class="pj-item"'))
+        self.assertIn('name="pj" value="1"><input type="hidden" name="was" value="">', html)                   # the new one comes after shop
+        self.assertIn('<details class="pj-item" id="pj-0"><summary><span class="pj-title">shop</span>'
+                      '<span class="pj-meta muted">3 repositories · build order set</span></summary>', html)
+        row = html[html.index('id="pj-0"'):html.index("</details>", html.index("Find package dependencies"))]
+        self.assertIn("<h3>Build order</h3>", row)                                                            # the build order is inside it
+        self.assertIn('class="secondary pj-remove" data-name="shop">Remove project</button>', row)
+        _, _, html = self.req("GET", "/settings?section=projects&open=shop", cookie=cookie)
+        self.assertIn('<details class="pj-item" id="pj-0" open data-here>', html)
 
     def test_standalone_repositories_are_rows_with_a_description_and_new_ones_are_checked_with_the_token(self):
         from factory.config import project_for
@@ -192,31 +226,30 @@ class Settings(AdminCase):
 
     def test_a_refused_projects_save_keeps_what_was_typed_and_marks_each_field(self):
         cookie, csrf = self.session()
-        typed = {"p0_name": "shop", "p0_desc": "A shop", "p0_r0_repo": "your-org/shop-web", "p0_r0_role": "the storefront", "p0_r1_repo": "not a repo",
-                 "p0_r1_role": "api", "p3_name": "empty", "p3_r2_role": "orphan role", "p4_name": "bad/name", "p4_r0_repo": "your-org/shop-web"}
+        typed = {"pj": "1", "was": "", "p1_name": "bad/name", "p1_desc": "A blog", "p1_r0_repo": "your-org/blog-web", "p1_r0_role": "the storefront",
+                 "p1_r2_repo": "not a repo", "p1_r2_role": "api", "p1_r4_repo": "your-org/shop-web"}
         s, _, html = self.post(cookie, csrf, "/settings/projects", typed)
         self.assertEqual(s, 422)
-        self.assertIn("Nothing was saved. Correct the 4 fields marked below.", html)
-        for kept in ('value="A shop"', 'value="the storefront"', 'value="not a repo"', 'value="empty"', 'value="bad/name"'):
+        self.assertIn("Nothing was saved. Correct the 3 fields marked below.", html)
+        for kept in ('value="A blog"', 'value="the storefront"', 'value="not a repo"', 'value="bad/name"'):
             self.assertIn(kept, html)
-        # empty slots close up, so the second project typed is p1 and the third p2
-        self.assertIn('name="p0_r1_repo" id="p0_r1_repo" placeholder="owner/name" aria-label="Repository 2"  value="not a repo" aria-invalid="true" aria-describedby="p0_r1_repo-err">'
-                      '<p class="f-err" id="p0_r1_repo-err">Write the repository as owner/name, like your-org/shop-web.</p>', html)
-        self.assertIn('id="p1_r0_repo-err">Add at least one repository, as owner/name.', html)
-        self.assertIn('id="p2_name-err">Use a short name', html)
-        self.assertIn('id="p2_r0_repo-err">your-org/shop-web is in two projects: shop and bad/name.', html)
-        self.assertEqual(html.count('class="f-err"'), 4)
-        self.assertEqual(load(str(self.root / "config.toml")).projects[0].name if load(str(self.root / "config.toml")).projects else "", "shop")   # the example's project, untouched
+        # empty rows close up, so the second repository typed is r1 and the third r2
+        self.assertIn('name="p1_r1_repo" id="p1_r1_repo" placeholder="owner/name" aria-label="Repository 2"  value="not a repo" aria-invalid="true" aria-describedby="p1_r1_repo-err">'
+                      '<p class="f-err" id="p1_r1_repo-err">Write the repository as owner/name, like your-org/shop-web.</p>', html)
+        self.assertIn('id="p1_name-err">Use a short name', html)
+        self.assertIn('id="p1_r2_repo-err">your-org/shop-web is in two projects: shop and bad/name.', html)
+        self.assertEqual(html.count('class="f-err"'), 3)
+        self.assertEqual([p.name for p in load(str(self.root / "config.toml")).projects], ["shop"])           # the example's project, untouched
 
     def test_projects_take_a_pasted_github_address_and_more_than_two_new_repos(self):
         cookie, csrf = self.session()
-        form = {"p0_name": "Yuki", "p0_r0_repo": "https://github.com/theninjadojo/ninja-packages", "p0_r1_repo": "git@github.com:theninjadojo/yuki-api.git",
-                "p0_r2_repo": "github.com/theninjadojo/yuki-web/tree/main", "p0_r3_repo": "theninjadojo/yuki-docs", "p0_r7_repo": " theninjadojo/yuki-infra "}
+        form = {"pj": "1", "was": "", "p1_name": "Yuki", "p1_r0_repo": "https://github.com/theninjadojo/ninja-packages", "p1_r1_repo": "git@github.com:theninjadojo/yuki-api.git",
+                "p1_r2_repo": "github.com/theninjadojo/yuki-web/tree/main", "p1_r3_repo": "theninjadojo/yuki-docs", "p1_r7_repo": " theninjadojo/yuki-infra "}
         self.assertEqual(self.post(cookie, csrf, "/settings/projects", form)[0], 303)
-        self.assertEqual([r.repo for r in load(str(self.root / "config.toml")).projects[0].repos],
+        self.assertEqual([r.repo for r in load(str(self.root / "config.toml")).projects[1].repos],
                          ["theninjadojo/ninja-packages", "theninjadojo/yuki-api", "theninjadojo/yuki-web", "theninjadojo/yuki-docs", "theninjadojo/yuki-infra"])
         _, _, html = self.req("GET", "/settings?section=projects", cookie=cookie)
-        self.assertEqual(html.count('name="p0_r'), 14)                       # five repos and two spare rows, each a repository and a role
+        self.assertEqual(html.count('name="p1_r'), 14)                       # five repos and two spare rows, each a repository and a role
         self.assertIn('class="secondary pj-add" data-max="30" hidden>Add repository</button>', html)
 
     def test_alias_rules_and_classifier_tester(self):

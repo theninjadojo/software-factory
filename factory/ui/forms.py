@@ -354,58 +354,62 @@ def _how(pub: dict) -> str:
     return {"workflow": f"by the {pub.get('workflow', '?')} workflow", "tag": "with a tag"}.get(d, "with a GitHub release")
 
 
-def build_order(eff: dict, csrf: str, found: dict | None = None, lock_state: str = "", lock_cmd: str = "") -> str:
-    """The Projects page's "Build order" card: which repo publishes packages the others install (so its change ships first), with
-    a button to find that out from GitHub (depdetect.py) and Apply / Remove. found: {project name: (suggestions, problems)}.
-    lock_state: "" (lockfile refresh not asked for), "ok", or a short sentence on what is missing; lock_cmd: the worker setup command."""
-    projects = [p for p in eff.get("projects", []) if p.get("name")]
-    if not projects:
-        return ""
-    out = ['<section class="card build-order"><h2>Build order</h2><p class="muted">When one repo publishes packages that another installs, '
+def _repos(p: dict) -> list[dict]:
+    return [r if isinstance(r, dict) else {"repo": r} for r in p.get("repos", [])]
+
+
+def build_order(p: dict, csrf: str, found: tuple | None = None) -> str:
+    """A saved project's build order, inside its row of the Projects page: which repo publishes packages the others install (so its
+    change ships first), with a button to find that out from GitHub (depdetect.py) and Apply / Remove.
+    found: depdetect's (suggestions, problems) for this project, None when it has not been looked for."""
+    repos = _repos(p)
+    hidden = f'{csrf_field(csrf)}<input type="hidden" name="project" value="{esc(p["name"])}">'
+    out = ['<section class="bo-project"><h3>Build order</h3><p class="muted">When one repo publishes packages that another installs, '
            'a change to both ships in two steps: the packages first, then, once they are merged and published, the repo that uses them. '
            'The factory can find these links from the repos\' package.json files and workflows.</p>']
-    for p in projects:
-        repos = [r if isinstance(r, dict) else {"repo": r} for r in p.get("repos", [])]
-        name, hidden = p["name"], f'{csrf_field(csrf)}<input type="hidden" name="project" value="{esc(p["name"])}">'
-        out.append(f'<div class="bo-project"><h3>{esc(name)}</h3>')
-        now = [r for r in repos if isinstance(r.get("publish"), dict)]
-        for r in now:
-            users = [x["repo"] for x in repos if {r["repo"], _repo_name(r["repo"])} & set(x.get("depends_on", []))]
-            out.append(f'<div class="bo-row"><p><strong>{esc(_repo_name(r["repo"]))}</strong> publishes {_how(r["publish"])}, then '
-                       f'<strong>{esc(", ".join(_repo_name(u) for u in users) or "no repo")}</strong> is built against it.</p>'
-                       f'<form method="post" action="/settings/projects/deps" class="inline">{hidden}<input type="hidden" name="publisher" value="{esc(r["repo"])}">'
-                       '<button name="action" value="remove" class="secondary">Remove</button></form></div>')
-        if not now:
-            out.append('<p class="muted">No build order set: every repo is built in the same step.</p>')
-        sug, problems = (found or {}).get(name, (None, []))
-        for s in sug or []:
-            if any(isinstance(r.get("publish"), dict) and r["repo"] == s.publisher and r["publish"].get("detect") == s.detect
-                   and r["publish"].get("workflow", "") == s.workflow and sorted(r["publish"].get("packages", [])) == sorted(s.packages) for r in now):
-                out.append(f'<p class="muted">Found: {esc(_repo_name(s.publisher))} → {esc(", ".join(_repo_name(c) for c in s.consumers))}, already set.</p>')
-                continue
-            fields = "".join(f'<input type="hidden" name="{k}" value="{esc(v)}">' for k, v in
-                             (("publisher", s.publisher), ("detect", s.detect), ("workflow", s.workflow), ("packages", ",".join(s.packages)),
-                              ("consumers", ",".join(s.consumers))))
-            uses = "; ".join(f"{_repo_name(c)} uses {len(ns)} of its packages" for c, ns in s.consumers.items())
-            out.append(f'<form method="post" action="/settings/projects/deps" class="bo-suggest">{hidden}{fields}'
-                       f'<p><strong>Suggested:</strong> {esc(_repo_name(s.publisher))} publishes packages ({esc(uses)}). '
-                       f'{esc(s.note)}.</p>'
-                       f'<details><summary>{len(s.packages)} packages</summary><p class="muted">{esc(", ".join(s.packages))}</p></details>'
-                       + (f'<p class="muted">After merging, someone runs {esc(s.workflow)}; the factory waits for it and reminds you if it has not run.</p>' if s.manual else "")
-                       + '<label class="check"><input type="checkbox" name="lockfiles" value="1" checked> Also refresh the lockfile of '
-                       f'{esc(", ".join(_repo_name(c) for c in s.consumers))} on a worker, so its CI installs the new version</label>'
-                       '<button name="action" value="apply">Apply</button></form>')
-        if sug is not None and not sug:
-            out.append('<p class="muted">Nothing found: no repo of this project installs packages another one publishes.</p>')
-        for why in problems:
-            out.append(f'<p class="muted">{esc(why)}</p>')
-        out.append(f'<form method="post" action="/settings/projects/detect" class="inline">{hidden}'
-                   f'<button class="secondary">{"Look again" if sug is not None else "Find package dependencies"}</button></form></div>')
-    if lock_state and lock_state != "ok":
-        out.append(f'<p class="bo-hint"><strong>Lockfile refresh:</strong> {esc(lock_state)}'
-                   + (f' On a worker machine run:</p><pre class="bo-cmd"><code>{esc(lock_cmd)}</code></pre>' if lock_cmd else "</p>"))
-    out.append("</section>")
+    now = [r for r in repos if isinstance(r.get("publish"), dict)]
+    for r in now:
+        users = [x["repo"] for x in repos if {r["repo"], _repo_name(r["repo"])} & set(x.get("depends_on", []))]
+        out.append(f'<div class="bo-row"><p><strong>{esc(_repo_name(r["repo"]))}</strong> publishes {_how(r["publish"])}, then '
+                   f'<strong>{esc(", ".join(_repo_name(u) for u in users) or "no repo")}</strong> is built against it.</p>'
+                   f'<form method="post" action="/settings/projects/deps" class="inline">{hidden}<input type="hidden" name="publisher" value="{esc(r["repo"])}">'
+                   '<button name="action" value="remove" class="secondary">Remove</button></form></div>')
+    if not now:
+        out.append('<p class="muted">No build order set: every repo is built in the same step.</p>')
+    sug, problems = found or (None, [])
+    for s in sug or []:
+        if any(isinstance(r.get("publish"), dict) and r["repo"] == s.publisher and r["publish"].get("detect") == s.detect
+               and r["publish"].get("workflow", "") == s.workflow and sorted(r["publish"].get("packages", [])) == sorted(s.packages) for r in now):
+            out.append(f'<p class="muted">Found: {esc(_repo_name(s.publisher))} → {esc(", ".join(_repo_name(c) for c in s.consumers))}, already set.</p>')
+            continue
+        fields = "".join(f'<input type="hidden" name="{k}" value="{esc(v)}">' for k, v in
+                         (("publisher", s.publisher), ("detect", s.detect), ("workflow", s.workflow), ("packages", ",".join(s.packages)),
+                          ("consumers", ",".join(s.consumers))))
+        uses = "; ".join(f"{_repo_name(c)} uses {len(ns)} of its packages" for c, ns in s.consumers.items())
+        out.append(f'<form method="post" action="/settings/projects/deps" class="bo-suggest">{hidden}{fields}'
+                   f'<p><strong>Suggested:</strong> {esc(_repo_name(s.publisher))} publishes packages ({esc(uses)}). '
+                   f'{esc(s.note)}.</p>'
+                   f'<details><summary>{len(s.packages)} packages</summary><p class="muted">{esc(", ".join(s.packages))}</p></details>'
+                   + (f'<p class="muted">After merging, someone runs {esc(s.workflow)}; the factory waits for it and reminds you if it has not run.</p>' if s.manual else "")
+                   + '<label class="check"><input type="checkbox" name="lockfiles" value="1" checked> Also refresh the lockfile of '
+                   f'{esc(", ".join(_repo_name(c) for c in s.consumers))} on a worker, so its CI installs the new version</label>'
+                   '<button name="action" value="apply">Apply</button></form>')
+    if sug is not None and not sug:
+        out.append('<p class="muted">Nothing found: no repo of this project installs packages another one publishes.</p>')
+    for why in problems:
+        out.append(f'<p class="muted">{esc(why)}</p>')
+    out.append(f'<form method="post" action="/settings/projects/detect" class="inline">{hidden}'
+               f'<button class="secondary">{"Look again" if sug is not None else "Find package dependencies"}</button></form></section>')
     return "".join(out)
+
+
+def lockfile_hint(lock_state: str, lock_cmd: str) -> str:
+    """Under the projects. lock_state: "" (lockfile refresh not asked for), "ok", or a short sentence on what is missing; lock_cmd: the
+    worker setup command."""
+    if not lock_state or lock_state == "ok":
+        return ""
+    return (f'<p class="bo-hint"><strong>Lockfile refresh:</strong> {esc(lock_state)}'
+            + (f' On a worker machine run:</p><pre class="bo-cmd"><code>{esc(lock_cmd)}</code></pre>' if lock_cmd else "</p>"))
 
 
 def _checked(name: str, errors: dict, attrs: str, value: str) -> str:
@@ -415,28 +419,59 @@ def _checked(name: str, errors: dict, attrs: str, value: str) -> str:
     return f'<input name="{name}" id="{name}" {attrs} value="{esc(value)}"{mark}>' + (f'<p class="f-err" id="{name}-err">{esc(why)}</p>' if why else "")
 
 
-def projects_form(base: dict, eff: dict, csrf: str, submitted=None, errors: dict | None = None) -> str:
-    """A refused save shows what was typed (S.read_projects, so the fields line up with S.check_projects' names), not the saved projects."""
+def _project_form(i: int, p: dict, was: str, csrf: str, errors: dict) -> str:
+    """One project's form, its fields named p{i}_... (S.read_project). was: its saved name, '' for the New project form."""
+    repos = (_repos(p) + [{"repo": "", "role": ""}, {"repo": "", "role": ""}])[:S.MAX_PROJECT_REPOS]
+    rows = "".join(
+        f'<tr><td data-l="Repository">{_checked(f"p{i}_r{j}_repo", errors, f"""placeholder="owner/name" aria-label="Repository {j + 1}" """, r["repo"])}</td>'
+        f'<td data-l="Role">{_checked(f"p{i}_r{j}_role", errors, f"""placeholder="what this repo is for" maxlength="300" class="wide" aria-label="Role of repository {j + 1}" """, r.get("role", ""))}</td></tr>'
+        for j, r in enumerate(repos))
+    status = '<span class="pj-status muted" role="status"></span>'
+    actions = (f'<button class="pj-save">Add project</button>{status}' if not was else         # Save first: the button Enter presses
+               f'<button class="pj-save">Save project</button>{status}<button name="action" value="remove" class="secondary pj-remove" data-name="{esc(was)}">Remove project</button>')
+    return (f'<form method="post" action="/settings/projects" class="settings pj-form" data-p="{i}">{csrf_field(csrf)}'
+            f'<input type="hidden" name="pj" value="{i}"><input type="hidden" name="was" value="{esc(was)}">'
+            f'<div class="field"><label for="p{i}_name">Name</label>{_checked(f"p{i}_name", errors, """maxlength="60" """, p.get("name", ""))}</div>'
+            f'<div class="field"><label for="p{i}_desc">Description</label>{_checked(f"p{i}_desc", errors, """maxlength="500" class="wide" """, p.get("description", ""))}</div>'
+            f'<table class="stack"><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table>'
+            f'<button type="button" class="secondary pj-add" data-max="{S.MAX_PROJECT_REPOS}" hidden>Add repository</button>'
+            f'<div class="pj-actions">{actions}</div></form>')
+
+
+def projects_form(base: dict, eff: dict, csrf: str, submitted=None, errors: dict | None = None, open_name: str = "",
+                  found: dict | None = None, lock_state: str = "", lock_cmd: str = "") -> str:
+    """The Projects page: the New project form on top, then each saved project as a row that opens on its form and build order.
+    A refused save shows what was typed in that one form (S.read_project, so the fields line up with S.check_projects' names) and
+    opens its row. open_name: the project row to open (just saved, or its build order looked for). found: {project name: (suggestions,
+    problems)} from depdetect."""
     errors = errors or {}
-    projects = S.read_projects(submitted) if submitted is not None else list(eff.get("projects", []))
-    projects = (projects + [{"name": "", "description": "", "repos": []}])[:S.MAX_PROJECTS]
-    out = ['<p class="muted">Repositories that work together are one project: agents get all of them side by side and may change several in one task.</p>',
-           f'<form method="post" action="/settings/projects" class="settings pj-form">{csrf_field(csrf)}']
-    for i, p in enumerate(projects):
-        repos = (list(p.get("repos", [])) + [{"repo": "", "role": ""}, {"repo": "", "role": ""}])[:S.MAX_PROJECT_REPOS]
-        rows = "".join(
-            f'<tr><td data-l="Repository">{_checked(f"p{i}_r{j}_repo", errors, f"""placeholder="owner/name" aria-label="Repository {j + 1}" """, r["repo"])}</td>'
-            f'<td data-l="Role">{_checked(f"p{i}_r{j}_role", errors, f"""placeholder="what this repo is for" maxlength="300" class="wide" aria-label="Role of repository {j + 1}" """, r.get("role", ""))}</td></tr>'
-            for j, r in enumerate(repos))
-        out.append(f'<fieldset data-p="{i}"><legend>{esc(p["name"] or "New project")}</legend>'
-                   f'<div class="field"><label for="p{i}_name">Name</label>{_checked(f"p{i}_name", errors, """maxlength="60" """, p["name"])}</div>'
-                   f'<div class="field"><label for="p{i}_desc">Description</label>{_checked(f"p{i}_desc", errors, """maxlength="500" class="wide" """, p.get("description", ""))}</div>'
-                   f'<table class="stack"><thead><tr><th>Repository</th><th>Role</th></tr></thead><tbody>{rows}</tbody></table>'
-                   f'<button type="button" class="secondary pj-add" data-max="{S.MAX_PROJECT_REPOS}" hidden>Add repository</button></fieldset>')
-    out.append('<button class="pj-save">Save projects</button> <span class="pj-status muted" role="status"></span></form>'
-               '<p class="muted">Paste a repository as owner/name or as its GitHub address. Leave a project\'s name and repositories empty to remove it.</p>'
-               '<p class="muted">Starting from nothing? <a href="/projects/new">Start a new project</a>: an agent asks what you want to build '
-               'and recommends a pattern with tests, CI and deployment set up.</p>')
+    saved = [p for p in eff.get("projects", []) if p.get("name")]
+    typed, was = (S.read_project(submitted, S.form_slot(submitted)), (submitted.get("was") or "").strip()) if submitted is not None else (None, "")
+    if typed is not None and was:
+        open_name = was
+    new = len(saved)
+    out = ['<p class="muted">Repositories that work together are one project: agents get all of them side by side and may change several in one task.</p>']
+    if new < S.MAX_PROJECTS:
+        out.append('<section class="card pj-new"><h2>New project</h2>'
+                   + _project_form(new, typed if typed is not None and not was else {}, "", csrf, errors if not was else {})
+                   + '<p class="muted">Paste a repository as owner/name or as its GitHub address.</p>'
+                   '<p class="muted">Starting from nothing? <a href="/projects/new">Start a new project</a>: an agent asks what you want to build '
+                   'and recommends a pattern with tests, CI and deployment set up.</p></section>')
+    else:
+        out.append(f'<p class="muted">{S.MAX_PROJECTS} projects is the most the factory takes: remove one to add another.</p>')
+    if saved:
+        out.append(f'<section class="pj-list"><h2>Configured projects <span class="muted">{len(saved)}</span></h2>')
+        for k, p in enumerate(saved):
+            repos, here = _repos(p), p["name"] == open_name
+            n, steps = len(repos), any(isinstance(r.get("publish"), dict) for r in repos)
+            meta = f'{n} repositor{"y" if n == 1 else "ies"}' + (" · build order set" if steps else "")
+            shown = typed if here and typed is not None else p
+            out.append(f'<details class="pj-item" id="pj-{k}"{" open data-here" if here else ""}>'
+                       f'<summary><span class="pj-title">{esc(p["name"])}</span><span class="pj-meta muted">{meta}</span></summary>'
+                       f'<div class="pj-body">{_project_form(k, shown, p["name"], csrf, errors if here else {})}'
+                       f'{build_order(p, csrf, (found or {}).get(p["name"]))}</div></details>')
+        out.append("</section>")
+    out.append(lockfile_hint(lock_state, lock_cmd))
     return "".join(out)
 
 
