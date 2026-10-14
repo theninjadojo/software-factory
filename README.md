@@ -105,6 +105,9 @@ Other labels the factory manages: `factory:working[-role]`, `factory:pr-open`, `
   completion. Low scores come with suggestions; nothing is changed by them. Off by default (`[evaluate]`); see the Evaluate page.
 - **Admin UI.** See what is happening and what happened (runs, decisions, PRs and CI, an event timeline), and change settings,
   credentials, Telegram and agent harnesses without editing files. Authenticated, loopback by default. See [docs/ui.md](docs/ui.md).
+- **Command-line client.** `shikumi` does from a terminal what the Tickets page and the Floor do (status, tickets, answering
+  questions, starting, closing and creating tickets), on any number of factories, with a token per computer. A static Linux
+  binary ships with each release. See [docs/cli.md](docs/cli.md).
 - **Other agents.** A harness is `{image, credential, command, hosts}`. Claude Code is built in; Codex and Gemini ship as
   experimental templates.
 
@@ -311,6 +314,7 @@ Everything is in one TOML file (plus the optional `config.overrides.toml` the UI
 
 ```bash
 python3 -m unittest discover -s tests     # standard library only; no network, no containers
+cd cli && cargo test                      # the command-line client (Rust)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/architecture.md](docs/architecture.md).

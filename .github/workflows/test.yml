@@ -34,3 +34,27 @@ jobs:
       - run: docker run --rm --entrypoint python3 -w /app software-factory:ci -m unittest discover -s tests
       - run: docker compose version
       - run: FACTORY_HOME=/tmp/fh DOCKER_GID=0 docker compose config -q
+  # The command-line client (cli/, Rust; docs/cli.md): format, lints, its own tests, a static (musl) build like the release's, and
+  # the built binary end to end against a real factory UI (tests/test_cli_e2e.py).
+  cli:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            cli/target
+          key: cli-${{ hashFiles('cli/Cargo.lock', 'cli/rust-toolchain.toml') }}
+      - run: sudo apt-get install -y musl-tools && rustup show active-toolchain
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl && file target/x86_64-unknown-linux-musl/release/shikumi | grep -q 'static'
+      - run: SHIKUMI_CLI_BIN=$PWD/cli/target/debug/shikumi python3 -m unittest tests.test_cli_e2e -v
+        working-directory: .
