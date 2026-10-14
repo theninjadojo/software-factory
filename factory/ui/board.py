@@ -415,6 +415,33 @@ def counts(rows: list[dict]) -> dict:
     return c
 
 
+def chosen_project(cfg, asked: str) -> str:
+    """The project filter asked for, when it is a configured name (or Standalone); "" otherwise."""
+    return asked if asked in {v for v, _ in project_options(cfg)} else ""
+
+
+def list_filters(q: dict, rows: list[dict]) -> tuple[str, str, str, str]:
+    """(stage filter, station, search text, sort) of the Tickets list, each from its allowlist. The filter defaults to Needs you
+    while anything needs a person, else All."""
+    flt = q.get("stage") if q.get("stage") in {k for k, _, _ in FILTERS} else ("needs" if counts(rows)["needs"] else "all")
+    at = q.get("at") if q.get("at") in LABEL else ""
+    text, order = (q.get("q") or "").strip()[:100], q.get("sort") if q.get("sort") in ("oldest", "priority") else "latest"
+    return flt, at, text, order
+
+
+def enrich(db, sel: dict) -> tuple:
+    """What a ticket's own page adds to its row: design imports, open review notes, the verify job and a Done ticket's outcome
+    (set on sel), and (design files, stage documents, events, has images) from ticket_extras."""
+    from .. import reviewnotes as RN
+    extras = ticket_extras(db, sel["repo"], sel["issue"], sel["journey"])
+    sel["design_imports"] = dbm.design_imports(db, sel["repo"], sel["issue"])
+    sel["review_notes"] = RN.notes(db, sel["repo"], sel["issue"], open_only=True)
+    sel["verify"] = ticket_verify(db, sel["repo"], sel["issue"])
+    if sel["state"] == "done":
+        sel["outcome_full"] = outcome_of(sel, dbm.doc_heads(db, [(sel["repo"], sel["issue"])]).get((sel["repo"], sel["issue"])))
+    return extras
+
+
 def pick(rows: list[dict], flt: str, at: str = "", q: str = "", order: str = "latest") -> list[dict]:
     out = [r for r in rows if flt in ("", "all") or r["state"] == flt or (flt == "prs" and _open_pr(r))]
     if at in LABEL:
@@ -1273,31 +1300,38 @@ def needs_tray(needs, csrf: str) -> str:
             f'<div class="sd-acts">{bulk}<a class="btn secondary" href="/tickets?stage=needs">Open in Tickets</a></div></div>{rows}</section>')
 
 
+def tile_numbers(d: dict, rows: list[dict], needs, now: float) -> dict:
+    """The Floor's five tiles as numbers (App.overview's d, the ticket rows, the Needs-you rows or None while GitHub is asked)."""
+    open_prs = [p for p in d["prs"] if views.live_pr(p)]
+    today = [r for r in d["recent"] if (r.get("finished") or r["started"]) > now - 86400]
+    nneeds = len(needs) if needs is not None else counts(rows)["needs"]
+    asking = sum(1 for r in needs or [] if r.get("st"))
+    return {"needs": nneeds, "asking": asking, "deciding": nneeds - asking,
+            "running": len(d["running"]),
+            "working_at": sorted({LABEL.get(_RUN_AT.get(x.get("stage") or "", "") or ("build" if x["kind"] in ("build", "fix") else "review" if x["kind"] == "review" else ""), "a run").lower()
+                                  for x in d["running"]}),
+            "open_prs": len(open_prs), "checks_running": sum(p["status"] == "watching" for p in open_prs),
+            "checks_failing": sum(p["status"] == "failed" for p in open_prs),
+            "passed_today": sum(r["status"] in ("passed", "pr", "stage") for r in today), "runs_today": len(today),
+            "failed": [r for r in rows if r["state"] == "failed"]}
+
+
 def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar: str = "") -> str:
     from . import floor
     cfg = d["cfg"]
-    c = counts(rows)
     paused = d["paused"]
     state = f"Paused: {paused}" if paused else "running"
     line = f'{"Live" if cfg["live"] else "Dry run"} · {state} · polling every {int(cfg["poll_seconds"])} s'
     last = d["status"].get("last_poll_ok", {}).get("value")
     seen = f"last poll {ago(float(last), now)}" if last else "no poll yet"
     line += f" · Not reporting, {seen}" if floor._stale(d, now) else f" · Healthy, {seen}"
-    open_prs = [p for p in d["prs"] if views.live_pr(p)]
-    checks = sum(p["status"] == "watching" for p in open_prs)
-    failing = sum(p["status"] == "failed" for p in open_prs)
-    today = [r for r in d["recent"] if (r.get("finished") or r["started"]) > now - 86400]
-    passed = sum(r["status"] in ("passed", "pr", "stage") for r in today)
-    work_at = sorted({LABEL.get(_RUN_AT.get(x.get("stage") or "", "") or ("build" if x["kind"] in ("build", "fix") else "review" if x["kind"] == "review" else ""), "a run").lower()
-                      for x in d["running"]})
-    fail_rows = [r for r in rows if r["state"] == "failed"]
-    nneeds = len(needs) if needs is not None else c["needs"]
-    asking = sum(1 for r in needs or [] if r.get("st"))
+    t = tile_numbers(d, rows, needs, now)
+    nneeds, asking, fail_rows = t["needs"], t["asking"], t["failed"]
     needs_sub = ("asking GitHub…" if d.get("needs_loading") else f"{asking} with questions, {nneeds - asking} to decide" if nneeds else "nothing waiting")
     tiles = (_tile("/tickets?stage=needs", "Needs you", nneeds, "wait", needs_sub, hot=bool(nneeds))
-             + _tile("/tickets?stage=working", "Working now", len(d["running"]), "run", " and ".join(work_at) if d["running"] else "nothing running")
-             + _tile("/tickets?stage=prs", "PRs & CI", f'{len(open_prs)} <small>open</small>', "run", f"{checks} running checks, {failing} failing")
-             + _tile("/runs?status=passed", "Done today", passed, "done", f"{len(today)} runs in the last 24 hours")
+             + _tile("/tickets?stage=working", "Working now", t["running"], "run", " and ".join(t["working_at"]) if d["running"] else "nothing running")
+             + _tile("/tickets?stage=prs", "PRs & CI", f'{t["open_prs"]} <small>open</small>', "run", f"{t['checks_running']} running checks, {t['checks_failing']} failing")
+             + _tile("/runs?status=passed", "Done today", t["passed_today"], "done", f"{t['runs_today']} runs in the last 24 hours")
              + _tile("/tickets?stage=failed", "Failed", len(fail_rows), "fail", f'#{fail_rows[0]["issue"]} {fail_rows[0]["why"]}'[:48] if fail_rows else "none"))
     head = (f'<div class="sd-dash-head"><div><p class="muted sd-fine">{esc(line)}</p><h1>Factory</h1></div>'
             f'<div class="sd-acts"><a class="btn" href="/projects/new">New project</a>{floor.pause_form(paused, csrf)}<a class="btn secondary" href="/?mode=confirm">Mode: {"live" if cfg["live"] else "dry run"}</a></div></div>')

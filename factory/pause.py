@@ -43,3 +43,16 @@ def set_backoff(state_dir: str | Path, seconds: int) -> bool:
             out.write(str(max(current, now + seconds)))
         os.replace(tmp, f)
         return current <= now
+
+
+def pause_manual(state_dir: str | Path) -> None:
+    """A person's pause (the Floor's button, `ctl pause`, the API): no new work starts until they resume."""
+    (Path(state_dir) / "PAUSED").write_text("")
+
+
+def resume(state_dir: str | Path) -> None:
+    """End a person's pause and any rate-limit backoff."""
+    d = Path(state_dir)
+    (d / "PAUSED").unlink(missing_ok=True)
+    with _lock:
+        (d / "pause_until").unlink(missing_ok=True)

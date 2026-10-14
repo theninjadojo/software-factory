@@ -101,19 +101,16 @@ def _write(h):
     return db
 
 
-def priority_post(h, form, csrf: str) -> None:
+def set_priority(h, repo: str, n, choice: str) -> str:
     """Pin a priority (its label changes to match) or hand it back to the project manager. The labels change first: if that fails,
     nothing is pinned."""
-    cfg, choice = h.app.cfg(), form.get("priority", "")
-    try:
-        repo, n = L._repo(cfg, form.get("repo", "")), L._number(form.get("n", ""))
-        if choice not in (*plan.PRIORITIES, "pm"):
-            raise L.Refused("Pick a priority.")
-    except L.Refused as e:
-        return L._done(h, form, csrf, str(e), "bad")
+    cfg = h.app.cfg()
+    repo, n = L._repo(cfg, repo), L._number(str(n))
+    if choice not in (*plan.PRIORITIES, "pm"):
+        raise L.Invalid("Pick a priority.")
     gh = L._gh_for(h, cfg, n)
     if gh is None:
-        return L._done(h, form, csrf, L.NO_TOKEN, "bad")
+        raise L.NoToken(L.NO_TOKEN)
     try:
         names = [lb.get("name", "") for lb in gh.get_issue(repo, n).get("labels", [])]
         if choice != "pm":
@@ -123,9 +120,12 @@ def priority_post(h, form, csrf: str) -> None:
                     gh.remove_label(repo, n, x)
             if target and target not in {x.strip().lower() for x in names}:
                 gh.add_labels(repo, n, [target])
-    except (LookupError, urllib.error.URLError, OSError) as e:
+    except LookupError:
         log.warning("priority: %s#%d could not be changed", repo, n)
-        return L._done(h, form, csrf, L._github_error(e) if not isinstance(e, LookupError) else "There is no such ticket.", "bad")
+        raise L.NotFound("There is no such ticket.") from None
+    except (urllib.error.URLError, OSError) as e:
+        log.warning("priority: %s#%d could not be changed", repo, n)
+        raise L.Upstream(L._github_error(e)) from None
     db = _write(h)
     try:
         if choice == "pm":
@@ -135,8 +135,16 @@ def priority_post(h, form, csrf: str) -> None:
     finally:
         db.close()
     log.info("priority: %s %s#%d", choice, repo, n)
-    L._done(h, form, csrf, "The project manager decides this ticket's priority again." if choice == "pm"
+    return ("The project manager decides this ticket's priority again." if choice == "pm"
             else f"Pinned at {PRIO_WORD[choice]}. The project manager will not change it.")
+
+
+def priority_post(h, form, csrf: str) -> None:
+    try:
+        msg = set_priority(h, form.get("repo", ""), form.get("n", ""), form.get("priority", ""))
+    except L.Refused as e:
+        return L._done(h, form, csrf, str(e), "bad")
+    L._done(h, form, csrf, msg)
 
 
 def milestone_post(h, form, csrf: str) -> None:

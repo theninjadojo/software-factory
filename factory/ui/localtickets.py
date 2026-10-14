@@ -194,64 +194,84 @@ def failed_extras(cfg, issue: dict, repo: str, csrf: str, back: str, decision: d
 
 
 # ---------------------------------------------------------------- actions
-def _target(h, form) -> tuple[str, int]:
+def target(h, repo: str, n) -> tuple[str, int]:
+    """A local ticket the request names: a configured repository and a local number that exists."""
     cfg = h.app.cfg()
-    repo, n = L._repo(cfg, form.get("repo", "")), L._number(form.get("n", ""))
+    repo, n = L._repo(cfg, repo), L._number(str(n))
     db = h.app.ro_db()
     try:
         if not tracker.is_local(n) or db is None or info(db, repo, n) is None:
-            raise L.Refused("There is no such local ticket.")
+            raise L.NotFound("There is no such local ticket.")
     finally:
         if db is not None:
             db.close()
     return repo, n
 
 
+def _target(h, form) -> tuple[str, int]:
+    return target(h, form.get("repo", ""), form.get("n", ""))
+
+
 def _store(h) -> tracker.LocalTracker:
     return tracker.LocalTracker(dbm.local(h.app.cfg().db_path), tracker.UI_ACTOR)
 
 
-def comment(h, form, csrf: str) -> None:
-    body = (form.get("body") or "").replace("\r\n", "\n").strip()
-    try:
-        repo, n = _target(h, form)
-        if not body:
-            raise L.Refused("Write a comment first.")
-        if len(body) > L.MAX_BODY:
-            raise L.Refused(f"The comment is too long ({L.MAX_BODY:,} characters at most).")
-    except L.Refused as e:
-        return L._done(h, form, csrf, str(e), "bad")
+def add_comment(h, repo: str, n, body: str) -> str:
+    body = (body or "").replace("\r\n", "\n").strip()
+    repo, n = target(h, repo, n)
+    if not body:
+        raise L.Invalid("Write a comment first.")
+    if len(body) > L.MAX_BODY:
+        raise L.Invalid(f"The comment is too long ({L.MAX_BODY:,} characters at most).")
     _store(h).add_comment(repo, n, tracker.UI_ACTOR, body)
     log.info("tickets: comment on local %s %s", repo, tracker.display(n))
-    L._done(h, form, csrf, "Comment added.")
+    return "Comment added."
+
+
+def comment(h, form, csrf: str) -> None:
+    _local(h, form, csrf, lambda: add_comment(h, form.get("repo", ""), form.get("n", ""), form.get("body", "")))
+
+
+def edit_ticket(h, repo: str, n, title: str, body: str) -> str:
+    title, body = " ".join((title or "").split()), (body or "").replace("\r\n", "\n").strip()
+    repo, n = target(h, repo, n)
+    if not title:
+        raise L.Invalid("Enter a title.")
+    if len(title) > L.MAX_TITLE or len(body) > L.MAX_BODY:
+        raise L.Invalid("The title or the description is too long.")
+    _store(h).edit(repo, n, title, body)
+    log.info("tickets: edited local %s %s", repo, tracker.display(n))
+    return "Saved."
 
 
 def edit(h, form, csrf: str) -> None:
-    title, body = " ".join((form.get("title") or "").split()), (form.get("body") or "").replace("\r\n", "\n").strip()
-    try:
-        repo, n = _target(h, form)
-        if not title:
-            raise L.Refused("Enter a title.")
-        if len(title) > L.MAX_TITLE or len(body) > L.MAX_BODY:
-            raise L.Refused("The title or the description is too long.")
-    except L.Refused as e:
-        return L._done(h, form, csrf, str(e), "bad")
-    _store(h).edit(repo, n, title, body)
-    log.info("tickets: edited local %s %s", repo, tracker.display(n))
-    L._done(h, form, csrf, "Saved.")
+    _local(h, form, csrf, lambda: edit_ticket(h, form.get("repo", ""), form.get("n", ""), form.get("title", ""), form.get("body", "")))
+
+
+def reopen(h, repo: str, n) -> str:
+    """Reopen a closed local ticket (closing goes through /tickets/close, which checks the ticket is not busy)."""
+    repo, n = target(h, repo, n)
+    _store(h).set_state(repo, n, "open")
+    log.info("tickets: reopened local %s %s", repo, tracker.display(n))
+    return f"Reopened {tracker.display(n)}."
 
 
 def set_state(h, form, csrf: str) -> None:
-    """Reopen a closed local ticket (closing goes through /tickets/close, which checks the ticket is not busy)."""
-    try:
-        repo, n = _target(h, form)
+    def act():
+        target(h, form.get("repo", ""), form.get("n", ""))
         if form.get("state") != "open":
-            raise L.Refused("Use Close ticket to close it.")
+            raise L.Invalid("Use Close ticket to close it.")
+        return reopen(h, form.get("repo", ""), form.get("n", ""))
+    _local(h, form, csrf, act)
+
+
+def _local(h, form, csrf: str, act) -> None:
+    """The local ticket forms show every refusal as a message on the page they came from."""
+    try:
+        msg = act()
     except L.Refused as e:
         return L._done(h, form, csrf, str(e), "bad")
-    _store(h).set_state(repo, n, "open")
-    log.info("tickets: reopened local %s %s", repo, tracker.display(n))
-    L._done(h, form, csrf, f"Reopened {tracker.display(n)}.")
+    L._done(h, form, csrf, msg)
 
 
 def create(cfg, repo: str, title: str, body: str, labels: list[str], files=()) -> int:

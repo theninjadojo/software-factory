@@ -296,11 +296,10 @@ def main():
     if cmd == "scans":
         sys.exit(scans_cmd(cfg, sys.argv[2:]))
     if cmd == "pause":
-        (state / "PAUSED").write_text("")
+        pause.pause_manual(state)
         print("paused")
     elif cmd == "resume":
-        (state / "PAUSED").unlink(missing_ok=True)
-        (state / "pause_until").unlink(missing_ok=True)
+        pause.resume(state)
         print("resumed")
     else:
         print("version:", version.current(), "| mode:", "dry-run" if cfg.dry_run else "LIVE", "| paused:", pause.paused(state) or "no")

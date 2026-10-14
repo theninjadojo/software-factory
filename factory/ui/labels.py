@@ -68,7 +68,32 @@ def _done(h, form, csrf: str, msg: str, kind: str = "ok") -> None:
 
 
 class Refused(Exception):
-    """A request we reject with a message safe to show."""
+    """A request we reject with a message safe to show. status and code: how the JSON API answers it (api.py); the pages show
+    the message (see _html)."""
+    status, code = 409, "refused"
+
+
+class Invalid(Refused):
+    """A value that cannot be used (an empty title, an unknown stage)."""
+    status, code = 422, "invalid"
+
+
+class BadTicket(Invalid):
+    """Not a configured repository or not a ticket number: the pages answer it with an error page, not a message."""
+
+
+class NotFound(Refused):
+    status, code = 404, "not_found"
+
+
+class NoToken(Refused):
+    """The action needs the GitHub token and none is saved."""
+    status, code = 409, "no_github_token"
+
+
+class Upstream(Refused):
+    """GitHub failed or refused; the message is one of _github_error's fixed ones."""
+    status, code = 502, "github"
 
 
 def _github_error(e: Exception) -> str:
@@ -108,13 +133,13 @@ def _names(issue: dict) -> list[str]:
 
 def _repo(cfg, value: str) -> str:
     if value not in cfg.repos:
-        raise Refused("That repository is not configured.")
+        raise BadTicket("That repository is not configured.")
     return value
 
 
 def _number(value: str) -> int:
     if not NUM.match(value or ""):
-        raise Refused("That is not a valid issue number.")
+        raise BadTicket("That is not a valid issue number.")
     return int(value)
 
 
@@ -241,6 +266,23 @@ def _gh_for(h, cfg, n: int):
 
 def _page(h, status: int, title: str, body: str, csrf: str, flash=None, kind="ok") -> None:
     h._send(status, views.page(title, body, "/tickets", csrf, flash=flash, flash_kind=kind, wide=True))
+
+
+def _html(h, form, csrf: str, act, bad_ticket_page: bool = True) -> None:
+    """Run one action for a page's form: its message is shown once on the page the form came from. act() returns the message or
+    raises Refused (the JSON API runs the same functions and answers with the refusal's status). bad_ticket_page: a ticket that is
+    not one gets an error page rather than a message (as it always has for the ticket buttons)."""
+    try:
+        msg = act()
+    except BadTicket as e:
+        if not bad_ticket_page:
+            return _done(h, form, csrf, str(e), "bad")
+        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
+    except NotFound:
+        return h._send(404, "no such issue", "text/plain")
+    except (Refused, Q.Refused) as e:
+        return _done(h, form, csrf, str(e), "bad")
+    _done(h, form, csrf, msg)
 
 
 # ------------------------------------------------------------------ pages
@@ -822,23 +864,19 @@ def replace(h, form, csrf: str) -> None:
     _act(h, form, csrf, "replaced", steps)
 
 
-def start(h, form, csrf: str) -> None:
+def start_ticket(h, repo: str, n, action: str) -> str:
     """One-click start for a named action: Auto and Review apply their trigger label; Build and the stages queue a person's
     approval (the same one the Telegram buttons write), because a label would send the ticket back through the classifier. The ticket is re-read first, so a stale page cannot
     start something that is already running or queued, and the action must be one actions_for() offers right now."""
     cfg = h.app.cfg()
-    action = form.get("action", "")
-    try:
-        repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
-    except Refused as e:
-        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
+    repo, n = _repo(cfg, repo), _number(str(n))
     gh = _gh_for(h, cfg, n)
     if gh is None:
-        return _done(h, form, csrf, NO_TOKEN, "bad")
+        raise NoToken(NO_TOKEN)
     try:
         issue = gh.get_issue(repo, n)
         if "pull_request" in issue:
-            return h._send(404, "no such issue", "text/plain")
+            raise NotFound("That is a pull request, not a ticket.")
         status, acts = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)), (repo, n) in _approved(h))
         found = next(((a, lab) for a, _, lab in acts if a == action), None)
         if found is None:
@@ -860,34 +898,33 @@ def start(h, form, csrf: str) -> None:
                     if lab in held and lab != chosen:
                         gh.remove_label(repo, n, lab)
         needs_forget(repo, n)                                # the Floor's tray must not show it again
-    except Refused as e:
-        return _done(h, form, csrf, str(e), "bad")
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: start %s on %s#%d failed", action, repo, n)
-        return _done(h, form, csrf, _github_error(e), "bad")
+        raise Upstream(_github_error(e)) from None
     log.info("tickets: %s on %s#%d from the UI", "approved " + action if approval_for(cfg, action) else "started " + action, repo, n)
-    _done(h, form, csrf, FLASH["skipped" if action == "skip" else "started"])
+    return FLASH["skipped" if action == "skip" else "started"]
 
 
-def send_back(h, form, csrf: str) -> None:
+def start(h, form, csrf: str) -> None:
+    _html(h, form, csrf, lambda: start_ticket(h, form.get("repo", ""), form.get("n", ""), form.get("action", "")))
+
+
+def send_back_ticket(h, repo: str, n, stage: str) -> str:
     """Send a ticket back to a stage that has already run: it queues the `redirect:<stage>` approval (the one a confirmed chat
     proposal writes), and the factory takes off that stage's done label and every later one, so they run again. The ticket is
     re-read first: the stage must be done, the ticket open, not running and with nothing else queued."""
     cfg = h.app.cfg()
-    try:
-        repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
-    except Refused as e:
-        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
-    role = next((r for r in cfg.roles if r.name == form.get("stage", "")), None)
+    repo, n = _repo(cfg, repo), _number(str(n))
+    role = next((r for r in cfg.roles if r.name == stage), None)
     gh = _gh_for(h, cfg, n)
     if gh is None:
-        return _done(h, form, csrf, NO_TOKEN, "bad")
+        raise NoToken(NO_TOKEN)
     try:
         if role is None:
-            raise Refused("That stage is not configured.")
+            raise Invalid("That stage is not configured.")
         issue = gh.get_issue(repo, n)
         if "pull_request" in issue:
-            return h._send(404, "no such issue", "text/plain")
+            raise NotFound("That is a pull request, not a ticket.")
         names = set(_names(issue))
         if issue.get("state") != "open":
             raise Refused("The ticket is closed. Reopen it first.")
@@ -899,14 +936,16 @@ def send_back(h, form, csrf: str) -> None:
             raise Refused(f"The {role.name} stage has not run on this ticket yet, so there is nothing to send it back to.")
         h.app.add_approval(repo, n, f"redirect:{role.name}")
         needs_forget(repo, n)
-    except Refused as e:
-        return _done(h, form, csrf, str(e), "bad")
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: send back %s#%d to %s failed", repo, n, role.name if role else "?")
-        return _done(h, form, csrf, _github_error(e), "bad")
+        raise Upstream(_github_error(e)) from None
     log.info("tickets: %s#%d sent back to %s from the UI", repo, n, role.name)
-    _done(h, form, csrf, f"Queued: {tracker.display(n)} goes back to the {role.name} stage at the factory's next poll, "
-                         "and the stages after it run again.")
+    return (f"Queued: {tracker.display(n)} goes back to the {role.name} stage at the factory's next poll, "
+            "and the stages after it run again.")
+
+
+def send_back(h, form, csrf: str) -> None:
+    _html(h, form, csrf, lambda: send_back_ticket(h, form.get("repo", ""), form.get("n", ""), form.get("stage", "")))
 
 
 _recent: dict = {}          # (repo, title) -> time of the last create, so a double click makes one issue
@@ -924,117 +963,139 @@ def flights(now: float, last: float = 20.0) -> list[dict]:
         return [{"label": lab, "age": now - t} for t, lab in _flights]
 
 
-def create(h, form, csrf: str, files=()) -> None:
-    """A person's new ticket: title, body and at most one start action, looked up in start_options (never a label from the
-    browser). No start action means no labels, so it does not start work. Validated before GitHub is called."""
-    cfg = h.app.cfg()
-    title, body = " ".join((form.get("title") or "").split()), (form.get("body") or "").strip()
-    try:
-        repo = _repo(cfg, form.get("repo", ""))
-        if not title:
-            raise Refused("Enter a title.")
-        if len(title) > MAX_TITLE:
-            raise Refused(f"The title is too long ({MAX_TITLE} characters at most).")
-        if len(body) > MAX_BODY:
-            raise Refused(f"The description is too long ({MAX_BODY:,} characters at most).")
-        chosen = next((o for o in start_options(cfg) if o[0] == (form.get("start") or "").strip()), None)
-        if chosen is None:
-            raise Refused("That start action is not available.")
-        labels = [chosen[2]] if chosen[2] else []
-        where = form.get("where") or ("local" if cfg.local_enabled else "github")
-        if where not in ("local", "github") or (where == "local" and not cfg.local_enabled):
-            raise Refused("Local tickets are turned off. Turn them on under Settings → General.")
-        if files and where != "local":
-            raise Refused("Attachments can only be kept on local tickets. Choose “The factory”, or remove the files.")
-        if files:
-            from . import localtickets as LT
-            files = LT.vet(cfg, files)
-    except Refused as e:
-        return _done(h, form, csrf, str(e), "bad")
-    if where == "local":
-        return _create_local(h, form, csrf, cfg, repo, title, body, labels, chosen[1], files)
-    gh = _gh(h)
-    if gh is None:
-        return _done(h, form, csrf, NO_TOKEN, "bad")
+def _remember(repo: str, title: str) -> None:
+    """The double-click guard: the same title on the same repository within DUP_SECONDS is refused."""
     now = time.time()
     with _recent_lock:
         if now - _recent.get((repo, title), 0) < DUP_SECONDS:
-            return _done(h, form, csrf, "That ticket was just created.", "bad")
+            raise Refused("That ticket was just created.")
         if len(_recent) > 100:
             _recent.clear()
         _recent[(repo, title)] = now
+
+
+def _forget(repo: str, title: str) -> None:
+    with _recent_lock:
+        _recent.pop((repo, title), None)
+
+
+def _fly(label: str) -> None:
+    with _flights_lock:
+        _flights.append((time.time(), label))
+        del _flights[:-5]
+
+
+def create_ticket(h, repo: str, title: str, body: str, start: str, where: str = "", files=()) -> tuple[int, str]:
+    """A person's new ticket: title, body and at most one start action, looked up in start_options (never a label from the
+    browser). No start action means no labels, so it does not start work. Validated before GitHub is called.
+    Returns (its number, the message)."""
+    cfg = h.app.cfg()
+    title, body = " ".join((title or "").split()), (body or "").strip()
+    repo = _repo(cfg, repo)
+    if not title:
+        raise Invalid("Enter a title.")
+    if len(title) > MAX_TITLE:
+        raise Invalid(f"The title is too long ({MAX_TITLE} characters at most).")
+    if len(body) > MAX_BODY:
+        raise Invalid(f"The description is too long ({MAX_BODY:,} characters at most).")
+    chosen = next((o for o in start_options(cfg) if o[0] == (start or "").strip()), None)
+    if chosen is None:
+        raise Invalid("That start action is not available.")
+    labels = [chosen[2]] if chosen[2] else []
+    where = where or ("local" if cfg.local_enabled else "github")
+    if where not in ("local", "github") or (where == "local" and not cfg.local_enabled):
+        raise Refused("Local tickets are turned off. Turn them on under Settings → General.")
+    if files and where != "local":
+        raise Refused("Attachments can only be kept on local tickets. Choose “The factory”, or remove the files.")
+    if files:
+        from . import localtickets as LT
+        files = LT.vet(cfg, files)
+    if where == "local":
+        from . import localtickets as LT
+        _remember(repo, title)
+        try:
+            n = LT.create(cfg, repo, title, body, labels, files)
+        except ValueError as e:
+            _forget(repo, title)
+            raise Refused(str(e)) from None
+        log.info("tickets: created local %s %s from the UI%s", repo, tracker.display(n), f" with {labels[0]}" if labels else "")
+        _fly(tracker.display(n))
+        ref = views.ref(repo, n)
+        return n, (f"Created {ref} and started {chosen[1]}. The factory picks it up on its next poll." if labels
+                   else f"Created {ref}. Nothing started.")
+    gh = _gh(h)
+    if gh is None:
+        raise NoToken(NO_TOKEN)
+    _remember(repo, title)
     try:
         n = gh.create_ticket(repo, title, body, labels)["number"]
     except (urllib.error.URLError, OSError, KeyError, TypeError) as e:
-        with _recent_lock:
-            _recent.pop((repo, title), None)
+        _forget(repo, title)
         log.warning("tickets: create on %s failed", repo)
-        return _done(h, form, csrf, _github_error(e) if isinstance(e, urllib.error.HTTPError)
-                     else "GitHub did not accept the ticket. Nothing was created. Try again, or check the token under Credentials.", "bad")
+        raise Upstream(_github_error(e) if isinstance(e, urllib.error.HTTPError)
+                       else "GitHub did not accept the ticket. Nothing was created. Try again, or check the token under Credentials.") from None
     log.info("tickets: created %s#%s from the UI%s", repo, n, f" with {labels[0]}" if labels else "")
-    with _flights_lock:
-        _flights.append((time.time(), f"#{int(n)}"))
-        del _flights[:-5]
-    _done(h, form, csrf, f"Created {repo}#{int(n)} and started {chosen[1]}. The factory picks it up on its next poll." if labels
-          else f"Created {repo}#{int(n)}. Nothing started.")
+    _fly(f"#{int(n)}")
+    return int(n), (f"Created {repo}#{int(n)} and started {chosen[1]}. The factory picks it up on its next poll." if labels
+                    else f"Created {repo}#{int(n)}. Nothing started.")
 
 
-def _create_local(h, form, csrf: str, cfg, repo: str, title: str, body: str, labels: list[str], verb: str, files=()) -> None:
-    from . import localtickets as LT
-    now = time.time()
-    with _recent_lock:
-        if now - _recent.get((repo, title), 0) < DUP_SECONDS:
-            return _done(h, form, csrf, "That ticket was just created.", "bad")
-        _recent[(repo, title)] = now
-    try:
-        n = LT.create(cfg, repo, title, body, labels, files)
-    except ValueError as e:
-        with _recent_lock:
-            _recent.pop((repo, title), None)
-        return _done(h, form, csrf, str(e), "bad")
-    log.info("tickets: created local %s %s from the UI%s", repo, tracker.display(n), f" with {labels[0]}" if labels else "")
-    with _flights_lock:
-        _flights.append((time.time(), tracker.display(n)))
-        del _flights[:-5]
-    ref = views.ref(repo, n)
-    _done(h, form, csrf, f"Created {ref} and started {verb}. The factory picks it up on its next poll." if labels
-          else f"Created {ref}. Nothing started.")
+def create(h, form, csrf: str, files=()) -> None:
+    _html(h, form, csrf, lambda: create_ticket(h, form.get("repo", ""), form.get("title", ""), form.get("body", ""), form.get("start", ""),
+                                               form.get("where", ""), files)[1], bad_ticket_page=False)
 
 
-def merge_pr(h, form, csrf: str) -> None:
-    """Merge a pull request the factory is watching, from the Tickets > PRs view. Only a tracked PR whose checks passed is merged; it is
-    re-read first (open, not a draft, head unchanged) and GitHub still applies the repository's own rules (reviews, required checks)."""
-    repo, n = form.get("repo", ""), form.get("n", "")
-    back = "/tickets"
-    if not (views.REPO.fullmatch(repo) and NUM.match(n or "")):
-        return _page(h, 400, "Tickets", "", csrf, "That is not a pull request.", "bad")
+def watched_pr(h, repo: str, n) -> dict | None:
+    """The pull request the factory watches, or None (also for a malformed repo or number)."""
+    if not (views.REPO.fullmatch(repo or "") and NUM.match(str(n or ""))):
+        return None
     db = h.app.ro_db()
     try:
-        row = next((p for p in dbm.watched_prs(db, 300) if p["repo"] == repo and p["number"] == int(n)), None) if db is not None else None
+        return next((p for p in dbm.watched_prs(db, 300) if p["repo"] == repo and p["number"] == int(n)), None) if db is not None else None
     finally:
         if db is not None:
             db.close()
-    if row is not None:                    # back to the ticket the pull request belongs to
-        back = f"/ticket?repo={quote(row['issue_repo'], safe='')}&n={int(row['issue_num'])}"
+
+
+def merge_pull(h, repo: str, n) -> str:
+    """Merge a pull request the factory is watching. Only a tracked PR whose checks passed is merged; it is re-read first (open,
+    not a draft, head unchanged) and GitHub still applies the repository's own rules (reviews, required checks)."""
+    if not (views.REPO.fullmatch(repo or "") and NUM.match(str(n or ""))):
+        raise BadTicket("That is not a pull request.")
+    row = watched_pr(h, repo, n)
     if row is None or row["status"] != "passed":
-        return _done_to(h, csrf, back, "Only a pull request whose checks passed can be merged here.", "bad")
+        raise Refused("Only a pull request whose checks passed can be merged here.")
     gh = _gh(h)
     if gh is None:
-        return _done_to(h, csrf, back, NO_TOKEN, "bad")
+        raise NoToken(NO_TOKEN)
     try:
         pr = gh.get_pr(repo, int(n))
         if pr.get("merged") or pr.get("state") != "open":
-            return _done_to(h, csrf, back, f"{repo}#{n} is already closed or merged.", "bad")
+            raise Refused(f"{repo}#{n} is already closed or merged.")
         if pr.get("draft"):
-            return _done_to(h, csrf, back, f"{repo}#{n} is still a draft.", "bad")
+            raise Refused(f"{repo}#{n} is still a draft.")
         gh.merge_pr(repo, int(n), pr["head"]["sha"])
     except urllib.error.HTTPError as e:
         if e.code in (405, 409, 422):
-            return _done_to(h, csrf, back, f"GitHub would not merge {repo}#{n} ({e.code}): it has conflicts, a missing review or required check, or changed just now.", "bad")
-        return _done_to(h, csrf, back, _github_error(e), "bad")
+            raise Refused(f"GitHub would not merge {repo}#{n} ({e.code}): it has conflicts, a missing review or required check, or changed just now.") from None
+        raise Upstream(_github_error(e)) from None
     except (urllib.error.URLError, OSError, ValueError) as e:
-        return _done_to(h, csrf, back, _github_error(e), "bad")
-    _done_to(h, csrf, back, f"Merged {repo}#{n}.")
+        raise Upstream(_github_error(e)) from None
+    return f"Merged {repo}#{n}."
+
+
+def merge_pr(h, form, csrf: str) -> None:
+    """Merge from the Tickets > PRs view and the ticket page; the message is shown on the page of the ticket the PR belongs to."""
+    repo, n = form.get("repo", ""), form.get("n", "")
+    row = watched_pr(h, repo, n)
+    back = f"/ticket?repo={quote(row['issue_repo'], safe='')}&n={int(row['issue_num'])}" if row is not None else "/tickets"
+    try:
+        msg = merge_pull(h, repo, n)
+    except BadTicket as e:
+        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
+    except Refused as e:
+        return _done_to(h, csrf, back, str(e), "bad")
+    _done_to(h, csrf, back, msg)
 
 
 def _done_to(h, csrf: str, where: str, msg: str, kind: str = "ok") -> None:
@@ -1042,21 +1103,18 @@ def _done_to(h, csrf: str, where: str, msg: str, kind: str = "ok") -> None:
     h._redirect(where)
 
 
-def close(h, form, csrf: str) -> None:
+def close_ticket(h, repo: str, n) -> str:
     """Close an open ticket, after a fixed comment. The ticket is re-read first. One that is running, queued or waiting for a person
     is closed too: its trigger labels come off, and the orchestrator stops the work once it sees the ticket is closed."""
     cfg = h.app.cfg()
-    try:
-        repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
-    except Refused as e:
-        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
+    repo, n = _repo(cfg, repo), _number(str(n))
     gh = _gh_for(h, cfg, n)
     if gh is None:
-        return _done(h, form, csrf, NO_TOKEN, "bad")
+        raise NoToken(NO_TOKEN)
     try:
         issue = gh.get_issue(repo, n)
         if "pull_request" in issue:
-            return h._send(404, "no such issue", "text/plain")
+            raise NotFound("That is a pull request, not a ticket.")
         status, _ = actions_for(cfg, issue, _decisions(h, repo).get((repo, n)), (repo, n) in _approved(h))
         if status == "closed":
             raise Refused("This ticket is already closed.")
@@ -1067,14 +1125,16 @@ def close(h, form, csrf: str) -> None:
             if lab in held:
                 gh.remove_label(repo, n, lab)
         gh.update_issue(repo, n, state="closed")
-    except Refused as e:
-        return _done(h, form, csrf, str(e), "bad")
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: close %s#%d failed", repo, n)
-        return _done(h, form, csrf, _github_error(e), "bad")
+        raise Upstream(_github_error(e)) from None
     needs_forget(repo, n)
     log.info("tickets: closed %s %s from the UI", repo, tracker.display(n))
-    _done(h, form, csrf, f"Closed {views.ref(repo, n)}.")
+    return f"Closed {views.ref(repo, n)}."
+
+
+def close(h, form, csrf: str) -> None:
+    _html(h, form, csrf, lambda: close_ticket(h, form.get("repo", ""), form.get("n", "")))
 
 
 def _open_numbers(gh, cfg, repo: str, label: str, max_pages: int = 20) -> tuple[list[int], int]:
@@ -1127,7 +1187,7 @@ def import_issues(h, form, csrf: str) -> None:
     _done(h, form, csrf, f"Queued {len(numbers)} issue(s) to move. The factory moves them at its next poll.{rest}")
 
 
-def _record(gh, cfg, h, repo: str, n: int, stage, picks, accept_all: bool) -> bool:
+def _record(gh, cfg, h, repo: str, n: int, stage, picks, accept_all: bool, source: str = "factory UI") -> bool:
     """Record a person's answers on one ticket, after the same checks wherever they come from. True when nothing needing a person is
     left, in which case the auto label starts the next stage through the factory's normal gates."""
     issue = gh.get_issue(repo, n)
@@ -1138,7 +1198,7 @@ def _record(gh, cfg, h, repo: str, n: int, stage, picks, accept_all: bool) -> bo
         raise Refused(f"Answers cannot be recorded now ({status}).")
     if status != "queued":
         _existing(gh, repo, cfg.auto_label)               # checked before anything is posted
-    stage_name, done = Q.record(gh, repo, n, stage, picks, "factory UI", accept_all)
+    stage_name, done = Q.record(gh, repo, n, stage, picks, source, accept_all)
     if done and status != "queued":
         role = next((r for r in cfg.roles if r.name == stage_name), None)
         if role is None:
@@ -1161,63 +1221,72 @@ def _picks(form) -> dict:
     return picks
 
 
-def answer(h, form, csrf: str) -> None:
+def answer_ticket(h, repo: str, n, stage: str, picks: dict | None, accept_all: bool, source: str = "factory UI") -> tuple[bool, str]:
     """A person's answers to open questions, or Accept all recommendations. Posted as the factory's account in the marked answers
     comment, which the factory then reads as a person's input (never as an instruction). The question and option ids are validated
-    against the questions the factory posted on the ticket."""
+    against the questions the factory posted on the ticket. picks: {question id: ("option", id) | ("other", text)}.
+    Returns (nothing left for a person, the message)."""
     cfg = h.app.cfg()
-    try:
-        repo, n = _repo(cfg, form.get("repo", "")), _number(form.get("n", ""))
-    except Refused as e:
-        return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
-    stage = form.get("stage", "")
-    accept_all = form.get("accept") == "1"
-    picks = None if accept_all else _picks(form)
+    repo, n = _repo(cfg, repo), _number(str(n))
+    picks = None if accept_all else (picks or {})
     gh = _gh(h)
     if gh is None:
-        return _done(h, form, csrf, NO_TOKEN, "bad")
+        raise NoToken(NO_TOKEN)
+    if stage or not accept_all:      # accepting every recommendation needs no stage: the latest stage's questions are used
+        if not re.fullmatch(r"[a-z]{1,20}", stage or ""):
+            raise Invalid("That answer does not match the ticket's questions. Reload the page.")
+    if not accept_all and not picks:
+        raise Invalid("Choose an answer first, or accept the recommendations.")
     try:
-        if stage or not accept_all:      # accepting every recommendation needs no stage: the latest stage's questions are used
-            if not re.fullmatch(r"[a-z]{1,20}", stage):
-                raise Refused("That answer does not match the ticket's questions. Reload the page.")
-        if not accept_all and not picks:
-            raise Refused("Choose an answer first, or accept the recommendations.")
-        done = _record(gh, cfg, h, repo, n, stage or None, picks, accept_all)
-    except (Q.Refused, Refused) as e:
-        return _done(h, form, csrf, str(e), "bad")
+        done = _record(gh, cfg, h, repo, n, stage or None, picks, accept_all, source)
     except (urllib.error.URLError, OSError) as e:
         log.warning("tickets: answer on %s#%d failed", repo, n)
-        return _done(h, form, csrf, _github_error(e), "bad")
+        raise Upstream(_github_error(e)) from None
     needs_forget(repo, n)                                    # the tray must not show it again
-    log.info("tickets: answers recorded on %s#%d from the UI", repo, n)
-    _done(h, form, csrf, FLASH["continued" if done else "answered"])
+    log.info("tickets: answers recorded on %s#%d from the %s", repo, n, "UI" if source == "factory UI" else source)
+    return done, FLASH["continued" if done else "answered"]
+
+
+def answer(h, form, csrf: str) -> None:
+    _html(h, form, csrf, lambda: answer_ticket(h, form.get("repo", ""), form.get("n", ""), form.get("stage", ""), _picks(form),
+                                               form.get("accept") == "1")[1])
 
 
 TICKETS = re.compile(r"^[\w.-]+/[\w.-]+#\d{1,9}$")
 
 
-def answer_all(h, form, csrf: str) -> None:
+def answer_all_tickets(h, refs: list[str], source: str = "factory UI") -> tuple[list[str], list[str]]:
     """Accept the recommendations on several tickets at once. The person has just been shown what each recommendation is; the tickets
-    named here are checked like any other (configured repository, valid number) and every ticket's questions are re-read from GitHub."""
+    named here are checked like any other (configured repository, valid number) and every ticket's questions are re-read from GitHub.
+    refs: owner/name#n, at most 20. Returns (the refs done, the refs that could not be)."""
     cfg = h.app.cfg()
-    refs = [t for t in (form.get("tickets") or "").split(",") if t][:20]
+    refs = [t for t in refs if t][:20]
     if not refs or any(not TICKETS.fullmatch(t) for t in refs):
-        return _done(h, form, csrf, "That list of tickets is not valid. Reload the page.", "bad")
+        raise Invalid("That list of tickets is not valid. Reload the page.")
     gh = _gh(h)
     if gh is None:
-        return _done(h, form, csrf, NO_TOKEN, "bad")
-    ok, failed = 0, []
+        raise NoToken(NO_TOKEN)
+    ok, failed = [], []
     for ref in refs:
         repo, _, num = ref.rpartition("#")
         try:
             _repo(cfg, repo), _number(num)
-            _record(gh, cfg, h, repo, int(num), None, None, True)
+            _record(gh, cfg, h, repo, int(num), None, None, True, source)
             needs_forget(repo, int(num))
-            ok += 1
+            ok.append(ref)
         except (Q.Refused, Refused, urllib.error.URLError, OSError):
-            failed.append(ref.split("/")[-1])
-    log.info("tickets: recommendations accepted on %d ticket(s) from the UI, %d failed", ok, len(failed))
-    msg = f"Recommendations accepted on {ok} ticket{'s' if ok != 1 else ''}." + (f" Could not do: {', '.join(failed)}." if failed else "")
+            failed.append(ref)
+    log.info("tickets: recommendations accepted on %d ticket(s) from the UI, %d failed", len(ok), len(failed))
+    return ok, failed
+
+
+def answer_all(h, form, csrf: str) -> None:
+    try:
+        ok, failed = answer_all_tickets(h, (form.get("tickets") or "").split(","))
+    except Refused as e:
+        return _done(h, form, csrf, str(e), "bad")
+    short = [ref.split("/")[-1] for ref in failed]
+    msg = f"Recommendations accepted on {len(ok)} ticket{'s' if len(ok) != 1 else ''}." + (f" Could not do: {', '.join(short)}." if short else "")
     _done(h, form, csrf, msg, "bad" if failed and not ok else "ok")
 
 
@@ -1267,6 +1336,21 @@ def stage_comment(h, repo: str, issue: int, stage: str) -> str | None:
         return found
     except Exception:
         return None
+
+
+def stage_doc_text(h, db, repo: str, issue: int, stage: str) -> tuple:
+    """A stage document as readable text: the stored one first, the factory's own GitHub comment when it is missing or was cut
+    short. (the stored row or None, the text, where it came from, cut short with no full copy found)."""
+    doc, source = dbm.stage_doc(db, repo, issue, stage), "Stored output"
+    text = Q.readable(doc["output"]) if doc else ""
+    cut = False
+    if not doc or doc["truncated"]:
+        full = stage_comment(h, repo, issue, stage)
+        if full:
+            text, source = Q.readable(full), "Complete, from GitHub"
+        elif doc:
+            cut = True
+    return doc, text, source, cut
 
 
 def titles_cached() -> dict:
