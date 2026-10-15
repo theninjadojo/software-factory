@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -47,6 +48,19 @@ class Workflow(unittest.TestCase):
         self.assertNotIn(": write", cli)
         self.assertIn("--locked --release --target x86_64-unknown-linux-musl", cli)
         self.assertIn("grep -qF \"$(cat VERSION)\"", cli)
+
+    def test_every_action_runs_on_node_24(self):
+        # GitHub runs Node 20 actions on Node 24 with a deprecation warning, then not at all. The first major of each action we use
+        # that runs on Node 24 (read from its action.yml). A new action needs a line here.
+        node24 = {"actions/checkout": 5, "actions/setup-python": 6, "actions/cache": 5, "actions/upload-artifact": 6,
+                  "actions/download-artifact": 7, "actions/configure-pages": 6, "actions/deploy-pages": 5,
+                  "actions/upload-pages-artifact": 5, "docker/login-action": 4}
+        for path in (ROOT / ".github" / "workflows").glob("*.yml"):
+            for line in path.read_text().splitlines():
+                m = re.match(r"\s*(?:-\s*)?uses:\s*([\w.-]+/[\w.-]+)@v(\d+)", line)
+                if m:
+                    self.assertIn(m.group(1), node24, f"{path.name}: {m.group(1)} is not listed; add its first Node 24 major")
+                    self.assertGreaterEqual(int(m.group(2)), node24[m.group(1)], f"{path.name}: {m.group(1)}@v{m.group(2)} runs on Node 20")
 
     def test_no_workflow_runs_on_a_self_hosted_runner(self):
         # The repository is public: a fork's pull request can change any workflow, so none may run on a self-hosted runner.
