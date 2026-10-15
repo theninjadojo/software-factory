@@ -122,7 +122,7 @@ every ticket also comes with its `ref` (`#12` or `L-3`).
 |---|---|---|
 | GET | `/api/v1/version` | `{api, factory, token: {name, scope}}` |
 | GET | `/api/v1/meta` | Repositories, projects, stages, start options, list filters, stations and priorities |
-| GET | `/api/v1/status` | Live or dry run, paused, healthy, running and queued work, the Floor's tiles, ticket counts and Claude plan use |
+| GET | `/api/v1/status` | Live or dry run, paused, healthy, running and queued work, the Floor's tiles, ticket counts and Claude plan use. The *Needs you* count comes from GitHub: when the last read is more than two minutes old the request reads it again (`needs_known` is false only when GitHub could not be read, and the count is then the factory's own, possibly stale, record) |
 | POST | `/api/v1/pause`, `/api/v1/resume` | Pause or resume the factory (work in progress finishes) |
 | GET | `/api/v1/tickets` | The ticket list. Filters: `stage` (`needs`, `working`, `prs`, `failed`, `new`, `done`, `all`), `project`, `q`, `sort` (`latest`, `oldest`, `priority`), `at` (a station), `limit`, `fresh=1` (ask GitHub now) |
 | POST | `/api/v1/tickets` | Create a ticket: `{repo, title, body?, start?, where?: "local" \| "github"}` → `201` with `issue` and `ref` |

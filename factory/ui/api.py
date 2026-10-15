@@ -103,6 +103,8 @@ def get_status(h, q, token) -> dict:
     cfg, now = h.app.cfg(), time.time()
     d = h.app.overview()
     needs = L.needs_cached()
+    if needs is None:               # no recent read: ask GitHub (kept for a few seconds) rather than count the database's own record of
+        needs = L.needs_you(h)      # who is waiting, which can be out of date (answered or closed on GitHub). None: it could not be read
     rows = []
     db = h.app.ro_db()
     if db is not None:
