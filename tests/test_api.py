@@ -140,6 +140,21 @@ class Reads(ApiCase):
         self.assertEqual(set(st["tiles"]), {"needs", "asking", "deciding", "running", "working_at", "open_prs", "checks_running",
                                             "checks_failing", "passed_today", "runs_today", "failed"})
 
+    def test_status_asks_github_when_the_last_read_is_old_instead_of_counting_a_stale_record(self):
+        dbm.record(self.db, REPO, 13, "t", "human", "needs a person: low confidence")      # the database still says a person was called
+        dbm.add_event(self.db, "decision", "needs a person: low confidence", REPO, 13)
+        with mock.patch.object(L, "needs_cached", return_value=None), mock.patch.object(L, "needs_you", return_value=[]) as read:
+            st = self.api("GET", "/api/v1/status")[2]
+        read.assert_called_once()
+        self.assertEqual((st["tiles"]["needs"], st["tiles"]["asking"], st["tiles"]["deciding"], st["needs_known"]), (0, 0, 0, True))
+        with mock.patch.object(L, "needs_cached", return_value=None), mock.patch.object(L, "needs_you", return_value=None):
+            st = self.api("GET", "/api/v1/status")[2]              # GitHub could not be read: the record is all there is, and it says so
+        self.assertEqual((st["tiles"]["needs"], st["needs_known"]), (1, False))
+
+    def test_status_uses_the_recent_read_without_calling_github(self):
+        with mock.patch.object(L, "needs_cached", return_value=[]), mock.patch.object(L, "needs_you", side_effect=AssertionError("read GitHub")):
+            self.assertTrue(self.api("GET", "/api/v1/status")[2]["needs_known"])
+
     def test_pause_and_resume(self):
         s, _, body = self.api("POST", "/api/v1/pause", {})
         self.assertEqual((s, body["ok"]), (200, True))

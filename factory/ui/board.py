@@ -1327,8 +1327,10 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
     line += f" · Not reporting, {seen}" if floor._stale(d, now) else f" · Healthy, {seen}"
     t = tile_numbers(d, rows, needs, now)
     nneeds, asking, fail_rows = t["needs"], t["asking"], t["failed"]
-    needs_sub = ("asking GitHub…" if d.get("needs_loading") else f"{asking} with questions, {nneeds - asking} to decide" if nneeds else "nothing waiting")
-    tiles = (_tile("/tickets?stage=needs", "Needs you", nneeds, "wait", needs_sub, hot=bool(nneeds))
+    needs_sub = ("asking GitHub…" if d.get("needs_loading") else f"{nneeds} from the factory's own record, not confirmed with GitHub" if nneeds and needs is None
+                 else f"{asking} with questions, {nneeds - asking} to decide" if nneeds else "nothing waiting")
+    loading = bool(d.get("needs_loading"))       # GitHub has not been read yet: the database alone would show a stale count
+    tiles = (_tile("/tickets?stage=needs", "Needs you", "…" if loading else nneeds, "wait", needs_sub, hot=bool(nneeds) and not loading)
              + _tile("/tickets?stage=working", "Working now", t["running"], "run", " and ".join(t["working_at"]) if d["running"] else "nothing running")
              + _tile("/tickets?stage=prs", "PRs & CI", f'{t["open_prs"]} <small>open</small>', "run", f"{t['checks_running']} running checks, {t['checks_failing']} failing")
              + _tile("/runs?status=passed", "Done today", t["passed_today"], "done", f"{t['runs_today']} runs in the last 24 hours")

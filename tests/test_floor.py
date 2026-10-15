@@ -1,3 +1,4 @@
+import re
 import time
 from pathlib import Path
 import unittest
@@ -337,6 +338,24 @@ class Pages(UiCase):
         self.assertIn("Run analyst", tray)
         self.assertNotIn("<html", tray)
         self.assertEqual(self.req("GET", "/fragment/needs-tray")[0], 401)
+
+    def test_the_needs_tile_shows_no_count_until_github_has_been_read(self):
+        dbm.record(self.db, REPO, 13, "t", "human", "needs a person: low confidence")      # a stale record of a call for a person
+        dbm.add_event(self.db, "decision", "needs a person: low confidence", REPO, 13)
+        cookie, _ = self.session()
+        with mock.patch("factory.ui.server.L.needs_cached", return_value=None), mock.patch("factory.ui.server.L.has_token", return_value=True):
+            html = self.req("GET", "/", cookie=cookie)[2]
+        tile = re.search(r'<a class="sd-tile link[^"]*" href="/tickets\?stage=needs">.*?</a>', html, re.S).group(0)
+        self.assertIn("…", tile)
+        self.assertNotIn(" hot", tile)
+        self.assertNotRegex(tile, r'sd-num wait">1<')
+        with mock.patch("factory.ui.server.L.needs_cached", return_value=[]), mock.patch("factory.ui.server.L.has_token", return_value=True):
+            html = self.req("GET", "/", cookie=cookie)[2]
+        self.assertNotIn("asking GitHub", html)
+        with mock.patch("factory.ui.server.L.needs_you", return_value=None):                  # the refresh could not read GitHub
+            frag = self.req("GET", "/fragment/overview", cookie=cookie)[2]
+        self.assertIn("not confirmed with GitHub", frag)
+        self.assertNotIn("1 to decide", frag)
 
     def test_tickets_never_wait_for_github_and_the_ticket_loads_in_place(self):
         dbm.record(self.db, REPO, 13, "t", "human", "needs a person: low confidence")
