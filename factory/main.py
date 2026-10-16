@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videos, waves
 from . import depdetect
 from . import judges
 from . import recommend
@@ -612,6 +612,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
                 m = PR_URL.match(u)
                 if m:
                     dbm.track_pr(conn, m.group(1), int(m.group(2)), repo, num)    # merge conflicts are checked whether or not CI is
+                    if cfg.videos.enabled:
+                        videos.pr_opened(conn, repo, num, m.group(1), int(m.group(2)), time.time())   # when the ticket's switch is on
                     if cfg.ci.enabled:
                         dbm.watch_pr(conn, m.group(1), int(m.group(2)), repo, num)
         alert(f"PR ready: {repo}#{num}\n{res.pr_url}\n{picked(route, c)}", event="pr_ready")
@@ -2027,6 +2029,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         captures.tick(cfg, gh, conn, time.time())
     except Exception:
         log.exception("screens: Playwright runs failed")        # never stops the poll
+    try:
+        videos.tick(cfg, gh, conn, time.time(), lambda: dbm.connect(cfg.db_path), time.time)
+    except Exception:
+        log.exception("review videos failed")                   # never stops the poll
     try:
         verify.watch(cfg, conn, lambda text, event="worker_offline": alert(text, event=event))
     except Exception:

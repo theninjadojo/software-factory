@@ -31,7 +31,7 @@ MEMBERS = ("manifest.json", "factory.db", "config.toml", "config.overrides.toml"
 TMP_BACKUP, TMP_RESTORE, STAGED, MARKER, LAST = ".backup-tmp", ".restore-tmp", "restore", "RESTORE.json", "last_backup.json"
 
 BLANK = {"runs": ("output", "log_tail"), "verify_jobs": ("patch", "log", "progress", "tests"),
-         "design_imports": ("html", "png"), "verify_reports": ("html",)}          # run output, logs, test reports and agent-written diffs
+         "design_imports": ("html", "png"), "verify_reports": ("html",), "review_videos": ("transcript",)}   # run output, logs, test reports, agent-written diffs; transcripts (the videos are not backed up)
 SKIP = ("approvals", "schedule_requests")                                          # queued actions: restoring them would start work
 SKIP_WHERE = {"verify_jobs": "status IN ('queued','claimed')"}                      # work a worker has not finished (its patch is blanked)
 
