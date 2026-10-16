@@ -116,6 +116,12 @@ class App:
         except Exception:
             log.exception("update notice failed")
 
+    def refresh_videos_menu(self) -> None:
+        try:
+            views.VIDEOS["on"] = bool(self.cfg().videos.enabled)
+        except Exception:
+            log.exception("videos menu check failed")
+
     def refresh_classifier_hint(self) -> None:
         """Show the warning while an OpenRouter key is saved and the classifier is still on labels."""
         try:
@@ -693,7 +699,7 @@ class Handler(BaseHTTPRequestHandler):
                     local = CH.folded(cfg, db, sel["repo"], sel["issue"], csrf, back) + local + views.fold(
                         "priority", "Priority", views.esc(f"{prio} · {who}"),
                         PC.card(cfg, db, sel["repo"], sel["issue"], [x["name"] for x in issue["labels"]] if issue else None, issue["body"] if issue else "", csrf, back))
-                    local += views.fold("linked", "Linked tickets", "Split from or into other tickets", SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back))
+                    local += SPC.fold(cfg, db, sel["repo"], sel["issue"], csrf, back)
                     local += RVID.fold(cfg, db, sel["repo"], sel["issue"], csrf, back, now)
                     local = views.fold("followups", "Review follow-ups", "The reviewer proposed follow-up work", RA.card(db, sel["repo"], sel["issue"], csrf, back), tone="fd-ask",
                                        open_=True) + local
@@ -719,6 +725,7 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self, path: str, q: dict, csrf: str) -> None:
         self.app.refresh_update_notice()
         self.app.refresh_classifier_hint()
+        self.app.refresh_videos_menu()
         cached = L.needs_cached()                            # the nav count: never a GitHub call, only what the tray already read
         badges = {"/tickets": len(cached)} if cached else None
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))

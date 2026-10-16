@@ -158,7 +158,7 @@ auto = true
 label = "factory:fix-conflicts"
 max_attempts = 10            # resolution runs per PR; then a person is asked
 
-# Review videos: a person ticks "Make a review video for each pull request" on a ticket's page in the admin UI (there is no label
+# Review videos (all of this is also on Settings → Review videos in the admin UI, which builds the image too): a person ticks "Make a review video for each pull request" on a ticket's page in the admin UI (there is no label
 # for it) and picks a voice. Each build PR of that ticket, including ones already open, then gets a short narrated walkthrough with
 # a transcript, rendered with Remotion: the screenshots the build took and the most important parts of the diff. The automated
 # review writes the narration (it already reads the diff); without one it is fixed wording made from the file list. Rendering and

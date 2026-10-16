@@ -513,7 +513,7 @@ def _split(db, pid: int, repo: str, issue: dict, row: dict) -> str:
     raw = json.loads(row["evidence"])
     items = tuple(split.Item(d["title"], d["body"], d["repo"], tuple(d.get("after", ()))) for d in raw)
     split.ensure_tables(db)
-    split.store(db, repo, issue, split.Proposal(row["reason"] or "", items))
+    split.store(db, repo, issue, split.Proposal(row["reason"] or "", items), source="review")
     return _finish(db, pid, "applied", "proposed on the ticket: approve the split there")
 
 

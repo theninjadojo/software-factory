@@ -1,3 +1,4 @@
+import io
 import json
 import re
 import time
@@ -8,6 +9,9 @@ import urllib.request
 
 STEP_TITLE_PREFIX = "[factory] "
 RETRY_WAITS = (2, 5)                        # seconds before the 2nd and 3rd try of a request that is safe to repeat
+RATE_LIMIT_RETRIES = 3                      # rate-limited tries of a request that is safe to repeat, after the first
+RATE_LIMIT_WAIT = 60                        # seconds, when GitHub does not say how long (its advice for secondary rate limits)
+MAX_RATE_LIMIT_WAIT = 120                   # never wait longer than this before one try, whatever GitHub asks
 
 
 def _repeatable(method: str, path: str) -> bool:
@@ -22,6 +26,50 @@ def _transient(e: Exception) -> bool:
     return isinstance(e, (TimeoutError, ConnectionError, urllib.error.URLError))
 
 
+def _header(e: urllib.error.HTTPError, name: str) -> str:
+    try:
+        return str((e.headers or {}).get(name) or "").strip()
+    except Exception:
+        return ""
+
+
+def _error_body(e: urllib.error.HTTPError) -> str:
+    """The error's body, read once and put back, so whoever catches the error can still read it."""
+    if not hasattr(e, "_body"):
+        try:
+            data = e.read() or b""
+        except Exception:
+            data = b""
+        e._body = data
+        if e.fp is not None:
+            e.fp = e.file = io.BytesIO(data)
+            e.__dict__.pop("read", None)            # the wrapper caches the old file's read
+    return e._body.decode("utf-8", "replace")
+
+
+def rate_limited(e: Exception) -> bool:
+    """GitHub's primary or secondary rate limit: 429, or a 403 that says so (a retry-after header, no requests left, or the
+    message). A plain 403 is a missing permission and is not one."""
+    if not isinstance(e, urllib.error.HTTPError) or e.code not in (403, 429):
+        return False
+    if e.code == 429 or _header(e, "retry-after") or _header(e, "x-ratelimit-remaining") == "0":
+        return True
+    return "rate limit" in _error_body(e).lower()
+
+
+def rate_limit_wait(e: urllib.error.HTTPError, cap: float = MAX_RATE_LIMIT_WAIT) -> float:
+    """Seconds to wait as GitHub asks (retry-after, or until x-ratelimit-reset when none are left), never more than cap."""
+    wait: float = RATE_LIMIT_WAIT
+    try:
+        if _header(e, "retry-after"):
+            wait = float(_header(e, "retry-after"))
+        elif _header(e, "x-ratelimit-remaining") == "0" and _header(e, "x-ratelimit-reset"):
+            wait = float(_header(e, "x-ratelimit-reset")) - time.time() + 1
+    except ValueError:
+        pass
+    return max(1.0, min(cap, wait))
+
+
 class GitHub:
     """Small GitHub client. Writes are limited to: comments, labels, pull requests (closed only through close_pr, never a branch
     deleted), and the step sub-issues the factory creates itself (fixed title prefix, no labels or assignees), and confirmed
@@ -32,15 +80,21 @@ class GitHub:
 
     def _req(self, method: str, path: str, data: dict | None = None, accept: str = "application/vnd.github+json"):
         """One API call. A call that is safe to repeat is tried again when GitHub times out or answers 5xx, so a short GitHub
-        hiccup does not throw away a finished run."""
-        waits = RETRY_WAITS if _repeatable(method, path) else ()
-        for wait in (*waits, None):
+        hiccup does not throw away a finished run, and after waiting as told when GitHub rate-limits it (a few minutes at most)."""
+        repeatable = _repeatable(method, path)
+        waits = list(RETRY_WAITS) if repeatable else []
+        limited = RATE_LIMIT_RETRIES if repeatable else 0
+        while True:
             try:
                 return self._send(method, path, data, accept)
             except Exception as e:
-                if wait is None or not _transient(e):
+                if limited and rate_limited(e):
+                    limited -= 1
+                    time.sleep(rate_limit_wait(e))
+                elif waits and _transient(e):
+                    time.sleep(waits.pop(0))
+                else:
                     raise
-                time.sleep(wait)
 
     def _send(self, method: str, path: str, data: dict | None = None, accept: str = "application/vnd.github+json"):
         req = urllib.request.Request(
