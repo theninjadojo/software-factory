@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, waves
+from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videos, waves
 from . import depdetect
 from . import judges
 from . import recommend
@@ -612,6 +612,8 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
                 m = PR_URL.match(u)
                 if m:
                     dbm.track_pr(conn, m.group(1), int(m.group(2)), repo, num)    # merge conflicts are checked whether or not CI is
+                    if cfg.videos.enabled:
+                        videos.pr_opened(conn, repo, num, m.group(1), int(m.group(2)), time.time())   # when the ticket's switch is on
                     if cfg.ci.enabled:
                         dbm.watch_pr(conn, m.group(1), int(m.group(2)), repo, num)
         alert(f"PR ready: {repo}#{num}\n{res.pr_url}\n{picked(route, c)}", event="pr_ready")
@@ -1048,14 +1050,15 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
                            comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num),
                            conversation=chat_conversation(cfg, repo, num),
-                           follow=reviewactions.prompt(cfg))
+                           follow=reviewactions.prompt(cfg) + (videos.prompt() if cfg.videos.enabled and conn is not None and videos.wanted(conn, prs) else ""))
     if res.status == "rate-limited":
         if trigger_label:
             requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
         else:
             alert(f"Review of {repo}#{num} hit a rate limit. Apply `{cfg.review.label}` to the ticket to retry.", event="rate_limit")
     elif res.status == "stage":
-        body = review_comment(route, reviewactions.strip(res.output) if cfg.review.follow_actions else res.output)
+        shown = videos.reviewed(cfg, gh, conn, prs, res.output, time.time()) if cfg.videos.enabled else res.output   # keeps its narration
+        body = review_comment(route, reviewactions.strip(shown) if cfg.review.follow_actions else shown)
         store_follow_actions(cfg, conn, repo, num, prs, res.output)
         links = []
         for r, n in prs:
@@ -2027,6 +2030,10 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
         captures.tick(cfg, gh, conn, time.time())
     except Exception:
         log.exception("screens: Playwright runs failed")        # never stops the poll
+    try:
+        videos.tick(cfg, gh, conn, time.time(), lambda: dbm.connect(cfg.db_path), time.time)
+    except Exception:
+        log.exception("review videos failed")                   # never stops the poll
     try:
         verify.watch(cfg, conn, lambda text, event="worker_offline": alert(text, event=event))
     except Exception:

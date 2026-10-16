@@ -379,6 +379,25 @@ class CleanupCfg:
 
 
 @dataclass(frozen=True)
+class VideosCfg:
+    """Review videos (videos.py): a person ticks "Make a review video" on a ticket in the admin UI, and each of its build PRs gets a
+    short narrated walkthrough. The narration is fixed wording built from the PR's changed files (no model reads the diff); the
+    speech and the encoding run offline in a sealed container (image, no network). Off by default: the image is built locally."""
+    enabled: bool = False
+    image: str = "localhost/factory-video:latest"
+    max_seconds: int = 120                # longest video kept
+    max_mb: int = 50                      # largest video kept
+    max_per_day: int = 10                 # videos started in any 24 hours, "Make again" included
+    retention_days: int = 30              # a video's file is removed this long after it was made
+    timeout_seconds: int = 600            # the whole making of one video
+    ui_url: str | None = None             # the admin UI's address for the links in PR comments (else telegram.ui_url)
+    voice: str = "piper"                  # piper (offline, in the container) or elevenlabs (a ticket may choose the other)
+    elevenlabs_key_file: str | None = None    # saved on the Credentials page; default: next to the GitHub token
+    elevenlabs_voice_id: str = ""         # the ElevenLabs voice used unless a ticket names another
+    elevenlabs_model: str = "eleven_multilingual_v2"
+
+
+@dataclass(frozen=True)
 class ScheduleCfg:
     """A scheduled job: on `every` (6h, 2d, 1w) or `cron` (UTC, five fields), fetch `source`, save a snapshot and open a ticket
     on `repo`. `labels` default to the auto label, so the classifier picks the next stage and only builds what it is sure about;
@@ -609,6 +628,7 @@ class Config:
     ci: CiCfg = field(default_factory=CiCfg)
     conflicts: ConflictsCfg = field(default_factory=ConflictsCfg)
     cleanup: CleanupCfg = field(default_factory=CleanupCfg)
+    videos: VideosCfg = field(default_factory=VideosCfg)
     review: ReviewCfg = field(default_factory=ReviewCfg)
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
     split: SplitCfg = field(default_factory=SplitCfg)
@@ -941,6 +961,30 @@ def _ui_url(v, section: str = "telegram"):
     return v.rstrip("/")
 
 
+def _videos(raw: dict, github_token_file=None) -> VideosCfg:
+    from .voices import ENGINES, MODEL_ID, VOICE_ID
+    key_file = raw.get("elevenlabs_key_file") or (str(Path(github_token_file).parent / "elevenlabs_key") if github_token_file else None)
+    v = VideosCfg(**{**raw, "ui_url": _ui_url(raw.get("ui_url"), "videos"), "elevenlabs_key_file": key_file})
+    if v.voice not in ENGINES:
+        raise ValueError("videos.voice must be piper or elevenlabs")
+    if v.elevenlabs_voice_id and not (isinstance(v.elevenlabs_voice_id, str) and VOICE_ID.fullmatch(v.elevenlabs_voice_id)):
+        raise ValueError("videos.elevenlabs_voice_id must be an ElevenLabs voice id (8 to 40 letters and digits)")
+    if v.voice == "elevenlabs" and not v.elevenlabs_voice_id:
+        raise ValueError("videos.voice = elevenlabs needs videos.elevenlabs_voice_id")
+    if not isinstance(v.elevenlabs_model, str) or not MODEL_ID.fullmatch(v.elevenlabs_model):
+        raise ValueError("videos.elevenlabs_model must be an ElevenLabs model id such as eleven_multilingual_v2")
+    if not isinstance(v.enabled, bool):
+        raise ValueError("videos.enabled must be true or false")
+    if not isinstance(v.image, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,200}", v.image):
+        raise ValueError("videos.image must be an image name such as localhost/factory-video:latest")
+    for name, lo, hi in (("max_seconds", 10, 600), ("max_mb", 1, 500), ("max_per_day", 1, 1000), ("retention_days", 1, 3650),
+                         ("timeout_seconds", 60, 7200)):
+        n = getattr(v, name)
+        if not isinstance(n, int) or isinstance(n, bool) or not lo <= n <= hi:
+            raise ValueError(f"videos.{name} must be a whole number from {lo} to {hi}")
+    return v
+
+
 _SCREEN_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
 _SCREEN_PATH = re.compile(r"[A-Za-z0-9_./-]{1,200}")
 
@@ -1210,6 +1254,7 @@ def parse(raw: dict) -> Config:
     cleanup = CleanupCfg(**raw.get("cleanup", {}))
     if not isinstance(cleanup.enabled, bool):
         raise ValueError("cleanup.enabled must be true or false")
+    videos = _videos(raw.get("videos", {}), raw.get("github", {}).get("token_file"))
     review = ReviewCfg(**_tuples(raw.get("review", {})))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
@@ -1342,6 +1387,7 @@ def parse(raw: dict) -> Config:
         workers=workers,
         conflicts=conflicts,
         cleanup=cleanup,
+        videos=videos,
         review=review,
         mockups=mockups,
         split=split_cfg,

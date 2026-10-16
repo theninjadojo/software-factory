@@ -149,7 +149,7 @@ def secret_files(cfg) -> list[str]:
     """Every file the configuration names that holds a credential."""
     from .config import default_harnesses
     paths = [cfg.token_file, cfg.telegram_token_file, cfg.openrouter_key_file, cfg.slack_bot_token_file, cfg.slack_app_token_file,
-             cfg.updates.token_file, cfg.runner.claude_env_file, cfg.workers.tokens_file]
+             cfg.updates.token_file, cfg.runner.claude_env_file, cfg.workers.tokens_file, cfg.videos.elevenlabs_key_file]
     paths += [h.env_file for h in (cfg.harnesses or default_harnesses(cfg.runner)).values()]
     return sorted({p for p in paths if isinstance(p, str) and p}, key=len, reverse=True)
 

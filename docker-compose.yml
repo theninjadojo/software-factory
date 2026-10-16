@@ -78,6 +78,12 @@ services:
     profiles: ["build"]
     entrypoint: ["true"]
 
+  video-image:  # build-only, for review videos: `docker compose --profile video build` produces factory-video:latest (large, optional)
+    build: {context: ./sandbox/video}
+    image: localhost/factory-video:latest
+    profiles: ["video"]
+    entrypoint: ["true"]
+
   android-image:   # build-only, for verification workers on a Linux box: `docker compose --profile android build` produces factory-android:latest
     build:           # (version and checksum are pinned in the Dockerfile; ANDROID_WITH_EMULATOR=1 in .env adds the emulator and its system image)
       context: ./sandbox/android

@@ -158,6 +158,29 @@ auto = true
 label = "factory:fix-conflicts"
 max_attempts = 10            # resolution runs per PR; then a person is asked
 
+# Review videos: a person ticks "Make a review video for each pull request" on a ticket's page in the admin UI (there is no label
+# for it) and picks a voice. Each build PR of that ticket, including ones already open, then gets a short narrated walkthrough with
+# a transcript, rendered with Remotion: the screenshots the build took and the most important parts of the diff. The automated
+# review writes the narration (it already reads the diff); without one it is fixed wording made from the file list. Rendering and
+# the Piper voice run offline in a sealed container with no network; an ElevenLabs voice is made by the factory (the narration text
+# is sent to ElevenLabs) and handed in. Videos are kept in the state folder (not in backups) and shown behind the admin login. A
+# failed or skipped video never holds up the PR. Needs the factory-video image, built locally (about 0.5 GB):
+#   docker compose --profile video build     (or: podman build -t factory-video -f sandbox/video/Dockerfile sandbox/video)
+# Remotion is free for individuals and companies of up to three people; larger companies need a Remotion company licence.
+# [videos]
+# enabled = false
+# image = "localhost/factory-video:latest"
+# max_seconds = 120           # longest video kept
+# max_mb = 50                 # largest video kept
+# max_per_day = 10            # videos started in any 24 hours, "Make again" included
+# retention_days = 30         # files are removed this long after they were made
+# timeout_seconds = 600       # the whole making of one video
+# ui_url = "https://factory.example.com"   # for the links in PR comments; else telegram.ui_url
+# voice = "piper"             # piper (offline) or elevenlabs; a ticket can choose the other
+# elevenlabs_voice_id = ""    # the ElevenLabs voice used unless a ticket names another (the key is saved on the Credentials page)
+# elevenlabs_model = "eleven_multilingual_v2"
+# elevenlabs_key_file = "/srv/factory/secrets/elevenlabs_key"   # default: next to the GitHub token
+
 # Standing instructions of your own for the agents (house style, domain rules, language). Each is put at the top of that
 # agent's prompt, `all` first; the factory's built-in rules (read-only, untrusted ticket text, protected paths, no commit,
 # the open-questions block) still apply and win if they conflict. Up to 4000 characters each, line breaks and tabs only.

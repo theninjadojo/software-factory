@@ -504,7 +504,7 @@ def credentials_page(cfg, csrf: str, result: str = "") -> str:
                      '(<code>claude setup-token</code>)</label> <label class="check"><input type="radio" name="kind" value="apikey"> API key</label>'
                      '<div class="muted">Unattended use of a subscription is a gray area in Anthropic\'s terms; an API key is the supported route.</div></div>')
         hint = '<p class="muted">Pasting a new value replaces the current one.</p>' if st["set"] else ""
-        test = f'<button name="action" value="test" formaction="/credentials/test">Test</button>' if name in ("github", "openrouter", "slack_bot", "slack_app") else ""
+        test = f'<button name="action" value="test" formaction="/credentials/test">Test</button>' if name in ("github", "openrouter", "slack_bot", "slack_app", "elevenlabs") else ""
         cards.append(
             f'<form method="post" action="/credentials/save" class="card cred">{csrf_field(csrf)}<input type="hidden" name="name" value="{esc(name)}">'
             f'<h3>{esc(label)}</h3><p>{status}</p>{hint}{extra}<div class="field"><input type="password" name="value" placeholder="paste new value" autocomplete="off" class="wide" aria-label="{esc(label)} – new value"></div>'

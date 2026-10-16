@@ -163,6 +163,16 @@ class GitHub:
     def get_pr(self, repo: str, number: int) -> dict:
         return self._get(f"/repos/{repo}/pulls/{number}")
 
+    def pr_files(self, repo: str, number: int, max_pages: int = 3) -> list[dict]:
+        """The files a pull request changes (filename, status, additions, deletions, patch), 100 per page, at most max_pages pages."""
+        out: list[dict] = []
+        for page in range(1, max_pages + 1):
+            got = self._get(f"/repos/{repo}/pulls/{number}/files?per_page=100&page={page}") or []
+            out += got
+            if len(got) < 100:
+                break
+        return out
+
     def check_runs(self, repo: str, sha: str) -> list[dict]:
         """CI results for a commit. Uses the Checks API when the token may read it; otherwise falls back to the GitHub Actions
         API (workflow jobs), which needs only 'Actions: read' and carries the same status, conclusion and job id."""

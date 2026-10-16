@@ -95,14 +95,14 @@ stage 3 install
 PARTS=(factory tests sandbox deploy worker config.example.toml VERSION)
 rm -rf "$APP.prev"; mkdir "$APP.prev"
 for p in "${PARTS[@]}"; do [ -e "$APP/$p" ] && cp -a "$APP/$p" "$APP.prev/"; done
-for e in factory-agent factory-render factory-screens; do podman image exists "$e" && run podman tag "$e" "$e:previous" || true; done
+for e in factory-agent factory-render factory-screens factory-video; do podman image exists "$e" && run podman tag "$e" "$e:previous" || true; done
 for p in "${PARTS[@]}"; do rm -rf "$APP/$p"; [ -e "$TMP/src/$p" ] && cp -a "$TMP/src/$p" "$APP/$p"; done
 
 rollback() {
   echo "The new version did not come up healthy: rolling back to v$HAVE" >&2
   [ -z "${DRY_RUN:-}" ] || return 0
   for p in "${PARTS[@]}"; do rm -rf "$APP/$p"; [ -e "$APP.prev/$p" ] && cp -a "$APP.prev/$p" "$APP/$p"; done
-  for e in factory-agent factory-render factory-screens; do podman image exists "$e:previous" && podman tag "$e:previous" "$e" || true; done
+  for e in factory-agent factory-render factory-screens factory-video; do podman image exists "$e:previous" && podman tag "$e:previous" "$e" || true; done
   systemctl --user restart factory.service || true
   systemctl --user is-enabled factory-ui.service >/dev/null 2>&1 && systemctl --user restart factory-ui.service || true
   exit 1                                 # (the EXIT trap lifts the pause)
@@ -113,6 +113,8 @@ stage 4 images
 run podman build -q -t factory-agent -f sandbox/Dockerfile sandbox || rollback
 run podman build -q -t factory-render -f sandbox/render/Dockerfile sandbox/render || rollback
 [ -f sandbox/screens/Dockerfile ] && { run podman build -q -t factory-screens -f sandbox/screens/Dockerfile sandbox/screens || rollback; }
+# the video image is built only where review videos were set up (it is large); then it is kept up to date like the others
+podman image exists factory-video && [ -f sandbox/video/Dockerfile ] && { run podman build -q -t factory-video -f sandbox/video/Dockerfile sandbox/video || rollback; }
 stage 5 restart
 run systemctl --user restart factory.service
 systemctl --user is-enabled factory-workers.service >/dev/null 2>&1 && run systemctl --user disable --now factory-workers.service   # the UI runs the worker API now
