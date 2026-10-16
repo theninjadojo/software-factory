@@ -190,7 +190,7 @@ def list_get(h, q: dict, csrf: str) -> None:
     cfg = h.app.cfg()
     shown = L.flash_pop(csrf)
     if not cfg.videos.enabled:
-        body = '<p>Videos are switched off. Turn them on in <a href="/settings">Settings</a>, Review videos.</p>'
+        body = '<p>Videos are switched off. Turn them on in <a href="/settings?section=videos">Settings, Review videos</a>.</p>'
         return h._send(200, views.page("Videos", body, "/videos", csrf))
     db = h.app.ro_db()
     try:
