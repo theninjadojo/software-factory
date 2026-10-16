@@ -142,6 +142,12 @@ def _video(h, q: dict, want_file: bool):
     return cfg, row, path
 
 
+def player_csp(headers: dict) -> str:
+    """The site's policy plus media from this origin, as a directive of its own (appended without a separator it would join the
+    last directive's source list, and the player would be refused)."""
+    return headers["Content-Security-Policy"].rstrip("; ") + "; media-src 'self'"
+
+
 def player_get(h, q: dict, csrf: str) -> None:
     got = _video(h, q, False)
     if got is None:
@@ -151,15 +157,14 @@ def player_get(h, q: dict, csrf: str) -> None:
     vid = int(row["id"])
     lines = "".join(f'<li><span class="mono muted">{esc(videos.clock(t))}</span> {esc(s)}</li>' for t, s in videos.transcript(row))
     stale = ('<div class="card"><p>The pull request has new commits since this video was made.</p></div>' if row["status"] == "stale" else "")
-    body = (f'<h1>Review video · {esc(row["pr_repo"])}#{int(row["pr_number"])}</h1>{stale}'
+    body = (f'<h2>{esc(row["pr_repo"])}#{int(row["pr_number"])}</h2>{stale}'
             f'<video controls preload="metadata" width="100%" src="{_link("/ticket/video/file", vid)}">The video could not be played. Download it instead.</video>'
             f'<p class="muted">{esc(videos.clock(row["seconds"]))} · {int(row["bytes"]) // 1024} KB</p>'
             f'<p><a href="{_link("/ticket/video/file", vid)}&amp;dl=1">Download video</a> · '
             f'<a href="{_link("/ticket/video/transcript", vid)}">Download transcript</a></p>'
             f'<section aria-label="Transcript"><h2>Transcript</h2>' + (f"<ol>{lines}</ol>" if lines else '<p class="muted">No transcript was saved for this video.</p>')
             + "</section>")
-    csp = server.HEADERS["Content-Security-Policy"] + " media-src 'self';"
-    h._send(200, views.page("Review video", body, "/ticket/video", csrf), extra={"Content-Security-Policy": csp})
+    h._send(200, views.page("Review video", body, "/ticket/video", csrf), extra={"Content-Security-Policy": player_csp(server.HEADERS)})
 
 
 def file_get(h, q: dict, csrf: str) -> None:

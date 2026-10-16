@@ -57,8 +57,9 @@ export function check(spec) {
                subtitle: str(s.subtitle, 300, `${w} subtitle`)};
     if (s.kind === 'shot') c.image = file('img', s.image, `${w} image`);
     if (s.kind === 'code') {
-      if (!Array.isArray(s.lines) || s.lines.length > 60) throw new Bad(`${w}: lines must be at most 60 lines`);
-      c.lines = s.lines.map((l, j) => {
+      const lines = s.lines ?? [];
+      if (!Array.isArray(lines) || lines.length > 60) throw new Bad(`${w}: lines must be a list of at most 60 lines`);
+      c.lines = lines.map((l, j) => {
         if (!l || !['+', '-', '@', ' '].includes(l.t)) throw new Bad(`${w} line ${j + 1}: t must be +, -, @ or a space`);
         return {t: l.t, text: str(l.text, 200, `${w} line ${j + 1}`)};
       });

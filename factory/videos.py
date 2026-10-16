@@ -44,6 +44,7 @@ FILE = re.compile(r"(\d{1,12})\.mp4")
 SPOKEN = re.compile(r"[^A-Za-z0-9 .,:;'()/_+-]")
 PR_REF = re.compile(r"([A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100})#(\d{1,9})")
 SCREEN = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
+LOCKFILE = re.compile(r"(^|/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Pipfile\.lock|uv\.lock|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock|Podfile\.lock|pubspec\.lock)$")
 BLOCK = re.compile(r"^```factory-video[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 KINDS = ("title", "shot", "code", "points")
 _running = threading.Lock()
@@ -403,8 +404,12 @@ def _file_scene(f: dict, say: str, hunk: int = 0) -> dict:
 
 
 def fixed_script(pr_number: int, title: str, files: list[dict], shots: list[str]) -> list[dict]:
-    """The narration when there is no review block: fixed wording with only cleaned names and numbers."""
+    """The narration when there is no review block: fixed wording with only cleaned names and numbers. The files with the most changed
+    lines come first, so a large pull request shows its main changes rather than whatever sorts first by name; lock files and files
+    without a text diff go last."""
     files = [f for f in files if isinstance(f, dict) and speakable(f.get("filename"), 160)]
+    files.sort(key=lambda f: (not f.get("patch") or LOCKFILE.search(str(f.get("filename"))) is not None,
+                              -(int(f.get("additions") or 0) + int(f.get("deletions") or 0))))
     plus = sum(int(f.get("additions") or 0) for f in files)
     minus = sum(int(f.get("deletions") or 0) for f in files)
     t = speakable(title, 80)
@@ -601,6 +606,8 @@ def spec(vc, scenes: list[dict], voice: str) -> dict:
     for i, s in enumerate(scenes, 1):
         c = {"kind": s["kind"], "say": s.get("say", "")}
         c.update({k: s[k] for k in keep[s["kind"]] if s.get(k)})
+        if s["kind"] == "code":
+            c["lines"] = s.get("lines") or []                    # empty: a binary or very large file, shown as "no text diff"
         if s["kind"] == "shot":
             c["image"] = f"s{i:02d}.png"
         if voice == "files" and c["say"]:

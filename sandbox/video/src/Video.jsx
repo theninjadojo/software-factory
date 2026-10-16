@@ -60,6 +60,9 @@ const Code = ({s}) => {
       <div style={{color: C.text, fontSize: 28, fontWeight: 700, marginBottom: 6, wordBreak: 'break-all'}}>{s.title}</div>
       {s.subtitle ? <div style={{color: C.muted, fontSize: 20, marginBottom: 14}}>{s.subtitle}</div> : null}
       <div style={{flex: 1, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 10, background: C.panel, padding: '14px 18px'}}>
+        {s.lines.length === 0 ? (
+          <div style={{color: C.muted, fontSize: 22, fontFamily: SANS}}>No text diff to show (a binary or very large file).</div>
+        ) : null}
         {s.lines.map((l, i) => (
           <div key={i} style={{fontFamily: MONO, fontSize: 17, lineHeight: 1.4, whiteSpace: 'pre', overflow: 'hidden',
                                color: l.t === '+' ? C.add : l.t === '-' ? C.del : l.t === '@' ? C.hunk : C.text,

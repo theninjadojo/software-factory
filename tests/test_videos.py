@@ -182,8 +182,14 @@ class ReviewBlock(unittest.TestCase):
         scenes, narration = videos.script(7, "Add **videos**", FILES, [], [{"kind": "code", "file": "nope.py", "hunk": 0, "say": "x"}])
         self.assertEqual(narration, "fixed")
         self.assertEqual(scenes[0]["say"], "Review of pull request 7: Add videos. It changes 2 files, with 53 lines added and 1 removed.")
-        many = [{"filename": f"f{i}.py", "additions": 1, "deletions": 0, "patch": "+x"} for i in range(20)]
+        many = [{"filename": f"f{i:02d}.py", "additions": i, "deletions": 0, "patch": "+x"} for i in range(20)]
         scenes, _ = videos.script(7, "", many, ["home"])
+        self.assertEqual(scenes[2]["title"], "f19.py")                          # the biggest change first, not the first name
+        noisy = [{"filename": "package-lock.json", "additions": 5000, "deletions": 0, "patch": "+x"},
+                 {"filename": "big.bin", "additions": 900, "deletions": 0}, {"filename": "app.py", "additions": 3, "deletions": 0, "patch": "+y"}]
+        ordered, _ = videos.script(7, "", noisy, [])
+        self.assertEqual([s["title"] for s in ordered[1:]], ["app.py", "package-lock.json", "big.bin"])  # lock files and binaries last
+        self.assertEqual(videos.spec(VideosCfg(), ordered, "piper")["scenes"][3]["lines"], [])     # always sent, even when empty
         self.assertEqual(len(scenes), videos.MAX_SCENES)
         self.assertEqual(scenes[-1]["kind"], "points")
         self.assertIn("more files", scenes[-1]["say"])
@@ -313,6 +319,14 @@ class Queue(Base):
 
 
 class Ui(Base):
+    def test_the_player_may_load_media_from_this_site(self):
+        from factory.ui import reviewvideo, server
+        directives = [d.strip() for d in reviewvideo.player_csp(server.HEADERS).split(";") if d.strip()]
+        self.assertIn("media-src 'self'", directives)
+        self.assertIn("default-src 'none'", directives)
+        self.assertFalse(any("media-src" in d and not d.startswith("media-src") for d in directives))
+
+
     def test_elevenlabs_is_offered_only_with_a_saved_key(self):
         from factory.ui import reviewvideo
         html = reviewvideo.voice_fields(self.cfg, "", "")
