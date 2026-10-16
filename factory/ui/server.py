@@ -693,7 +693,7 @@ class Handler(BaseHTTPRequestHandler):
                     local = CH.folded(cfg, db, sel["repo"], sel["issue"], csrf, back) + local + views.fold(
                         "priority", "Priority", views.esc(f"{prio} · {who}"),
                         PC.card(cfg, db, sel["repo"], sel["issue"], [x["name"] for x in issue["labels"]] if issue else None, issue["body"] if issue else "", csrf, back))
-                    local += views.fold("linked", "Linked tickets", "Split from or into other tickets", SPC.card(cfg, db, sel["repo"], sel["issue"], csrf, back))
+                    local += SPC.fold(cfg, db, sel["repo"], sel["issue"], csrf, back)
                     local += RVID.fold(cfg, db, sel["repo"], sel["issue"], csrf, back, now)
                     local = views.fold("followups", "Review follow-ups", "The reviewer proposed follow-up work", RA.card(db, sel["repo"], sel["issue"], csrf, back), tone="fd-ask",
                                        open_=True) + local
