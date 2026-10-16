@@ -25,6 +25,8 @@ SWITCHES = {
     "evaluate.enabled": ("Evaluation", "Once a ticket is finished, an agent with a clean context scores how well each step went and suggests what to change. "
                          "One ticket at a time, only while the factory has nothing else to do. Each evaluation is a run.",
                          "Finished tickets are no longer evaluated. The evaluations so far stay on the Evaluate page."),
+    "videos.enabled": ("Review videos", "Each ticket's page offers a narrated walkthrough of its pull requests. Videos are made only for tickets you tick.",
+                       "No new videos are made. Videos already made stay until they expire."),
     "pm.enabled": ("Project manager", "An agent ranks each repository's factory tickets and records blockers; a build waits for its open blockers.",
                    "Tickets are no longer ranked, and builds no longer wait for blockers."),
 }
@@ -108,6 +110,8 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           *_onoff(cfg.review.enabled), ("A ticket", "PRs & CI"), "/settings?section=review", "Code review", "review.enabled"),
         F("conflicts", "checks", "Merge conflicts", f"An agent resolves conflicts with the base branch, at most {cfg.conflicts.max_attempts} times per pull request.",
           *_onoff(cfg.conflicts.enabled), ("A ticket", "PRs & CI"), "/settings?section=conflicts", "Merge conflicts", "conflicts.enabled"),
+        F("videos", "checks", "Review videos", "A short narrated walkthrough of a ticket's pull requests: the screens and the main parts of the diff.",
+          *_onoff(cfg.videos.enabled), ("A ticket",), "/settings?section=videos", "Review videos", "videos.enabled"),
         F("mockups", "checks", "Design mockups", "Whether a build waits for the designer's mockups (and, if you ask, for your approval of them).",
           *mock, ("A ticket", "Screens"), "/settings?section=mockups", "Design mockups"),
         F("pm", "checks", "Project manager", "An agent ranks tickets and records blockers; a build waits for its open blockers.",

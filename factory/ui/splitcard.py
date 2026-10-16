@@ -6,10 +6,12 @@ import sqlite3
 
 from .. import split as S
 from .. import tracker
-from . import labels as L
+from . import labels as L, views
 from .views import csrf_field, esc, ticket_link
 
 TOO_FEW = "At least two tickets must remain. Dismiss the split instead."
+SOURCE = {"analyst": "Proposed by the analyst.", "architect": "Proposed by the architect: its plan is large, so it suggests building it in phases.",
+          "review": "Proposed by the ticket review."}
 
 
 def _state(db, repo: str, n: int) -> str:
@@ -20,11 +22,14 @@ def _state(db, repo: str, n: int) -> str:
     return r[0] if r else ""
 
 
-def _item(db, k: dict, waiting: bool) -> str:
-    """One kept item; while the proposal waits, with its text and a Drop box that belongs to the approval form."""
+def _item(db, k: dict, waiting: bool, rows: list[dict]) -> str:
+    """One kept item and the items it comes after; while the proposal waits, with its text and a Drop box that belongs to the approval
+    form."""
     state = _state(db, k["child_repo"], k["child_issue"]) if k["child_issue"] else ""
+    after = ", ".join(str(S.kept_index(rows, int(a))) for a in k["after"].split(",") if a)
     out = (f'<li>{ticket_link(k["child_repo"], k["child_issue"]) if k["child_issue"] else esc("not created yet")}'
-           f' <span class="muted">{esc(k["title"])} ({esc(k["repo"])}{", " + esc(state) if state else ""})</span>')
+           f' <span class="muted">{esc(k["title"])} ({esc(k["repo"])}{", after " + esc(after) if after else ""}'
+           f'{", " + esc(state) if state else ""})</span>')
     if waiting:
         out += (f' <label><input type="checkbox" name="drop" value="{int(k["pos"])}" form="split-f"> Drop</label>'
                 f'<details><summary>What it says</summary><p class="muted">{esc(k["body"])}</p></details>')
@@ -48,7 +53,7 @@ def card(cfg, db, repo: str, n: int, csrf: str, back: str) -> str:
                 + (f', after {", ".join(str(S.kept_index(siblings, int(a))) for a in it["after"].split(",") if a)}' if it["after"] else "") + ".</p>")
     if parent:
         waiting = parent["status"] == "proposed"
-        rows = "".join(_item(db, k, waiting) for k in S.kept(kids))
+        rows = "".join(_item(db, k, waiting, kids) for k in S.kept(kids))
         gone = [esc(k["title"]) for k in kids if k["dropped"]]
         dropped = f'<p class="muted">Dropped when it was approved: <s>{"</s>, <s>".join(gone)}</s></p>' if gone else ""
         form = ""
@@ -57,14 +62,24 @@ def card(cfg, db, repo: str, n: int, csrf: str, back: str) -> str:
             hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(n)}">' \
                      f'<input type="hidden" name="id" value="{int(parent["id"])}"><input type="hidden" name="back" value="{esc(back)}">'
             form = (f'<form method="post" action="/tickets/split" class="field" id="split-f">{hidden}'
-                    '<p class="muted">Tick Drop on any item you do not want; at least two must remain.</p>'
+                    '<p class="muted">Tick Drop on any item you do not want; at least two must remain. Each new ticket is '
+                    'blocked by the ones it comes after.</p>'
                     f'<label>Start every new ticket with<select name="start">{opts}</select></label>'
                     '<button name="decision" value="approve">Approve the split</button> '
                     '<button name="decision" value="dismiss">Dismiss</button></form>')
         head = {"proposed": "Proposed split", "approved": "Split approved (creating the tickets)", "done": "Split into"}[parent["status"]]
-        out += f'<h4>{head}</h4><p class="muted">{esc(parent["reason"])}</p><ol>{rows}</ol>{dropped}{form}'
+        by = f'<p class="muted">{esc(SOURCE[parent["source"]])}</p>' if waiting and parent.get("source") in SOURCE else ""
+        out += f'<h4>{head}</h4>{by}<p class="muted">{esc(parent["reason"])}</p><ol>{rows}</ol>{dropped}{form}'
     return (f'<section class="sd-card" aria-labelledby="split-h"><div class="sd-cardhead"><h3 id="split-h">Linked tickets</h3></div>{out}</section>'
             if out else "")
+
+
+def fold(cfg, db, repo: str, n: int, csrf: str, back: str) -> str:
+    """The card folded on the ticket page; open, and saying so, while a proposed split waits for a person's decision."""
+    body = card(cfg, db, repo, n, csrf, back)
+    waiting = 'id="split-f"' in body
+    return views.fold("linked", "Linked tickets", "A proposed split is waiting for your decision" if waiting else "Split from or into other tickets",
+                      body, tone="fd-ask" if waiting else "", open_=waiting)
 
 
 def _drops(h, form, pid: int) -> list[int]:

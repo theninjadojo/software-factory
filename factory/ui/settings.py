@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, EFFORT_FLOOR, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, EFFORT_FLOOR, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, VideosCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -66,6 +66,14 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
                   Field("split.notes_label", "Meeting notes label", "text",
                         "Put on a ticket by 'These are meeting notes': the analyst always considers splitting it into several tickets, "
                         "which a person approves."),
+                  Field("split.architect", "Architect: propose splitting a large plan", "bool",
+                        "On: when its plan is large, the architect proposes an ordered list of smaller tickets, each with its own scope and "
+                        "acceptance checks. Nothing is created until a person approves it on the ticket page."),
+                  Field("split.architect_min_areas", "Architect: split from this many areas", "int",
+                        "A split is proposed only when the plan touches at least this many apps, modules or components, or reaches the "
+                        "number of plan items below.", lo=2, hi=20),
+                  Field("split.architect_min_items", "Architect: split from this many plan items", "int",
+                        "Or when the plan has at least this many items.", lo=2, hi=50),
                   Field("auto.chain", "Auto continues to the next stage", "bool",
                         "On (default): after a stage, if nothing needs a person, the next stage starts by itself. Off: one stage per label."),
                   Field("auto.confirm_stages", "Ask before auto runs a stage", "bool",
@@ -333,11 +341,36 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               "Ask about every ticket and the settings on the Chat page (/chat, in the main menu). Read-only: it changes nothing. Uses the chat model "
               "and harness above; each reply is a model run.", group="Factory chat"),
         Field("chat.factory_max_per_hour", "Factory chat messages per hour", "int", "All admins together.", lo=1, hi=1000, group="Factory chat"),
+        Field("chat.factory_code", "Let the factory chat read the code", "bool",
+              "A read-only copy of each repository's default branch, refreshed at most every 15 minutes, for the factory chat and for the "
+              "videos it proposes. The runs still have no network and no GitHub token.", group="Factory chat"),
+        Field("chat.factory_max_turns", "Factory chat: max turns per reply", "int", "Reading code takes more turns than a ticket chat. "
+              "Also used for writing a video's narration.", lo=1, hi=1000, group="Factory chat", adv=True),
+        Field("chat.factory_timeout_seconds", "Factory chat: reply timeout (seconds)", "int", lo=10, hi=10000, group="Factory chat", adv=True),
         Field("chat.harness", "Chat agent harness", "select", choices=("claude-code",), adv=True),
         Field("chat.max_turns", "Max turns per reply", "int", lo=1, hi=1000, adv=True),
         Field("chat.timeout_seconds", "Reply timeout (seconds)", "int", lo=10, hi=10000, adv=True),
         Field("chat.check_seconds", "Look for new messages every (seconds)", "int", lo=1, hi=1000, adv=True),
         Field("chat.context_turns", "Chat turns later stages read", "int", "The newest turns that stage prompts carry.", lo=1, hi=1000, adv=True),
+    ]),
+    "videos": ("Review videos", [
+        Field("videos.enabled", "Enable review videos", "bool",
+              "A ticket's page then offers a short narrated walkthrough of each of its pull requests. Needs the video image (built below)."),
+        Field("videos.voice", "Default voice", "select",
+              "Piper runs offline on this machine. ElevenLabs needs its key (below) and a voice id; it receives the narration text. "
+              "A ticket can choose the other.", choices=("piper", "elevenlabs"), group="Voice"),
+        Field("videos.elevenlabs_voice_id", "ElevenLabs voice id", "text",
+              "8 to 40 letters and digits, from your ElevenLabs voice library. Used unless a ticket names another.", group="Voice"),
+        Field("videos.elevenlabs_model", "ElevenLabs model", "text", "For example eleven_multilingual_v2.", group="Voice", adv=True),
+        Field("videos.max_per_day", "Videos per day", "int", "Videos started in any 24 hours, Make again included.", lo=1, hi=1000, group="Limits"),
+        Field("videos.max_seconds", "Longest video (seconds)", "int", "A longer video is not kept.", lo=10, hi=600, group="Limits"),
+        Field("videos.max_mb", "Largest video (MB)", "int", "A larger video is not kept.", lo=1, hi=500, group="Limits"),
+        Field("videos.retention_days", "Keep videos (days)", "int", "Video files are removed this long after they were made.", lo=1, hi=3650, group="Limits"),
+        Field("videos.timeout_seconds", "Time to make one video (seconds)", "int", lo=60, hi=7200, adv=True),
+        Field("videos.ui_url", "Admin UI address for links", "url",
+              "Used in the links posted on pull requests and tickets. Empty: the Telegram UI address.", adv=True),
+        Field("videos.image", "Video image", "text",
+              "The container image the videos are made in. Only the default one can be built from this page.", adv=True),
     ]),
     "new_projects": ("New project interviews", [
         Field("new_projects.enabled", "Enable new-project interviews", "bool",
@@ -374,6 +407,7 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("updates.repo", "Release repository", "text", "owner/name of the repository releases come from.", adv=True),
     ]),
 }
+OPTIONAL_TEXT = frozenset({"videos.elevenlabs_voice_id"})      # text settings that may be left empty
 VIEWPORT_LINE = re.compile(r"([a-z0-9][a-z0-9-]{0,60})\s+(\d{1,5})\s*[x×]\s*(\d{1,5})")
 
 
@@ -428,7 +462,7 @@ def del_in(d: dict, dotted: str) -> None:
 
 
 DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "questions": QuestionsCfg, "ticket_review": TicketReviewCfg, "evaluate": EvaluateCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
-                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg}
+                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg, "videos": VideosCfg}
 
 
 def default_for(key: str):
@@ -549,6 +583,8 @@ def parse_value(f: Field, form: Form):
             return v
         if f.kind == "text":
             v = raw.strip()
+            if not v and f.key in OPTIONAL_TEXT:
+                return ""
             if not v or len(v) > 200 or "\n" in v or "\r" in v:
                 raise ValueError
             if f.key == "runner.memory" and not re.fullmatch(r"\d+[kKmMgG]", v):

@@ -81,7 +81,8 @@ class HarnessPage(AdminCase):
     def test_roles_can_pick_a_harness(self):
         cookie, csrf = self.session()
         self.post(cookie, csrf, "/harnesses/save", self.form())
-        form = {"section": "roles", "auto.label": "factory:auto", "split.notes_label": "factory:notes"}
+        form = {"section": "roles", "auto.label": "factory:auto", "split.notes_label": "factory:notes",
+                "split.architect_min_areas": "3", "split.architect_min_items": "8"}
         for name, label, done, model, eff in (("analyst", "factory:analyze", "stage:analysed", "sonnet", "medium"),
                                               ("designer", "factory:design", "stage:designed", "sonnet", "medium"),
                                               ("architect", "factory:architect", "stage:architected", "opus", "high")):
@@ -95,7 +96,8 @@ class HarnessPage(AdminCase):
         cookie, csrf = self.session()
         self.assertIn("Write design mockup files", self.req("GET", "/settings?section=roles", cookie=cookie)[2])
         self.assertTrue(next(r for r in self.cfg().roles if r.name == "designer").design_files)          # on by default
-        form = {"section": "roles", "auto.label": "factory:auto", "split.notes_label": "factory:notes"}
+        form = {"section": "roles", "auto.label": "factory:auto", "split.notes_label": "factory:notes",
+                "split.architect_min_areas": "3", "split.architect_min_items": "8"}
         for name, label, done, model, eff in (("analyst", "factory:analyze", "stage:analysed", "sonnet", "medium"),
                                               ("designer", "factory:design", "stage:designed", "sonnet", "medium"),
                                               ("architect", "factory:architect", "stage:architected", "opus", "high")):
@@ -105,6 +107,24 @@ class HarnessPage(AdminCase):
         self.assertFalse(next(r for r in self.cfg().roles if r.name == "designer").design_files)
         self.assertEqual(self.post(cookie, csrf, "/settings/save", {**form, "roles.designer.design_files": "1"})[0], 303)
         self.assertTrue(next(r for r in self.cfg().roles if r.name == "designer").design_files)
+
+    def test_the_architect_split_is_set_on_the_stage_agents_page(self):
+        cookie, csrf = self.session()
+        page = self.req("GET", "/settings?section=roles", cookie=cookie)[2]
+        self.assertIn("Architect: propose splitting a large plan", page)
+        self.assertIn("split.architect_min_areas", page)
+        form = {"section": "roles", "auto.label": "factory:auto", "split.notes_label": "factory:notes",
+                "split.architect_min_areas": "5", "split.architect_min_items": "12"}
+        for name, label, done, model, eff in (("analyst", "factory:analyze", "stage:analysed", "sonnet", "medium"),
+                                              ("designer", "factory:design", "stage:designed", "sonnet", "medium"),
+                                              ("architect", "factory:architect", "stage:architected", "opus", "high")):
+            form.update({f"roles.{name}.label": label, f"roles.{name}.done_label": done, f"roles.{name}.model": model,
+                         f"roles.{name}.effort": eff, f"roles.{name}.harness": "claude-code", "roles.designer.design_dir": "docs/design"})
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)                           # switch not ticked: off
+        self.assertEqual((self.cfg().split.architect, self.cfg().split.architect_min_areas, self.cfg().split.architect_min_items), (False, 5, 12))
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", {**form, "split.architect": "1", "split.architect_min_areas": "1"})[0], 422)
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", {**form, "split.architect": "1"})[0], 303)
+        self.assertTrue(self.cfg().split.architect)
 
     def test_harness_credentials_are_write_only_and_stored_0600(self):
         cookie, csrf = self.session()
