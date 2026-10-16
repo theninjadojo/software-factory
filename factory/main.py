@@ -1050,14 +1050,15 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
                            comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num),
                            conversation=chat_conversation(cfg, repo, num),
-                           follow=reviewactions.prompt(cfg))
+                           follow=reviewactions.prompt(cfg) + (videos.prompt() if cfg.videos.enabled and conn is not None and videos.wanted(conn, prs) else ""))
     if res.status == "rate-limited":
         if trigger_label:
             requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
         else:
             alert(f"Review of {repo}#{num} hit a rate limit. Apply `{cfg.review.label}` to the ticket to retry.", event="rate_limit")
     elif res.status == "stage":
-        body = review_comment(route, reviewactions.strip(res.output) if cfg.review.follow_actions else res.output)
+        shown = videos.reviewed(cfg, gh, conn, prs, res.output, time.time()) if cfg.videos.enabled else res.output   # keeps its narration
+        body = review_comment(route, reviewactions.strip(shown) if cfg.review.follow_actions else shown)
         store_follow_actions(cfg, conn, repo, num, prs, res.output)
         links = []
         for r, n in prs:

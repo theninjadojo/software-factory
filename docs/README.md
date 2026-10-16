@@ -16,6 +16,7 @@ Shikumi is an issue-driven software factory: label a GitHub issue and sandboxed 
 - [Operations](operations.md): Docker and Podman, backups, health and troubleshooting.
 - [Releases](releasing.md): publishing, installing and updating.
 - [Verification workers](workers.md): machines that run checks on agent patches.
+- [Review videos](videos.md): narrated walkthroughs of a ticket's pull requests, made with Remotion and Piper or ElevenLabs.
 - [Repository settings](repo-settings.md): the About text, topics and the publication checklist.
 
 ## Understanding and contributing

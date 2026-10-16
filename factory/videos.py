@@ -1,20 +1,22 @@
-"""Review videos: a short walkthrough of a pull request with a spoken voice-over and a transcript, made for each build PR of a ticket
-whose "Make a review video" switch is on. The switch lives only in the admin UI (a row here, never a label).
+"""Review videos: a short narrated walkthrough of a pull request, rendered with Remotion, made for each build PR of a ticket whose
+"Make a review video" switch is on. The switch, and the voice, live only in the admin UI (rows here, never a label).
 
 The UI writes rows (the switch, and one queued video per PR); the orchestrator makes them, one at a time on its own thread.
 Nothing a ticket or a repository says decides what runs:
-  - the narration is fixed wording built from the PR's file list (names cleaned to a small set of characters, counts as numbers);
-    no model reads the diff, so text in it cannot steer anything. It is sanitised before it is stored or shown.
-  - the pictures are the screenshots the build already took of its configured screens (each re-checked with png_ok), then each
-    changed file's first lines of diff, escaped into a fixed template and turned into PNGs by the sealed render container.
-  - speech (Piper) and encoding (ffmpeg) run in the sealed video container named in config ([videos] image): no network, read-only
-    root, no capabilities, only /in (read-only) and /out mounted.
+  - the narration comes from the automated code review, which already reads the diff: the reviewer ends its document with a
+    `factory-video` block (scenes of plain text). That block is untrusted model output, so it is only data: each scene is checked
+    against fixed kinds and limits, a code scene may only name a file the PR changes (the lines shown are taken from the PR's own
+    diff here, never from the block), a screen scene only a screenshot the build took, and every text is cleaned and cut to length.
+    Without a usable block (no review, or review videos turned on after it) the narration is fixed wording built from the file list.
+  - the pictures are the build's screenshots (each re-checked with png_ok) and the PR's diff lines; the Remotion composition shows
+    them with fixed templates as React text, so nothing in them is ever HTML or code.
+  - Piper speaks inside the video container; ElevenLabs (a ticket's choice, or the config default) is called from voices.py, and its
+    WAVs are passed in. The container (config [videos] image) has no network, a read-only root, no capabilities, and only /in
+    (read-only) and /out mounted.
 What comes back is untrusted: the MP4 is accepted only when mp4_ok walks its boxes and finds a real MP4 of one H.264 track and at most
 one AAC track, within the configured length and size; it is stored under a name the factory picks, in a private folder of the
 state directory (not in backups). A video that fails, times out or hits the daily limit is skipped with a fixed reason on the ticket;
 it never touches the PR's checks or blocks anything."""
-import dataclasses
-import html
 import json
 import logging
 import re
@@ -26,26 +28,49 @@ import tempfile
 import threading
 from pathlib import Path
 
-from . import render
+from . import render, voices
 from .sanitize import sanitize_markdown
 
 log = logging.getLogger("factory.videos")
 ACTIVE = ("queued", "making")
 STATUSES = ("queued", "making", "ready", "skipped", "stale", "removed")
-MAX_SCENES, MAX_SHOTS, HUNK_LINES, LINE_CHARS = 8, 3, 40, 110
+MAX_SCENES, MAX_SHOTS, HUNK_LINES, LINE_CHARS, MAX_POINTS = 12, 3, 40, 110, 6
 CHECK_SECONDS = 600                     # a ready video's PR is re-read for new commits at most this often
 CHECKS_PER_TICK = 5
+REVIEW_WAIT = 3600                      # a new PR's video waits this long for the automated review's narration
 MAX_MOOV = 8 * 1024 * 1024
 BRANDS = (b"isom", b"mp42", b"avc1", b"iso2", b"mp41")
 FILE = re.compile(r"(\d{1,12})\.mp4")
 SPOKEN = re.compile(r"[^A-Za-z0-9 .,:;'()/_+-]")
+PR_REF = re.compile(r"([A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100})#(\d{1,9})")
+SCREEN = re.compile(r"[a-z0-9][a-z0-9-]{0,60}")
+BLOCK = re.compile(r"^```factory-video[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
+KINDS = ("title", "shot", "code", "points")
 _running = threading.Lock()
+
+PROMPT = (
+    "\n\nREVIEW VIDEO BLOCK (required). A short narrated video of each pull request is made for the people reviewing it. After your "
+    "review, add exactly one fenced code block whose info string is `factory-video`, holding JSON like "
+    '{"videos": [{"pr": "owner/repo#12", "scenes": [{"kind": "title", "title": "Short headline", "say": "One or two sentences."}, '
+    '{"kind": "code", "file": "path/changed/in/the/pr.py", "hunk": 0, "say": "What this change does and why it matters."}, '
+    '{"kind": "shot", "screen": "screen-name", "say": "What the person sees."}, '
+    '{"kind": "points", "title": "What to check", "points": ["Short point"], "say": "Closing sentence."}]}]}. '
+    "One entry per pull request you reviewed. 3 to 10 scenes each, in the order a reviewer should look at things: start with a title "
+    "scene saying what the change is for, then the most important files (`file` must be a path the pull request changes; `hunk` is "
+    "the 0-based index of the diff hunk to show), screens only by the names of the built screenshots you were given, and end with "
+    "what a reviewer should check. `say` is what the narrator speaks: plain spoken English, at most 300 characters, no Markdown, "
+    "no code, no URLs. The block is machine-read: valid JSON, plain text.")
+
+
+def prompt() -> str:
+    return PROMPT
 
 
 def reasons(vc) -> dict[str, str]:
     """Every reason a video is skipped, fixed wording with only config numbers in it: nothing from a ticket, a repo or a tool."""
     return {"daily_cap": f"Daily limit of {vc.max_per_day} videos reached. Try again tomorrow.",
             "tool_failed": "The video tool failed. The pull request is not affected.",
+            "voice": "The voice could not be made (check the ElevenLabs key, voice and quota on the Credentials page).",
             "timeout": f"Took longer than {max(1, vc.timeout_seconds // 60)} minutes to make.",
             "too_long": f"The video was longer than {_minutes(vc.max_seconds)}.",
             "too_large": f"The video was larger than {vc.max_mb} MB.",
@@ -57,10 +82,17 @@ def _minutes(s: int) -> str:
     return f"{s // 60} minutes" if s % 60 == 0 and s >= 120 else f"{s // 60} minute" if s == 60 else f"{s} seconds"
 
 
+def _column(db, table: str, name: str, decl: str) -> None:
+    if name not in {r[1] for r in db.execute(f"PRAGMA table_info({table})")}:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 def ensure_tables(db: sqlite3.Connection) -> None:
     db.execute("""CREATE TABLE IF NOT EXISTS review_video_tickets (
         repo TEXT NOT NULL, issue INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
         updated REAL NOT NULL, updated_by TEXT NOT NULL DEFAULT '', PRIMARY KEY (repo, issue))""")
+    _column(db, "review_video_tickets", "voice", "TEXT NOT NULL DEFAULT ''")          # '' = the config's voice
+    _column(db, "review_video_tickets", "voice_id", "TEXT NOT NULL DEFAULT ''")       # an ElevenLabs voice id; '' = the config's
     db.execute("""CREATE TABLE IF NOT EXISTS review_videos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         issue_repo TEXT NOT NULL, issue_num INTEGER NOT NULL, pr_repo TEXT NOT NULL, pr_number INTEGER NOT NULL,
@@ -71,8 +103,15 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         created REAL NOT NULL, started REAL, finished REAL, checked REAL,
         seconds REAL NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0,
         transcript TEXT NOT NULL DEFAULT '')         -- JSON [[start seconds, text], ...], sanitised""")
+    _column(db, "review_videos", "narration", "TEXT NOT NULL DEFAULT ''")             # review (the reviewer's scenes) | fixed
+    _column(db, "review_videos", "voice", "TEXT NOT NULL DEFAULT ''")                 # piper | elevenlabs, as made
+    _column(db, "review_videos", "wait_review", "INTEGER NOT NULL DEFAULT 0")         # queued as the PR opened: its review is coming
     db.execute("CREATE INDEX IF NOT EXISTS review_videos_pr ON review_videos(pr_repo, pr_number)")
     db.execute("CREATE INDEX IF NOT EXISTS review_videos_issue ON review_videos(issue_repo, issue_num)")
+    db.execute("""CREATE TABLE IF NOT EXISTS review_video_notes (
+        pr_repo TEXT NOT NULL, pr_number INTEGER NOT NULL, created REAL NOT NULL,
+        scenes TEXT NOT NULL,                       -- JSON, checked by parse_block (files and screens are checked again when made)
+        PRIMARY KEY (pr_repo, pr_number))""")
 
 
 def _dicts(cur) -> list[dict]:
@@ -88,6 +127,21 @@ def enabled(db, repo: str, issue: int) -> bool:
     return bool(row and row[0])
 
 
+def ticket_voice(db, repo: str, issue: int) -> tuple[str, str]:
+    """(engine, ElevenLabs voice id) a ticket chose; '' for either means the config's."""
+    try:
+        row = db.execute("SELECT voice, voice_id FROM review_video_tickets WHERE repo=? AND issue=?", (repo, int(issue))).fetchone()
+    except sqlite3.OperationalError:
+        return "", ""
+    return (row[0] or "", row[1] or "") if row else ("", "")
+
+
+def voice_for(vc, chosen: tuple[str, str]) -> tuple[str, str]:
+    """The engine and voice id a video is spoken with: the ticket's choice over the config's."""
+    engine = chosen[0] if chosen[0] in voices.ENGINES else vc.voice
+    return engine, (chosen[1] or vc.elevenlabs_voice_id) if engine == "elevenlabs" else ""
+
+
 def build_prs(db, repo: str, issue: int) -> list[tuple[str, int]]:
     """The ticket's open build PRs the factory recorded (design PRs left out)."""
     from . import db as dbm
@@ -95,25 +149,30 @@ def build_prs(db, repo: str, issue: int) -> list[tuple[str, int]]:
     return [(r["repo"], int(r["number"])) for r in dbm.conflicts_for_issue(db, repo, issue) if (r["repo"], int(r["number"])) not in design]
 
 
-def queue(db, issue_repo: str, issue_num: int, pr_repo: str, pr_number: int, now: float, again: bool = False) -> int | None:
+def queue(db, issue_repo: str, issue_num: int, pr_repo: str, pr_number: int, now: float, again: bool = False,
+          wait_review: bool = False) -> int | None:
     """Queue one video of a PR. Without `again`, only when the PR never had one (turning the switch off and on queues nothing new);
     with it, when none is queued or being made. The new row's id, else None."""
     ensure_tables(db)
     have = {r[0] for r in db.execute("SELECT status FROM review_videos WHERE pr_repo=? AND pr_number=?", (pr_repo, int(pr_number)))}
     if have & set(ACTIVE) or (have and not again):
         return None
-    cur = db.execute("INSERT INTO review_videos (issue_repo, issue_num, pr_repo, pr_number, created) VALUES (?,?,?,?,?)",
-                     (issue_repo, int(issue_num), pr_repo, int(pr_number), now))
+    cur = db.execute("INSERT INTO review_videos (issue_repo, issue_num, pr_repo, pr_number, created, wait_review) VALUES (?,?,?,?,?,?)",
+                     (issue_repo, int(issue_num), pr_repo, int(pr_number), now, int(wait_review)))
     db.commit()
     return cur.lastrowid
 
 
-def set_enabled(db, repo: str, issue: int, on: bool, who: str, now: float) -> int:
-    """Save the switch. Turned on, every open build PR of the ticket without a video gets one queued. Returns how many were."""
+def set_enabled(db, repo: str, issue: int, on: bool, who: str, now: float, voice: str = "", voice_id: str = "") -> int:
+    """Save the switch and the voice. Turned on, every open build PR of the ticket without a video gets one queued. Returns how
+    many were. `voice` is '' (the config's), piper or elevenlabs; `voice_id` '' or an ElevenLabs voice id (checked here)."""
+    if voice not in ("", *voices.ENGINES) or voice_id and not voices.VOICE_ID.fullmatch(voice_id):
+        raise ValueError("not a voice")
     ensure_tables(db)
-    db.execute("INSERT INTO review_video_tickets (repo, issue, enabled, updated, updated_by) VALUES (?,?,?,?,?) "
-               "ON CONFLICT(repo, issue) DO UPDATE SET enabled=excluded.enabled, updated=excluded.updated, updated_by=excluded.updated_by",
-               (repo, int(issue), int(bool(on)), now, who))
+    db.execute("INSERT INTO review_video_tickets (repo, issue, enabled, updated, updated_by, voice, voice_id) VALUES (?,?,?,?,?,?,?) "
+               "ON CONFLICT(repo, issue) DO UPDATE SET enabled=excluded.enabled, updated=excluded.updated, updated_by=excluded.updated_by, "
+               "voice=excluded.voice, voice_id=excluded.voice_id",
+               (repo, int(issue), int(bool(on)), now, who, voice, voice_id))
     db.commit()
     if not on:
         return 0
@@ -126,7 +185,16 @@ def set_enabled(db, repo: str, issue: int, on: bool, who: str, now: float) -> in
 
 def pr_opened(db, issue_repo: str, issue_num: int, pr_repo: str, pr_number: int, now: float) -> int | None:
     """A build PR was opened: queue its video when the ticket's switch is on."""
-    return queue(db, issue_repo, issue_num, pr_repo, pr_number, now) if enabled(db, issue_repo, issue_num) else None
+    return queue(db, issue_repo, issue_num, pr_repo, pr_number, now, wait_review=True) if enabled(db, issue_repo, issue_num) else None
+
+
+def wanted(db, prs: list) -> bool:
+    """Whether any of these PRs belongs to a ticket with the switch on (the reviewer is then asked for the video block)."""
+    try:
+        return any(db.execute("SELECT 1 FROM review_videos v JOIN review_video_tickets t ON t.repo=v.issue_repo AND t.issue=v.issue_num "
+                              "WHERE t.enabled=1 AND v.pr_repo=? AND v.pr_number=? LIMIT 1", (r, int(n))).fetchone() for r, n in prs)
+    except sqlite3.OperationalError:
+        return False
 
 
 def get(db, vid) -> dict | None:
@@ -201,62 +269,190 @@ def byte_range(header: str | None, size: int):
     return first, min(last, size - 1)
 
 
-# ---- the script ----
+# ---- the reviewer's narration ----
+
+def clean(text, n: int) -> str:
+    """Model or repository text made safe to speak and show: printable characters, single spaces, no Markdown or tags, at most n."""
+    s = "".join(c if c.isprintable() else " " for c in str(text or ""))
+    s = re.sub(r"[`*_<>\[\]{}|#\\]", " ", s)
+    s = re.sub(r"https?://\S+", "", s)
+    return sanitize_markdown(" ".join(s.split())[:n].strip(), n)
+
 
 def speakable(text, n: int) -> str:
-    """Text safe to read aloud and to show: a small set of characters, single spaces, at most n characters."""
+    """Names (files, screens, titles) cut to a small set of characters, single spaces, at most n characters."""
     return " ".join(SPOKEN.sub(" ", str(text or "")).split())[:n].strip()
 
+
+def _scene(d) -> dict | None:
+    if not isinstance(d, dict) or d.get("kind") not in KINDS:
+        return None
+    s = {"kind": d["kind"], "say": clean(d.get("say"), 300)}
+    if d["kind"] in ("title", "points"):
+        s["title"] = clean(d.get("title"), 120)
+        if not s["title"]:
+            return None
+    if d["kind"] == "code":
+        f, h = d.get("file"), d.get("hunk", 0)
+        if not isinstance(f, str) or not 0 < len(f) <= 300 or not isinstance(h, int) or isinstance(h, bool) or not 0 <= h < 200:
+            return None
+        s.update(file=f, hunk=h)
+    if d["kind"] == "shot":
+        if not isinstance(d.get("screen"), str) or not SCREEN.fullmatch(d["screen"]):
+            return None
+        s["screen"] = d["screen"]
+    if d["kind"] == "points":
+        pts = [clean(p, 140) for p in d.get("points") or [] if isinstance(p, str)] if isinstance(d.get("points"), list) else []
+        s["points"] = [p for p in pts if p][:MAX_POINTS]
+        if not s["points"]:
+            return None
+    return s
+
+
+def parse_block(text: str, prs: list) -> dict[tuple[str, int], list[dict]]:
+    """{(repo, number): scenes} from the last `factory-video` block, for the reviewed PRs only, each scene checked; {} without one."""
+    blocks = BLOCK.findall(text or "")
+    try:
+        data = json.loads(blocks[-1]) if blocks else None
+    except ValueError:
+        return {}
+    if not isinstance(data, dict) or not isinstance(data.get("videos"), list):
+        return {}
+    mine, out = {(r, int(n)) for r, n in prs}, {}
+    for v in data["videos"][:20]:
+        m = PR_REF.fullmatch(v.get("pr", "")) if isinstance(v, dict) and isinstance(v.get("pr"), str) else None
+        key = (m[1], int(m[2])) if m else None
+        if key not in mine or key in out or not isinstance(v.get("scenes"), list):
+            continue
+        scenes = [s for s in map(_scene, v["scenes"][:MAX_SCENES * 2]) if s][:MAX_SCENES]
+        if scenes:
+            out[key] = scenes
+    return out
+
+
+def strip(text: str) -> str:
+    """The review without its video block, so the PR comment never echoes the JSON."""
+    return BLOCK.sub("", text or "").rstrip()
+
+
+def store_notes(db, found: dict, now: float) -> None:
+    ensure_tables(db)
+    for (r, n), scenes in found.items():
+        db.execute("INSERT INTO review_video_notes (pr_repo, pr_number, created, scenes) VALUES (?,?,?,?) ON CONFLICT(pr_repo, pr_number) "
+                   "DO UPDATE SET created=excluded.created, scenes=excluded.scenes", (r, int(n), now, json.dumps(scenes)))
+    db.commit()
+
+
+def notes(db, pr_repo: str, pr_number: int) -> list[dict] | None:
+    try:
+        row = db.execute("SELECT scenes FROM review_video_notes WHERE pr_repo=? AND pr_number=?", (pr_repo, int(pr_number))).fetchone()
+        return [s for s in map(_scene, json.loads(row[0])) if s] if row else None
+    except (sqlite3.OperationalError, ValueError, TypeError):
+        return None
+
+
+def reviewed(cfg, gh, conn, prs: list, output: str, now: float) -> str:
+    """After an automated review: keep its narration for the PRs' videos and requeue a video already made from fixed wording.
+    Returns the review without the block. Never fails a review."""
+    if conn is None:
+        return strip(output)
+    try:
+        found = parse_block(output, prs)
+        store_notes(conn, found, now)
+        for r, n in found:
+            last = newest_for_pr(conn, r, n)
+            if last and last["status"] in ("ready", "stale", "skipped") and last.get("narration") != "review":
+                queue(conn, last["issue_repo"], last["issue_num"], r, n, now, again=True)
+    except Exception:
+        log.exception("videos: could not keep the review's narration")
+    return strip(output)
+
+
+# ---- the script ----
 
 WHAT = {"added": "new file", "removed": "deleted", "renamed": "renamed", "copied": "copied"}
 
 
-def script(pr_number: int, title: str, files: list[dict], shots: list[str]) -> list[dict]:
-    """The scenes of a video, in order: what the PR is, the screens as built (when the build took any), each changed file, and how many
-    were left out. Each scene: {text (spoken and the transcript), kind, file or shot}. Fixed wording; only cleaned names and numbers."""
+def hunks(patch: str) -> list[list[str]]:
+    """A file's diff split into hunks (each starting at its @@ line)."""
+    out: list[list[str]] = []
+    for line in str(patch or "").splitlines():
+        if line.startswith("@@") or not out:
+            out.append([])
+        out[-1].append(line)
+    return out
+
+
+def code_lines(f: dict, hunk: int = 0) -> list[dict]:
+    """The lines a code scene shows, taken from the PR's own diff (never from model text), cut to fixed limits."""
+    hs = hunks(f.get("patch"))
+    pick = hs[hunk] if 0 <= hunk < len(hs) else (hs[0] if hs else [])
+    out = []
+    for line in pick[:HUNK_LINES]:
+        t = "@" if line.startswith("@@") else line[:1] if line[:1] in "+-" else " "
+        body = line if t == "@" else line[1:] if line[:1] in "+- " else line
+        out.append({"t": t, "text": "".join(c if c.isprintable() else " " for c in body)[:LINE_CHARS]})
+    return out
+
+
+def _file_scene(f: dict, say: str, hunk: int = 0) -> dict:
+    a, d = int(f.get("additions") or 0), int(f.get("deletions") or 0)
+    name = str(f.get("filename"))[:200]
+    return {"kind": "code", "title": "".join(c if c.isprintable() else " " for c in name),
+            "subtitle": f"{WHAT.get(f.get('status'), 'changed')} · +{a} −{d}", "lines": code_lines(f, hunk), "say": say}
+
+
+def fixed_script(pr_number: int, title: str, files: list[dict], shots: list[str]) -> list[dict]:
+    """The narration when there is no review block: fixed wording with only cleaned names and numbers."""
     files = [f for f in files if isinstance(f, dict) and speakable(f.get("filename"), 160)]
     plus = sum(int(f.get("additions") or 0) for f in files)
     minus = sum(int(f.get("deletions") or 0) for f in files)
-    head = f"Review of pull request {int(pr_number)}" + (f": {t}." if (t := speakable(title, 80)) else ".")
-    scenes = [{"kind": "intro", "text": f"{head} It changes {len(files)} file{'' if len(files) == 1 else 's'}, "
-                                        f"with {plus} line{'' if plus == 1 else 's'} added and {minus} removed."}]
+    t = speakable(title, 80)
+    scenes = [{"kind": "title", "title": f"Pull request {int(pr_number)}", "subtitle": t,
+               "say": f"Review of pull request {int(pr_number)}{': ' + t if t else ''}. It changes {len(files)} file{'' if len(files) == 1 else 's'}, "
+                      f"with {plus} line{'' if plus == 1 else 's'} added and {minus} removed."}]
     for name in shots[:MAX_SHOTS]:
-        scenes.append({"kind": "ui", "shot": name, "text": f"The {speakable(name.replace('-', ' '), 60)} screen, as built."})
+        scenes.append({"kind": "shot", "screen": name, "title": f"{speakable(name.replace('-', ' '), 60)} screen",
+                       "say": f"The {speakable(name.replace('-', ' '), 60)} screen, as built."})
     room = MAX_SCENES - len(scenes) - (1 if len(files) > MAX_SCENES - len(scenes) else 0)
     for f in files[:room]:
         a, d = int(f.get("additions") or 0), int(f.get("deletions") or 0)
-        scenes.append({"kind": "file", "file": f, "text": f"{speakable(f['filename'], 160)}: {WHAT.get(f.get('status'), 'changed')}, "
-                                                         f"{a} line{'' if a == 1 else 's'} added and {d} removed."})
+        scenes.append(_file_scene(f, f"{speakable(f['filename'], 160)}: {WHAT.get(f.get('status'), 'changed')}, "
+                                     f"{a} line{'' if a == 1 else 's'} added and {d} removed."))
     if len(files) > room:
-        rest = len(files) - room
-        scenes.append({"kind": "more", "text": f"{rest} more file{'' if rest == 1 else 's'} are in the pull request but not in this video."})
-    for s in scenes:
-        s["text"] = sanitize_markdown(s["text"], 400)
+        rest = files[room:]
+        scenes.append({"kind": "points", "title": "Also changed", "points": [speakable(f["filename"], 140) for f in rest[:MAX_POINTS]],
+                       "say": f"{len(rest)} more file{'' if len(rest) == 1 else 's'} are in the pull request but not in this video."})
     return scenes
 
 
-SLIDE_CSS = ("html,body{margin:0;background:#12161a;color:#e8edf0;font:22px/1.4 'DejaVu Sans',sans-serif}"
-             ".s{width:1280px;height:720px;box-sizing:border-box;padding:44px 56px;overflow:hidden;border:1px solid #2d363d}"
-             "h1{font-size:32px;margin:0 0 10px;word-break:break-all}p{margin:0 0 18px;color:#a9b5bd}"
-             "pre{margin:0;font:17px/1.35 'DejaVu Sans Mono',monospace;white-space:pre;overflow:hidden}"
-             ".a{color:#52c7a1}.d{color:#ff6b5e}.h{color:#8fa8ff}")
+def review_script(found: list[dict], files: list[dict], shots: list[str]) -> list[dict]:
+    """The reviewer's scenes made concrete: a code scene gets its lines from the named file's diff (a file the PR does not change
+    drops the scene), a screen scene the named screenshot (one the build did not take drops it)."""
+    by_name = {f.get("filename"): f for f in files if isinstance(f, dict)}
+    out = []
+    for s in found:
+        if s["kind"] == "code":
+            f = by_name.get(s["file"])
+            if f is None:
+                continue
+            out.append(_file_scene(f, s["say"], s.get("hunk", 0)))
+        elif s["kind"] == "shot":
+            if s["screen"] not in shots:
+                continue
+            out.append({"kind": "shot", "screen": s["screen"], "title": f"{speakable(s['screen'].replace('-', ' '), 60)} screen", "say": s["say"]})
+        else:
+            out.append({k: v for k, v in s.items()})
+    return out[:MAX_SCENES]
 
 
-def slide_html(scene: dict) -> str:
-    """A fixed template; every piece of text from the PR is escaped. The render container has no network and runs no script."""
-    e = html.escape
-    if scene["kind"] == "file":
-        f = scene["file"]
-        lines = []
-        for line in str(f.get("patch") or "").splitlines()[:HUNK_LINES]:
-            cls = "h" if line.startswith("@@") else "a" if line.startswith("+") else "d" if line.startswith("-") else ""
-            text = e(line[:LINE_CHARS])
-            lines.append(f'<span class="{cls}">{text}</span>' if cls else text)
-        body = f"<pre>{chr(10).join(lines)}</pre>" if lines else "<p>No text diff to show (a binary or very large file).</p>"
-        top = f"<h1>{e(str(f.get('filename'))[:200])}</h1><p>{e(scene['text'])}</p>"
-    else:
-        top, body = f"<h1>{e(scene['text'])}</h1>", ""
-    return f'<!doctype html><html><head><meta charset="utf-8"><style>{SLIDE_CSS}</style></head><body><div class="s">{top}{body}</div></body></html>'
+def script(pr_number: int, title: str, files: list[dict], shots: list[str], found: list[dict] | None = None) -> tuple[list[dict], str]:
+    """(scenes, narration): the reviewer's scenes when at least two survive the checks, else the fixed wording."""
+    if found:
+        scenes = review_script(found, files, shots)
+        if len(scenes) >= 2:
+            return scenes, "review"
+    return fixed_script(pr_number, title, files, shots), "fixed"
 
 
 def built_shots(db, repo: str, issue: int) -> dict[str, bytes]:
@@ -267,7 +463,7 @@ def built_shots(db, repo: str, issue: int) -> dict[str, bytes]:
                           (repo, int(issue), MAX_SHOTS)).fetchall()
     except sqlite3.OperationalError:
         return {}
-    return {n: bytes(p) for n, p in rows if render.png_ok(bytes(p))}
+    return {n: bytes(p) for n, p in rows if SCREEN.fullmatch(str(n)) and render.png_ok(bytes(p))}
 
 
 # ---- checking what comes back ----
@@ -398,17 +594,49 @@ class Skip(Exception):
     """A video that will not be made; args[0] is a key of reasons()."""
 
 
-def _compose(cfg, scenes: list[dict], slides: dict[str, bytes], run) -> tuple[Path, Path, Path]:
-    """Run the video container on the scenes and their slides. (work dir, review.mp4, timings.json); the caller removes the work dir."""
+def spec(vc, scenes: list[dict], voice: str) -> dict:
+    """script.json for the container (sandbox/video/render.mjs checks it again): only the fields its templates use."""
+    keep = {"title": ("title", "subtitle"), "shot": ("title",), "code": ("title", "subtitle", "lines"), "points": ("title", "points")}
+    out = []
+    for i, s in enumerate(scenes, 1):
+        c = {"kind": s["kind"], "say": s.get("say", "")}
+        c.update({k: s[k] for k in keep[s["kind"]] if s.get(k)})
+        if s["kind"] == "shot":
+            c["image"] = f"s{i:02d}.png"
+        if voice == "files" and c["say"]:
+            c["audio"] = f"s{i:02d}.wav"
+        out.append(c)
+    return {"width": 1280, "height": 720, "fps": 30, "max_seconds": vc.max_seconds, "voice": voice, "scenes": out}
+
+
+def speech(vc, engine: str, voice_id: str, scenes: list[dict], post=None) -> dict[str, bytes]:
+    """{sNN.wav: WAV} of each spoken scene, made with ElevenLabs; {} for Piper (the container speaks). Raises Skip('voice')."""
+    if engine != "elevenlabs":
+        return {}
+    key = voices.read_key(vc.elevenlabs_key_file)
+    out = {}
+    try:
+        for i, s in enumerate(scenes, 1):
+            if s.get("say"):
+                out[f"s{i:02d}.wav"] = voices.elevenlabs(key, voice_id, vc.elevenlabs_model, s["say"], **({"post": post} if post else {}))
+    except voices.VoiceError as e:
+        log.warning("videos: %s", e)
+        raise Skip("voice") from None
+    return out
+
+
+def _compose(cfg, script_json: dict, images: dict[str, bytes], audio: dict[str, bytes], run) -> tuple[Path, Path, Path]:
+    """Run the video container. (work dir, review.mp4, timings.json); the caller removes the work dir."""
     rn, vc = cfg.runner, cfg.videos
     Path(rn.work_dir).mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="video-", dir=rn.work_dir))
-    (work / "in" / "slides").mkdir(parents=True)
-    (work / "out").mkdir()
-    for name, png in slides.items():
-        (work / "in" / "slides" / f"{name}.png").write_bytes(png)
-    spec = {"max_seconds": vc.max_seconds, "scenes": [{"slide": f"{s['slide']}.png", "text": s["text"]} for s in scenes]}
-    (work / "in" / "script.json").write_text(json.dumps(spec))
+    for d in ("in/img", "in/audio", "out"):
+        (work / d).mkdir(parents=True)
+    for name, data in images.items():
+        (work / "in" / "img" / name).write_bytes(data)
+    for name, data in audio.items():
+        (work / "in" / "audio" / name).write_bytes(data)
+    (work / "in" / "script.json").write_text(json.dumps(script_json))
     run(["chmod", "-R", "a+rX", str(work / "in")], check=True)
     run(["chmod", "a+rwX", str(work / "out")], check=True)
     name = f"factory-video-{secrets.token_hex(4)}"            # factory-*: the deploy guard and recovery see it like a run
@@ -422,14 +650,15 @@ def _compose(cfg, scenes: list[dict], slides: dict[str, bytes], run) -> tuple[Pa
         shutil.rmtree(work, ignore_errors=True)
         log.warning("videos: could not start the video container (is %s installed?)", rn.engine)
         raise Skip("tool_failed")
-    if getattr(res, "returncode", 0) != 0:
-        log.warning("videos: the video container exited %s: %s", res.returncode, (getattr(res, "stderr", "") or "")[-300:])
+    code = getattr(res, "returncode", 0)
+    if code != 0:
+        log.warning("videos: the video container exited %s: %s", code, (getattr(res, "stderr", "") or "")[-300:])
         shutil.rmtree(work, ignore_errors=True)
-        raise Skip("tool_failed")
+        raise Skip("too_long" if code == 3 else "tool_failed")
     return work, work / "out" / "review.mp4", work / "out" / "timings.json"
 
 
-def make(cfg, gh, db, row: dict, run=subprocess.run) -> dict:
+def make(cfg, gh, db, row: dict, run=subprocess.run, post=None) -> dict:
     """Make one video (its row is already 'making'). Stores the file and returns the finished fields; raises Skip with a reason."""
     vc = cfg.videos
     try:
@@ -443,19 +672,11 @@ def make(cfg, gh, db, row: dict, run=subprocess.run) -> dict:
         log.exception("videos: could not read %s#%s", row["pr_repo"], row["pr_number"])
         raise Skip("github")
     shots = built_shots(db, row["issue_repo"], row["issue_num"])
-    scenes = script(row["pr_number"], pr.get("title") or "", files, sorted(shots))
-    slides, docs = {}, {}
-    for i, s in enumerate(scenes, 1):
-        s["slide"] = f"s{i:02d}"
-        if s["kind"] == "ui":
-            slides[s["slide"]] = shots[s["shot"]]
-        else:
-            docs[s["slide"]] = slide_html(s)
-    slides.update(render.render(dataclasses.replace(cfg.runner, render_previews=True), docs, run=run))
-    if any(s["slide"] not in slides for s in scenes):
-        log.warning("videos: some slides of %s#%s did not render", row["pr_repo"], row["pr_number"])
-        raise Skip("tool_failed")
-    work, mp4, tim = _compose(cfg, scenes, slides, run)
+    scenes, narration = script(row["pr_number"], pr.get("title") or "", files, sorted(shots), notes(db, row["pr_repo"], row["pr_number"]))
+    engine, voice_id = voice_for(vc, ticket_voice(db, row["issue_repo"], row["issue_num"]))
+    audio = speech(vc, engine, voice_id, scenes, post)
+    images = {f"s{i:02d}.png": shots[s["screen"]] for i, s in enumerate(scenes, 1) if s["kind"] == "shot"}
+    work, mp4, tim = _compose(cfg, spec(vc, scenes, "files" if engine == "elevenlabs" else "piper"), images, audio, run)
     try:
         if mp4.is_file() and not mp4.is_symlink() and mp4.stat().st_size > vc.max_mb * 1024 * 1024:
             raise Skip("too_large")
@@ -467,7 +688,8 @@ def make(cfg, gh, db, row: dict, run=subprocess.run) -> dict:
             raise Skip("tool_failed")
         start, lines = 0.0, []
         for s, t in zip(scenes, times):
-            lines.append([round(start, 1), s["text"]])
+            if s.get("say"):
+                lines.append([round(start, 1), s["say"]])
             start += t
         out = video_dir(cfg)
         out.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -477,7 +699,8 @@ def make(cfg, gh, db, row: dict, run=subprocess.run) -> dict:
         part.chmod(0o600)
         part.replace(dest)
         return {"head_sha": str((pr.get("head") or {}).get("sha") or "")[:64], "pr_title": speakable(pr.get("title"), 120),
-                "mode": "ui" if shots else "diff", "seconds": seconds, "bytes": dest.stat().st_size, "transcript": json.dumps(lines)}
+                "mode": "ui" if images else "diff", "seconds": seconds, "bytes": dest.stat().st_size, "transcript": json.dumps(lines),
+                "narration": narration, "voice": engine}
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -514,22 +737,24 @@ def _event(db, message: str, row: dict) -> None:
         pass
 
 
-def work_one(cfg, gh, db, row: dict, now_fn, run=subprocess.run) -> None:
+def work_one(cfg, gh, db, row: dict, now_fn, run=subprocess.run, post=None) -> None:
     try:
-        done = make(cfg, gh, db, row, run)
+        done = make(cfg, gh, db, row, run, post)
     except Skip as e:
         return _skip(cfg, gh, db, row, e.args[0], now_fn())
     except Exception:
         log.exception("videos: making the video of %s#%s failed", row["pr_repo"], row["pr_number"])
         return _skip(cfg, gh, db, row, "tool_failed", now_fn())
     db.execute("UPDATE review_videos SET status='ready', reason='', finished=?, checked=?, head_sha=?, pr_title=?, mode=?, seconds=?, bytes=?, "
-               "transcript=? WHERE id=?", (now_fn(), now_fn(), done["head_sha"], done["pr_title"], done["mode"], done["seconds"], done["bytes"],
-                                           done["transcript"], row["id"]))
+               "transcript=?, narration=?, voice=? WHERE id=?",
+               (now_fn(), now_fn(), done["head_sha"], done["pr_title"], done["mode"], done["seconds"], done["bytes"], done["transcript"],
+                done["narration"], done["voice"], row["id"]))
     db.commit()
     row = get(db, row["id"])
     _say(cfg, gh, row["pr_repo"], row["pr_number"], links(cfg, row))
     _say(cfg, gh, row["issue_repo"], row["issue_num"], f"{row['pr_repo']}#{int(row['pr_number'])}: " + links(cfg, row))
-    _event(db, f"review video for {row['pr_repo']}#{int(row['pr_number'])} made ({clock(row['seconds'])}, {row['mode']})", row)
+    _event(db, f"review video for {row['pr_repo']}#{int(row['pr_number'])} made ({clock(row['seconds'])}, {row['mode']}, "
+               f"{row['narration']} narration, {row['voice']})", row)
 
 
 # ---- the poll ----
@@ -575,9 +800,15 @@ def expire(cfg, db, now: float) -> int:
     return gone
 
 
+def waiting_for_review(cfg, db, row: dict, now: float) -> bool:
+    """A new PR's video waits (up to REVIEW_WAIT) for the automated review's narration, when a review will run on its own."""
+    return (bool(row.get("wait_review")) and cfg.review.enabled and cfg.review.auto and now - row["created"] < REVIEW_WAIT
+            and notes(db, row["pr_repo"], row["pr_number"]) is None)
+
+
 def tick(cfg, gh, db, now: float, connect, now_fn, threaded: bool = True, run=subprocess.run) -> bool:
-    """Expire old videos, mark out-of-date ones, and start the oldest queued video when none is being made and the daily limit
-    allows (else it is skipped with that reason). True when one was started."""
+    """Expire old videos, mark out-of-date ones, and start the oldest queued video that is not waiting for its review, when none is
+    being made and the daily limit allows (else it is skipped with that reason). True when one was started."""
     ensure_tables(db)
     expire(cfg, db, now)
     if not cfg.videos.enabled:
@@ -590,11 +821,11 @@ def tick(cfg, gh, db, now: float, connect, now_fn, threaded: bool = True, run=su
         return False
     db.execute("UPDATE review_videos SET status='skipped', reason='tool_failed', finished=? WHERE status='making'", (now,))   # left by a restart
     db.commit()
-    rows = _dicts(db.execute("SELECT * FROM review_videos WHERE status='queued' ORDER BY id LIMIT 1"))
-    if not rows:
+    row = next((r for r in _dicts(db.execute("SELECT * FROM review_videos WHERE status='queued' ORDER BY id LIMIT 50"))
+                if not waiting_for_review(cfg, db, r, now)), None)
+    if row is None:
         _running.release()
         return False
-    row = rows[0]
     if used_today(db, now) >= cfg.videos.max_per_day:
         _running.release()
         _skip(cfg, gh, db, row, "daily_cap", now)

@@ -1,5 +1,5 @@
 """Credentials and the outbound checks the UI offers. Secrets are write-only: stored 0600, never rendered back, never logged.
-Outbound calls go only to fixed hosts (api.github.com, api.telegram.org, slack.com, openrouter.ai)."""
+Outbound calls go only to fixed hosts (api.github.com, api.telegram.org, slack.com, openrouter.ai, api.elevenlabs.io)."""
 import json
 import os
 import re
@@ -23,6 +23,7 @@ SECRETS = {
     "telegram": ("Telegram bot token", lambda c: c.telegram_token_file),
     "slack_bot": ("Slack bot token (xoxb-)", lambda c: c.slack_bot_token_file),
     "slack_app": ("Slack app-level token (xapp-)", lambda c: c.slack_app_token_file),
+    "elevenlabs": ("ElevenLabs key (video voices)", lambda c: c.videos.elevenlabs_key_file),
 }
 SLACK_PREFIX = {"slack_bot": "xoxb-", "slack_app": "xapp-"}
 # The Slack app the factory needs: a bot that may post and own /factory, interactivity for the buttons, Socket Mode (no public URL).
@@ -218,6 +219,24 @@ def check_openrouter(key: str, model: str) -> dict:
     if s == 200:
         return {"ok": True, "message": f"Jev answered (cost ${body.get('usage', {}).get('cost', 0):.6f})."}
     return {"ok": False, "message": f"OpenRouter said HTTP {s}: {_scrub(str(body.get('error', body))[:160], key)}"}
+
+
+def check_elevenlabs(key: str, voice_id: str) -> dict:
+    """Reads the configured voice (or, without one, the account) with the key; says nothing about the key itself."""
+    url = f"https://api.elevenlabs.io/v1/voices/{voice_id}" if voice_id else "https://api.elevenlabs.io/v1/user"
+    req = urllib.request.Request(url, headers={"xi-api-key": key, "Accept": "application/json", "User-Agent": "shikumi-ui"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            body = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        why = {401: "the key was refused", 404: "there is no voice with the configured id"}.get(e.code, f"HTTP {e.code}")
+        return {"ok": False, "message": f"ElevenLabs: {why}."}
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        return {"ok": False, "message": f"Could not reach ElevenLabs: {_scrub(str(getattr(e, 'reason', e)), key)[:160]}"}
+    if voice_id:
+        name = str(body.get("name") or "")[:60] if isinstance(body, dict) else ""
+        return {"ok": True, "message": f"The key works and the voice {name or voice_id} is available."}
+    return {"ok": True, "message": "The key works. Set videos.elevenlabs_voice_id to the voice to use."}
 
 
 def classify_sample(cfg: Config, title: str, body: str, labels: list[str]) -> tuple[Classification, str]:

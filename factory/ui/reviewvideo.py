@@ -7,7 +7,7 @@ import sqlite3
 import time
 from urllib.parse import quote
 
-from .. import videos
+from .. import videos, voices
 from . import labels as L, views
 from .views import csrf_field, esc
 
@@ -42,14 +42,15 @@ def fold(cfg, db, repo: str, issue: int, csrf: str, back: str, now: float) -> st
     if not cfg.videos.enabled or db is None:
         return ""
     on = videos.enabled(db, repo, issue)
+    voice, voice_id = videos.ticket_voice(db, repo, issue)
     hidden = f'{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(repo)}"><input type="hidden" name="n" value="{int(issue)}">' \
              f'<input type="hidden" name="back" value="{esc(back)}">'
     form = (f'<form method="post" action="/ticket/video/save" class="field">{hidden}'
             f'<label class="check"><input type="checkbox" name="on" value="1"{" checked" if on else ""} aria-describedby="rv-help"> '
             'Make a review video for each pull request</label>'
-            '<p class="muted" id="rv-help">A short screen recording or diff walkthrough with a spoken voice-over and a transcript, made offline '
-            'in the sandbox. Applies to open pull requests too. Making a video again counts toward the daily limit.</p>'
-            '<button type="submit">Save</button></form>')
+            '<p class="muted" id="rv-help">A short walkthrough of the screens and the diff, narrated from the automated review, with a '
+            'transcript. Applies to open pull requests too. Making a video again counts toward the daily limit.</p>'
+            + voice_fields(cfg, voice, voice_id) + '<button type="submit">Save</button></form>')
     rows = ""
     if on:
         try:
@@ -67,6 +68,24 @@ def fold(cfg, db, repo: str, issue: int, csrf: str, back: str, now: float) -> st
     return views.fold("review-video", "Review video", "On" if on else "Off", form)
 
 
+def voice_fields(cfg, voice: str, voice_id: str) -> str:
+    """The voice choice. ElevenLabs is offered only with a saved key; it receives the narration text."""
+    vc = cfg.videos
+    has_key = bool(voices.read_key(vc.elevenlabs_key_file))
+    default = "ElevenLabs" if vc.voice == "elevenlabs" else "Piper"
+    opts = [("", f"Default ({default})"), ("piper", "Piper (offline)")] + ([("elevenlabs", "ElevenLabs")] if has_key or voice == "elevenlabs" else [])
+    sel = "".join(f'<option value="{v}"{" selected" if v == voice else ""}>{esc(t)}</option>' for v, t in opts)
+    out = f'<label>Voice <select name="voice">{sel}</select></label>'
+    if has_key:
+        out += (f'<label>ElevenLabs voice id <input name="voice_id" value="{esc(voice_id)}" pattern="[A-Za-z0-9]{{8,40}}" '
+                f'placeholder="{esc(vc.elevenlabs_voice_id or "voice id")}" aria-describedby="rv-voice-help"></label>'
+                '<p class="muted" id="rv-voice-help">ElevenLabs receives the narration text of each video (file names and the review\'s '
+                'summary); Piper never leaves this machine. Leave the id empty for the configured voice.</p>')
+    else:
+        out += '<p class="muted">To use an ElevenLabs voice, save an ElevenLabs key on the Credentials page.</p>'
+    return out
+
+
 def save_post(h, form, csrf: str) -> None:
     cfg = h.app.cfg()
     try:
@@ -75,9 +94,14 @@ def save_post(h, form, csrf: str) -> None:
         return L._done(h, form, csrf, str(e), "bad")
     if not cfg.videos.enabled:
         return L._done(h, form, csrf, "Review videos are not turned on in the configuration.", "bad")
+    voice, voice_id = form.get("voice", ""), form.get("voice_id", "").strip()
+    if voice == "elevenlabs" and not (voice_id or cfg.videos.elevenlabs_voice_id):
+        return L._done(h, form, csrf, "Give an ElevenLabs voice id, or set videos.elevenlabs_voice_id in the configuration.", "bad")
     db = sqlite3.connect(cfg.db_path, timeout=10)
     try:
-        queued = videos.set_enabled(db, repo, n, form.get("on") == "1", "admin", time.time())
+        queued = videos.set_enabled(db, repo, n, form.get("on") == "1", "admin", time.time(), voice, voice_id)
+    except ValueError:
+        return L._done(h, form, csrf, "That is not a voice the factory knows (Piper, or ElevenLabs with a voice id of 8 to 40 letters and digits).", "bad")
     finally:
         db.close()
     L._done(h, form, csrf, f"Saved. Videos will be made for {queued} open pull request{'' if queued == 1 else 's'}." if form.get("on") == "1" else "Saved.")

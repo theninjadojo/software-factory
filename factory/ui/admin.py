@@ -323,6 +323,9 @@ def credentials_test(h, form, csrf: str) -> None:
     if name == "openrouter":
         r = I.check_openrouter(secret, cfg.jev_model)
         return _send_page(h, 200, "Credentials", _cred(h, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
+    if name == "elevenlabs":
+        r = I.check_elevenlabs(secret, cfg.videos.elevenlabs_voice_id)
+        return _send_page(h, 200, "Credentials", _cred(h, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
     if name in ("slack_bot", "slack_app"):
         r = I.slack_check(secret) if name == "slack_bot" else I.slack_app_check(secret)
         return _send_page(h, 200, "Credentials", _cred(h, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
