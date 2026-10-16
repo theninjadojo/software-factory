@@ -21,16 +21,24 @@ When the pull request gets new commits, the video is marked out of date, and **M
 
 ## Videos from the chat
 
-With videos on, you can ask for a video about some tickets, for example "a two-minute tour of this week's board changes" or "how
-the login fix works, for the support team". Either describe it in the **Describe a video** box on the **Videos** page, which starts a
-new chat conversation with your description, or ask in any conversation on the **Chat** page.
+With videos on, you can ask for a video about some tickets ("a two-minute tour of this week's board changes") or about the code
+itself ("how the login flow works, for new developers"). Describe it in the **Describe a video** box on the **Videos** page, or ask
+in any conversation on the **Chat** page.
 
-1. The chat answers with a proposal: a title, a brief (what the video should show) and the tickets it will use. It picks the
-   tickets from what you described, and only ones it can see on the board.
-2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click.
-3. The video is made by the same worker as review videos and counts toward the same daily limit. When it is ready, or if it
-   is skipped, the conversation that asked for it says so. Made videos are listed on the **Videos** page (`/videos`), with
-   **Watch**, **Transcript** and **Make again**.
+1. The chat reads the tickets it can see on the board and, while **Let the factory chat read the code** is on (Settings → Ticket
+   chat, on by default), a read-only copy of each repository's default branch. It answers with a proposal: a title, a brief, and
+   the tickets and files it will use.
+2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click. A request made on the Videos page stays
+   there: the reply, the proposal and the **Make video** button appear on the Videos page, above the list of videos.
+3. The video is made by the same worker as review videos and counts toward the same daily limit. When it is ready, or if it is
+   skipped, the conversation that asked for it says so. Videos are listed on the **Videos** page (`/videos`), with **Watch**,
+   **Transcript** and **Make again**.
+
+Reading the code: the factory keeps a shallow clone of each configured repository's default branch in `state/code/` (refreshed at
+most every 15 minutes, before a chat reply or a video writer run; a repository over 500 MB is skipped). The runs get the copies
+mounted read-only at `/work/code`, still with no network and no GitHub token, and the clone itself holds no credential. A code scene
+names a file and a line range; the factory reads those lines from its copy (at most 40, text files only, never through a symlink).
+Factory chat replies get more turns and time than a ticket chat for this (Settings → Ticket chat, Advanced).
 
 How it is made:
 - **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the

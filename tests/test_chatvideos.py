@@ -25,7 +25,7 @@ class Proposal(unittest.TestCase):
         shown, p = F.parse_proposal(block(tickets=["o/r#3", "o/r#4"]), REFS)
         self.assertNotIn("factory-proposal", shown)
         self.assertEqual(p, {"action": "video", "title": "Board tour", "brief": "Show the board changes.",
-                             "tickets": [["o/r", 3, "Board drag"], ["o/r", 4, "Login fix"]]})
+                             "tickets": [["o/r", 3, "Board drag"], ["o/r", 4, "Login fix"]], "files": []})
 
     def test_extra_keys_unknown_tickets_and_videos_off_are_dropped(self):
         for text in (block(voice="x"), block(tickets=["o/r#99"]), block(tickets=[]), block(tickets=["o/r#3"] * 9),

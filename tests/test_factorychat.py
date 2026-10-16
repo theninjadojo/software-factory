@@ -81,7 +81,7 @@ class Lane(unittest.TestCase):
         db, seen = memdb(), {}
         _, conv = talk(db, "What is running?")
 
-        def fake(cfg_, route, prompt, sink):
+        def fake(cfg_, route, prompt, sink, code=None):
             seen["prompt"], seen["model"] = prompt, route.model
             return RunResult("stage", "ok", output="Nothing is running.")
         c = cfg()

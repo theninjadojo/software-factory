@@ -311,6 +311,9 @@ class ChatCfg:
     context_turns: int = 20               # newest turns that later stage prompts carry
     factory_enabled: bool = False         # the factory chat (factory.factorychat): ask about every ticket and the settings, read-only
     factory_max_per_hour: int = 20        # factory chat messages per hour, all admins together
+    factory_code: bool = True             # the factory chat and the video writer may read copies of the repositories' default branches
+    factory_max_turns: int = 30           # turns of a factory chat reply or a video writer run (reading code takes more than a ticket chat)
+    factory_timeout_seconds: int = 600
 
 
 @dataclass(frozen=True)
@@ -1342,8 +1345,11 @@ def parse(raw: dict) -> Config:
         raise ValueError("chat.enabled must be true or false")
     if not isinstance(chat.factory_enabled, bool):
         raise ValueError("chat.factory_enabled must be true or false")
-    for name in ("max_turns", "timeout_seconds", "max_parallel", "check_seconds", "max_per_hour", "context_turns", "factory_max_per_hour"):
-        top = 10000 if name == "timeout_seconds" else 1000
+    if not isinstance(chat.factory_code, bool):
+        raise ValueError("chat.factory_code must be true or false")
+    for name in ("max_turns", "timeout_seconds", "max_parallel", "check_seconds", "max_per_hour", "context_turns", "factory_max_per_hour",
+                 "factory_max_turns", "factory_timeout_seconds"):
+        top = 10000 if name.endswith("timeout_seconds") else 1000
         v = getattr(chat, name)
         if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= top:
             raise ValueError(f"chat.{name} must be a whole number from 1 to {top}")

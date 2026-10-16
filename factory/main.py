@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import why as W
 from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videoimage, videos, waves
+from . import codecopy
 from . import depdetect
 from . import judges
 from . import recommend
@@ -453,7 +454,7 @@ def interview_lane(cfg: Config) -> None:
           cfg.db_path, np.max_parallel, np.check_seconds)
 
 
-def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
+def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict, token: str | None = None) -> None:
     """Answer one claimed factory chat message with a read-only run (no repository, no GitHub token). The agent sees only the redacted
     snapshot of the tickets and settings built here; nothing in its reply is acted on."""
     if cfg.dry_run:
@@ -467,13 +468,16 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
     now = time.time()
     snap, cut = factorychat.snapshot(db, raw, cfg, now, secrets)
     refs = factorychat.ticket_refs(factorychat.ticket_rows(db, now, cfg.github_issues_enabled)) if cfg.videos.enabled else None
-    prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets, cfg.videos.enabled)
+    code = code_for_chat(cfg, token)
+    prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets, cfg.videos.enabled,
+                                      codecopy.listing(cfg) if code else "")
     route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
     run_id, sink = begin_run("factory-chat", "factory", {"number": 0, "title": "Factory chat"}, route), {}     # 0: never a ticket on the board
-    res = runner.run_factory_chat(cfg, route, prompt, sink)
+    res = runner.run_factory_chat(cfg, route, prompt, sink, code)
     end_run(run_id, res, sink)
     if res.status == "stage":
-        factorychat.add_reply(db, turn, res.output, run_id, secrets, now, cut, refs)
+        factorychat.add_reply(db, turn, res.output, run_id, secrets, now, cut, refs,
+                              (lambda ref: codecopy.resolve(cfg, ref) is not None) if code else None)
         emit("chat", "replied in the factory chat", None, None, run_id)
     elif res.status == "rate-limited":
         factorychat.settle(db, turn["id"], "failed", "The model is rate limited. Try again later.")
@@ -484,12 +488,22 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
         factorychat.settle(db, turn["id"], "failed", "The reply could not be written. Try again.")
 
 
-def video_writer(cfg: Config, prompt: str) -> str | None:
-    """The scenes of a video asked for in the factory chat, from a sealed read-only run with the chat's model (videos.make_brief
-    checks them); None when the run did not answer."""
+def code_for_chat(cfg: Config, token: str | None) -> list:
+    """The read-only repository copies a factory chat or video writer run gets (refreshed first), or [] when it may not read code."""
+    if not cfg.chat.factory_code:
+        return []
+    problems = codecopy.refresh(cfg, token)
+    for repo, why in problems.items():
+        log.warning("code copy of %s not available: %s", repo, why)
+    return codecopy.mounts(cfg)
+
+
+def video_writer(cfg: Config, prompt: str, token: str | None = None) -> str | None:
+    """The scenes of a video asked for in the factory chat, from a sealed read-only run with the chat's model and the code copies
+    (videos.make_brief checks them); None when the run did not answer."""
     route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
     run_id, sink = begin_run("video-writer", "factory", {"number": 0, "title": "Chat video"}, route), {}
-    res = runner.run_video_writer(cfg, route, prompt, sink)
+    res = runner.run_video_writer(cfg, route, prompt, sink, code_for_chat(cfg, token))
     end_run(run_id, res, sink)
     if res.status != "stage":
         log.warning("video writer: %s %s", res.status, res.detail[:300])
@@ -497,9 +511,10 @@ def video_writer(cfg: Config, prompt: str) -> str | None:
     return res.output
 
 
-def factory_chat_lane(cfg: Config, config_path: str) -> None:
-    """The factory chat's own lane: one shared conversation, so one reply at a time, in order."""
-    _lane("factory-chat", lambda: cfg.chat.factory_enabled, factorychat.claim, lambda db, turn: factory_chat_answer(cfg, config_path, db, turn),
+def factory_chat_lane(cfg: Config, config_path: str, gh=None) -> None:
+    """The factory chat's own lane: one reply at a time, in order."""
+    token = getattr(gh, "token", None)
+    _lane("factory-chat", lambda: cfg.chat.factory_enabled, factorychat.claim, lambda db, turn: factory_chat_answer(cfg, config_path, db, turn, token),
           lambda db, turn: factorychat.settle(db, turn["id"], "failed", "The reply could not be written. Try again."),
           cfg.db_path, 1, cfg.chat.check_seconds)
 
@@ -2051,7 +2066,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     except Exception:
         log.exception("screens: Playwright runs failed")        # never stops the poll
     try:
-        videos.tick(cfg, gh, conn, time.time(), lambda: dbm.connect(cfg.db_path), time.time, write=lambda p: video_writer(cfg, p))
+        videos.tick(cfg, gh, conn, time.time(), lambda: dbm.connect(cfg.db_path), time.time, write=lambda p: video_writer(cfg, p, getattr(gh, "token", None)))
     except Exception:
         log.exception("review videos failed")                   # never stops the poll
     try:
@@ -2180,7 +2195,7 @@ def main() -> None:
     if not args.once and cfg.new_projects.enabled:
         threading.Thread(target=interview_lane, args=(cfg,), daemon=True, name="interview-lane").start()
     if not args.once and cfg.chat.factory_enabled:
-        threading.Thread(target=factory_chat_lane, args=(cfg, args.config), daemon=True, name="factory-chat-lane").start()
+        threading.Thread(target=factory_chat_lane, args=(cfg, args.config, gh), daemon=True, name="factory-chat-lane").start()
     if not args.once and not cfg.dry_run:
         recover(cfg, gh)
     while True:

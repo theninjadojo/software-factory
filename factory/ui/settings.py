@@ -333,6 +333,12 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               "Ask about every ticket and the settings on the Chat page (/chat, in the main menu). Read-only: it changes nothing. Uses the chat model "
               "and harness above; each reply is a model run.", group="Factory chat"),
         Field("chat.factory_max_per_hour", "Factory chat messages per hour", "int", "All admins together.", lo=1, hi=1000, group="Factory chat"),
+        Field("chat.factory_code", "Let the factory chat read the code", "bool",
+              "A read-only copy of each repository's default branch, refreshed at most every 15 minutes, for the factory chat and for the "
+              "videos it proposes. The runs still have no network and no GitHub token.", group="Factory chat"),
+        Field("chat.factory_max_turns", "Factory chat: max turns per reply", "int", "Reading code takes more turns than a ticket chat. "
+              "Also used for writing a video's narration.", lo=1, hi=1000, group="Factory chat", adv=True),
+        Field("chat.factory_timeout_seconds", "Factory chat: reply timeout (seconds)", "int", lo=10, hi=10000, group="Factory chat", adv=True),
         Field("chat.harness", "Chat agent harness", "select", choices=("claude-code",), adv=True),
         Field("chat.max_turns", "Max turns per reply", "int", lo=1, hi=1000, adv=True),
         Field("chat.timeout_seconds", "Reply timeout (seconds)", "int", lo=10, hi=10000, adv=True),
@@ -393,6 +399,7 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("updates.repo", "Release repository", "text", "owner/name of the repository releases come from.", adv=True),
     ]),
 }
+OPTIONAL_TEXT = frozenset({"videos.elevenlabs_voice_id"})      # text settings that may be left empty
 VIEWPORT_LINE = re.compile(r"([a-z0-9][a-z0-9-]{0,60})\s+(\d{1,5})\s*[x×]\s*(\d{1,5})")
 
 
@@ -566,6 +573,8 @@ def parse_value(f: Field, form: Form):
             return v
         if f.kind == "text":
             v = raw.strip()
+            if not v and f.key in OPTIONAL_TEXT:
+                return ""
             if not v or len(v) > 200 or "\n" in v or "\r" in v:
                 raise ValueError
             if f.key == "runner.memory" and not re.fullmatch(r"\d+[kKmMgG]", v):

@@ -434,7 +434,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
 
 
 def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: HarnessCfg | None = None,
-                design_dir: str | None = None) -> list[str]:
+                design_dir: str | None = None, ro_mounts: list | None = None) -> list[str]:
     harness = harness or default_harnesses(rn)["claude-code"]
     # Podman maps the host user onto the container user (keep-id). Docker has no such flag: run as uid 1000 and rely on
     # the workspace being world-writable, which run_task arranges.
@@ -444,6 +444,7 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: Harnes
         "--security-opt=no-new-privileges", "--pids-limit=256", f"--memory={rn.memory}", f"--cpus={rn.cpus}",
         "--tmpfs", "/tmp:rw,size=512m", "--tmpfs", "/home/agent:rw,size=512m,mode=1777",
         "-v", f"{d/'work'}:/work:rw", "-v", f"{d/'task'}:/task:ro", "-v", f"{d/'out'}:/out:rw",
+        *[x for host, inside in (ro_mounts or []) for x in ("-v", f"{host}:{inside}:ro")],
         "-v", f"{rn.proxy_socket}:/run/proxy.sock",
         "--env-file", harness.env_file,
         "-e", f"AGENT_COMMAND={harness.command}",
@@ -548,16 +549,19 @@ def run_chat(cfg: Config, repo: str, issue: dict, route: Route, comments: list, 
     return _quick_run(cfg, route, f"chat-{num}", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
 
 
-def run_factory_chat(cfg: Config, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
+def run_factory_chat(cfg: Config, route: Route, prompt: str, sink: dict | None = None, code: list | None = None) -> RunResult:
     """One reply of the factory chat (factory.factorychat): the prompt carries the orchestrator's redacted snapshot of the tickets and
-    settings; the run is the same sealed, repository-less sandbox as a ticket chat reply, with the [chat] limits."""
-    return _quick_run(cfg, route, "factory-chat", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
+    settings; the run is the same sealed sandbox as a ticket chat reply (no network, no token), plus `code`: read-only copies of the
+    repositories (codecopy.mounts) under /work/code."""
+    c = cfg.chat
+    return _quick_run(cfg, route, "factory-chat", prompt, c.factory_max_turns, c.factory_timeout_seconds, sink, code)
 
 
-def run_video_writer(cfg: Config, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
+def run_video_writer(cfg: Config, route: Route, prompt: str, sink: dict | None = None, code: list | None = None) -> RunResult:
     """The scenes of a video asked for in the factory chat (factory.videos.make_brief): the prompt carries the brief and the
-    material; the run is the same sealed, repository-less sandbox as a chat reply, with the [chat] limits."""
-    return _quick_run(cfg, route, "video-writer", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
+    material; the run is the same sealed sandbox as a factory chat reply, with the same read-only code."""
+    c = cfg.chat
+    return _quick_run(cfg, route, "video-writer", prompt, c.factory_max_turns, c.factory_timeout_seconds, sink, code)
 
 
 def run_interview(cfg: Config, draft_id: int, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
@@ -573,8 +577,9 @@ def run_evaluation(cfg: Config, route: Route, prompt: str, sink: dict | None = N
     return _quick_run(cfg, route, "evaluate", prompt, ev.max_turns, ev.timeout_seconds, sink)
 
 
-def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: int, timeout: int, sink: dict | None) -> RunResult:
-    """A read-only run with no repository: an empty /work, the prompt, and only the agent's text back."""
+def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: int, timeout: int, sink: dict | None,
+               ro_mounts: list | None = None) -> RunResult:
+    """A read-only run with no repository: an empty /work (plus `ro_mounts`, read-only), the prompt, and only the agent's text back."""
     rn = cfg.runner
     harness = harness_for(cfg, route.harness)
     if harness is None or not harness.enabled:
@@ -595,7 +600,7 @@ def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: in
         name = f"factory-{label}-{secrets.token_hex(3)}"
         quick = replace(rn, max_turns=max_turns, timeout_seconds=timeout)
         try:
-            proc = subprocess.run(sandbox_cmd(quick, route, name, d, harness), timeout=timeout, check=False,
+            proc = subprocess.run(sandbox_cmd(quick, route, name, d, harness, ro_mounts=ro_mounts), timeout=timeout, check=False,
                                   capture_output=True, text=True)
         except subprocess.TimeoutExpired:
             subprocess.run([rn.engine, "kill", name], check=False, capture_output=True)
