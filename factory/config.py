@@ -135,6 +135,15 @@ class SplitCfg:
 
 
 @dataclass(frozen=True)
+class IntakeCfg:
+    """A ticket whose body says next to nothing (intake.py). With a trigger label on it the factory does not start a run: it asks
+    the author once for the goal, the scope, how the result is checked and any constraints, and waits. It starts once the body
+    is longer than min_chars of real text, or a person with write access comments "go ahead"."""
+    enabled: bool = True
+    min_chars: int = 80                  # characters of real text (no markup, links or HTML comments) a body needs
+
+
+@dataclass(frozen=True)
 class DesignLinksCfg:
     """Design exports (single HTML files, e.g. from Claude Design) linked in a ticket body. Off by default: the orchestrator fetches
     only https links on the listed hosts (plain host names, no wildcards), at most max_links per ticket and max_bytes each, and re-fetches
@@ -632,6 +641,7 @@ class Config:
     review: ReviewCfg = field(default_factory=ReviewCfg)
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
     split: SplitCfg = field(default_factory=SplitCfg)
+    intake: IntakeCfg = field(default_factory=IntakeCfg)
     design_links: DesignLinksCfg = field(default_factory=DesignLinksCfg)
     issue_images: IssueImagesCfg = field(default_factory=IssueImagesCfg)
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
@@ -1272,6 +1282,10 @@ def parse(raw: dict) -> Config:
     split_cfg = SplitCfg(**raw.get("split", {}))
     if not isinstance(split_cfg.notes_label, str) or not split_cfg.notes_label.strip():
         raise ValueError("split.notes_label must not be empty")
+    intake = IntakeCfg(**raw.get("intake", {}))
+    if not isinstance(intake.enabled, bool) or isinstance(intake.min_chars, bool) or not isinstance(intake.min_chars, int) \
+            or not 1 <= intake.min_chars <= 2000:
+        raise ValueError("intake.enabled must be true or false and intake.min_chars a whole number from 1 to 2000")
     design_links = DesignLinksCfg(**_tuples(raw.get("design_links", {})))
     from .designlinks import valid_host
     if (not all(valid_host(h) for h in design_links.hosts) or not 1 <= design_links.max_links <= 5
@@ -1391,6 +1405,7 @@ def parse(raw: dict) -> Config:
         review=review,
         mockups=mockups,
         split=split_cfg,
+        intake=intake,
         design_links=design_links,
         issue_images=issue_images,
         updates=updates,

@@ -11,12 +11,12 @@ from factory import main as m
 from factory import pm
 from factory.config import PmCfg, Project, ProjectRepo, parse
 from factory.runner import RunResult, build_prompt
-from test_roles import CFG, FakeClf, FakeGH
+from test_roles import BODY, CFG, FakeClf, FakeGH
 
 PM = replace(CFG, pm=PmCfg(enabled=True))
 
 
-def tk(n, labels=(), body="please"):
+def tk(n, labels=(), body=BODY):
     return {"number": n, "title": f"Ticket {n}", "body": body, "updated_at": f"t{n}", "state": "open",
             "labels": [{"name": l} for l in labels]}
 
@@ -195,7 +195,7 @@ class Poll(unittest.TestCase):
         return calls, conn, alert
 
     def test_a_build_with_an_open_blocker_waits_untouched(self):
-        gh = GH({"factory:ready": [tk(5, body="Blocked by #9")]}, open_={9})
+        gh = GH({"factory:ready": [tk(5, body=BODY + "\nBlocked by #9")]}, open_={9})
         calls, conn, _ = self.poll(gh)
         self.assertEqual(calls, [])
         self.assertEqual(m.queued, [{"repo": "o/r", "issue": 5, "kind": "implement", "title": "Ticket 5", "reason": "blocked by #9"}])
@@ -203,23 +203,23 @@ class Poll(unittest.TestCase):
         self.assertIsNone(conn.execute("select 1 from decisions").fetchone())     # nothing recorded: a later poll retries
 
     def test_it_starts_once_the_blocker_is_closed(self):
-        gh = GH({"factory:ready": [tk(5, body="Blocked by #9")]}, open_=set())
+        gh = GH({"factory:ready": [tk(5, body=BODY + "\nBlocked by #9")]}, open_=set())
         calls, _, _ = self.poll(gh)
         self.assertEqual([c.get("role") for c in calls], [None])
 
     def test_a_lower_priority_unblocked_ticket_goes_first(self):
-        gh = GH({"factory:ready": [tk(5, ["priority: high"], "Blocked by #9"), tk(6, ["priority: low"])]}, open_={9})
+        gh = GH({"factory:ready": [tk(5, ["priority: high"], BODY + "\nBlocked by #9"), tk(6, ["priority: low"])]}, open_={9})
         calls, _, _ = self.poll(gh)
         self.assertEqual([c["issue"]["number"] for c in calls], [6])
 
     def test_blockers_count_only_while_the_pm_is_enabled(self):
-        gh = GH({"factory:ready": [tk(5, body="Blocked by #9")]}, open_={9})
+        gh = GH({"factory:ready": [tk(5, body=BODY + "\nBlocked by #9")]}, open_={9})
         calls, _, _ = self.poll(gh, cfg=CFG)
         self.assertEqual(len(calls), 1)
         self.assertNotIn("reason", str(m.queued))
 
     def test_stages_are_never_blocked(self):
-        gh = GH({"factory:analyze": [tk(5, body="Blocked by #9")]}, open_={9})
+        gh = GH({"factory:analyze": [tk(5, body=BODY + "\nBlocked by #9")]}, open_={9})
         fake = fake_runner(build=RunResult("stage", "ok", output="# Doc"))
         calls, _, _ = self.poll(gh, fake=fake)
         self.assertEqual([c.get("role") for c in calls], ["analyst"])
@@ -247,7 +247,7 @@ class Poll(unittest.TestCase):
         self.assertEqual(alert.call_args_list, [])
 
     def test_a_running_ticket_is_not_reported_as_blocked(self):
-        gh = GH({"factory:ready": [tk(5, body="Blocked by #9")]}, open_={9})
+        gh = GH({"factory:ready": [tk(5, body=BODY + "\nBlocked by #9")]}, open_={9})
         with mock.patch.object(m.pool, "busy", return_value=True), mock.patch.object(m.pool, "can_take", return_value=False):
             calls, _, _ = self.poll(gh)
         self.assertEqual((calls, m.queued), ([], []))

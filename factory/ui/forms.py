@@ -40,7 +40,8 @@ def _fmt(f: S.Field, v) -> str:
 # The settings menu, grouped by what each page is for (the same groups as the Settings home). A row: (key, name, link).
 SIDE_GROUPS = [
     ("Where work comes from", [("new_project", "New project", "/projects/new"), ("projects", "Projects", "/settings?section=projects"), ("schedules", "Schedules", "/schedules"), ("scans", "Scans", "/scans"),
-                               ("scanner", "Scan limits", "/settings?section=scanner"), ("comments", "Comment triage", "/settings?section=comments"),
+                               ("scanner", "Scan limits", "/settings?section=scanner"), ("intake", "Thin tickets", "/settings?section=intake"),
+                               ("comments", "Comment triage", "/settings?section=comments"),
                                ("design_links", "Design links", "/settings?section=design_links"), ("ticket_review", "Ticket review", "/settings?section=ticket_review")]),
     ("How the work is done", [("routing", "Models by ticket size", "/settings?section=routing"), ("roles", "Stage agents", "/settings?section=roles"),
                               ("classifier", "Classifier", "/settings?section=classifier"), ("runner", "Sandbox & limits", "/settings?section=runner"),
@@ -254,6 +255,7 @@ SECTION_INTRO = {
     "comments": "When a person comments on a ticket the factory worked on, an agent can work out what the comment asks for.",
     "ticket_review": "On request, an agent proposes which open tickets are already built or duplicates. Nothing runs until a person asks.",
     "evaluate": "Once a ticket is finished, an agent scores how well each step went and suggests what to change. Results are on the Evaluate page.",
+    "intake": "A ticket whose description says next to nothing does not start an agent. The factory asks its author for more first.",
     "design_links": "Design exports linked in a ticket, fetched only from hosts you list.",
     "scanner": "Limits for code-smell scans. The scans themselves, and what they look for, are on the Scans page.",
     "chat": "Ask about a ticket and get a quick answer, outside the label-driven pipeline. The factory chat answers about every ticket and the settings.",
