@@ -167,7 +167,7 @@ def player_get(h, q: dict, csrf: str) -> None:
             f'<section aria-label="Transcript"><h2>Transcript</h2>' + (f"<ol>{lines}</ol>" if lines else '<p class="muted">No transcript was saved for this video.</p>')
             + "</section>")
     h._send(200, views.page("Video" if row.get("kind") == "brief" else "Review video", body,
-                            "/videos" if row.get("kind") == "brief" else "/ticket/video", csrf, nav=NAV), extra={"Content-Security-Policy": player_csp(server.HEADERS)})
+                            "/videos" if row.get("kind") == "brief" else "/ticket/video", csrf), extra={"Content-Security-Policy": player_csp(server.HEADERS)})
 
 
 def file_get(h, q: dict, csrf: str) -> None:
@@ -185,16 +185,13 @@ def transcript_get(h, q: dict, csrf: str) -> None:
         h._send(200, text, "text/plain; charset=utf-8", {"Content-Disposition": f'attachment; filename="review-{int(row["id"])}.txt"'})
 
 
-NAV = views.NAV[:4] + [("/videos", "Videos")] + views.NAV[4:]
-
-
 def list_get(h, q: dict, csrf: str) -> None:
     """The Videos page: the videos asked for in the factory chat, newest first."""
     cfg = h.app.cfg()
     shown = L.flash_pop(csrf)
     if not cfg.videos.enabled:
         body = '<p>Videos are switched off. Turn them on in <a href="/settings">Settings</a>, Review videos.</p>'
-        return h._send(200, views.page("Videos", body, "/videos", csrf, nav=NAV))
+        return h._send(200, views.page("Videos", body, "/videos", csrf))
     db = h.app.ro_db()
     try:
         rows = videos.briefs(db) if db is not None else []
@@ -220,7 +217,7 @@ def list_get(h, q: dict, csrf: str) -> None:
              'proposal. Review videos of a ticket\'s pull requests are on the ticket\'s page.</p>')
     table = (f'<table class="stack" aria-live="polite"><thead><tr><th>Video</th><th>Status</th><th>Length</th><th>Made</th><th></th></tr></thead><tbody>{out}</tbody></table>'
              if out else '<p class="muted">No videos yet.</p>')
-    h._send(200, views.page("Videos", intro + table, "/videos", csrf, nav=NAV, flash=shown[0] if shown else None,
+    h._send(200, views.page("Videos", intro + table, "/videos", csrf, flash=shown[0] if shown else None,
                             flash_kind=shown[1] if shown else "ok"))
 
 

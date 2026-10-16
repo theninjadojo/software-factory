@@ -193,6 +193,15 @@ class Page(UiCase):
         self.assertIn('action="/videos/again"', html)
         self.assertEqual(self.req("GET", "/videos")[0], 303)                  # behind the login
 
+    def test_the_menu_offers_videos_on_every_page_only_while_they_are_on(self):
+        cookie, _ = self.session()
+        self.on(videos_on=False)
+        for path in ("/", "/tickets", "/chat", "/settings"):
+            self.assertNotIn('href="/videos"', self.req("GET", path, cookie=cookie)[2], path)
+        self.on()
+        for path in ("/", "/tickets", "/chat", "/settings", "/events"):
+            self.assertIn('href="/videos"', self.req("GET", path, cookie=cookie)[2], path)
+
 
 if __name__ == "__main__":
     unittest.main()
