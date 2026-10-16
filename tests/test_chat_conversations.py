@@ -143,9 +143,12 @@ class Page(UiCase):
         s, h, _ = self.post(cookie, csrf, "/videos/ask", text="A tour of the board changes, for the team.")
         db = self.rw()
         t = F.threads(db)[0]
-        self.assertEqual(h["Location"], f"/chat?c={t['id']}")
+        self.assertEqual(h["Location"], f"/videos?c={t['id']}")                  # the request stays on the Videos page
         self.assertEqual(F.turns(db, t["id"])[0]["body"], "Propose a video: A tour of the board changes, for the team.")
-        self.assertIn("Sent to the chat", self.req("GET", h["Location"], cookie=cookie)[2])
+        html = self.req("GET", h["Location"], cookie=cookie)[2]
+        self.assertIn("Your video request", html)
+        self.assertIn("A tour of the board changes", html)
+        self.assertIn(f'data-src="/fragment/factory-chat?c={t["id"]}&amp;in=videos"', html)
         self.post(cookie, csrf, "/videos/ask", text="")
         self.assertEqual(len(F.threads(db)), 1)
 

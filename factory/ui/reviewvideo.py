@@ -208,23 +208,39 @@ def list_get(h, q: dict, csrf: str) -> None:
                 if ready else "")
         again = (f'<form method="post" action="/videos/again" class="inline">{csrf_field(csrf)}<input type="hidden" name="id" value="{int(v["id"])}">'
                  '<button class="secondary">Make again</button></form>' if v["status"] in ("ready", "stale", "skipped", "removed") else "")
-        tickets = ", ".join(f"{r}{display(n)}" for r, n, _ in videos.sources_of(v))
+        tickets = ", ".join([f"{r}{display(n)}" for r, n, _ in videos.sources_of(v)] + videos.files_of(v))
         out += (f'<tr><td data-l="Video"><b>{esc(v["title"])}</b><br><span class="muted">{esc(tickets)}</span></td>'
                 f'<td data-l="Status">{views.badge(word, tone)} <span class="muted">{note}</span></td>'
                 f'<td data-l="Length">{esc(videos.clock(v["seconds"])) if ready and v["seconds"] else ""}</td>'
                 f'<td data-l="Made">{esc(views.ago(v["created"]))}</td><td class="actions">{acts} {again}</td></tr>')
-    intro = ('<p class="muted">Videos about some tickets, made from their pull requests and screenshots. Describe one below, or ask in '
-             '<a href="/chat">Chat</a>: the chat picks the tickets and proposes the video, and you decide whether to make it. Review videos '
-             'of one ticket\'s pull requests are on that ticket\'s page.</p>')
-    from .factorychat import _why_not, VIDEO_ASK
+    intro = ('<p class="muted">Videos about the factory\'s tickets or its code: what changed, or how something works. Describe one below '
+             '(or ask in <a href="/chat">Chat</a>): the chat reads the tickets and the code, proposes the video, and you decide whether to '
+             'make it. Review videos of one ticket\'s pull requests are on that ticket\'s page.</p>')
+    from . import factorychat as FCU
     from .. import factorychat as F
-    why = _why_not(cfg, h.app.state_dir())
-    intro += (f'<form method="post" action="/videos/ask" class="card fc-reply">{csrf_field(csrf)}'
-              '<div class="field"><label for="va-text">Describe a video</label>'
-              f'<textarea id="va-text" name="text" rows="3" maxlength="{F.MAX_TEXT - len(VIDEO_ASK)}" required aria-describedby="va-help" '
-              'placeholder="A two-minute tour of this week\'s board changes, for the team, focused on mobile."></textarea>'
-              '<p class="muted" id="va-help">What it should show, for whom, and roughly how long. It starts a new chat conversation.</p></div>'
-              + (f'<p class="muted">{esc(why)}</p>' if why else '<button>Ask the chat</button>') + '</form>')
+    tid = FCU._cid(q)
+    convo = ""
+    if tid is not None:
+        db = h.app.ro_db()
+        try:
+            if db is not None and F.thread(db, tid) is not None:
+                convo = FCU.body(cfg, db, csrf, h.app.state_dir(), tid, "videos")
+        finally:
+            if db is not None:
+                db.close()
+    if convo:
+        intro += (f'<section class="va-convo" aria-labelledby="va-h"><div class="va-head"><h2 id="va-h">Your video request</h2>'
+                  f'<a class="btn secondary" href="/videos">Describe another video</a></div>{convo}'
+                  f'<p class="muted">The same conversation is on <a href="/chat?c={int(tid)}">Chat</a>.</p></section>')
+    else:
+        why = FCU._why_not(cfg, h.app.state_dir())
+        intro += (f'<form method="post" action="/videos/ask" class="card fc-reply">{csrf_field(csrf)}'
+                  '<div class="field"><label for="va-text">Describe a video</label>'
+                  f'<textarea id="va-text" name="text" rows="3" maxlength="{F.MAX_TEXT - len(FCU.VIDEO_ASK)}" required aria-describedby="va-help" '
+                  'placeholder="How the login flow works, from the form to the session, for new developers. About two minutes."></textarea>'
+                  '<p class="muted" id="va-help">What it should show (some tickets, or a part of the code), for whom, and roughly how long. '
+                  'The chat answers here with a proposal you can make.</p></div>'
+                  + (f'<p class="muted">{esc(why)}</p>' if why else '<button>Ask for a video</button>') + '</form>')
     table = (f'<table class="stack" aria-live="polite"><thead><tr><th>Video</th><th>Status</th><th>Length</th><th>Made</th><th></th></tr></thead><tbody>{out}</tbody></table>'
              if out else '<p class="muted">No videos yet.</p>')
     h._send(200, views.page("Videos", intro + table, "/videos", csrf, flash=shown[0] if shown else None,

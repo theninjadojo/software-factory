@@ -32,10 +32,10 @@ def _why_not(cfg, state_dir) -> str:
     return ""
 
 
-def _turn_html(t: dict) -> str:
+def _turn_html(t: dict, where: str = "chat") -> str:
     if t["author"] == "agent":
         cut = '<p class="muted">Some tickets or details were left out of what it saw.</p>' if t["snapshot_cut"] else ""
-        watch = f'<p><a href="/videos">Open Videos</a></p>' if t.get("video_id") else ""
+        watch = f'<p><a href="/videos">Open Videos</a></p>' if t.get("video_id") and where != "videos" else ""
         return (f'<div class="chat-turn chat-agent"><p class="muted">Factory · {esc(ago(t["created"]))}</p>'
                 f'<div class="md">{md_render(t["body"])[0]}</div>{watch}{cut}</div>')
     note = "No reply: " if t["status"] in ("failed", "refused") else ""
@@ -45,21 +45,24 @@ def _turn_html(t: dict) -> str:
             f'<p class="chat-text">{esc(t["body"])}</p>{tail}</div>')
 
 
-def _proposal_html(cfg, t: dict, csrf: str) -> str:
+def _proposal_html(cfg, t: dict, csrf: str, where: str = "chat") -> str:
     """A video proposal: what it covers, and Make video / Dismiss while it is open."""
     p = t["proposal"]
     if not p:
         return ""
     if t["proposal_state"] != "open" or not cfg.videos.enabled:
-        done = {"confirmed": "Video queued. It appears on the Videos page.", "dismissed": "Proposal dismissed."}.get(t["proposal_state"] or "", "")
+        queued = "Video queued. It is in the list below." if where == "videos" else "Video queued. It appears on the Videos page."
+        done = {"confirmed": queued, "dismissed": "Proposal dismissed."}.get(t["proposal_state"] or "", "")
         return f'<p class="muted">{esc(done)}</p>' if done else ""
     from ..tracker import display
     tickets = "".join(f'<li>{esc(r)}{esc(display(n))} {esc(title)}</li>' for r, n, title in p["tickets"])
+    files = "".join(f'<li class="mono">{esc(f)}</li>' for f in p.get("files") or [])
     hidden = (f'{csrf_field(csrf)}<input type="hidden" name="id" value="{int(t["id"])}">'
-              f'<input type="hidden" name="c" value="{int(t["thread_id"] or 0)}">')
+              f'<input type="hidden" name="c" value="{int(t["thread_id"] or 0)}">' + _in(where))
     return (f'<div class="chat-proposal" aria-label="Video proposal"><p><b>Proposed video: {esc(p["title"])}</b></p><p>{esc(p["brief"])}</p>'
-            f'<p class="muted">Made from these tickets\' pull requests and screenshots:</p><ul>{tickets}</ul>'
-            f'<form method="post" action="/chat/video/make" class="field">{hidden}{RVID.voice_fields(cfg, "", "")}'
+            + (f'<p class="muted">Made from these tickets\' pull requests and screenshots:</p><ul>{tickets}</ul>' if tickets else "")
+            + (f'<p class="muted">Explaining this code (default branch):</p><ul>{files}</ul>' if files else "")
+            + f'<form method="post" action="/chat/video/make" class="field">{hidden}{RVID.voice_fields(cfg, "", "")}'
             '<div class="sd-acts"><button>Make video</button></div></form>'
             f'<form method="post" action="/chat/video/dismiss" class="inline">{hidden}<button class="secondary">Dismiss</button></form></div>')
 
@@ -69,17 +72,27 @@ def _cid(q) -> int | None:
     return int(c) if c.isdigit() and len(c) <= 12 else None
 
 
-def _back(tid) -> str:
-    return f"/chat?c={int(tid)}" if tid else "/chat"
+def _where(q) -> str:
+    """Which page a conversation is shown on: the Videos page keeps a video request there, else the Chat page."""
+    return "videos" if q.get("in") == "videos" else "chat"
 
 
-def body(cfg, db, csrf: str, state_dir, tid: int | None = None) -> str:
-    """One conversation (or, without `tid`, an empty new one) and the message form. It replaces itself while a reply is awaited
-    (app.js chatTick polls it)."""
+def _in(where: str) -> str:
+    return '<input type="hidden" name="in" value="videos">' if where == "videos" else ""
+
+
+def _back(tid, where: str = "chat") -> str:
+    page = "/videos" if where == "videos" else "/chat"
+    return f"{page}?c={int(tid)}" if tid else page
+
+
+def body(cfg, db, csrf: str, state_dir, tid: int | None = None, where: str = "chat") -> str:
+    """One conversation (or, without `tid`, an empty new one) and the message form, on the Chat page or (where='videos') the Videos
+    page. It replaces itself while a reply is awaited (app.js chatTick polls it)."""
     rows = F.turns(db, tid) if db is not None else []
     waiting = any(t["author"] == "person" and t["status"] in ("pending", "running") for t in rows)
     last_open = max((t["id"] for t in rows if t["proposal"] and t["proposal_state"] == "open"), default=None)
-    turns = "".join(_turn_html(t) + (_proposal_html(cfg, t, csrf) if t["id"] == last_open or t["proposal_state"] in ("confirmed", "dismissed")
+    turns = "".join(_turn_html(t, where) + (_proposal_html(cfg, t, csrf, where) if t["id"] == last_open or t["proposal_state"] in ("confirmed", "dismissed")
                                      else "") for t in rows) or ('<p class="muted">Ask what a ticket is waiting for, why one is stuck, what is '
                                                       'running, or what a setting does.</p>')
     why = _why_not(cfg, state_dir)
@@ -89,12 +102,12 @@ def body(cfg, db, csrf: str, state_dir, tid: int | None = None) -> str:
     elif waiting:
         form = '<p class="muted">The factory is writing…</p>'
     else:
-        keep = f'<input type="hidden" name="c" value="{int(tid)}">' if tid else ""
+        keep = (f'<input type="hidden" name="c" value="{int(tid)}">' if tid else "") + _in(where)
         form = (f'<form method="post" action="/chat/send" class="fc-reply">{csrf_field(csrf)}{keep}'
                 f'<div class="field"><label for="fc-text">{"Your message" if tid else "Start a new conversation"}</label>'
                 f'<textarea id="fc-text" name="text" rows="3" maxlength="{F.MAX_TEXT}" required></textarea></div>'
                 f'{f"<p class=muted>{esc(why)}</p>" if why else ""}<button>Send</button></form>')
-    src = f"/fragment/factory-chat?c={int(tid)}" if tid else "/fragment/factory-chat"
+    src = (f"/fragment/factory-chat?c={int(tid)}" if tid else "/fragment/factory-chat?c=new") + ("&amp;in=videos" if where == "videos" else "")
     return (f'<div class="fc-chat" data-src="{src}" data-pending="{1 if waiting else 0}">'
             f'<section class="card" aria-label="Conversation"><div class="chat-turns">{turns}</div>{form}</section></div>')
 
@@ -152,7 +165,7 @@ def get(h, q: dict, csrf: str) -> None:
 def fragment_get(h, q: dict, csrf: str) -> None:
     db = h.app.ro_db()
     try:
-        html = body(h.app.cfg(), db, csrf, h.app.state_dir(), _cid(q))
+        html = body(h.app.cfg(), db, csrf, h.app.state_dir(), _cid(q), _where(q))
     finally:
         if db is not None:
             db.close()
@@ -174,9 +187,9 @@ def send(h, form, csrf: str) -> None:
         tid = ask(cfg, text, tid)
     except L.Refused as e:
         L.flash_set(csrf, str(e), "bad")
-        return h._redirect(_back(tid) if tid else "/chat?c=new")
+        return h._redirect(_back(tid, _where(form)) if tid else "/videos" if _where(form) == "videos" else "/chat?c=new")
     log.info("factory chat: message sent")
-    h._redirect(_back(tid))
+    h._redirect(_back(tid, _where(form)))
 
 
 def ask(cfg, text: str, tid: int | None) -> int:
@@ -220,8 +233,7 @@ def ask_video(h, form, csrf: str) -> None:
         L.flash_set(csrf, str(e), "bad")
         return h._redirect("/videos")
     log.info("factory chat: video asked for from the Videos page")
-    L.flash_set(csrf, "Sent to the chat. It proposes a video here; make it if it looks right.")
-    h._redirect(_back(tid))
+    h._redirect(_back(tid, "videos"))
 
 
 def delete(h, form, csrf: str) -> None:
@@ -281,7 +293,8 @@ def make_video(h, form, csrf: str) -> None:
             if not F.set_proposal_state(db, p["id"], "open", "confirmed"):
                 raise L.Refused("That proposal is no longer open.")
             try:
-                vid = videos.queue_brief(db, p["title"], p["brief"], [tuple(x) for x in p["tickets"]], time.time(), voice, voice_id)
+                vid = videos.queue_brief(db, p["title"], p["brief"], [tuple(x) for x in p["tickets"]], time.time(), voice, voice_id,
+                                         p.get("files") or [])
                 F.link_video(db, p["id"], vid)
             except ValueError:
                 F.set_proposal_state(db, p["id"], "confirmed", "open")          # nothing was queued: let it be tried again
@@ -290,10 +303,11 @@ def make_video(h, form, csrf: str) -> None:
             db.close()
     except L.Refused as e:
         L.flash_set(csrf, str(e), "bad")
-        return h._redirect(_back(_cid(form)))
+        return h._redirect(_back(_cid(form), _where(form)))
     log.info("factory chat: video proposal confirmed")
-    L.flash_set(csrf, "Queued. The video is made at the next poll and appears on the Videos page.")
-    h._redirect(_back(_cid(form)))
+    L.flash_set(csrf, "Queued. The video is made at the next poll and appears in the list below." if _where(form) == "videos"
+                else "Queued. The video is made at the next poll and appears on the Videos page.")
+    h._redirect(_back(_cid(form), _where(form)))
 
 
 def dismiss_video(h, form, csrf: str) -> None:
@@ -303,11 +317,11 @@ def dismiss_video(h, form, csrf: str) -> None:
         F.set_proposal_state(db, p["id"], "open", "dismissed")
     except L.Refused as e:
         L.flash_set(csrf, str(e), "bad")
-        return h._redirect(_back(_cid(form)))
+        return h._redirect(_back(_cid(form), _where(form)))
     finally:
         db.close()
     L.flash_set(csrf, "Proposal dismissed.")
-    h._redirect(_back(_cid(form)))
+    h._redirect(_back(_cid(form), _where(form)))
 
 
 GET = {"/chat": get, "/fragment/factory-chat": fragment_get}

@@ -1761,3 +1761,5 @@ main > [data-flash] { position:sticky; top:8px; z-index:40; box-shadow:0 8px 24p
   .fc-list ul { margin-top:.4rem; max-height:50vh; }
   .fc-list a { min-height:44px; justify-content:center; }
 }
+.va-convo { margin:0 0 1.5rem; } .va-head { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; justify-content:space-between; }
+.va-head h2 { margin:0; }
