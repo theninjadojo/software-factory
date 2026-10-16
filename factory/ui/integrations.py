@@ -236,7 +236,7 @@ def check_elevenlabs(key: str, voice_id: str) -> dict:
     if voice_id:
         name = str(body.get("name") or "")[:60] if isinstance(body, dict) else ""
         return {"ok": True, "message": f"The key works and the voice {name or voice_id} is available."}
-    return {"ok": True, "message": "The key works. Set videos.elevenlabs_voice_id to the voice to use."}
+    return {"ok": True, "message": "The key works. Set the ElevenLabs voice id on Settings → Review videos."}
 
 
 def classify_sample(cfg: Config, title: str, body: str, labels: list[str]) -> tuple[Classification, str]:

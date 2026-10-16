@@ -8,7 +8,7 @@ import urllib.parse
 from pathlib import Path
 
 from .. import backup as B
-from .. import selfupdate as SU, tools, updates, version, workerupdate
+from .. import selfupdate as SU, tools, updates, version, videoimage, workerupdate
 from .. import db as dbm
 from ..config import deep_merge
 from ..router import decide
@@ -118,6 +118,8 @@ def render_settings(h, section: str, csrf: str, submitted=None, tester: str = ""
     if section == "questions":
         db = h.app.ro_db()
         body = forms.auto_tally(*(dbm.auto_tally(db) if db is not None else (0, 0))) + body
+    if section == "videos":
+        body += forms.video_setup_card(h.app.cfg(), videoimage.read(h.app.state_dir()), I.secret_status(h.app.cfg(), "elevenlabs"), csrf)
     return body
 
 
@@ -304,9 +306,32 @@ def credentials_save(h, form, csrf: str) -> None:
     try:
         I.save_secret(cfg, form.get("name", ""), form.get("value", ""), form.get("kind", "subscription"))
     except ValueError as e:
+        if _to_videos(form):
+            return _send_page(h, 400, "Settings", render_settings(h, "videos", csrf), "/settings", csrf, str(e), "bad", section="videos")
         return _send_page(h, 400, "Credentials", _cred(h, csrf), "/credentials", csrf, str(e), "bad")
     S.request_restart(h.app.state_dir())
+    if _to_videos(form):
+        L.flash_set(csrf, "ElevenLabs key saved.")
+        return h._redirect("/settings?section=videos")
     h._redirect("/credentials?ok=secret")
+
+
+def _to_videos(form) -> bool:
+    """A credential form on the Review videos settings (only the ElevenLabs key) answers there."""
+    return form.get("back") == "videos" and form.get("name") == "elevenlabs"
+
+
+def video_image_build(h, form, csrf: str) -> None:
+    cfg = h.app.cfg()
+    if not videoimage.managed(cfg):
+        L.flash_set(csrf, "The configured video image is a custom one; it is not built from here.", "bad")
+    elif cfg.dry_run:
+        L.flash_set(csrf, "The factory is in dry run, so it builds nothing. Go live first.", "bad")
+    else:
+        videoimage.request(h.app.state_dir())
+        log.info("video image: build requested")
+        L.flash_set(csrf, "Build requested. The factory starts it within a poll (up to a minute) and it takes several minutes.")
+    h._redirect("/settings?section=videos")
 
 
 def credentials_test(h, form, csrf: str) -> None:
@@ -325,6 +350,8 @@ def credentials_test(h, form, csrf: str) -> None:
         return _send_page(h, 200, "Credentials", _cred(h, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
     if name == "elevenlabs":
         r = I.check_elevenlabs(secret, cfg.videos.elevenlabs_voice_id)
+        if _to_videos(form):
+            return _send_page(h, 200, "Settings", render_settings(h, "videos", csrf), "/settings", csrf, r["message"], "ok" if r["ok"] else "bad", section="videos")
         return _send_page(h, 200, "Credentials", _cred(h, csrf), "/credentials", csrf, r["message"], "ok" if r["ok"] else "bad")
     if name in ("slack_bot", "slack_app"):
         r = I.slack_check(secret) if name == "slack_bot" else I.slack_app_check(secret)
@@ -927,7 +954,7 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
 
 GET = {"/ticket/video": RVID.player_get, "/ticket/video/file": RVID.file_get, "/ticket/video/transcript": RVID.transcript_get, "/release": release_redirect, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/machines/server": server_machine_get, "/workers/machine": worker_machine_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/roadmap": RM.get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/ticket/design": RV.design_get, "/tickets/review": TRV.review_get, "/tickets/review/live": TRV.live_get, "/fragment/chat": CH.fragment_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/results": SB.results_get, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get, **TS.GET, **NP.GET, **FC.GET, **EV.GET}
-POST = {"/ticket/video/save": RVID.save_post, "/ticket/video/again": RVID.again_post, "/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
+POST = {"/videos/image/build": video_image_build, "/ticket/video/save": RVID.save_post, "/ticket/video/again": RVID.again_post, "/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/settings/projects/detect": projects_detect, "/settings/projects/deps": projects_deps, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/credentials/api-token/add": api_token_add, "/credentials/api-token/revoke": api_token_revoke, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/tools/check": tools_check, "/tools/update": tools_update, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,

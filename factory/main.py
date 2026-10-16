@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videos, waves
+from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videoimage, videos, waves
 from . import depdetect
 from . import judges
 from . import recommend
@@ -2175,6 +2175,10 @@ def main() -> None:
                 tools.tick(cfg, Path(cfg.db_path).parent)        # a requested CLI update, or the periodic version scan (background thread)
             except Exception:
                 log.exception("tool update check failed")       # never stops the poll
+            try:
+                videoimage.tick(cfg, Path(cfg.db_path).parent)   # a requested video image build, or the periodic check that it exists
+            except Exception:
+                log.exception("video image check failed")
             poll_once(cfg, gh, conn, clf)
             dbm.set_status(conn, "pool", pool_status())
             dbm.set_status(conn, "last_poll_ok", str(time.time()))

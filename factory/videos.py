@@ -71,7 +71,7 @@ def reasons(vc) -> dict[str, str]:
     """Every reason a video is skipped, fixed wording with only config numbers in it: nothing from a ticket, a repo or a tool."""
     return {"daily_cap": f"Daily limit of {vc.max_per_day} videos reached. Try again tomorrow.",
             "tool_failed": "The video tool failed. The pull request is not affected.",
-            "voice": "The voice could not be made (check the ElevenLabs key, voice and quota on the Credentials page).",
+            "voice": "The voice could not be made (check the ElevenLabs key, voice and quota on Settings → Review videos).",
             "timeout": f"Took longer than {max(1, vc.timeout_seconds // 60)} minutes to make.",
             "too_long": f"The video was longer than {_minutes(vc.max_seconds)}.",
             "too_large": f"The video was larger than {vc.max_mb} MB.",

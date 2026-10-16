@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, VideosCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -331,6 +331,25 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("chat.check_seconds", "Look for new messages every (seconds)", "int", lo=1, hi=1000, adv=True),
         Field("chat.context_turns", "Chat turns later stages read", "int", "The newest turns that stage prompts carry.", lo=1, hi=1000, adv=True),
     ]),
+    "videos": ("Review videos", [
+        Field("videos.enabled", "Enable review videos", "bool",
+              "A ticket's page then offers a short narrated walkthrough of each of its pull requests. Needs the video image (built below)."),
+        Field("videos.voice", "Default voice", "select",
+              "Piper runs offline on this machine. ElevenLabs needs its key (below) and a voice id; it receives the narration text. "
+              "A ticket can choose the other.", choices=("piper", "elevenlabs"), group="Voice"),
+        Field("videos.elevenlabs_voice_id", "ElevenLabs voice id", "text",
+              "8 to 40 letters and digits, from your ElevenLabs voice library. Used unless a ticket names another.", group="Voice"),
+        Field("videos.elevenlabs_model", "ElevenLabs model", "text", "For example eleven_multilingual_v2.", group="Voice", adv=True),
+        Field("videos.max_per_day", "Videos per day", "int", "Videos started in any 24 hours, Make again included.", lo=1, hi=1000, group="Limits"),
+        Field("videos.max_seconds", "Longest video (seconds)", "int", "A longer video is not kept.", lo=10, hi=600, group="Limits"),
+        Field("videos.max_mb", "Largest video (MB)", "int", "A larger video is not kept.", lo=1, hi=500, group="Limits"),
+        Field("videos.retention_days", "Keep videos (days)", "int", "Video files are removed this long after they were made.", lo=1, hi=3650, group="Limits"),
+        Field("videos.timeout_seconds", "Time to make one video (seconds)", "int", lo=60, hi=7200, adv=True),
+        Field("videos.ui_url", "Admin UI address for links", "url",
+              "Used in the links posted on pull requests and tickets. Empty: the Telegram UI address.", adv=True),
+        Field("videos.image", "Video image", "text",
+              "The container image the videos are made in. Only the default one can be built from this page.", adv=True),
+    ]),
     "new_projects": ("New project interviews", [
         Field("new_projects.enabled", "Enable new-project interviews", "bool",
               "An agent interviews you about a new project and recommends a pattern. Each reply is a read-only model run with no repository."),
@@ -420,7 +439,7 @@ def del_in(d: dict, dotted: str) -> None:
 
 
 DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "questions": QuestionsCfg, "ticket_review": TicketReviewCfg, "evaluate": EvaluateCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
-                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg}
+                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg, "videos": VideosCfg}
 
 
 def default_for(key: str):

@@ -6,17 +6,15 @@ automated review, which writes the narration. It never blocks or changes the pul
 
 ## Turning it on
 
-1. Build the video image once on the factory's machine. It is about 0.5 GB and is not part of a release:
+Everything is set up in the admin UI, on **Settings > Review videos** (also listed on the Settings home under *Before a pull request
+is done*):
 
-   ```bash
-   docker compose --profile video build                                       # Docker install
-   podman build -t factory-video -f sandbox/video/Dockerfile sandbox/video    # native install
-   ```
-
-   After that, `deploy/update-native.sh` rebuilds it with each update.
-2. Set `[videos] enabled = true` in the configuration. The other settings are described in `config.example.toml`.
-3. On a ticket's page in the admin UI, open **Review video**, tick **Make a review video for each pull request**, pick a voice and
-   save. Open pull requests of the ticket get a video too.
+1. Switch on **Enable review videos** and save. The same page holds the default voice, the ElevenLabs voice id and the limits.
+2. Under **Video image**, click **Build video image**. The factory builds it within a poll; it is about 0.5 GB, takes several minutes
+   and is not part of a release. After that, `deploy/update-native.sh` rebuilds it with each update. (From a shell, the same is
+   `docker compose --profile video build` or `podman build -t factory-video -f sandbox/video/Dockerfile sandbox/video`.)
+3. On a ticket's page, open **Review video**, tick **Make a review video for each pull request**, pick a voice and save. Open pull
+   requests of the ticket get a video too.
 
 The video appears on the ticket's page (**Watch**, **Transcript**). Its link is also posted on the pull request and the ticket.
 When the pull request gets new commits, the video is marked out of date, and **Make again** makes a new one.
@@ -29,9 +27,10 @@ When the pull request gets new commits, the video is marked out of date, and **M
 | ElevenLabs | The factory calls `api.elevenlabs.io` and passes the sound into the container. | The narration text of each scene |
 
 To use ElevenLabs:
-1. Save the key on **Settings > Credentials** (ElevenLabs key). **Test** checks the key and the configured voice.
-2. Set `videos.elevenlabs_voice_id`, or give a voice id on the ticket.
-3. To make ElevenLabs the default for every ticket, set `voice = "elevenlabs"`.
+1. Save the key under **ElevenLabs key** on **Settings > Review videos** (or on **Settings > Credentials**). **Test key** checks the key
+   and the configured voice.
+2. Set **ElevenLabs voice id** on the same page, or give a voice id on the ticket.
+3. To make ElevenLabs the default for every ticket, set **Default voice** to elevenlabs.
 
 A video whose voice cannot be made is skipped with a note on the ticket. Common causes are a refused key, an unknown voice, or a used-up quota.
 

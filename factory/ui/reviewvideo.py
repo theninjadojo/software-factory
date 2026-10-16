@@ -82,7 +82,7 @@ def voice_fields(cfg, voice: str, voice_id: str) -> str:
                 '<p class="muted" id="rv-voice-help">ElevenLabs receives the narration text of each video (file names and the review\'s '
                 'summary); Piper never leaves this machine. Leave the id empty for the configured voice.</p>')
     else:
-        out += '<p class="muted">To use an ElevenLabs voice, save an ElevenLabs key on the Credentials page.</p>'
+        out += '<p class="muted">To use an ElevenLabs voice, save an ElevenLabs key on <a href="/settings?section=videos">Settings → Review videos</a>.</p>'
     return out
 
 
@@ -93,10 +93,10 @@ def save_post(h, form, csrf: str) -> None:
     except L.Refused as e:
         return L._done(h, form, csrf, str(e), "bad")
     if not cfg.videos.enabled:
-        return L._done(h, form, csrf, "Review videos are not turned on in the configuration.", "bad")
+        return L._done(h, form, csrf, "Review videos are off. Turn them on in Settings → Review videos.", "bad")
     voice, voice_id = form.get("voice", ""), form.get("voice_id", "").strip()
     if voice == "elevenlabs" and not (voice_id or cfg.videos.elevenlabs_voice_id):
-        return L._done(h, form, csrf, "Give an ElevenLabs voice id, or set videos.elevenlabs_voice_id in the configuration.", "bad")
+        return L._done(h, form, csrf, "Give an ElevenLabs voice id, or set one on Settings → Review videos.", "bad")
     db = sqlite3.connect(cfg.db_path, timeout=10)
     try:
         queued = videos.set_enabled(db, repo, n, form.get("on") == "1", "admin", time.time(), voice, voice_id)
