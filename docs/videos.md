@@ -21,6 +21,29 @@ automated review, which writes the narration. It never blocks or changes the pul
 The video appears on the ticket's page (**Watch**, **Transcript**). Its link is also posted on the pull request and the ticket.
 When the pull request gets new commits, the video is marked out of date, and **Make again** makes a new one.
 
+## Videos from the chat
+
+With videos on, you can ask the factory chat (**Chat** in the menu) for a video about some tickets, for example "a two-minute tour of
+this week's board changes" or "how the login fix works, for the support team".
+
+1. The chat answers with a proposal: a title, a brief (what the video should show) and the tickets it will use. It picks the
+   tickets from what you described, and only ones it can see on the board.
+2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click.
+3. The video is made by the same worker as review videos and counts toward the same daily limit. When it is ready, or if it
+   is skipped, the chat says so. Made videos are listed on the **Videos** page (`/videos`, linked from the Chat page), with
+   **Watch**, **Transcript** and **Make again**.
+
+How it is made:
+- **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the
+  changed files and their diff hunks) and the screenshots its builds took.
+- **Writer.** A sealed, read-only run with the chat's model and limits (no repository, no GitHub token) gets the brief and the
+  material and writes the scenes. Its output is untrusted and checked like the reviewer's block. A code scene must name a pull
+  request and file from the material, and the lines shown come from that diff. A screen scene must name a screenshot from the
+  material. Anything else is dropped.
+- **Fallback.** With fewer than two usable scenes, the video is the brief, the screenshots and the list of tickets, in fixed
+  wording.
+- Nothing is posted on GitHub for these videos.
+
 ## Voices
 
 | Voice | Where it runs | What leaves the machine |
