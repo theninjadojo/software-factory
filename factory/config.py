@@ -130,8 +130,14 @@ class MockupsCfg:
 @dataclass(frozen=True)
 class SplitCfg:
     """Splitting a ticket into smaller ones. notes_label marks a ticket whose text or pictures are unstructured meeting notes: the
-    analyst then always considers a split, whatever the ticket's size. It only shapes the prompt; a person still approves every split."""
+    analyst then always considers a split, whatever the ticket's size. It only shapes the prompt; a person still approves every split.
+    architect: the architect may propose splitting its plan into ordered tickets, only when the plan touches at least
+    architect_min_areas areas (apps, modules or components) or has at least architect_min_items plan items; a block under both is
+    ignored. Like the analyst's, the split is only a proposal a person approves."""
     notes_label: str = "factory:notes"
+    architect: bool = True
+    architect_min_areas: int = 3
+    architect_min_items: int = 8
 
 
 @dataclass(frozen=True)
@@ -1272,6 +1278,10 @@ def parse(raw: dict) -> Config:
     split_cfg = SplitCfg(**raw.get("split", {}))
     if not isinstance(split_cfg.notes_label, str) or not split_cfg.notes_label.strip():
         raise ValueError("split.notes_label must not be empty")
+    if (not isinstance(split_cfg.architect, bool)
+            or any(not isinstance(v, int) or isinstance(v, bool) for v in (split_cfg.architect_min_areas, split_cfg.architect_min_items))
+            or not 2 <= split_cfg.architect_min_areas <= 20 or not 2 <= split_cfg.architect_min_items <= 50):
+        raise ValueError("split.architect must be true or false, split.architect_min_areas 2-20 and split.architect_min_items 2-50")
     design_links = DesignLinksCfg(**_tuples(raw.get("design_links", {})))
     from .designlinks import valid_host
     if (not all(valid_host(h) for h in design_links.hosts) or not 1 <= design_links.max_links <= 5

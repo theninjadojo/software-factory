@@ -66,6 +66,14 @@ def _role_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
                   Field("split.notes_label", "Meeting notes label", "text",
                         "Put on a ticket by 'These are meeting notes': the analyst always considers splitting it into several tickets, "
                         "which a person approves."),
+                  Field("split.architect", "Architect: propose splitting a large plan", "bool",
+                        "On: when its plan is large, the architect proposes an ordered list of smaller tickets, each with its own scope and "
+                        "acceptance checks. Nothing is created until a person approves it on the ticket page."),
+                  Field("split.architect_min_areas", "Architect: split from this many areas", "int",
+                        "A split is proposed only when the plan touches at least this many apps, modules or components, or reaches the "
+                        "number of plan items below.", lo=2, hi=20),
+                  Field("split.architect_min_items", "Architect: split from this many plan items", "int",
+                        "Or when the plan has at least this many items.", lo=2, hi=50),
                   Field("auto.chain", "Auto continues to the next stage", "bool",
                         "On (default): after a stage, if nothing needs a person, the next stage starts by itself. Off: one stage per label."),
                   Field("auto.confirm_stages", "Ask before auto runs a stage", "bool",

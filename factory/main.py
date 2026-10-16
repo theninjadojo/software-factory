@@ -801,10 +801,14 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                 if pm:
                     dbm.track_pr(conn, pm.group(1), int(pm.group(2)), repo, num)
         labels = [lb["name"] for lb in gh.get_issue(repo, num).get("labels", []) if lb["name"] != working] + [role.done_label]
-        output, proposal = res.output, None
-        if role.name == "analyst" and conn is not None:      # a split is only a proposal; the block never reaches the ticket
-            allowed = [r.repo for r in project_for(cfg, repo).repos if r.repo in cfg.repos] or [repo]
-            output, proposal = split.extract(output, set(allowed) | {repo})
+        output, proposal, plan_size = res.output, None, None
+        if role.name in ("analyst", "architect") and conn is not None:   # a split is only a proposal; the block never reaches the ticket
+            allowed = set([r.repo for r in project_for(cfg, repo).repos if r.repo in cfg.repos] or [repo]) | {repo}
+            if role.name == "analyst":
+                output, proposal = split.extract(output, allowed)
+            else:                                       # the architect's only counts when it is on and the plan is large enough
+                output, proposal, plan_size = split.sized(output, allowed, cfg.split.architect_min_areas, cfg.split.architect_min_items)
+                proposal = proposal if cfg.split.architect else None
         doc, qs = Q.extract(output)                     # qs None: no block or a malformed one, so the classifier alone decides
         pending = [q for q in qs or [] if not q.safe]
         earlier = [q for st in before if st.stage != role.name for q in st.pending()]    # still unanswered from another stage
@@ -840,7 +844,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         stop = chain_stop(cfg, role, nxt, rec, done_now) if chain and cfg.auto_chain else "not an auto run"
         if proposal:
             stop, hint = "split", "a person's decision on the proposed split"
-            doc += split.section(proposal)
+            doc += split.section(proposal, plan_size)
         if pending or earlier:
             stop, hint = "questions", "a person's answer to the open questions " + ", ".join(q.id for q in pending + earlier)
         go_on = not stop
@@ -882,7 +886,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             alert(done + ("\nContinuing automatically: " + (hint or "next stage") + assumed if go_on else (f"\nWaiting for you: {hint}" if hint else ""))
                   + ("" if go_on else auto_lines), change or None, event="stage_done")
         if proposal:
-            propose_split(cfg, gh, conn, repo, num, proposal)
+            propose_split(cfg, gh, conn, repo, num, proposal, role.name)
     elif res.status == "cancelled":
         gh.remove_label(repo, num, working)
     else:
@@ -943,17 +947,19 @@ def second_opinion(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, stage:
     return found
 
 
-def propose_split(cfg: Config, gh: GitHub, conn, repo: str, num: int, proposal) -> None:
-    """Keep the analyst's validated split proposal and ask a person. Nothing is created until they approve it."""
+def propose_split(cfg: Config, gh: GitHub, conn, repo: str, num: int, proposal, source: str = "analyst") -> None:
+    """Keep the analyst's or the architect's validated split proposal and ask a person. Nothing is created until they approve it."""
     try:
-        pid = split.store(conn, repo, gh.get_issue(repo, num), proposal)
+        pid = split.store(conn, repo, gh.get_issue(repo, num), proposal, source=source)
         try:
             gh.create_label(repo, split.PROPOSED_LABEL, "fbca04", "A proposed split into smaller tickets is waiting for a person")
         except Exception:
             log.warning("could not create the label %s in %s", split.PROPOSED_LABEL, repo)
         gh.add_labels(repo, num, [split.PROPOSED_LABEL])
         buttons = [("Approve split", f"split:{pid}|{repo}|{num}"), ("Dismiss", f"split-no:{pid}|{repo}|{num}")]
-        alert(f"Proposed split: {repo} {tracker.display(num)} into {len(proposal.items)} tickets.\n{proposal.reason}",
+        whose = " of the architect's plan" if source == "architect" else ""
+        alert(f"Proposed split{whose}: {repo} {tracker.display(num)} into "
+              f"{len(proposal.items)} tickets.\n{proposal.reason}",
               [b for b in buttons if len(b[1].encode()) <= 64], event="needs_human")
     except Exception:
         log.exception("could not store the split proposal of %s#%s", repo, num)

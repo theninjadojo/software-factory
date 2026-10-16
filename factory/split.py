@@ -1,7 +1,9 @@
 """Splitting a large ticket into smaller linked tickets.
 
-The analyst may end its document with a `factory-split` block when the ticket is too large for one pull request. The block is
-derived from untrusted ticket text, so it is only data, validated against fixed sets and length caps:
+The analyst may end its document with a `factory-split` block when the ticket is too large for one pull request, and so may the
+architect when its plan is large (`split.architect`): its block also carries the plan's size, `{"areas": n, "items": m}`, and is kept
+only when that reaches `split.architect_min_areas` or `split.architect_min_items` (see `sized`). The block is derived from untrusted
+ticket text, so it is only data, validated against fixed sets and length caps:
 
 * 2 to MAX_ITEMS items (more than that rejects the whole block, the list is never cut);
 * per item a one-line title and a body (both passed through sanitize_markdown), a repository from the parent's project, and `after`,
@@ -12,7 +14,8 @@ A proposal is stored (`split_proposals`, `split_items`) and nothing is created u
 chat buttons (`split:<id>`). On approval the children are created one at a time, each step recorded so a retry or a restart never
 creates one twice. In the admin UI the approver may also drop items (flagged `dropped`, never deleted; an item that came after a
 dropped one inherits what that one came after). Children carry no label unless the approver chose one start action; the factory database is the record of which
-ticket belongs to which (so it works for local tickets too), and `blockers` keeps a later child's build waiting for the items it
+ticket belongs to which (so it works for local tickets too). A child names the earlier items of its own repository on a
+`Blocked by #N` line (which the project manager honours), and `blockers` keeps a later child's build waiting for the items it
 comes after. The parent stays open as an umbrella and `sweep` closes it once every child is closed. main.py decides when these run."""
 import hashlib
 import json
@@ -30,6 +33,8 @@ BLOCK = re.compile(r"^```factory-split[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 MAX_ITEMS, MIN_ITEMS = 10, 2
 MAX_TITLE, MAX_BODY, MAX_REASON = 120, 4000, 300
 MAX_TRIES, SWEEP_LIMIT = 3, 20
+MAX_SIZE = 1000
+SOURCES = ("", "analyst", "architect", "review")
 PROPOSED_LABEL, UMBRELLA_LABEL = "factory:split-proposed", "factory:umbrella"
 
 PROPOSAL = "\n\n### Proposed split\n\n{reason}\n\n{items}\n\nNothing is created until a person approves it (in the factory UI or the factory's chat message)."
@@ -102,11 +107,38 @@ def extract(text: str, allowed) -> tuple[str, Proposal | None]:
     return BLOCK.sub("", text or "").rstrip() + "\n", parse(text, allowed)
 
 
-def section(p: Proposal) -> str:
-    """A readable list for the stage comment, built from the validated values only."""
+def size(text: str) -> tuple[int, int] | None:
+    """(areas, plan items) the architect gave in its last `factory-split` block; None when it gave none or anything is off."""
+    blocks = BLOCK.findall(text or "")
+    try:
+        d = json.loads(blocks[-1]) if blocks else None
+    except ValueError:
+        return None
+    got = d.get("size") if isinstance(d, dict) else None
+    vals = (got.get("areas"), got.get("items")) if isinstance(got, dict) else (None, None)
+    if any(not isinstance(v, int) or isinstance(v, bool) or not 0 <= v <= MAX_SIZE for v in vals):
+        return None
+    return vals
+
+
+def sized(text: str, allowed, min_areas: int, min_items: int) -> tuple[str, Proposal | None, tuple[int, int] | None]:
+    """The architect's document without its block, the proposal only when the plan it reports is large enough (at least min_areas
+    areas or min_items plan items; a block without a valid size is no proposal), and that size."""
+    out, p = extract(text, allowed)
+    got = size(text)
+    if p is None or got is None or (got[0] < min_areas and got[1] < min_items):
+        return out, None, got
+    return out, p, got
+
+
+def section(p: Proposal, plan_size: tuple[int, int] | None = None) -> str:
+    """A readable list for the stage comment, built from the validated values only (plan_size: the architect's areas and items)."""
     lines = [f"{i + 1}. **{it.title}** ({it.repo})" + (f", after {', '.join(str(a + 1) for a in it.after)}" if it.after else "")
              for i, it in enumerate(p.items)]
-    return PROPOSAL.format(reason=p.reason or "The ticket is larger than one pull request.", items="\n".join(lines))
+    reason = p.reason or "The ticket is larger than one pull request."
+    if plan_size:
+        reason += f" (The plan touches {plan_size[0]} areas and has {plan_size[1]} plan items.)"
+    return PROPOSAL.format(reason=reason, items="\n".join(lines))
 
 
 def fingerprint(issue: dict) -> str:
@@ -120,6 +152,7 @@ def ensure_tables(db) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, issue INTEGER NOT NULL, run_id INTEGER,
             reason TEXT NOT NULL DEFAULT '', snapshot TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'proposed',   -- proposed, approved, done, dismissed, stale, failed
+            source TEXT NOT NULL DEFAULT '',           -- who proposed it: analyst, architect, review ('' = before this was kept)
             start_action TEXT NOT NULL DEFAULT '',     -- the one label the approver chose for every child ('' = none)
             fails INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '', umbrella_closed REAL,
             created REAL NOT NULL, updated REAL NOT NULL);
@@ -133,22 +166,24 @@ def ensure_tables(db) -> None:
     """)
     if "dropped" not in {r[1] for r in db.execute("PRAGMA table_info(split_items)")}:   # 1 = the approver left it out; older databases get it here
         db.execute("ALTER TABLE split_items ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0")
+    if "source" not in {r[1] for r in db.execute("PRAGMA table_info(split_proposals)")}:
+        db.execute("ALTER TABLE split_proposals ADD COLUMN source TEXT NOT NULL DEFAULT ''")
     db.commit()
 
 
-def store(db, repo: str, issue: dict, p: Proposal, run_id=None) -> int:
-    """Keep a new proposal for a ticket; an earlier one still waiting for a person is superseded."""
+def store(db, repo: str, issue: dict, p: Proposal, run_id=None, source: str = "") -> int:
+    """Keep a new proposal for a ticket; an earlier one still waiting for a person is superseded. source: one of SOURCES."""
     now = time.time()
     db.execute("UPDATE split_proposals SET status='stale', updated=? WHERE repo=? AND issue=? AND status='proposed'", (now, repo, issue["number"]))
-    pid = db.execute("INSERT INTO split_proposals (repo, issue, run_id, reason, snapshot, created, updated) VALUES (?,?,?,?,?,?,?)",
-                     (repo, issue["number"], run_id, p.reason, fingerprint(issue), now, now)).lastrowid
+    pid = db.execute("INSERT INTO split_proposals (repo, issue, run_id, reason, snapshot, source, created, updated) VALUES (?,?,?,?,?,?,?,?)",
+                     (repo, issue["number"], run_id, p.reason, fingerprint(issue), source if source in SOURCES else "", now, now)).lastrowid
     db.executemany("INSERT INTO split_items (proposal_id, pos, title, body, repo, after) VALUES (?,?,?,?,?,?)",
                    [(pid, i, it.title, it.body, it.repo, ",".join(map(str, it.after))) for i, it in enumerate(p.items)])
     db.commit()
     return pid
 
 
-PCOLS = ("id", "repo", "issue", "reason", "snapshot", "status", "start_action", "fails", "detail", "umbrella_closed")
+PCOLS = ("id", "repo", "issue", "reason", "snapshot", "status", "start_action", "fails", "detail", "umbrella_closed", "source")
 
 
 def get(db, pid: int) -> dict | None:
@@ -248,14 +283,22 @@ def _create(gh, conn, p: dict, it: dict, made: dict, index: int, total: int, git
     issue. Returns (number, id on GitHub or '')."""
     marker = f"<!-- factory:split={p['id']}.{it['pos']} -->"
     after = [made[a] for a in map(int, filter(None, it["after"].split(",")))]
-    body = (CHILD_HEAD.format(parent=_shown(p["repo"], p["issue"]), pos=index, total=total)
-            + (f"Starts after: {', '.join(_shown(*a) for a in after)}.\n\n" if after else "") + it["body"] + "\n\n" + marker)
+    body = CHILD_HEAD.format(parent=_shown(p["repo"], p["issue"]), pos=index, total=total) + order_lines(it["repo"], after) + it["body"] + "\n\n" + marker
     if tracker.is_local(p["issue"]):
         return tracker.LocalTracker(conn).create(it["repo"], it["title"], body, author=tracker.FACTORY_ACTOR), ""
     if not github_ok:
         raise RuntimeError("GitHub issues are switched off")
     made_issue = gh.create_followup(it["repo"], it["title"], body)
     return int(made_issue["number"]), made_issue.get("id")
+
+
+def order_lines(repo: str, after: list[tuple[str, int]]) -> str:
+    """What a child waits for: `Blocked by #N` (or `L-N`) for earlier tickets of its own repository, which the project manager reads
+    (pm.explicit_blockers), and a plain `Starts after` for those of other repositories. Built from recorded numbers only."""
+    same = [tracker.display(n) for r, n in after if r == repo]
+    other = [_shown(r, n) for r, n in after if r != repo]
+    return ((f"Blocked by {', '.join(same)}\n\n" if same else "")
+            + (f"Starts after: {', '.join(other)}.\n\n" if other else ""))
 
 
 def _found_local(conn, it: dict, pid: int) -> int | None:
