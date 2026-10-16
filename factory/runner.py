@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from . import reviewnotes
 from .render import render as preview_render
 from .roles import (CI_FIX_PROMPT, VERIFY_FIX_PROMPT, CONFLICTS_PROMPT, SCREEN_FIX_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
                     agent_key, common_for, design_files_rules, operator_prompt, SUMMARY_RULES, stage_rules)
+from . import github
 from .github import GitHub
 
 log = logging.getLogger("factory.runner")
@@ -44,6 +46,10 @@ class PatchRejected(Exception):
 
 class NeedsPerson(Exception):
     """A merge the factory must not or cannot finish by itself."""
+
+
+class PROpenFailed(Exception):
+    """A branch was pushed but its pull request could not be opened. The message names why and how to open it by hand."""
 
 
 CONFLICT_MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
@@ -179,6 +185,45 @@ def push_factory_branch(base: Path, branch: str, env: dict) -> None:
     if not branch.startswith(BRANCH_PREFIX):
         raise ValueError("refusing to push outside factory/*")
     git(["push", "origin", f"HEAD:refs/heads/{branch}"], base, env)
+
+
+PR_STEP_TRIES = 5            # tries at opening the pull request of a pushed branch: the finished work must not be thrown away
+PR_STEP_WAIT = 30            # seconds between tries after a GitHub hiccup
+PR_STEP_MAX_WAIT = 180       # seconds, at most, between tries after a rate limit (GitHub's secondary limits clear in minutes)
+
+
+def pr_failure(e: Exception, repo: str, branch: str) -> str:
+    """Why a pushed branch has no pull request, in words a person can act on."""
+    by_hand = f"The branch {branch} is pushed: open its pull request at https://github.com/{repo}/compare/{branch}?expand=1"
+    if github.rate_limited(e):
+        return f"GitHub rate limited the factory while it opened the pull request in {repo} (HTTP {e.code}), and it did not clear in time. {by_hand}"
+    if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403, 404):
+        return (f"GitHub refused to open the pull request in {repo} (HTTP {e.code}): the token may be missing the Pull requests: write "
+                f"permission on it. {by_hand}")
+    return f"the pull request in {repo} could not be opened ({type(e).__name__}: {str(e)[:200]}). {by_hand}"
+
+
+def open_pr(gh: GitHub, repo: str, branch: str, title: str, body: str, draft: bool = False) -> str:
+    """Open the pull request of a branch that is already pushed. The work is done by then, so a rate limit or a GitHub hiccup is
+    waited out (several minutes) instead of failing the run; when an earlier try's answer was lost, the pull request it opened is
+    found. Raises PROpenFailed naming the cause (rate limited, or a missing permission)."""
+    for attempt in range(PR_STEP_TRIES):
+        try:
+            return gh.create_pr(repo, branch, gh.default_branch(repo), title, body, draft=draft)
+        except Exception as e:
+            if attempt and isinstance(e, urllib.error.HTTPError) and e.code == 422:      # "a pull request already exists"
+                try:
+                    found = [p["html_url"] for p in gh.open_pulls(repo, branch) if p["head"]["ref"] == branch]
+                except Exception:
+                    found = []
+                if found:
+                    return found[0]
+            limited = github.rate_limited(e)
+            if attempt == PR_STEP_TRIES - 1 or not (limited or github._transient(e)):
+                raise PROpenFailed(pr_failure(e, repo, branch)) from e
+            log.warning("opening the pull request of %s in %s failed (%s), trying again", branch, repo, "rate limited" if limited else type(e).__name__)
+            time.sleep(github.rate_limit_wait(e, PR_STEP_MAX_WAIT) if limited else PR_STEP_WAIT)
+    raise AssertionError("unreachable")
 
 
 def _neutral(text: str) -> str:
@@ -460,8 +505,8 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
         sha = git(["rev-parse", "HEAD"], base, env).stdout.strip()
         ref = sha if re.fullmatch(r"[0-9a-f]{40}", sha) else branch          # a commit link outlives the branch
         push_factory_branch(base, branch, env)
-        pr = gh.create_pr(
-            r, branch, gh.default_branch(r), f"[factory] design mockups for {tracker.display(num)}: {title[:60]}",
+        pr = open_pr(
+            gh, r, branch, f"[factory] design mockups for {tracker.display(num)}: {title[:60]}",
             f"Static design canvases (`.dc.html`, the Claude Design canvas format) written by the designer agent for {tracker.ref(home_repo, num)}. "
             "They are new files only; nothing else changes.\n\nOpen them in Claude Design (design-sync), or merge "
             "this draft to keep them with the repository. Treat them as a first draft.\n\n"
@@ -894,8 +939,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             git([*ident, "commit", "-q", "-m", f"Fix {tracker.ref(repo, num)}: {issue['title'][:60]}\n\nAutomated change for {tracker.ref(repo, num)}."], base, env)
             push_factory_branch(base, branch, env)
             pushed.append(r)
-            urls.append(gh.create_pr(
-                r, branch, gh.default_branch(r), f"[factory] {issue['title'][:80]}",
+            urls.append(open_pr(
+                gh, r, branch, f"[factory] {issue['title'][:80]}",
                 f"Automated change for {tracker.ref(repo, num)} (harness: {route.harness}, model: {route.model}, effort: {route.effort}).\n\n"
                 "Generated by an agent in a sandbox. **Review carefully before merging.**\n\n"
                 + ("**This change updates screen baseline images** (`" + cfg.screens.baseline_dir + "`). Review them before merging: "
@@ -927,6 +972,9 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
         return RunResult("pr", f"{len(urls)} pull request(s) opened{held_note}", " ".join(urls), images=built_images, held=held)
     except NeedsPerson as e:
         return RunResult("needs-person", str(e))
+    except PROpenFailed as e:
+        log.error("pushed, but no pull request: %s", e)
+        return RunResult("failed", str(e) + (f" (branches pushed in: {', '.join(pushed)})" if len(pushed) > 1 else ""))
     except Exception as e:
         log.exception("run failed")
         extra = f" (branches already pushed in: {', '.join(pushed)})" if pushed else ""
