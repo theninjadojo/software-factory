@@ -4,7 +4,9 @@ from unittest import mock
 from factory.classifier import Classification, RuleClassifier
 from factory.config import Config, Route
 from factory.main import trusted
-from factory.router import decide
+from dataclasses import replace
+
+from factory.router import build_route, decide, floor
 
 R = lambda m: Route("claude-code", m, "low")
 CFG = Config("x", 1, True, 0.6, None, "factory:ready", ["o/r"], frozenset({"write", "admin", "maintain"}),
@@ -52,8 +54,45 @@ class EffortOverride(unittest.TestCase):
     def test_classifier_effort_overrides_row_effort(self):
         d = decide(CFG, Classification("bug", "medium", False, 0.9, effort="high"))
         self.assertEqual((d.route.model, d.route.effort), ("sonnet", "high"))
-        d = decide(CFG, Classification("bug", "medium", False, 0.9))
-        self.assertEqual((d.route.model, d.route.effort), ("sonnet", "low"))   # row default
+        d = decide(replace(CFG, effort_floor={}), Classification("bug", "medium", False, 0.9))
+        self.assertEqual((d.route.model, d.route.effort), ("sonnet", "low"))   # row default, with no minimum effort
+
+
+class EffortFloor(unittest.TestCase):
+    """#482: a minimum effort per step, raised to and never lowered; a build never classified uses the medium row."""
+
+    def test_build_is_raised_to_the_default_floor(self):
+        self.assertEqual(CFG.effort_floor, {"implement": "high"})
+        d = decide(CFG, Classification("bug", "medium", False, 0.9, effort="low"))     # the classifier's low effort is raised too
+        self.assertEqual((d.route.model, d.route.effort), ("sonnet", "high"))
+
+    def test_a_higher_effort_is_never_lowered(self):
+        cfg = replace(CFG, effort_floor={"implement": "medium"})
+        self.assertEqual(decide(cfg, Classification("bug", "low", False, 0.9, effort="high")).route.effort, "high")
+        self.assertEqual(decide(cfg, Classification("bug", "low", False, 0.9)).route.effort, "medium")
+        self.assertEqual(floor(cfg, "implement", Route("claude-code", "opus", "high")).effort, "high")
+
+    def test_floor_is_per_step(self):
+        cfg = replace(CFG, effort_floor={"implement": "high", "analyze": "medium"})
+        r = Route("claude-code", "sonnet", "low", ("haiku",))
+        self.assertEqual(floor(cfg, "analyze", r), Route("claude-code", "sonnet", "medium", ("haiku",)))
+        self.assertIs(floor(cfg, "ci-fix", r), r)                  # no minimum for that step
+        self.assertIs(floor(cfg, None, r), r)
+        odd = Route("claude-code", "x", "max")
+        self.assertIs(floor(cfg, "implement", odd), odd)          # an effort the factory does not rank is left alone
+
+    def test_unclassified_build_uses_the_medium_row(self):
+        cfg = replace(CFG, routes={"low": R("haiku"), "medium": Route("claude-code", "sonnet", "medium", ("haiku",)), "high": R("opus")})
+        self.assertEqual(build_route(replace(cfg, effort_floor={}), None), cfg.routes["medium"])
+        self.assertEqual(build_route(cfg, None), Route("claude-code", "sonnet", "high", ("haiku",)))
+
+    def test_config_reads_the_floor(self):
+        from factory.config import _effort_floor
+        self.assertEqual(_effort_floor({}), {"implement": "high"})
+        self.assertEqual(_effort_floor({"implement": "none", "review": "medium"}), {"review": "medium"})
+        for bad in ({"build": "high"}, {"implement": "max"}):
+            with self.assertRaises(ValueError):
+                _effort_floor(bad)
 
 
 class Recovery(unittest.TestCase):

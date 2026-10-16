@@ -26,7 +26,7 @@ from .github import GitHub
 from .jev import JevClassifier
 from .pool import Pool, key as jobkey
 from .roles import MARKER, STAGE_TO_ROLE
-from .router import behind, decide, pick_stage
+from .router import behind, build_route, decide, floor, pick_stage
 from .sanitize import sanitize_markdown
 from .slack import Slack
 from .telegram import Telegram
@@ -525,6 +525,7 @@ def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route,
     """Run the task with the route's model, then with each admin-configured fallback while a model is unavailable (rate
     limit or API error). Every attempt is its own run: fresh workspace, container, branch and `runs` row. The last result is
     returned unchanged when the chain ends, so requeue/backoff/failure handling is as without fallbacks."""
+    route = floor(cfg, dbm.step_of(kind, stage) or kind, route)     # the step's minimum effort, whoever chose the route
     models = chain(route)
     if cfg.design_links.enabled and "design_imports" not in kw:
         kw["design_imports"] = ticket_design_imports(cfg, repo, issue)
@@ -546,6 +547,7 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     that waited for those rows' packages to be published (see waves.py). A build label on a ticket whose second build failed
     runs that second build again."""
     num, trigger_label = issue["number"], trigger_label or cfg.trigger_label
+    route = floor(cfg, "implement", route) if route else build_route(cfg, c)      # no route: the medium row, as for a ticket never sized
     if wave is None and conn is not None:
         wave = waves.rows(conn, repo, num, ("failed", "building")) or None      # building: interrupted (a ticket never runs twice at once)
         if wave is None:
@@ -1256,7 +1258,7 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
                 if role:                            # sent back: the stages after it follow through the normal auto chain
                     res = dispatch_stage(cfg, gh, classifier, repo, issue, role, chain=back, conn=db)
                 else:
-                    res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=db)
+                    res = dispatch(cfg, gh, repo, issue, None, conn=db)
                 if res.status != "needs-person":        # else ask_person's record is the ticket's latest decision
                     dbm.record(db, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved from chat; {res.detail}; {res.pr_url or ''}")
             start(cfg, conn, repo, num, role.name if role else "build", approved, gh)

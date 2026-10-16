@@ -1,7 +1,7 @@
 import re
 import unittest
 
-from factory.config import CODEX_COMMAND, allowed_hosts, default_harnesses, RunnerCfg, load
+from factory.config import CODEX_COMMAND, FLOOR_STEPS, allowed_hosts, default_harnesses, RunnerCfg, load
 from test_ui_admin import AdminCase
 
 CODEX = default_harnesses(RunnerCfg())["codex"]
@@ -66,7 +66,7 @@ class HarnessPage(AdminCase):
         self.post(cookie, csrf, "/harnesses/save", self.form())
         _, _, after = self.req("GET", "/settings?section=routing", cookie=cookie)
         self.assertIn("<option>codex</option>", after)
-        routing = {"section": "routing"}
+        routing = {"section": "routing", **{f"effort_floor.{step}": "none" for step in FLOOR_STEPS}}
         for tier, model in (("low", "haiku"), ("medium", "sonnet"), ("high", "opus")):
             routing.update({f"routing.{tier}.harness": "codex" if tier == "low" else "claude-code",
                             f"routing.{tier}.model": "gpt-x" if tier == "low" else model, f"routing.{tier}.effort": "low"})

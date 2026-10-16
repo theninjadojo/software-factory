@@ -642,6 +642,7 @@ class Config:
     questions: QuestionsCfg = field(default_factory=QuestionsCfg)
     chat: ChatCfg = field(default_factory=ChatCfg)
     new_projects: NewProjectsCfg = field(default_factory=NewProjectsCfg)
+    effort_floor: dict = field(default_factory=lambda: dict(EFFORT_FLOOR))   # [effort_floor]: step -> least effort a run of it gets
     screens: ScreensCfg = field(default_factory=ScreensCfg)
     workers: WorkersCfg = field(default_factory=WorkersCfg)
     subtasks: SubtasksCfg = field(default_factory=SubtasksCfg)
@@ -800,6 +801,25 @@ def _check_models(routes: dict, roles: tuple, review: "ReviewCfg | None" = None,
 
 
 MAX_FALLBACKS = 3
+
+
+EFFORT_LEVELS = ("low", "medium", "high")             # in order: a floor raises a route's effort to its level, never lowers it
+FLOOR_STEPS = ("implement", "ci-fix", "conflicts", "analyze", "design", "architect", "review")    # as db.step_of names a run's step
+EFFORT_FLOOR = {"implement": "high"}                   # builds judged too light at low and medium effort (#482); "none" turns it off
+
+
+def _effort_floor(raw: dict) -> dict:
+    """[effort_floor]: the least effort each step runs with. Unset steps keep the built-in floor; "none" removes it."""
+    if not isinstance(raw, dict):
+        raise ValueError("effort_floor must be a table of step = effort")
+    out = dict(EFFORT_FLOOR)
+    for step, level in raw.items():
+        if step not in FLOOR_STEPS:
+            raise ValueError(f"effort_floor.{step}: unknown step (one of {', '.join(FLOOR_STEPS)})")
+        if level not in EFFORT_LEVELS + ("none",):
+            raise ValueError(f"effort_floor.{step} must be none, low, medium or high")
+        out[step] = level
+    return {k: v for k, v in out.items() if v != "none"}
 
 
 def _tuples(d: dict) -> dict:
@@ -1401,6 +1421,7 @@ def parse(raw: dict) -> Config:
         questions=questions,
         chat=chat,
         new_projects=new_projects,
+        effort_floor=_effort_floor(raw.get("effort_floor", {})),
         health=health,
         subtasks=SubtasksCfg(**raw.get("subtasks", {})),
         schedules=_schedules(raw.get("schedules", []), repos),

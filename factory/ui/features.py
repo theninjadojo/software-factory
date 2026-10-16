@@ -7,6 +7,7 @@ ticket) show it in a strip, and a simple switch can be flipped there after a con
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from ..router import floor
 from ..tracker import display
 from .integrations import SECRETS, secret_status
 from .views import badge, csrf_field, esc, fold
@@ -281,6 +282,7 @@ def ticket_handling(cfg, repo: str, issue: int, detail: str = "") -> str:
     m = re.search(r"classified \w+/(\w+)", detail or "")
     tier = m.group(1) if m and m.group(1) in cfg.routes else None
     route = cfg.routes.get(tier or "medium")
+    route = floor(cfg, "implement", route) if route else None             # what the build runs with: never below the minimum effort
     rows = [("Size", f'{esc(tier)} <span class="muted">(classifier)</span>' if tier else '<span class="muted">not classified yet; medium is the default</span>'),
             ("Model and effort", f'<span class="mono">{esc(route.model)}</span> · {esc(route.effort)}' if route else "—"),
             ("Harness", esc(route.harness) if route else "—"),

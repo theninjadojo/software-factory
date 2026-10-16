@@ -85,6 +85,17 @@ class Chain(unittest.TestCase):
         (res, used), fake, _ = self.run_chain([RunResult("rate-limited", "x")] * 3)
         self.assertEqual((res.status, used.model, fake.call_count), ("rate-limited", "haiku", 3))
 
+    def test_every_attempt_runs_at_the_step_minimum(self):
+        cfg = replace(parse(copy.deepcopy(RAW)), effort_floor={"analyze": "high"})
+        route, fake = Route("claude-code", "sonnet", "low", ("haiku",)), mock.Mock(side_effect=[RunResult("rate-limited", "x"), RunResult("stage", "ok"), RunResult("pr", "ok")])
+        with mock.patch.object(m.runner, "run_task", fake), mock.patch.object(m, "alert"), mock.patch.object(m, "begin_run") as begin, \
+                mock.patch.object(m, "end_run"):
+            m.run_chain(cfg, None, "stage", "o/r", ISSUE, route, None, "analyst")
+            m.run_chain(cfg, None, "fix", "o/r", ISSUE, route)       # no minimum for CI fixes here
+        self.assertEqual([(c.args[4].model, c.args[4].effort) for c in fake.call_args_list][:2], [("sonnet", "high"), ("haiku", "high")])
+        self.assertEqual(begin.call_args_list[0].args[3].effort, "high")      # the run is recorded with the effort it ran at
+        self.assertEqual(fake.call_args_list[-1].args[4].effort, "low")
+
     def test_no_fallbacks_is_one_run(self):
         (res, used), fake, _ = self.run_chain([RunResult("rate-limited", "x")], fallbacks=())
         self.assertEqual((res.status, fake.call_count), ("rate-limited", 1))
@@ -92,7 +103,8 @@ class Chain(unittest.TestCase):
 
 class TrustBoundary(unittest.TestCase):
     def test_ticket_text_and_classifier_cannot_change_the_chain(self):
-        cfg = replace(parse(copy.deepcopy(RAW)), routes={**parse(copy.deepcopy(RAW)).routes, "high": Route("claude-code", "opus", "high", ("sonnet",))})
+        cfg = replace(parse(copy.deepcopy(RAW)), routes={**parse(copy.deepcopy(RAW)).routes, "high": Route("claude-code", "opus", "high", ("sonnet",))},
+                      effort_floor={})                             # no minimum effort: the classifier's effort is used as it is
         c = Classification(kind="feature", complexity="high", needs_human=False, confidence=0.9, source="jev", effort="low",
                            stage="implement", stage_confidence=0.9)
         route = router.decide(cfg, c).route

@@ -50,6 +50,12 @@ effort = "high"
 # Also valid under [roles.<name>] and [review]. Ticket text and the classifier cannot set or change it.
 # fallback_models = ["sonnet"]
 
+# Optional: the least effort each step runs with, whatever the routing row or the classifier chose (raised, never lowered).
+# Steps: implement, ci-fix, conflicts, analyze, design, architect, review. Built in: implement = "high"; "none" turns a floor off.
+# Set from the admin UI: Settings > Models by ticket size > Minimum effort per step.
+# [effort_floor]
+# implement = "high"
+
 [runner]
 # Rendered previews of the designer's mockups (PNG screenshots committed to the draft PR). Needs the factory-render image:
 #   scripts/deploy.sh user@host --image   (or docker compose --profile build build). Without it, previews are skipped.
