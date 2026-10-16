@@ -48,7 +48,8 @@ SIDE_GROUPS = [
                               ("new_projects", "New project interviews", "/settings?section=new_projects")]),
     ("Before a pull request is done", [("review", "Code review", "/settings?section=review"), ("ci", "CI feedback", "/settings?section=ci"),
                                        ("conflicts", "Merge conflicts", "/settings?section=conflicts"), ("mockups", "Design mockups", "/settings?section=mockups"),
-                                       ("workers", "Workers", "/workers"), ("pm", "Project manager", "/settings?section=pm")]),
+                                       ("workers", "Workers", "/workers"), ("pm", "Project manager", "/settings?section=pm"),
+                                       ("videos", "Review videos", "/settings?section=videos")]),
     ("Keeping you in the loop", [("telegram", "Telegram", "/telegram"), ("slack", "Slack", "/slack"), ("chat", "Ticket chat", "/settings?section=chat"),
                                  ("screens", "Screens", "/settings?section=screens"), ("evaluate", "Evaluation", "/settings?section=evaluate")]),
     ("Running the factory", [("credentials", "Credentials", "/credentials"), ("labels", "Labels", "/settings?section=labels"), ("health", "Health alerts", "/settings?section=health"),
@@ -236,6 +237,8 @@ def effective_value(f: S.Field, eff: dict, submitted=None):
 
 
 SECTION_INTRO = {
+    "videos": "A short narrated walkthrough of a ticket's pull requests, made in a sealed container on this machine. Turn it on here, "
+              "build the video image once, then tick Make a review video on a ticket's page.",
     "general": "Whether the factory is live, how often it looks for work, where tickets come from and who may start work with a label.",
     "routing": "The classifier sizes each ticket. Its size picks the model and effort the build runs with.",
     "roles": "Before a build a ticket can go through up to three stages. Each stage is an agent that writes one document on the ticket; "
@@ -725,3 +728,38 @@ def harnesses_page(cfg, eff: dict, csrf: str, errors=None, state_dir=None) -> st
             'Codex, Gemini and OpenCode (OpenRouter, Zen) are <strong>experimental templates</strong>: the plumbing is tested, but their command lines have not been verified end to end. '
             'Build their images from <code>sandbox/codex</code>, <code>sandbox/gemini</code> and <code>sandbox/opencode</code>. Each login also has its own terms for unattended use.</p>')
     return note + tools_section(state_dir, csrf) + '<div class="cards one">' + "".join(cards) + "</div>"
+
+
+def video_setup_card(cfg, image: dict, key: dict, csrf: str) -> str:
+    """Below the Review videos settings: whether the video image is built (with a button that asks the orchestrator to build it) and
+    the ElevenLabs key (saved like on the Credentials page; never shown back)."""
+    from .. import videoimage
+    vc = cfg.videos
+    if image.get("building"):
+        state, act = badge("Building…", "blue"), '<p class="muted">The build takes several minutes. Reload to see when it is done.</p>'
+    else:
+        exists = image.get("exists")
+        state = badge("Built", "good") if exists else badge("Not checked yet", "") if exists is None else badge("Not built", "warn")
+        last = image.get("last") or {}
+        note = (f'<p class="muted">Last build: {esc(last.get("message", ""))}</p>' if last else "")
+        if not videoimage.managed(cfg):
+            act = note + f'<p class="muted">The image {esc(vc.image)} is a custom one; build it yourself.</p>'
+        elif cfg.dry_run:
+            act = note + '<p class="muted">The factory is in dry run, so it builds nothing. Go live to build the image.</p>'
+        else:
+            word = "Rebuild video image" if exists else "Build video image"
+            act = (note + f'<form method="post" action="/videos/image/build">{csrf_field(csrf)}<button class="{"secondary" if exists else ""}">{word}</button></form>'
+                   '<p class="muted">About 0.5 GB. The factory starts the build within a poll; nothing running is interrupted. '
+                   'Updates rebuild it after this.</p>')
+    image_html = f'<section class="card" aria-labelledby="vi-h"><h3 id="vi-h">Video image {state}</h3>{act}</section>'
+    kstate = badge("Set", "good") if key.get("set") else badge("Not set", "warn")
+    test = (f'<form method="post" action="/credentials/test" class="inline">{csrf_field(csrf)}<input type="hidden" name="name" value="elevenlabs">'
+            f'<input type="hidden" name="back" value="videos"><button class="secondary">Test key</button></form>' if key.get("set") else "")
+    key_html = (f'<section class="card" aria-labelledby="ve-h"><h3 id="ve-h">ElevenLabs key {kstate}</h3>'
+                '<p class="muted">Only for ElevenLabs voices. Stored in a private file on this machine; it is never shown again.</p>'
+                + (f'<form method="post" action="/credentials/save" class="field">{csrf_field(csrf)}<input type="hidden" name="name" value="elevenlabs">'
+                   f'<input type="hidden" name="back" value="videos"><label for="ve-key">{"Replace the key" if key.get("set") else "API key"}</label>'
+                   '<input id="ve-key" type="password" name="value" autocomplete="off" required minlength="8" maxlength="500"> '
+                   f'<button>Save key</button></form>' if key.get("configured") else
+                   '<p class="muted">No file is configured for this key.</p>') + test + "</section>")
+    return image_html + key_html

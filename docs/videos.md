@@ -6,20 +6,42 @@ automated review, which writes the narration. It never blocks or changes the pul
 
 ## Turning it on
 
-1. Build the video image once on the factory's machine. It is about 0.5 GB and is not part of a release:
+Everything is set up in the admin UI, on **Settings > Review videos** (also listed on the Settings home under *Before a pull request
+is done*):
 
-   ```bash
-   docker compose --profile video build                                       # Docker install
-   podman build -t factory-video -f sandbox/video/Dockerfile sandbox/video    # native install
-   ```
-
-   After that, `deploy/update-native.sh` rebuilds it with each update.
-2. Set `[videos] enabled = true` in the configuration. The other settings are described in `config.example.toml`.
-3. On a ticket's page in the admin UI, open **Review video**, tick **Make a review video for each pull request**, pick a voice and
-   save. Open pull requests of the ticket get a video too.
+1. Switch on **Enable review videos** and save. The same page holds the default voice, the ElevenLabs voice id and the limits.
+2. Under **Video image**, click **Build video image**. The factory builds it within a poll; it is about 0.5 GB, takes several minutes
+   and is not part of a release. After that, `deploy/update-native.sh` rebuilds it with each update. (From a shell, the same is
+   `docker compose --profile video build` or `podman build -t factory-video -f sandbox/video/Dockerfile sandbox/video`.)
+3. On a ticket's page, open **Review video**, tick **Make a review video for each pull request**, pick a voice and save. Open pull
+   requests of the ticket get a video too.
 
 The video appears on the ticket's page (**Watch**, **Transcript**). Its link is also posted on the pull request and the ticket.
 When the pull request gets new commits, the video is marked out of date, and **Make again** makes a new one.
+
+## Videos from the chat
+
+With videos on, you can ask for a video about some tickets, for example "a two-minute tour of this week's board changes" or "how
+the login fix works, for the support team". Either describe it in the **Describe a video** box on the **Videos** page, which starts a
+new chat conversation with your description, or ask in any conversation on the **Chat** page.
+
+1. The chat answers with a proposal: a title, a brief (what the video should show) and the tickets it will use. It picks the
+   tickets from what you described, and only ones it can see on the board.
+2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click.
+3. The video is made by the same worker as review videos and counts toward the same daily limit. When it is ready, or if it
+   is skipped, the conversation that asked for it says so. Made videos are listed on the **Videos** page (`/videos`), with
+   **Watch**, **Transcript** and **Make again**.
+
+How it is made:
+- **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the
+  changed files and their diff hunks) and the screenshots its builds took.
+- **Writer.** A sealed, read-only run with the chat's model and limits (no repository, no GitHub token) gets the brief and the
+  material and writes the scenes. Its output is untrusted and checked like the reviewer's block. A code scene must name a pull
+  request and file from the material, and the lines shown come from that diff. A screen scene must name a screenshot from the
+  material. Anything else is dropped.
+- **Fallback.** With fewer than two usable scenes, the video is the brief, the screenshots and the list of tickets, in fixed
+  wording.
+- Nothing is posted on GitHub for these videos.
 
 ## Voices
 
@@ -29,9 +51,10 @@ When the pull request gets new commits, the video is marked out of date, and **M
 | ElevenLabs | The factory calls `api.elevenlabs.io` and passes the sound into the container. | The narration text of each scene |
 
 To use ElevenLabs:
-1. Save the key on **Settings > Credentials** (ElevenLabs key). **Test** checks the key and the configured voice.
-2. Set `videos.elevenlabs_voice_id`, or give a voice id on the ticket.
-3. To make ElevenLabs the default for every ticket, set `voice = "elevenlabs"`.
+1. Save the key under **ElevenLabs key** on **Settings > Review videos** (or on **Settings > Credentials**). **Test key** checks the key
+   and the configured voice.
+2. Set **ElevenLabs voice id** on the same page, or give a voice id on the ticket.
+3. To make ElevenLabs the default for every ticket, set **Default voice** to elevenlabs.
 
 A video whose voice cannot be made is skipped with a note on the ticket. Common causes are a refused key, an unknown voice, or a used-up quota.
 
@@ -60,3 +83,11 @@ A video whose voice cannot be made is skipped with a note on the ticket. Common 
 Remotion is free for individuals and for companies of up to three people. Larger companies need a
 [Remotion company licence](https://www.remotion.dev/license). Piper is MIT-licensed. The bundled voice is trained on LJSpeech, which
 is in the public domain.
+
+## Chat conversations
+
+The **Chat** page keeps separate conversations. Each reply is written with only its own conversation as context (the newest
+`chat.context_turns` turns of it), so a new topic in a new conversation is not coloured by earlier ones. **New conversation**
+starts one; the list beside the chat (a menu above it on a phone) switches between them. **Delete this conversation** and
+**Delete other conversations** clean up; a conversation waiting for a reply is kept. Videos a conversation asked for stay on the
+Videos page when it is deleted. Messages from before conversations existed are kept as one conversation, "Earlier conversation".
