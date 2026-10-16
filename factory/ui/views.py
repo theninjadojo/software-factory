@@ -16,7 +16,7 @@ REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 NAV = [("/", "Factory"), ("/tickets", "Tickets"), ("/events", "Events"), ("/chat", "Chat"), ("/roadmap", "Roadmap"), ("/screens", "Screens"), ("/scenarios", "Tests"), ("/evaluate", "Evaluate"), ("/settings", "Settings")]
 # Needs you, Runs and PRs & CI are part of Tickets: those pages light up the Tickets tab, and the needs count sits on it.
-TICKET_PAGES = {"/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/ticket/review", "/ticket/design", "/labels", "/labels/issue"}
+TICKET_PAGES = {"/ticket/video", "/needs", "/runs", "/prs", "/ticket", "/ticket/doc", "/ticket/images", "/ticket/review", "/ticket/design", "/labels", "/labels/issue"}
 ICON = '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 16 16\'%3E%3Ccircle cx=\'8\' cy=\'8\' r=\'6\' fill=\'%23e0a030\'/%3E%3C/svg%3E">'
 BRAND = ('<svg class="brand-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V10l6 4V10l6 4V6h6v15z"/></svg>')
 MENU_ICON = '<svg class="ph-menu-i" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>'
