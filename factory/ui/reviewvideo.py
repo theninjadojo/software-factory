@@ -213,8 +213,18 @@ def list_get(h, q: dict, csrf: str) -> None:
                 f'<td data-l="Status">{views.badge(word, tone)} <span class="muted">{note}</span></td>'
                 f'<td data-l="Length">{esc(videos.clock(v["seconds"])) if ready and v["seconds"] else ""}</td>'
                 f'<td data-l="Made">{esc(views.ago(v["created"]))}</td><td class="actions">{acts} {again}</td></tr>')
-    intro = ('<p class="muted">Videos asked for in the <a href="/chat">Chat</a>: ask it for a video about some tickets, then confirm its '
-             'proposal. Review videos of a ticket\'s pull requests are on the ticket\'s page.</p>')
+    intro = ('<p class="muted">Videos about some tickets, made from their pull requests and screenshots. Describe one below, or ask in '
+             '<a href="/chat">Chat</a>: the chat picks the tickets and proposes the video, and you decide whether to make it. Review videos '
+             'of one ticket\'s pull requests are on that ticket\'s page.</p>')
+    from .factorychat import _why_not, VIDEO_ASK
+    from .. import factorychat as F
+    why = _why_not(cfg, h.app.state_dir())
+    intro += (f'<form method="post" action="/videos/ask" class="card fc-reply">{csrf_field(csrf)}'
+              '<div class="field"><label for="va-text">Describe a video</label>'
+              f'<textarea id="va-text" name="text" rows="3" maxlength="{F.MAX_TEXT - len(VIDEO_ASK)}" required aria-describedby="va-help" '
+              'placeholder="A two-minute tour of this week\'s board changes, for the team, focused on mobile."></textarea>'
+              '<p class="muted" id="va-help">What it should show, for whom, and roughly how long. It starts a new chat conversation.</p></div>'
+              + (f'<p class="muted">{esc(why)}</p>' if why else '<button>Ask the chat</button>') + '</form>')
     table = (f'<table class="stack" aria-live="polite"><thead><tr><th>Video</th><th>Status</th><th>Length</th><th>Made</th><th></th></tr></thead><tbody>{out}</tbody></table>'
              if out else '<p class="muted">No videos yet.</p>')
     h._send(200, views.page("Videos", intro + table, "/videos", csrf, flash=shown[0] if shown else None,

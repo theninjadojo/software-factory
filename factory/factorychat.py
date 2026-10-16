@@ -20,7 +20,9 @@ from .chat import MAX_TEXT, PROMPT_CHARS, TURN_CHARS  # noqa: F401 - MAX_TEXT is
 from .sanitize import sanitize_markdown
 
 MAX_REPLY = 6000                      # a stored reply
-SHOWN = 100                           # turns the page shows (all are kept)
+SHOWN = 100                           # turns the page shows of a conversation (all are kept)
+MAX_THREADS_SHOWN = 50                # conversations listed on the page
+TITLE_CHARS_THREAD = 70
 DONE_DAYS = 14                        # done tickets younger than this are in the snapshot
 SNAPSHOT_CHARS = 40000
 TITLE_CHARS = 120
@@ -82,30 +84,89 @@ def ensure_tables(db) -> None:
     have = {r[1] for r in db.execute("PRAGMA table_info(factory_chat)")}
     for name, decl in (("proposal", "TEXT"),                    # validated JSON of an agent turn's video proposal, or NULL
                        ("proposal_state", "TEXT"),              # NULL | open | confirmed | dismissed
-                       ("video_id", "INTEGER")):                # a note about a chat video: review_videos.id
+                       ("video_id", "INTEGER"),                 # a note about a chat video, or a confirmed proposal: review_videos.id
+                       ("thread_id", "INTEGER")):               # factory_chat_threads.id: the conversation it belongs to
         if name not in have:
             db.execute(f"ALTER TABLE factory_chat ADD COLUMN {name} {decl}")
     db.execute("CREATE INDEX IF NOT EXISTS factory_chat_pending ON factory_chat(status, id)")
+    db.execute("CREATE INDEX IF NOT EXISTS factory_chat_thread ON factory_chat(thread_id, id)")
+    db.execute("""CREATE TABLE IF NOT EXISTS factory_chat_threads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,                        -- the first message, cut to TITLE_CHARS (escaped when shown)
+        created REAL NOT NULL,
+        updated REAL NOT NULL)""")
+    if db.execute("SELECT 1 FROM factory_chat WHERE thread_id IS NULL LIMIT 1").fetchone():
+        # turns from before conversations: one conversation of their own
+        first = db.execute("SELECT MIN(created), MAX(created) FROM factory_chat WHERE thread_id IS NULL").fetchone()
+        cur = db.execute("INSERT INTO factory_chat_threads (title, created, updated) VALUES ('Earlier conversation',?,?)", first)
+        db.execute("UPDATE factory_chat SET thread_id=? WHERE thread_id IS NULL", (cur.lastrowid,))
+    db.commit()
+
+
+# ---------------------------------------------------------------- conversations
+def new_thread(db, first_text: str) -> int:
+    ensure_tables(db)
+    now = time.time()
+    title = _one_line(first_text, TITLE_CHARS_THREAD) or "Conversation"
+    cur = db.execute("INSERT INTO factory_chat_threads (title, created, updated) VALUES (?,?,?)", (title, now, now))
+    db.commit()
+    return cur.lastrowid
+
+
+def threads(db, limit: int = MAX_THREADS_SHOWN) -> list[dict]:
+    """Conversations, most recently active first: id, title, created, updated, turns, waiting."""
+    try:
+        rows = db.execute("SELECT t.id, t.title, t.created, t.updated, COUNT(c.id), "
+                          "SUM(CASE WHEN c.author='person' AND c.status IN ('pending','running') THEN 1 ELSE 0 END) "
+                          "FROM factory_chat_threads t LEFT JOIN factory_chat c ON c.thread_id=t.id GROUP BY t.id "
+                          "ORDER BY t.updated DESC, t.id DESC LIMIT ?", (int(limit),)).fetchall()
+    except Exception:
+        return []
+    return [{"id": r[0], "title": r[1], "created": r[2], "updated": r[3], "turns": r[4], "waiting": bool(r[5])} for r in rows]
+
+
+def thread(db, thread_id) -> dict | None:
+    try:
+        tid = int(thread_id)
+        row = db.execute("SELECT id, title, created, updated FROM factory_chat_threads WHERE id=?", (tid,)).fetchone()
+    except Exception:
+        return None
+    return dict(zip(("id", "title", "created", "updated"), row)) if row else None
+
+
+def delete_thread(db, thread_id: int) -> bool:
+    """Delete a conversation and its turns; refused (False) while a message of it waits for a reply. Videos it asked for stay."""
+    if busy(db, thread_id):
+        return False
+    db.execute("DELETE FROM factory_chat WHERE thread_id=?", (int(thread_id),))
+    cur = db.execute("DELETE FROM factory_chat_threads WHERE id=?", (int(thread_id),))
+    db.commit()
+    return cur.rowcount == 1
+
+
+def delete_idle_threads(db, keep: int | None = None) -> int:
+    """Delete every conversation except `keep` and those waiting for a reply. Returns how many went."""
+    ids = [t["id"] for t in threads(db, 10 ** 6) if t["id"] != keep and not t["waiting"]]
+    return sum(delete_thread(db, i) for i in ids)
 
 
 COLS = ("id", "author", "body", "created", "status", "detail", "reply_to", "run_id", "snapshot_at", "snapshot_cut")
-MORE = ("proposal", "proposal_state", "video_id")
+MORE = ("proposal", "proposal_state", "video_id", "thread_id")
 
 
-def turns(db, limit: int = SHOWN) -> list[dict]:
-    """The newest `limit` turns, oldest first."""
+def turns(db, thread_id: int | None, limit: int = SHOWN) -> list[dict]:
+    """The newest `limit` turns of a conversation, oldest first."""
+    if thread_id is None:
+        return []
     try:
-        rows = db.execute(f"SELECT {', '.join(COLS + MORE)} FROM factory_chat ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+        rows = db.execute(f"SELECT {', '.join(COLS + MORE)} FROM factory_chat WHERE thread_id=? ORDER BY id DESC LIMIT ?",
+                          (int(thread_id), int(limit))).fetchall()
         cols = COLS + MORE
     except Exception:                                   # a database the orchestrator has not upgraded yet
-        try:
-            rows = db.execute(f"SELECT {', '.join(COLS)} FROM factory_chat ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
-            cols = COLS
-        except Exception:
-            return []
+        return []
     out = []
     for r in reversed(rows):
-        t = {"proposal": None, "proposal_state": None, "video_id": None, **dict(zip(cols, r))}
+        t = dict(zip(cols, r))
         t["proposal"] = _load(t["proposal"])
         out.append(t)
     return out
@@ -120,11 +181,12 @@ def _load(text):
 
 
 def prompt_turns(db, limit: int, upto: int) -> list[tuple[str, str]]:
-    """The conversation as of turn `upto`, as chat.prompt_turns: the newest `limit` answered or sent turns, each cut to TURN_CHARS
-    and all together to PROMPT_CHARS (the newest are kept), oldest first. [(author, text)]."""
+    """The conversation of turn `upto`, as of that turn, as chat.prompt_turns: the newest `limit` answered or sent turns of that
+    conversation only, each cut to TURN_CHARS and all together to PROMPT_CHARS (the newest are kept), oldest first. [(author, text)]."""
     try:
-        rows = db.execute("SELECT author, body FROM factory_chat WHERE id<=? AND (author='agent' OR status IN ('pending','running','done')) "
-                          "ORDER BY id DESC LIMIT ?", (int(upto), int(limit))).fetchall()
+        rows = db.execute("SELECT author, body FROM factory_chat WHERE id<=? AND thread_id=(SELECT thread_id FROM factory_chat WHERE id=?) "
+                          "AND (author='agent' OR status IN ('pending','running','done')) "
+                          "ORDER BY id DESC LIMIT ?", (int(upto), int(upto), int(limit))).fetchall()
     except Exception:
         return []
     out, used = [], 0
@@ -137,15 +199,23 @@ def prompt_turns(db, limit: int, upto: int) -> list[tuple[str, str]]:
     return out[::-1]
 
 
-def add_person(db, text: str) -> int:
-    cur = db.execute("INSERT INTO factory_chat (author, body, created, status) VALUES ('person',?,?,'pending')", (text, time.time()))
+def add_person(db, text: str, thread_id: int) -> int:
+    now = time.time()
+    cur = db.execute("INSERT INTO factory_chat (author, body, created, status, thread_id) VALUES ('person',?,?,'pending',?)",
+                     (text, now, int(thread_id)))
+    _touch(db, thread_id, now)
     db.commit()
     return cur.lastrowid
 
 
-def busy(db) -> bool:
-    """A message is waiting for its reply (one at a time keeps the shared conversation in order)."""
-    return db.execute("SELECT 1 FROM factory_chat WHERE author='person' AND status IN ('pending','running')").fetchone() is not None
+def _touch(db, thread_id, now: float) -> None:
+    db.execute("UPDATE factory_chat_threads SET updated=? WHERE id=?", (now, thread_id))
+
+
+def busy(db, thread_id: int) -> bool:
+    """A message of this conversation is waiting for its reply (one at a time keeps a conversation in order)."""
+    return db.execute("SELECT 1 FROM factory_chat WHERE thread_id=? AND author='person' AND status IN ('pending','running')",
+                      (int(thread_id),)).fetchone() is not None
 
 
 def sent_since(db, since: float) -> int:
@@ -181,21 +251,39 @@ def add_reply(db, turn: dict, text: str, run_id: int | None, secrets: tuple = ((
     shown, proposal = parse_proposal(redact(text, secrets), refs)
     body = sanitize_markdown(shown.strip(), MAX_REPLY)
     ensure_tables(db)
+    row = db.execute("SELECT thread_id FROM factory_chat WHERE id=?", (turn["id"],)).fetchone()
+    if row is None:                                     # its conversation was deleted while the reply was written
+        return 0
+    now = time.time()
     cur = db.execute("INSERT INTO factory_chat (author, body, created, status, reply_to, run_id, snapshot_at, snapshot_cut, proposal, "
-                     "proposal_state) VALUES ('agent',?,?,'done',?,?,?,?,?,?)",
-                     (body, time.time(), turn["id"], run_id, snapshot_at, 1 if cut else 0,
-                      json.dumps(proposal) if proposal else None, "open" if proposal else None))
+                     "proposal_state, thread_id) VALUES ('agent',?,?,'done',?,?,?,?,?,?,?)",
+                     (body, now, turn["id"], run_id, snapshot_at, 1 if cut else 0,
+                      json.dumps(proposal) if proposal else None, "open" if proposal else None, row[0]))
     db.execute("UPDATE factory_chat SET status='done', detail='' WHERE id=?", (turn["id"],))
+    _touch(db, row[0], now)
     db.commit()
     return cur.lastrowid
 
 
-def add_note(db, text: str, video_id: int | None = None) -> int:
-    """A note from the factory itself (a chat video made or skipped), shown as an agent turn. `text` is fixed wording."""
-    cur = db.execute("INSERT INTO factory_chat (author, body, created, status, video_id) VALUES ('agent',?,?,'done',?)",
-                     (sanitize_markdown(text, MAX_REPLY), time.time(), video_id))
+def add_note(db, text: str, video_id: int) -> int | None:
+    """A note from the factory itself (a chat video made or skipped), shown as an agent turn in the conversation whose proposal
+    asked for the video. `text` is fixed wording. None when that conversation was deleted."""
+    row = db.execute("SELECT thread_id FROM factory_chat WHERE video_id=? AND proposal IS NOT NULL ORDER BY id DESC LIMIT 1",
+                     (int(video_id),)).fetchone()
+    if row is None or row[0] is None:
+        return None
+    now = time.time()
+    cur = db.execute("INSERT INTO factory_chat (author, body, created, status, video_id, thread_id) VALUES ('agent',?,?,'done',?,?)",
+                     (sanitize_markdown(text, MAX_REPLY), now, int(video_id), row[0]))
+    _touch(db, row[0], now)
     db.commit()
     return cur.lastrowid
+
+
+def link_video(db, turn_id: int, video_id: int) -> None:
+    """The confirmed proposal of `turn_id` became video `video_id` (its notes then go to that conversation)."""
+    db.execute("UPDATE factory_chat SET video_id=? WHERE id=? AND author='agent'", (int(video_id), int(turn_id)))
+    db.commit()
 
 
 def _plain(text, n: int) -> str:

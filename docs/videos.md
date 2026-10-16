@@ -23,14 +23,15 @@ When the pull request gets new commits, the video is marked out of date, and **M
 
 ## Videos from the chat
 
-With videos on, you can ask the factory chat (**Chat** in the menu) for a video about some tickets, for example "a two-minute tour of
-this week's board changes" or "how the login fix works, for the support team".
+With videos on, you can ask for a video about some tickets, for example "a two-minute tour of this week's board changes" or "how
+the login fix works, for the support team". Either describe it in the **Describe a video** box on the **Videos** page, which starts a
+new chat conversation with your description, or ask in any conversation on the **Chat** page.
 
 1. The chat answers with a proposal: a title, a brief (what the video should show) and the tickets it will use. It picks the
    tickets from what you described, and only ones it can see on the board.
 2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click.
 3. The video is made by the same worker as review videos and counts toward the same daily limit. When it is ready, or if it
-   is skipped, the chat says so. Made videos are listed on the **Videos** page (`/videos`, linked from the Chat page), with
+   is skipped, the conversation that asked for it says so. Made videos are listed on the **Videos** page (`/videos`), with
    **Watch**, **Transcript** and **Make again**.
 
 How it is made:
@@ -83,3 +84,11 @@ A video whose voice cannot be made is skipped with a note on the ticket. Common 
 Remotion is free for individuals and for companies of up to three people. Larger companies need a
 [Remotion company licence](https://www.remotion.dev/license). Piper is MIT-licensed. The bundled voice is trained on LJSpeech, which
 is in the public domain.
+
+## Chat conversations
+
+The **Chat** page keeps separate conversations. Each reply is written with only its own conversation as context (the newest
+`chat.context_turns` turns of it), so a new topic in a new conversation is not coloured by earlier ones. **New conversation**
+starts one; the list beside the chat (a menu above it on a phone) switches between them. **Delete this conversation** and
+**Delete other conversations** clean up; a conversation waiting for a reply is kept. Videos a conversation asked for stay on the
+Videos page when it is deleted. Messages from before conversations existed are kept as one conversation, "Earlier conversation".

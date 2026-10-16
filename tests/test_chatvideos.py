@@ -43,8 +43,9 @@ class Proposal(unittest.TestCase):
 
     def test_the_reply_stores_an_open_proposal_and_the_prompt_says_when_videos_are_off(self):
         db = memdb()
-        F.add_reply(db, {"id": F.add_person(db, "make a video")}, block(), None, refs=REFS)
-        t = F.turns(db)[-1]
+        c = F.new_thread(db, "make a video")
+        F.add_reply(db, {"id": F.add_person(db, "make a video", c)}, block(), None, refs=REFS)
+        t = F.turns(db, c)[-1]
         self.assertEqual((t["proposal_state"], t["proposal"]["title"]), ("open", "Board tour"))
         self.assertTrue(F.set_proposal_state(db, t["id"], "open", "confirmed"))
         self.assertFalse(F.set_proposal_state(db, t["id"], "open", "confirmed"))
@@ -75,6 +76,10 @@ class Brief(Base):
 
     def queued(self):
         vid = videos.queue_brief(self.db, "Board tour", "Show the board.", [("o/r", 3, "Board drag")], 1000.0)
+        F.ensure_tables(self.db)
+        self.thread = F.new_thread(self.db, "make a video")
+        turn = F.add_reply(self.db, {"id": F.add_person(self.db, "make a video", self.thread)}, block(), None, refs=REFS)
+        F.link_video(self.db, turn, vid)                                       # as confirming the proposal does
         self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
         return videos.get(self.db, vid)
 
@@ -102,7 +107,7 @@ class Brief(Base):
         self.assertIn("<brief>", seen["prompt"])
         self.assertEqual(gh.comments, [])
         self.assertEqual(run.seen["img"], ["s03.png"])
-        notes = [t for t in F.turns(self.db) if t["video_id"] == row["id"]]
+        notes = [t for t in F.turns(self.db, self.thread) if t["video_id"] == row["id"] and not t["proposal"]]
         self.assertIn("is ready", notes[0]["body"])
 
     def test_without_a_usable_writer_the_wording_is_fixed(self):
@@ -115,7 +120,7 @@ class Brief(Base):
         row = self.queued()
         videos.work_one(self.cfg, FakeGH(), self.db, row, lambda: 2000.0, self.container(code=1), write=None)
         self.assertEqual(videos.get(self.db, row["id"])["status"], "skipped")
-        self.assertIn("was not made", F.turns(self.db)[-1]["body"])
+        self.assertIn("was not made", F.turns(self.db, self.thread)[-1]["body"])
 
     def test_mark_stale_never_reads_a_brief_video(self):
         row = self.queued()
@@ -148,8 +153,9 @@ class Page(UiCase):
 
     def proposal(self):
         db = self.rw()
-        F.add_reply(db, {"id": F.add_person(db, "make a video")}, block(), None, refs=REFS)
-        return F.turns(db)[-1]["id"]
+        self.thread = F.new_thread(db, "make a video")
+        F.add_reply(db, {"id": F.add_person(db, "make a video", self.thread)}, block(), None, refs=REFS)
+        return F.turns(db, self.thread)[-1]["id"]
 
     def test_confirm_queues_exactly_once(self):
         self.on()
@@ -175,7 +181,7 @@ class Page(UiCase):
         self.assertEqual(videos.briefs(self.rw()), [])
         self.on()
         self.req("POST", "/chat/video/dismiss", urlencode([("csrf", csrf), ("id", tid)]), cookie=cookie)
-        self.assertEqual(F.turns(self.rw())[-1]["proposal_state"], "dismissed")
+        self.assertEqual(F.turns(self.rw(), self.thread)[-1]["proposal_state"], "dismissed")
 
     def test_the_videos_page_lists_chat_videos(self):
         self.on()
