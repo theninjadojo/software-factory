@@ -13,7 +13,8 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewgate, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videos, waves
+from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewgate, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videoimage, videos, waves
+from . import codecopy
 from . import depdetect
 from . import judges
 from . import recommend
@@ -453,7 +454,7 @@ def interview_lane(cfg: Config) -> None:
           cfg.db_path, np.max_parallel, np.check_seconds)
 
 
-def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
+def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict, token: str | None = None) -> None:
     """Answer one claimed factory chat message with a read-only run (no repository, no GitHub token). The agent sees only the redacted
     snapshot of the tickets and settings built here; nothing in its reply is acted on."""
     if cfg.dry_run:
@@ -466,13 +467,17 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
         raw = None
     now = time.time()
     snap, cut = factorychat.snapshot(db, raw, cfg, now, secrets)
-    prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets)
+    refs = factorychat.ticket_refs(factorychat.ticket_rows(db, now, cfg.github_issues_enabled)) if cfg.videos.enabled else None
+    code = code_for_chat(cfg, token)
+    prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets, cfg.videos.enabled,
+                                      codecopy.listing(cfg) if code else "")
     route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
     run_id, sink = begin_run("factory-chat", "factory", {"number": 0, "title": "Factory chat"}, route), {}     # 0: never a ticket on the board
-    res = runner.run_factory_chat(cfg, route, prompt, sink)
+    res = runner.run_factory_chat(cfg, route, prompt, sink, code)
     end_run(run_id, res, sink)
     if res.status == "stage":
-        factorychat.add_reply(db, turn, res.output, run_id, secrets, now, cut)
+        factorychat.add_reply(db, turn, res.output, run_id, secrets, now, cut, refs,
+                              (lambda ref: codecopy.resolve(cfg, ref) is not None) if code else None)
         emit("chat", "replied in the factory chat", None, None, run_id)
     elif res.status == "rate-limited":
         factorychat.settle(db, turn["id"], "failed", "The model is rate limited. Try again later.")
@@ -483,9 +488,33 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
         factorychat.settle(db, turn["id"], "failed", "The reply could not be written. Try again.")
 
 
-def factory_chat_lane(cfg: Config, config_path: str) -> None:
-    """The factory chat's own lane: one shared conversation, so one reply at a time, in order."""
-    _lane("factory-chat", lambda: cfg.chat.factory_enabled, factorychat.claim, lambda db, turn: factory_chat_answer(cfg, config_path, db, turn),
+def code_for_chat(cfg: Config, token: str | None) -> list:
+    """The read-only repository copies a factory chat or video writer run gets (refreshed first), or [] when it may not read code."""
+    if not cfg.chat.factory_code:
+        return []
+    problems = codecopy.refresh(cfg, token)
+    for repo, why in problems.items():
+        log.warning("code copy of %s not available: %s", repo, why)
+    return codecopy.mounts(cfg)
+
+
+def video_writer(cfg: Config, prompt: str, token: str | None = None) -> str | None:
+    """The scenes of a video asked for in the factory chat, from a sealed read-only run with the chat's model and the code copies
+    (videos.make_brief checks them); None when the run did not answer."""
+    route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
+    run_id, sink = begin_run("video-writer", "factory", {"number": 0, "title": "Chat video"}, route), {}
+    res = runner.run_video_writer(cfg, route, prompt, sink, code_for_chat(cfg, token))
+    end_run(run_id, res, sink)
+    if res.status != "stage":
+        log.warning("video writer: %s %s", res.status, res.detail[:300])
+        return None
+    return res.output
+
+
+def factory_chat_lane(cfg: Config, config_path: str, gh=None) -> None:
+    """The factory chat's own lane: one reply at a time, in order."""
+    token = getattr(gh, "token", None)
+    _lane("factory-chat", lambda: cfg.chat.factory_enabled, factorychat.claim, lambda db, turn: factory_chat_answer(cfg, config_path, db, turn, token),
           lambda db, turn: factorychat.settle(db, turn["id"], "failed", "The reply could not be written. Try again."),
           cfg.db_path, 1, cfg.chat.check_seconds)
 
@@ -787,10 +816,14 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                 if pm:
                     dbm.track_pr(conn, pm.group(1), int(pm.group(2)), repo, num)
         labels = [lb["name"] for lb in gh.get_issue(repo, num).get("labels", []) if lb["name"] != working] + [role.done_label]
-        output, proposal = res.output, None
-        if role.name == "analyst" and conn is not None:      # a split is only a proposal; the block never reaches the ticket
-            allowed = [r.repo for r in project_for(cfg, repo).repos if r.repo in cfg.repos] or [repo]
-            output, proposal = split.extract(output, set(allowed) | {repo})
+        output, proposal, plan_size = res.output, None, None
+        if role.name in ("analyst", "architect") and conn is not None:   # a split is only a proposal; the block never reaches the ticket
+            allowed = set([r.repo for r in project_for(cfg, repo).repos if r.repo in cfg.repos] or [repo]) | {repo}
+            if role.name == "analyst":
+                output, proposal = split.extract(output, allowed)
+            else:                                       # the architect's only counts when it is on and the plan is large enough
+                output, proposal, plan_size = split.sized(output, allowed, cfg.split.architect_min_areas, cfg.split.architect_min_items)
+                proposal = proposal if cfg.split.architect else None
         doc, qs = Q.extract(output)                     # qs None: no block or a malformed one, so the classifier alone decides
         pending = [q for q in qs or [] if not q.safe]
         earlier = [q for st in before if st.stage != role.name for q in st.pending()]    # still unanswered from another stage
@@ -826,7 +859,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
         stop = chain_stop(cfg, role, nxt, rec, done_now) if chain and cfg.auto_chain else "not an auto run"
         if proposal:
             stop, hint = "split", "a person's decision on the proposed split"
-            doc += split.section(proposal)
+            doc += split.section(proposal, plan_size)
         if pending or earlier:
             stop, hint = "questions", "a person's answer to the open questions " + ", ".join(q.id for q in pending + earlier)
         go_on = not stop
@@ -868,7 +901,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             alert(done + ("\nContinuing automatically: " + (hint or "next stage") + assumed if go_on else (f"\nWaiting for you: {hint}" if hint else ""))
                   + ("" if go_on else auto_lines), change or None, event="stage_done")
         if proposal:
-            propose_split(cfg, gh, conn, repo, num, proposal)
+            propose_split(cfg, gh, conn, repo, num, proposal, role.name)
     elif res.status == "cancelled":
         gh.remove_label(repo, num, working)
     else:
@@ -929,17 +962,19 @@ def second_opinion(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, stage:
     return found
 
 
-def propose_split(cfg: Config, gh: GitHub, conn, repo: str, num: int, proposal) -> None:
-    """Keep the analyst's validated split proposal and ask a person. Nothing is created until they approve it."""
+def propose_split(cfg: Config, gh: GitHub, conn, repo: str, num: int, proposal, source: str = "analyst") -> None:
+    """Keep the analyst's or the architect's validated split proposal and ask a person. Nothing is created until they approve it."""
     try:
-        pid = split.store(conn, repo, gh.get_issue(repo, num), proposal)
+        pid = split.store(conn, repo, gh.get_issue(repo, num), proposal, source=source)
         try:
             gh.create_label(repo, split.PROPOSED_LABEL, "fbca04", "A proposed split into smaller tickets is waiting for a person")
         except Exception:
             log.warning("could not create the label %s in %s", split.PROPOSED_LABEL, repo)
         gh.add_labels(repo, num, [split.PROPOSED_LABEL])
         buttons = [("Approve split", f"split:{pid}|{repo}|{num}"), ("Dismiss", f"split-no:{pid}|{repo}|{num}")]
-        alert(f"Proposed split: {repo} {tracker.display(num)} into {len(proposal.items)} tickets.\n{proposal.reason}",
+        whose = " of the architect's plan" if source == "architect" else ""
+        alert(f"Proposed split{whose}: {repo} {tracker.display(num)} into "
+              f"{len(proposal.items)} tickets.\n{proposal.reason}",
               [b for b in buttons if len(b[1].encode()) <= 64], event="needs_human")
     except Exception:
         log.exception("could not store the split proposal of %s#%s", repo, num)
@@ -2117,7 +2152,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     except Exception:
         log.exception("screens: Playwright runs failed")        # never stops the poll
     try:
-        videos.tick(cfg, gh, conn, time.time(), lambda: dbm.connect(cfg.db_path), time.time)
+        videos.tick(cfg, gh, conn, time.time(), lambda: dbm.connect(cfg.db_path), time.time, write=lambda p: video_writer(cfg, p, getattr(gh, "token", None)))
     except Exception:
         log.exception("review videos failed")                   # never stops the poll
     try:
@@ -2246,7 +2281,7 @@ def main() -> None:
     if not args.once and cfg.new_projects.enabled:
         threading.Thread(target=interview_lane, args=(cfg,), daemon=True, name="interview-lane").start()
     if not args.once and cfg.chat.factory_enabled:
-        threading.Thread(target=factory_chat_lane, args=(cfg, args.config), daemon=True, name="factory-chat-lane").start()
+        threading.Thread(target=factory_chat_lane, args=(cfg, args.config, gh), daemon=True, name="factory-chat-lane").start()
     if not args.once and not cfg.dry_run:
         recover(cfg, gh)
     while True:
@@ -2261,6 +2296,10 @@ def main() -> None:
                 tools.tick(cfg, Path(cfg.db_path).parent)        # a requested CLI update, or the periodic version scan (background thread)
             except Exception:
                 log.exception("tool update check failed")       # never stops the poll
+            try:
+                videoimage.tick(cfg, Path(cfg.db_path).parent)   # a requested video image build, or the periodic check that it exists
+            except Exception:
+                log.exception("video image check failed")
             poll_once(cfg, gh, conn, clf)
             dbm.set_status(conn, "pool", pool_status())
             dbm.set_status(conn, "last_poll_ok", str(time.time()))

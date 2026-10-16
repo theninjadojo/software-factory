@@ -202,6 +202,24 @@ class RunTaskEndToEnd(unittest.TestCase):
                 res = runner.run_task(cfg, gh, "o/web", {"number": 6, "title": "t", "body": ""}, cfg.routes["low"])
             self.assertEqual((res.status, [r for r, _, _ in gh.prs], gh.comments), ("pr", ["o/mobile"], []))
 
+    def test_a_rate_limit_after_the_push_does_not_throw_the_build_away(self):
+        import email.message
+        import io
+        import tempfile
+        import urllib.error
+        from unittest import mock
+        from factory import runner
+        with tempfile.TemporaryDirectory() as t:
+            cfg, gh, bare, p1, p2, g = self._setup(t, lambda w: (w / "web" / "a.txt").write_text("two\n"))
+            h = email.message.Message(); h["Retry-After"] = "60"
+            limited = [urllib.error.HTTPError("u", 403, "Forbidden", h, io.BytesIO(b"{}"))]
+            real = gh.default_branch
+            gh.default_branch = lambda r: (_ for _ in ()).throw(limited.pop()) if limited else real(r)
+            with p1, p2, mock.patch.object(runner.time, "sleep") as sleep:
+                res = runner.run_task(cfg, gh, "o/web", {"number": 7, "title": "t", "body": ""}, cfg.routes["low"])
+            self.assertEqual((res.status, [r for r, _, _ in gh.prs]), ("pr", ["o/web"]), res.detail)
+            sleep.assert_any_call(60)
+
     def test_a_pr_for_an_imported_ticket_refs_the_original_issue_and_a_ui_ticket_does_not(self):
         import dataclasses
         import os

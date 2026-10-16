@@ -223,10 +223,29 @@ NOTES_RULES = (
 )
 
 
-def stage_rules(agent: str, notes: bool = False) -> str:
-    """The required blocks at the end of a stage document; only the analyst may propose splitting the ticket. notes: the ticket
-    carries the meeting notes label, so the analyst always considers a split."""
+ARCHITECT_SPLIT_RULES = (
+    "\n\nSPLITTING A LARGE PLAN (optional). First estimate your plan's size: how many separate areas it touches (apps, modules, "
+    "services or components) and how many plan items it has. Only when it touches at least {areas} areas or has at least {items} "
+    "plan items, and it falls apart into phases that can each be built, reviewed and merged on their own, put one fenced code block "
+    "whose info string is `factory-split` right before the `factory-questions` block, holding JSON like "
+    '{{"reason": "Touches the API, the worker and two apps.", "size": {{"areas": 4, "items": 11}}, "items": [{{"title": "Add the '
+    'API field", "body": "Scope: what this part builds and what it leaves out.\\nAcceptance checks: how to tell it is done.", '
+    '"repo": "api", "after": []}}, {{"title": "Show the field in the app", "body": "...", "repo": "app", "after": [0]}}]}}. '
+    "`size` is your honest estimate of the whole plan. 2 to 10 items in the order they should be built, each a phase of your plan; "
+    "every body stands alone and starts with `Scope:` and has an `Acceptance checks:` part; `repo` is the directory name of the "
+    "repository the item changes (one of the repositories listed above); `after` lists the positions (counting from 0) of EARLIER "
+    "items this one must wait for. Still write the whole plan in your document. A person approves the split before anything is "
+    "created. Leave the block out when the plan is smaller than that. The block is machine-read: valid JSON, plain text."
+)
+
+
+def stage_rules(agent: str, notes: bool = False, split_at: tuple | None = None) -> str:
+    """The required blocks at the end of a stage document. The analyst may propose splitting the ticket; the architect may propose
+    splitting a large plan when split_at, (min areas, min plan items) from split.architect_*, is given. notes: the ticket carries
+    the meeting notes label, so the analyst always considers a split."""
     split_rules = (SPLIT_RULES + (NOTES_RULES if notes else "")) if agent == "analyst" else ""
+    if agent == "architect" and split_at:
+        split_rules = ARCHITECT_SPLIT_RULES.format(areas=int(split_at[0]), items=int(split_at[1]))
     return SUMMARY_RULES + split_rules + QUESTIONS_RULES
 
 

@@ -19,8 +19,9 @@ def item(title="Do a part", repo="api", after=(), body="Build it."):
     return dict(title=title, body=body, repo=repo, after=list(after))
 
 
-def block(items, reason="Too big", doc="# Requirements\n"):
-    return doc + "\n```factory-split\n" + json.dumps({"reason": reason, "items": items}) + "\n```\n\n```factory-questions\n{\"questions\": []}\n```\n"
+def block(items, reason="Too big", doc="# Requirements\n", size=None):
+    d = {"reason": reason, "items": items, **({"size": size} if size is not None else {})}
+    return doc + "\n```factory-split\n" + json.dumps(d) + "\n```\n\n```factory-questions\n{\"questions\": []}\n```\n"
 
 
 class Parse(unittest.TestCase):
@@ -61,12 +62,40 @@ class Parse(unittest.TestCase):
         self.assertIsNone(split.parse(block([item(), item(repo="api")]), {"a/api", "b/api"}))
 
 
+class ArchitectSize(unittest.TestCase):
+    def test_a_large_plan_keeps_its_proposal(self):
+        text = block([item(), item("Second", "app", [0])], doc="# Plan\n", size={"areas": 4, "items": 3})
+        out, p, got = split.sized(text, ALLOWED, 3, 8)
+        self.assertEqual(got, (4, 3))
+        self.assertEqual(len(p.items), 2)
+        self.assertNotIn("factory-split", out)
+        self.assertIsNotNone(split.sized(block([item(), item()], size={"areas": 1, "items": 8}), ALLOWED, 3, 8)[1])   # either count
+
+    def test_a_small_plan_or_a_missing_or_bad_size_makes_no_proposal(self):
+        for size in ({"areas": 2, "items": 7}, None, {"areas": "9", "items": 9}, {"areas": True, "items": 9}, {"areas": 5},
+                     {"areas": -1, "items": 99}, {"areas": 5000, "items": 1}, [4, 9]):
+            out, p, _ = split.sized(block([item(), item()], size=size), ALLOWED, 3, 8)
+            self.assertIsNone(p, size)
+            self.assertNotIn("factory-split", out)                           # the block never reaches the ticket either way
+
+    def test_the_comment_says_how_large_the_plan_is(self):
+        p = split.parse(block([item(), item()]), ALLOWED)
+        self.assertIn("4 areas and has 11 plan items", split.section(p, (4, 11)))
+        self.assertNotIn("plan items", split.section(p))
+
+
 class Prompts(unittest.TestCase):
-    def test_only_the_analyst_may_split(self):
+    def test_only_the_analyst_may_split_unless_the_architect_is_told_its_threshold(self):
         self.assertIn("factory-split", build_prompt("t", "b", PR, "o/api", "analyst"))
         self.assertIn("factory-split", builtin_prompt("analyst"))
         for role in ("designer", "architect"):
             self.assertNotIn("factory-split", build_prompt("t", "b", PR, "o/api", role))
+        self.assertNotIn("factory-split", build_prompt("t", "b", PR, "o/api", "designer", split_at=(3, 8)))
+        text = build_prompt("t", "b", PR, "o/api", "architect", split_at=(4, 12))
+        self.assertIn("factory-split", text)
+        self.assertIn("at least 4 areas or has at least 12 plan items", text)
+        self.assertIn('"size": {"areas"', text)
+        self.assertIn("Acceptance checks:", text)
 
     def test_chat_buttons_are_matched_strictly(self):
         self.assertEqual(telegram.parse_callback("split:12|o/api|3"), ("split:12", "o/api", 3))
@@ -136,7 +165,11 @@ class Flow(unittest.TestCase):
         self.assertEqual([k["status"] for k in kids], ["created"] * 3)
         two = self.gh.get_issue(OTHER, kids[1]["child_issue"])
         self.assertIn("Part of", two["body"])
-        self.assertIn("Starts after", two["body"])
+        self.assertIn("Starts after", two["body"])                           # another repository: named, not a blocker line
+        three = self.gh.get_issue(REPO, kids[2]["child_issue"])
+        self.assertIn(f"Blocked by {tracker.display(kids[0]['child_issue'])}\n", three["body"])     # same repository: the PM reads it
+        from factory.pm import explicit_blockers
+        self.assertEqual(explicit_blockers(three["body"]), [kids[0]["child_issue"]])
         self.assertEqual(two["labels"], [])                                  # no start action chosen: nothing starts
         parent = self.gh.get_issue(REPO, self.parent)
         self.assertIn(split.UMBRELLA_LABEL, [lb["name"] for lb in parent["labels"]])
@@ -208,6 +241,84 @@ class Flow(unittest.TestCase):
         self.lt.set_state(REPO, self.parent, "open")                         # a person reopens it: left alone
         split.sweep(self.gh, self.conn, self.emit)
         self.assertEqual(self.gh.get_issue(REPO, self.parent)["state"], "open")
+
+
+class Architect(unittest.TestCase):
+    """The architect's run: a large plan's split is stored for a person, a small one or a switched-off one is not."""
+    def run_stage(self, output, **split_cfg):
+        from dataclasses import replace
+        from unittest import mock
+        from factory import main as m
+        from factory.config import DEFAULT_ROLES, SplitCfg
+        from factory.runner import RunResult
+        from test_roles import CFG, FakeClf, FakeGH, issue
+        conn = dbm.connect(":memory:")
+        gh = FakeGH()
+        gh.create_label = lambda *a, **k: None
+        role = next(r for r in DEFAULT_ROLES if r.name == "architect")
+        cfg = replace(CFG, split=SplitCfg(**split_cfg))
+        with mock.patch.object(m.runner, "run_task", return_value=RunResult("stage", "ok", output=output)), tempfile.TemporaryDirectory() as d:
+            m.dispatch_stage(replace(cfg, db_path=d + "/f.db"), gh, FakeClf(), "o/r", issue(), role, conn=conn)
+        posted = "\n".join(c[1] for c in gh.calls if c[0] == "comment")
+        return split.for_ticket(conn, "o/r", 5), posted, gh
+
+    def plan(self, size):
+        return block([item("Phase one", "r"), item("Phase two", "r", [0])], "Four areas", "Summary: big.\n# Plan\n", size)
+
+    def test_a_large_plan_is_proposed_and_waits_for_a_person(self):
+        p, posted, gh = self.run_stage(self.plan({"areas": 4, "items": 12}))
+        self.assertEqual((p["status"], p["source"]), ("proposed", "architect"))
+        self.assertIn("Proposed split", posted)
+        self.assertIn("4 areas and has 12 plan items", posted)
+        self.assertNotIn("factory-split", posted)
+        self.assertIn(("add", (split.PROPOSED_LABEL,)), gh.calls)
+
+    def test_a_small_plan_or_the_switch_off_proposes_nothing(self):
+        for size, kw in (({"areas": 2, "items": 5}, {}), ({"areas": 9, "items": 30}, {"architect": False}),
+                         ({"areas": 4, "items": 5}, {"architect_min_areas": 5, "architect_min_items": 6})):
+            p, posted, _ = self.run_stage(self.plan(size), **kw)
+            self.assertIsNone(p, (size, kw))
+            self.assertNotIn("factory-split", posted)
+            self.assertNotIn("Proposed split", posted)
+
+
+class Card(unittest.TestCase):
+    def test_the_ticket_page_says_the_architect_proposed_it_and_the_order(self):
+        from factory.ui import splitcard
+        from test_roles import CFG
+        conn = dbm.connect(":memory:")
+        lt = tracker.LocalTracker(conn)
+        n = lt.create(REPO, "Big", "Do everything")
+        p = split.parse(block([item("One"), item("Two", "app", [0]), item("Three", "api", [0, 1])]), ALLOWED)
+        split.store(conn, REPO, {"number": n, "title": "Big", "body": "Do everything"}, p, source="architect")
+        html = splitcard.card(CFG, conn, REPO, n, "tok", "/")
+        self.assertIn("Proposed by the architect", html)
+        self.assertIn("(o/app, after 1)", html)
+        self.assertIn("(o/api, after 1, 2)", html)
+        self.assertIn("blocked by the ones it comes after", html)
+        folded = splitcard.fold(CFG, conn, REPO, n, "tok", "/")
+        self.assertIn('data-fold="linked" open', folded)                     # waiting for a person: open on the ticket page
+        self.assertIn("waiting for your decision", folded)
+        split.decide(conn, split.for_ticket(conn, REPO, n)["id"], REPO, n, False)
+        self.assertEqual(splitcard.fold(CFG, conn, REPO, n, "tok", "/"), "")  # dismissed: nothing linked
+
+
+class Config(unittest.TestCase):
+    def load(self, extra):
+        from factory.config import load
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(open("config.example.toml").read() + extra)
+        self.addCleanup(os.unlink, f.name)
+        return load(f.name)
+
+    def test_the_architect_split_settings_are_checked(self):
+        cfg = self.load("")
+        self.assertEqual((cfg.split.architect, cfg.split.architect_min_areas, cfg.split.architect_min_items), (True, 3, 8))
+        self.assertEqual(self.load("\n[split]\narchitect_min_areas = 5\n").split.architect_min_areas, 5)
+        for bad in ("architect_min_areas = 1", "architect_min_areas = 21", "architect_min_items = 51", 'architect = "yes"',
+                    "architect_min_items = true"):
+            with self.assertRaises(ValueError, msg=bad):
+                self.load(f"\n[split]\n{bad}\n")
 
 
 if __name__ == "__main__":

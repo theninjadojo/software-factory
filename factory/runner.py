@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from . import reviewnotes
 from .render import render as preview_render
 from .roles import (CI_FIX_PROMPT, REVIEW_FIX_PROMPT, VERIFY_FIX_PROMPT, CONFLICTS_PROMPT, SCREEN_FIX_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
                     agent_key, common_for, design_files_rules, operator_prompt, SUMMARY_RULES, stage_rules)
+from . import github
 from .github import GitHub
 
 log = logging.getLogger("factory.runner")
@@ -44,6 +46,10 @@ class PatchRejected(Exception):
 
 class NeedsPerson(Exception):
     """A merge the factory must not or cannot finish by itself."""
+
+
+class PROpenFailed(Exception):
+    """A branch was pushed but its pull request could not be opened. The message names why and how to open it by hand."""
 
 
 CONFLICT_MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
@@ -181,6 +187,45 @@ def push_factory_branch(base: Path, branch: str, env: dict) -> None:
     git(["push", "origin", f"HEAD:refs/heads/{branch}"], base, env)
 
 
+PR_STEP_TRIES = 5            # tries at opening the pull request of a pushed branch: the finished work must not be thrown away
+PR_STEP_WAIT = 30            # seconds between tries after a GitHub hiccup
+PR_STEP_MAX_WAIT = 180       # seconds, at most, between tries after a rate limit (GitHub's secondary limits clear in minutes)
+
+
+def pr_failure(e: Exception, repo: str, branch: str) -> str:
+    """Why a pushed branch has no pull request, in words a person can act on."""
+    by_hand = f"The branch {branch} is pushed: open its pull request at https://github.com/{repo}/compare/{branch}?expand=1"
+    if github.rate_limited(e):
+        return f"GitHub rate limited the factory while it opened the pull request in {repo} (HTTP {e.code}), and it did not clear in time. {by_hand}"
+    if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403, 404):
+        return (f"GitHub refused to open the pull request in {repo} (HTTP {e.code}): the token may be missing the Pull requests: write "
+                f"permission on it. {by_hand}")
+    return f"the pull request in {repo} could not be opened ({type(e).__name__}: {str(e)[:200]}). {by_hand}"
+
+
+def open_pr(gh: GitHub, repo: str, branch: str, title: str, body: str, draft: bool = False) -> str:
+    """Open the pull request of a branch that is already pushed. The work is done by then, so a rate limit or a GitHub hiccup is
+    waited out (several minutes) instead of failing the run; when an earlier try's answer was lost, the pull request it opened is
+    found. Raises PROpenFailed naming the cause (rate limited, or a missing permission)."""
+    for attempt in range(PR_STEP_TRIES):
+        try:
+            return gh.create_pr(repo, branch, gh.default_branch(repo), title, body, draft=draft)
+        except Exception as e:
+            if attempt and isinstance(e, urllib.error.HTTPError) and e.code == 422:      # "a pull request already exists"
+                try:
+                    found = [p["html_url"] for p in gh.open_pulls(repo, branch) if p["head"]["ref"] == branch]
+                except Exception:
+                    found = []
+                if found:
+                    return found[0]
+            limited = github.rate_limited(e)
+            if attempt == PR_STEP_TRIES - 1 or not (limited or github._transient(e)):
+                raise PROpenFailed(pr_failure(e, repo, branch)) from e
+            log.warning("opening the pull request of %s in %s failed (%s), trying again", branch, repo, "rate limited" if limited else type(e).__name__)
+            time.sleep(github.rate_limit_wait(e, PR_STEP_MAX_WAIT) if limited else PR_STEP_WAIT)
+    raise AssertionError("unreachable")
+
+
 def _neutral(text: str) -> str:
     """Stop untrusted text from closing the XML-ish wrappers the prompt uses."""
     return text.replace("</", "<​/")
@@ -263,11 +308,12 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                  review: dict | None = None, attachments: list | None = None,
                  design_imports: list | None = None, conversation: list | None = None, stages: tuple = (), released: str = "", follow: str = "",
                  missed_images: int = 0, judge: str = "", history: list | None = None, notes: bool = False,
-                 milestones: list | None = None, findings: str = "") -> str:
+                 milestones: list | None = None, split_at: tuple | None = None, findings: str = "") -> str:
     """judge: the open questions put to the second-opinion role (judges.agent_brief); history: a person's earlier answers in the repository.
     conversation: (author, text) turns of the ticket chat (chat.prompt_turns), untrusted data; stages: the names the chat may propose.
     missed_images: how many pictures in the GitHub issue could not be copied in (a fixed line says so).
     notes: the ticket carries the meeting notes label (split.notes_label), so the analyst always considers a split.
+    split_at: (min areas, min plan items) at which the architect may propose splitting its plan; None when that is off.
     findings: the automated review that said Needs changes or Blocking issues (reviewgate.py), for a build fix round on the PR branch.
     review: a person's notes on the screens (reviewnotes.for_designer), told to the designer only.
     backlog: the project manager's tickets ({number, title, labels, body}, untrusted text, and when known repo, pinned_priority,
@@ -289,7 +335,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
         if role == "designer" and design_files:
             task += design_files_rules(design_dir)
         if role in STAGE_TO_ROLE.values():
-            task += stage_rules(role, notes)
+            task += stage_rules(role, notes, split_at)
         if role == "reviewer":
             task += follow
         if role == "designer" and review:
@@ -395,7 +441,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
 
 
 def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: HarnessCfg | None = None,
-                design_dir: str | None = None) -> list[str]:
+                design_dir: str | None = None, ro_mounts: list | None = None) -> list[str]:
     harness = harness or default_harnesses(rn)["claude-code"]
     # Podman maps the host user onto the container user (keep-id). Docker has no such flag: run as uid 1000 and rely on
     # the workspace being world-writable, which run_task arranges.
@@ -405,6 +451,7 @@ def sandbox_cmd(rn: RunnerCfg, route: Route, name: str, d: Path, harness: Harnes
         "--security-opt=no-new-privileges", "--pids-limit=256", f"--memory={rn.memory}", f"--cpus={rn.cpus}",
         "--tmpfs", "/tmp:rw,size=512m", "--tmpfs", "/home/agent:rw,size=512m,mode=1777",
         "-v", f"{d/'work'}:/work:rw", "-v", f"{d/'task'}:/task:ro", "-v", f"{d/'out'}:/out:rw",
+        *[x for host, inside in (ro_mounts or []) for x in ("-v", f"{host}:{inside}:ro")],
         "-v", f"{rn.proxy_socket}:/run/proxy.sock",
         "--env-file", harness.env_file,
         "-e", f"AGENT_COMMAND={harness.command}",
@@ -467,8 +514,8 @@ def publish_design_files(rn: RunnerCfg, gh: GitHub, home_repo: str, num: int, ti
         sha = git(["rev-parse", "HEAD"], base, env).stdout.strip()
         ref = sha if re.fullmatch(r"[0-9a-f]{40}", sha) else branch          # a commit link outlives the branch
         push_factory_branch(base, branch, env)
-        pr = gh.create_pr(
-            r, branch, gh.default_branch(r), f"[factory] design mockups for {tracker.display(num)}: {title[:60]}",
+        pr = open_pr(
+            gh, r, branch, f"[factory] design mockups for {tracker.display(num)}: {title[:60]}",
             f"Static design canvases (`.dc.html`, the Claude Design canvas format) written by the designer agent for {tracker.ref(home_repo, num)}. "
             "They are new files only; nothing else changes.\n\nOpen them in Claude Design (design-sync), or merge "
             "this draft to keep them with the repository. Treat them as a first draft.\n\n"
@@ -509,10 +556,19 @@ def run_chat(cfg: Config, repo: str, issue: dict, route: Route, comments: list, 
     return _quick_run(cfg, route, f"chat-{num}", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
 
 
-def run_factory_chat(cfg: Config, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
+def run_factory_chat(cfg: Config, route: Route, prompt: str, sink: dict | None = None, code: list | None = None) -> RunResult:
     """One reply of the factory chat (factory.factorychat): the prompt carries the orchestrator's redacted snapshot of the tickets and
-    settings; the run is the same sealed, repository-less sandbox as a ticket chat reply, with the [chat] limits."""
-    return _quick_run(cfg, route, "factory-chat", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
+    settings; the run is the same sealed sandbox as a ticket chat reply (no network, no token), plus `code`: read-only copies of the
+    repositories (codecopy.mounts) under /work/code."""
+    c = cfg.chat
+    return _quick_run(cfg, route, "factory-chat", prompt, c.factory_max_turns, c.factory_timeout_seconds, sink, code)
+
+
+def run_video_writer(cfg: Config, route: Route, prompt: str, sink: dict | None = None, code: list | None = None) -> RunResult:
+    """The scenes of a video asked for in the factory chat (factory.videos.make_brief): the prompt carries the brief and the
+    material; the run is the same sealed sandbox as a factory chat reply, with the same read-only code."""
+    c = cfg.chat
+    return _quick_run(cfg, route, "video-writer", prompt, c.factory_max_turns, c.factory_timeout_seconds, sink, code)
 
 
 def run_interview(cfg: Config, draft_id: int, route: Route, prompt: str, sink: dict | None = None) -> RunResult:
@@ -528,8 +584,9 @@ def run_evaluation(cfg: Config, route: Route, prompt: str, sink: dict | None = N
     return _quick_run(cfg, route, "evaluate", prompt, ev.max_turns, ev.timeout_seconds, sink)
 
 
-def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: int, timeout: int, sink: dict | None) -> RunResult:
-    """A read-only run with no repository: an empty /work, the prompt, and only the agent's text back."""
+def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: int, timeout: int, sink: dict | None,
+               ro_mounts: list | None = None) -> RunResult:
+    """A read-only run with no repository: an empty /work (plus `ro_mounts`, read-only), the prompt, and only the agent's text back."""
     rn = cfg.runner
     harness = harness_for(cfg, route.harness)
     if harness is None or not harness.enabled:
@@ -550,7 +607,7 @@ def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: in
         name = f"factory-{label}-{secrets.token_hex(3)}"
         quick = replace(rn, max_turns=max_turns, timeout_seconds=timeout)
         try:
-            proc = subprocess.run(sandbox_cmd(quick, route, name, d, harness), timeout=timeout, check=False,
+            proc = subprocess.run(sandbox_cmd(quick, route, name, d, harness, ro_mounts=ro_mounts), timeout=timeout, check=False,
                                   capture_output=True, text=True)
         except subprocess.TimeoutExpired:
             subprocess.run([rn.engine, "kill", name], check=False, capture_output=True)
@@ -725,7 +782,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
                          screen_retry["text"] if screen_retry else "", verify_retry["text"] if verify_retry else "", review, attached, imported,
                          conversation, released=released, follow=follow, missed_images=missed_images, judge=judge, history=history,
                          notes=role == "analyst" and cfg.split.notes_label in {lb.get("name") for lb in issue.get("labels") or [] if isinstance(lb, dict)},
-                         milestones=milestones, findings=findings))
+                         milestones=milestones, findings=findings,
+                         split_at=(cfg.split.architect_min_areas, cfg.split.architect_min_items) if role == "architect" and cfg.split.architect else None))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
@@ -899,8 +957,8 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             git([*ident, "commit", "-q", "-m", f"Fix {tracker.ref(repo, num)}: {issue['title'][:60]}\n\nAutomated change for {tracker.ref(repo, num)}."], base, env)
             push_factory_branch(base, branch, env)
             pushed.append(r)
-            urls.append(gh.create_pr(
-                r, branch, gh.default_branch(r), f"[factory] {issue['title'][:80]}",
+            urls.append(open_pr(
+                gh, r, branch, f"[factory] {issue['title'][:80]}",
                 f"Automated change for {tracker.ref(repo, num)} (harness: {route.harness}, model: {route.model}, effort: {route.effort}).\n\n"
                 "Generated by an agent in a sandbox. **Review carefully before merging.**\n\n"
                 + ("**This change updates screen baseline images** (`" + cfg.screens.baseline_dir + "`). Review them before merging: "
@@ -932,6 +990,9 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
         return RunResult("pr", f"{len(urls)} pull request(s) opened{held_note}", " ".join(urls), images=built_images, held=held)
     except NeedsPerson as e:
         return RunResult("needs-person", str(e))
+    except PROpenFailed as e:
+        log.error("pushed, but no pull request: %s", e)
+        return RunResult("failed", str(e) + (f" (branches pushed in: {', '.join(pushed)})" if len(pushed) > 1 else ""))
     except Exception as e:
         log.exception("run failed")
         extra = f" (branches already pushed in: {', '.join(pushed)})" if pushed else ""

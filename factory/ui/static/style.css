@@ -1745,3 +1745,23 @@ main > [data-flash] { position:sticky; top:8px; z-index:40; box-shadow:0 8px 24p
 .ak-card { margin-top:1rem; } .ak-card h3 { margin-top:0; } .ak-list td form { margin:0; }
 .ak-add { max-width:28rem; margin-top:.8rem; } .ak-add .field { margin-bottom:.6rem; } .ak-add input[type=checkbox] { width:auto; }
 .ak-token, .ak-token + p + pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+
+/* Factory chat: the conversations beside the chat; on a phone, a folded list above it. */
+.fc-layout { display:flex; gap:1.5rem; align-items:flex-start; } .fc-main { flex:1; min-width:0; }
+.fc-threads { flex:0 0 16rem; min-width:0; display:flex; flex-direction:column; gap:.6rem; position:sticky; top:1rem; }
+.fc-narrow { display:none; } .fc-list ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; max-height:60vh; overflow-y:auto; }
+.fc-list a { display:flex; flex-direction:column; padding:.45rem .7rem; border-radius:6px; color:var(--muted); text-decoration:none; }
+.fc-list a:hover, .fc-list a.active { background:var(--bg); color:var(--text); } .fc-list a.active { box-shadow:inset 2px 0 0 var(--accent); }
+.fc-t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .fc-when { font-size:.8rem; }
+.fc-clean > summary { list-style:none; cursor:pointer; } .fc-clean > summary::-webkit-details-marker { display:none; }
+.fc-clean form { margin-top:.5rem; } .fc-del { margin-top:1rem; } #va-text { width:100%; }
+@media (max-width:700px) {
+  .fc-layout { flex-direction:column; gap:.75rem; } .fc-threads { flex-basis:auto; position:static; width:100%; }
+  .fc-wide { display:none; } .fc-narrow { display:block; }
+  .fc-list > summary { display:flex; align-items:center; gap:.4rem; min-height:44px; padding:0 .8rem; border:1px solid var(--line2); border-radius:8px; cursor:pointer;
+                       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fc-list ul { margin-top:.4rem; max-height:50vh; }
+  .fc-list a { min-height:44px; justify-content:center; }
+}
+.va-convo { margin:0 0 1.5rem; } .va-head { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; justify-content:space-between; }
+.va-head h2 { margin:0; }
