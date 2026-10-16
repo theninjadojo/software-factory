@@ -7,6 +7,7 @@ from urllib.parse import quote, urlencode
 
 from .. import db as dbm
 from .. import designfiles
+from .. import reviewgate
 from .. import version
 from ..sanitize import md_render
 from ..tracker import display, is_local
@@ -282,7 +283,7 @@ def run_what(r: dict) -> str:
     if r["kind"] == "build":
         return "Build opened PR" if r["pr_urls"] else "Build"
     if r["kind"] == "fix":
-        return "CI fix round"
+        return "Review fix round" if r.get("stage") == "review-fix" else "CI fix round"
     if r["kind"] == "stage" and r["stage"] in STAGE_WHAT:
         return STAGE_WHAT[r["stage"]]
     return str(r["kind"]) + (" " + str(r["stage"]) if r["stage"] else "")
@@ -352,7 +353,37 @@ def pr_round_line(p: dict, limit: int) -> str:
     return f"Fix round {n} of {limit} needed" if n else "No fix rounds needed"
 
 
-def prs_cards(prs: list[dict], fix_rounds: int = 1) -> str:
+REVIEW_TONE = {reviewgate.GOOD: "good", reviewgate.CHANGES: "warn", reviewgate.BLOCKING: "bad"}
+REVIEW_STATE = {"fixing": "a fix round is running", "held": "a draft until you decide", "override": "merged or marked ready anyway"}
+
+
+def review_html(p: dict) -> str:
+    """The last automated review's verdict of a watched PR (reviewgate.py), with its fix rounds; empty when it was never reviewed."""
+    v = p.get("review_verdict")
+    if v is None:
+        return ""
+    rounds, state = int(p.get("review_rounds") or 0), p.get("review_state") or ""
+    extra = [f"{rounds} review fix round{'' if rounds == 1 else 's'}"] if rounds else []
+    if v != reviewgate.GOOD and state in REVIEW_STATE:
+        extra.append(REVIEW_STATE[state])
+    return (f'<span class="review-v">Review: {badge(v or "no verdict", REVIEW_TONE.get(v, "warn"))}'
+            + (f' <span class="muted">{esc(" · ".join(extra))}</span>' if extra else "") + "</span>")
+
+
+def merge_form(p: dict, csrf: str, label: str = "Merge") -> str:
+    """The Merge button of a watched PR whose checks passed. When its last review was not Looks good the form says so and needs a
+    tick to merge anyway (labels.merge_pull checks the tick again, and takes a draft out of draft first)."""
+    if not csrf or p.get("status") != "passed" or not REPO.match(p.get("repo") or ""):
+        return ""
+    n, v = int(p["number"]), p.get("review_verdict")
+    warn = (f'<label class="merge-warn"><input type="checkbox" name="anyway" value="1" required><span>Merge anyway: the last review said '
+            f'<strong>{esc(v or "nothing readable")}</strong></span></label>' if reviewgate.needs_warning(v) else "")
+    return (f'<form method="post" action="/prs/merge" class="inline merge">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(p["repo"])}">'
+            f'<input type="hidden" name="n" value="{n}">{warn}<button aria-label="{esc(label)} pull request #{n}" '
+            'title="Merges this pull request on GitHub with a merge commit">' + esc(label) + "</button></form>")
+
+
+def prs_cards(prs: list[dict], fix_rounds: int = 1, csrf: str = "") -> str:
     if not prs:
         return '<p class="muted">No pull requests are being tracked yet.</p>'
 
@@ -364,7 +395,8 @@ def prs_cards(prs: list[dict], fix_rounds: int = 1) -> str:
                   if REPO.match(p["repo"]) and GH_URL.match(url) else "")
         return (f'<li class="prcard {cls}"><h3>{esc(p.get("title") or ref)}</h3>'
                 f'<p class="muted">{esc(ref)} · {esc(ago(p["watch_started"] or p["updated"]))} · ticket {ticket_link(p["issue_repo"], p["issue_num"])}</p>'
-                f'<p>CI: {badge(p["status"], cls)}</p><p>{esc(pr_round_line(p, fix_rounds))}</p>{button}</li>')
+                f'<p>CI: {badge(p["status"], cls)}</p><p>{esc(pr_round_line(p, fix_rounds))}</p>'
+                + (f"<p>{rv}</p>" if (rv := review_html(p)) else "") + (f'<div class="pr-acts">{acts}</div>' if (acts := button + merge_form(p, csrf)) else "") + "</li>")
 
     return '<ul class="prcards">' + "".join(card(p) for p in prs) + "</ul>"
 

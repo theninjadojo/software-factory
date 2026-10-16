@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .. import db as dbm
 from .. import plan
+from .. import reviewgate
 from .. import questions as Q
 from .. import tracker
 from .. import why as W
@@ -315,7 +316,7 @@ def list_get(h, q: dict, csrf: str) -> None:
             if db is not None:
                 db.close()
         return _page(h, 200, "Tickets", filters(cfg, repo, state, label, text, [], csrf, stage) + views.prs_summary_line(prs)
-                     + views.prs_cards(prs, cfg.ci.fix_rounds), csrf)
+                     + views.prs_cards(prs, cfg.ci.fix_rounds, csrf), csrf)
     gh = _gh(h)
     if gh is None:
         return _page(h, 200, "Tickets", views.tickets_page(_decisions(h, None)), csrf, NO_TOKEN + " Showing the factory's decisions only.", "bad")
@@ -1057,14 +1058,20 @@ def watched_pr(h, repo: str, n) -> dict | None:
             db.close()
 
 
-def merge_pull(h, repo: str, n) -> str:
+def merge_pull(h, repo: str, n, anyway: bool = False) -> str:
     """Merge a pull request the factory is watching. Only a tracked PR whose checks passed is merged; it is re-read first (open,
-    not a draft, head unchanged) and GitHub still applies the repository's own rules (reviews, required checks)."""
+    head unchanged) and GitHub still applies the repository's own rules (reviews, required checks). A PR whose last automated review
+    was not Looks good (reviewgate.py) is merged only with `anyway` (the form's tick): a draft the review held is then taken out of
+    draft first, and the override is recorded. Any other draft is refused."""
     if not (views.REPO.fullmatch(repo or "") and NUM.match(str(n or ""))):
         raise BadTicket("That is not a pull request.")
     row = watched_pr(h, repo, n)
     if row is None or row["status"] != "passed":
         raise Refused("Only a pull request whose checks passed can be merged here.")
+    warned = reviewgate.needs_warning(row.get("review_verdict"))
+    if warned and not anyway:
+        raise Refused(f"The last automated review of {repo}#{n} said {row['review_verdict'] or 'nothing readable'}. "
+                      "Tick Merge anyway to merge it regardless.")
     gh = _gh(h)
     if gh is None:
         raise NoToken(NO_TOKEN)
@@ -1072,8 +1079,12 @@ def merge_pull(h, repo: str, n) -> str:
         pr = gh.get_pr(repo, int(n))
         if pr.get("merged") or pr.get("state") != "open":
             raise Refused(f"{repo}#{n} is already closed or merged.")
-        if pr.get("draft"):
+        if pr.get("draft") and not warned:
             raise Refused(f"{repo}#{n} is still a draft.")
+        if pr.get("draft") and not gh.mark_ready(repo, int(n)):          # only a factory/ branch is taken out of draft
+            raise Refused(f"{repo}#{n} is a draft that the factory cannot mark ready.")
+        if warned:
+            _review_override(h, repo, int(n))
         gh.merge_pr(repo, int(n), pr["head"]["sha"])
     except urllib.error.HTTPError as e:
         if e.code in (405, 409, 422):
@@ -1084,13 +1095,26 @@ def merge_pull(h, repo: str, n) -> str:
     return f"Merged {repo}#{n}."
 
 
+def _review_override(h, repo: str, n: int) -> None:
+    """Record that a person merged past the review gate. Best effort: the merge itself is what matters."""
+    try:
+        db = sqlite3.connect(h.app.cfg().db_path, timeout=10)
+        try:
+            reviewgate.set_override(db, repo, n)
+        finally:
+            db.close()
+    except sqlite3.Error:
+        log.warning("tickets: could not record the review override of %s#%d", repo, n)
+    log.info("tickets: %s#%d merged past its automated review from the UI", repo, n)
+
+
 def merge_pr(h, form, csrf: str) -> None:
     """Merge from the Tickets > PRs view and the ticket page; the message is shown on the page of the ticket the PR belongs to."""
     repo, n = form.get("repo", ""), form.get("n", "")
     row = watched_pr(h, repo, n)
     back = f"/ticket?repo={quote(row['issue_repo'], safe='')}&n={int(row['issue_num'])}" if row is not None else "/tickets"
     try:
-        msg = merge_pull(h, repo, n)
+        msg = merge_pull(h, repo, n, form.get("anyway") == "1")
     except BadTicket as e:
         return _page(h, 400, "Tickets", "", csrf, str(e), "bad")
     except Refused as e:

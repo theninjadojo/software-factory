@@ -110,6 +110,7 @@ class ReviewCfg:
     fallback_models: tuple[str, ...] = ()
     follow_actions: bool = False         # the reviewer may propose labels or send-backs that a person approves on the ticket page
     follow_labels: tuple[str, ...] = ("review:needs-changes", "review:blocking")
+    fix_rounds: int = 2                  # after Needs changes / Blocking issues: build fix rounds on the PR branch, each reviewed again (0 = none)
 
 
 @dataclass(frozen=True)
@@ -1258,6 +1259,8 @@ def parse(raw: dict) -> Config:
     review = ReviewCfg(**_tuples(raw.get("review", {})))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
+    if isinstance(review.fix_rounds, bool) or not isinstance(review.fix_rounds, int) or not 0 <= review.fix_rounds <= 5:
+        raise ValueError("review.fix_rounds must be a whole number from 0 to 5")
     from .reviewactions import valid_label
     reserved = {gh["trigger_label"], review.label, review.done_label, *(r.label for r in roles)}
     if (not isinstance(review.follow_actions, bool) or not 1 <= len(review.follow_labels) <= 10

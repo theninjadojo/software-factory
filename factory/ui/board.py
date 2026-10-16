@@ -14,7 +14,7 @@ import time
 from urllib.parse import urlencode
 
 from .. import db as dbm
-from .. import cleanup, plan
+from .. import cleanup, plan, reviewgate
 from .. import questions as Q
 from .. import why as W
 from ..tracker import display, is_local
@@ -351,8 +351,11 @@ def _why(state: str, j: dict, prs: list, need, t: dict, at, now: float) -> str:
         why = (f[-1].get("message") or "") if f else ""
         return f'{LABEL.get(at or "", "A step")} failed' + (f": {_clip(plain(why), 90)}" if why else "")
     if state == "prs" and prs:
-        p = next(p for p in prs if views.live_pr(p))
-        return f'PR #{int(p["number"])} · {CI_WORD.get(p.get("status") or "", "checks pending")}'
+        live = [p for p in prs if views.live_pr(p)] or prs
+        p = next((p for p in live if reviewgate.needs_warning(p.get("review_verdict"))), live[0])   # one the review held comes first
+        rv = p.get("review_verdict")
+        return (f'PR #{int(p["number"])} · ' + ("" if rv is None else f'review: {rv or "no verdict"} · ')   # before CI: the line may be cut short
+                + CI_WORD.get(p.get("status") or "", "checks pending"))
     detail = plain((t.get("detail") or "").rsplit(";", 1)[-1])
     return detail[:90] or ("Merged" if prs else "Finished")
 
@@ -628,7 +631,8 @@ def prs_fold(prs: list[dict], fix_rounds: int, csrf: str = "", repo: str = "") -
     """Pull requests folded to one row: each one's checks in a few words, and how many passed, fail or still run."""
     if not prs:
         return views.fold("prs", "Pull requests", "No pull request yet", prs_list(prs, fix_rounds, csrf, repo), head_id="pr-h")
-    words = [f'{_pr_name(p, repo)} {("merged" if p.get("summary") == "merged" else PR_WORD.get(p.get("status") or "", "Checks running").lower())}' for p in prs]
+    words = [f'{_pr_name(p, repo)} {("merged" if p.get("summary") == "merged" else PR_WORD.get(p.get("status") or "", "Checks running").lower())}'
+             + (f', review: {p["review_verdict"] or "no verdict"}' if reviewgate.needs_warning(p.get("review_verdict")) else "") for p in prs]
     tally: dict = {}
     for p in prs:
         tally[_pr_tone(p.get("status") or "watching")] = tally.get(_pr_tone(p.get("status") or "watching"), 0) + 1
@@ -646,13 +650,9 @@ def prs_list(prs: list[dict], fix_rounds: int, csrf: str = "", repo: str = "") -
         url = f'https://github.com/{p["repo"]}/pull/{int(p["number"])}'
         name = _pr_name(p, repo)
         link = f'<a class="mono" href="{esc(url)}" rel="noopener noreferrer" target="_blank">{esc(name)} ↗</a>' if views.REPO.match(p["repo"]) else esc(name)
-        merge = (f'<form method="post" action="/prs/merge" class="inline">{views.csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(p["repo"])}">'
-                 f'<input type="hidden" name="n" value="{int(p["number"])}"><button aria-label="Merge pull request #{int(p["number"])}" '
-                 'title="Merges this pull request on GitHub with a merge commit">Merge</button></form>'
-                 if csrf and status == "passed" and views.REPO.match(p["repo"]) else "")
         rows += (f'<li class="sd-prrow">{link}<span class="sd-prt">{esc(p.get("title") or p["repo"])}</span>'
                  f'<span class="sd-word {tone}">{esc(PR_WORD.get(status, "Checks running"))}</span>'
-                 f'<span class="muted">{esc(views.pr_round_line(p, fix_rounds))}</span>{merge}</li>')
+                 f'<span class="muted">{esc(views.pr_round_line(p, fix_rounds))}</span>{views.review_html(p)}{views.merge_form(p, csrf)}</li>')
     return (f'<ul class="sd-prs">{rows}</ul>' if rows else '<p class="muted sd-fine">No pull request yet. When a build opens one, it appears '
             'here with its checks, the fix rounds and the merge state.</p>')
 

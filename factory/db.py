@@ -4,7 +4,7 @@ import threading
 import time
 
 from . import cleanup, waves
-from . import captures, chat, evaluate, factorychat, scenarios, designfiles, jobs, newproject, plan, reviewnotes, reviewactions, scanner, schedules, screenboard, split, ticketreview, tracker, triage, videos
+from . import captures, chat, evaluate, factorychat, scenarios, designfiles, jobs, newproject, plan, reviewnotes, reviewactions, reviewgate, scanner, schedules, screenboard, split, ticketreview, tracker, triage, videos
 from .render import png_ok
 
 _local = threading.local()
@@ -127,6 +127,7 @@ def connect(path: str) -> sqlite3.Connection:
     ticketreview.ensure_tables(db)
     split.ensure_tables(db)
     reviewactions.ensure_tables(db)
+    reviewgate.ensure_tables(db)
     waves.ensure_tables(db)
     cleanup.ensure_tables(db)
     scenarios.ensure_tables(db)
@@ -578,10 +579,15 @@ def latest_decisions(db, limit: int = 100) -> list[dict]:
 
 
 def watched_prs(db, limit: int = 100) -> list[dict]:
-    return _dicts(db.execute(
-        "SELECT p.repo, p.number, p.issue_repo, p.issue_num, p.status, p.rounds, p.watch_started, p.updated, p.summary, "
-        "(SELECT r.title FROM runs r WHERE r.repo=p.issue_repo AND r.issue=p.issue_num ORDER BY r.id DESC LIMIT 1) AS title "
-        "FROM prs p ORDER BY p.updated DESC LIMIT ?", (limit,)))
+    """The PRs whose CI is watched, newest first, with their last automated review (review_verdict NULL: never reviewed, reviewgate.py)."""
+    cols = ("SELECT p.repo, p.number, p.issue_repo, p.issue_num, p.status, p.rounds, p.watch_started, p.updated, p.summary, "
+            "(SELECT r.title FROM runs r WHERE r.repo=p.issue_repo AND r.issue=p.issue_num ORDER BY r.id DESC LIMIT 1) AS title")
+    try:
+        return _dicts(db.execute(cols + ", v.verdict AS review_verdict, v.rounds AS review_rounds, v.state AS review_state FROM prs p "
+                                 "LEFT JOIN pr_reviews v ON v.repo=p.repo AND v.number=p.number ORDER BY p.updated DESC LIMIT ?", (limit,)))
+    except sqlite3.OperationalError:                # a read-only reader of a database the orchestrator has not upgraded yet
+        return [{**r, "review_verdict": None, "review_rounds": None, "review_state": None}
+                for r in _dicts(db.execute(cols + " FROM prs p ORDER BY p.updated DESC LIMIT ?", (limit,)))]
 
 
 def tickets(db, limit: int = 100) -> list[dict]:
