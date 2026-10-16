@@ -466,13 +466,14 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
         raw = None
     now = time.time()
     snap, cut = factorychat.snapshot(db, raw, cfg, now, secrets)
-    prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets)
+    refs = factorychat.ticket_refs(factorychat.ticket_rows(db, now, cfg.github_issues_enabled)) if cfg.videos.enabled else None
+    prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets, cfg.videos.enabled)
     route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
     run_id, sink = begin_run("factory-chat", "factory", {"number": 0, "title": "Factory chat"}, route), {}     # 0: never a ticket on the board
     res = runner.run_factory_chat(cfg, route, prompt, sink)
     end_run(run_id, res, sink)
     if res.status == "stage":
-        factorychat.add_reply(db, turn, res.output, run_id, secrets, now, cut)
+        factorychat.add_reply(db, turn, res.output, run_id, secrets, now, cut, refs)
         emit("chat", "replied in the factory chat", None, None, run_id)
     elif res.status == "rate-limited":
         factorychat.settle(db, turn["id"], "failed", "The model is rate limited. Try again later.")
@@ -481,6 +482,19 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict) -> None:
     else:
         log.warning("factory chat: turn %s: %s %s", turn["id"], res.status, res.detail[:300])
         factorychat.settle(db, turn["id"], "failed", "The reply could not be written. Try again.")
+
+
+def video_writer(cfg: Config, prompt: str) -> str | None:
+    """The scenes of a video asked for in the factory chat, from a sealed read-only run with the chat's model (videos.make_brief
+    checks them); None when the run did not answer."""
+    route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
+    run_id, sink = begin_run("video-writer", "factory", {"number": 0, "title": "Chat video"}, route), {}
+    res = runner.run_video_writer(cfg, route, prompt, sink)
+    end_run(run_id, res, sink)
+    if res.status != "stage":
+        log.warning("video writer: %s %s", res.status, res.detail[:300])
+        return None
+    return res.output
 
 
 def factory_chat_lane(cfg: Config, config_path: str) -> None:
@@ -2031,7 +2045,7 @@ def poll_once(cfg: Config, gh: GitHub, conn, classifier) -> None:
     except Exception:
         log.exception("screens: Playwright runs failed")        # never stops the poll
     try:
-        videos.tick(cfg, gh, conn, time.time(), lambda: dbm.connect(cfg.db_path), time.time)
+        videos.tick(cfg, gh, conn, time.time(), lambda: dbm.connect(cfg.db_path), time.time, write=lambda p: video_writer(cfg, p))
     except Exception:
         log.exception("review videos failed")                   # never stops the poll
     try:

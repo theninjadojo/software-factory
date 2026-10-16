@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from .. import videos, voices
 from . import labels as L, views
+from ..tracker import display
 from .views import csrf_field, esc
 
 BADGE = {"queued": ("Making…", "blue"), "making": ("Making…", "blue"), "ready": ("Ready", "good"), "skipped": ("Skipped", "warn"),
@@ -157,14 +158,16 @@ def player_get(h, q: dict, csrf: str) -> None:
     vid = int(row["id"])
     lines = "".join(f'<li><span class="mono muted">{esc(videos.clock(t))}</span> {esc(s)}</li>' for t, s in videos.transcript(row))
     stale = ('<div class="card"><p>The pull request has new commits since this video was made.</p></div>' if row["status"] == "stale" else "")
-    body = (f'<h2>{esc(row["pr_repo"])}#{int(row["pr_number"])}</h2>{stale}'
+    head = esc(row["title"]) if row.get("kind") == "brief" else f'{esc(row["pr_repo"])}#{int(row["pr_number"])}'
+    body = (f'<h2>{head}</h2>{stale}'
             f'<video controls preload="metadata" width="100%" src="{_link("/ticket/video/file", vid)}">The video could not be played. Download it instead.</video>'
             f'<p class="muted">{esc(videos.clock(row["seconds"]))} · {int(row["bytes"]) // 1024} KB</p>'
             f'<p><a href="{_link("/ticket/video/file", vid)}&amp;dl=1">Download video</a> · '
             f'<a href="{_link("/ticket/video/transcript", vid)}">Download transcript</a></p>'
             f'<section aria-label="Transcript"><h2>Transcript</h2>' + (f"<ol>{lines}</ol>" if lines else '<p class="muted">No transcript was saved for this video.</p>')
             + "</section>")
-    h._send(200, views.page("Review video", body, "/ticket/video", csrf), extra={"Content-Security-Policy": player_csp(server.HEADERS)})
+    h._send(200, views.page("Video" if row.get("kind") == "brief" else "Review video", body,
+                            "/videos" if row.get("kind") == "brief" else "/ticket/video", csrf), extra={"Content-Security-Policy": player_csp(server.HEADERS)})
 
 
 def file_get(h, q: dict, csrf: str) -> None:
@@ -180,3 +183,64 @@ def transcript_get(h, q: dict, csrf: str) -> None:
         _, row, _ = got
         text = videos.transcript_text(row) or "No transcript was saved for this video.\n"
         h._send(200, text, "text/plain; charset=utf-8", {"Content-Disposition": f'attachment; filename="review-{int(row["id"])}.txt"'})
+
+
+def list_get(h, q: dict, csrf: str) -> None:
+    """The Videos page: the videos asked for in the factory chat, newest first."""
+    cfg = h.app.cfg()
+    shown = L.flash_pop(csrf)
+    if not cfg.videos.enabled:
+        body = '<p>Videos are switched off. Turn them on in <a href="/settings">Settings</a>, Review videos.</p>'
+        return h._send(200, views.page("Videos", body, "/videos", csrf))
+    db = h.app.ro_db()
+    try:
+        rows = videos.briefs(db) if db is not None else []
+    finally:
+        if db is not None:
+            db.close()
+    out = ""
+    for v in rows:
+        word, tone = BADGE.get(v["status"], (v["status"], ""))
+        note = esc(videos.reasons(cfg.videos).get(v["reason"], "The video was not made.")) if v["status"] == "skipped" else (
+            "This video is no longer available." if v["status"] == "removed" else "")
+        ready = v["status"] in ("ready", "stale")
+        acts = (f'<a href="{_link("/ticket/video", v["id"])}">Watch</a> · <a href="{_link("/ticket/video/transcript", v["id"])}">Transcript</a>'
+                if ready else "")
+        again = (f'<form method="post" action="/videos/again" class="inline">{csrf_field(csrf)}<input type="hidden" name="id" value="{int(v["id"])}">'
+                 '<button class="secondary">Make again</button></form>' if v["status"] in ("ready", "stale", "skipped", "removed") else "")
+        tickets = ", ".join(f"{r}{display(n)}" for r, n, _ in videos.sources_of(v))
+        out += (f'<tr><td data-l="Video"><b>{esc(v["title"])}</b><br><span class="muted">{esc(tickets)}</span></td>'
+                f'<td data-l="Status">{views.badge(word, tone)} <span class="muted">{note}</span></td>'
+                f'<td data-l="Length">{esc(videos.clock(v["seconds"])) if ready and v["seconds"] else ""}</td>'
+                f'<td data-l="Made">{esc(views.ago(v["created"]))}</td><td class="actions">{acts} {again}</td></tr>')
+    intro = ('<p class="muted">Videos about some tickets, made from their pull requests and screenshots. Describe one below, or ask in '
+             '<a href="/chat">Chat</a>: the chat picks the tickets and proposes the video, and you decide whether to make it. Review videos '
+             'of one ticket\'s pull requests are on that ticket\'s page.</p>')
+    from .factorychat import _why_not, VIDEO_ASK
+    from .. import factorychat as F
+    why = _why_not(cfg, h.app.state_dir())
+    intro += (f'<form method="post" action="/videos/ask" class="card fc-reply">{csrf_field(csrf)}'
+              '<div class="field"><label for="va-text">Describe a video</label>'
+              f'<textarea id="va-text" name="text" rows="3" maxlength="{F.MAX_TEXT - len(VIDEO_ASK)}" required aria-describedby="va-help" '
+              'placeholder="A two-minute tour of this week\'s board changes, for the team, focused on mobile."></textarea>'
+              '<p class="muted" id="va-help">What it should show, for whom, and roughly how long. It starts a new chat conversation.</p></div>'
+              + (f'<p class="muted">{esc(why)}</p>' if why else '<button>Ask the chat</button>') + '</form>')
+    table = (f'<table class="stack" aria-live="polite"><thead><tr><th>Video</th><th>Status</th><th>Length</th><th>Made</th><th></th></tr></thead><tbody>{out}</tbody></table>'
+             if out else '<p class="muted">No videos yet.</p>')
+    h._send(200, views.page("Videos", intro + table, "/videos", csrf, flash=shown[0] if shown else None,
+                            flash_kind=shown[1] if shown else "ok"))
+
+
+def again_brief_post(h, form, csrf: str) -> None:
+    cfg = h.app.cfg()
+    vid = form.get("id", "")
+    queued = None
+    if cfg.videos.enabled and vid.isdigit() and len(vid) <= 12:
+        db = sqlite3.connect(cfg.db_path, timeout=10)
+        try:
+            queued = videos.again_brief(db, int(vid), time.time())
+        finally:
+            db.close()
+    L.flash_set(csrf, "Queued. The video is made at the next poll." if queued else "Nothing queued: this video is already being made.",
+                "ok" if queued else "bad")
+    h._redirect("/videos")

@@ -19,6 +19,30 @@ is done*):
 The video appears on the ticket's page (**Watch**, **Transcript**). Its link is also posted on the pull request and the ticket.
 When the pull request gets new commits, the video is marked out of date, and **Make again** makes a new one.
 
+## Videos from the chat
+
+With videos on, you can ask for a video about some tickets, for example "a two-minute tour of this week's board changes" or "how
+the login fix works, for the support team". Either describe it in the **Describe a video** box on the **Videos** page, which starts a
+new chat conversation with your description, or ask in any conversation on the **Chat** page.
+
+1. The chat answers with a proposal: a title, a brief (what the video should show) and the tickets it will use. It picks the
+   tickets from what you described, and only ones it can see on the board.
+2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click.
+3. The video is made by the same worker as review videos and counts toward the same daily limit. When it is ready, or if it
+   is skipped, the conversation that asked for it says so. Made videos are listed on the **Videos** page (`/videos`), with
+   **Watch**, **Transcript** and **Make again**.
+
+How it is made:
+- **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the
+  changed files and their diff hunks) and the screenshots its builds took.
+- **Writer.** A sealed, read-only run with the chat's model and limits (no repository, no GitHub token) gets the brief and the
+  material and writes the scenes. Its output is untrusted and checked like the reviewer's block. A code scene must name a pull
+  request and file from the material, and the lines shown come from that diff. A screen scene must name a screenshot from the
+  material. Anything else is dropped.
+- **Fallback.** With fewer than two usable scenes, the video is the brief, the screenshots and the list of tickets, in fixed
+  wording.
+- Nothing is posted on GitHub for these videos.
+
 ## Voices
 
 | Voice | Where it runs | What leaves the machine |
@@ -59,3 +83,11 @@ A video whose voice cannot be made is skipped with a note on the ticket. Common 
 Remotion is free for individuals and for companies of up to three people. Larger companies need a
 [Remotion company licence](https://www.remotion.dev/license). Piper is MIT-licensed. The bundled voice is trained on LJSpeech, which
 is in the public domain.
+
+## Chat conversations
+
+The **Chat** page keeps separate conversations. Each reply is written with only its own conversation as context (the newest
+`chat.context_turns` turns of it), so a new topic in a new conversation is not coloured by earlier ones. **New conversation**
+starts one; the list beside the chat (a menu above it on a phone) switches between them. **Delete this conversation** and
+**Delete other conversations** clean up; a conversation waiting for a reply is kept. Videos a conversation asked for stay on the
+Videos page when it is deleted. Messages from before conversations existed are kept as one conversation, "Earlier conversation".

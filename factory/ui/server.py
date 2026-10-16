@@ -116,6 +116,12 @@ class App:
         except Exception:
             log.exception("update notice failed")
 
+    def refresh_videos_menu(self) -> None:
+        try:
+            views.VIDEOS["on"] = bool(self.cfg().videos.enabled)
+        except Exception:
+            log.exception("videos menu check failed")
+
     def refresh_classifier_hint(self) -> None:
         """Show the warning while an OpenRouter key is saved and the classifier is still on labels."""
         try:
@@ -719,6 +725,7 @@ class Handler(BaseHTTPRequestHandler):
     def _get(self, path: str, q: dict, csrf: str) -> None:
         self.app.refresh_update_notice()
         self.app.refresh_classifier_hint()
+        self.app.refresh_videos_menu()
         cached = L.needs_cached()                            # the nav count: never a GitHub call, only what the tray already read
         badges = {"/tickets": len(cached)} if cached else None
         page = lambda title, body, **kw: self._send(200, views.page(title, body, path, csrf, badges=badges, **kw))

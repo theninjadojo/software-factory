@@ -164,6 +164,15 @@ def update_banner() -> str:
 
 
 CLASSIFIER_HINT = {"show": False}   # set by the server: an OpenRouter key is saved but the classifier is still on labels
+VIDEOS = {"on": False}              # set by the server: review videos are on, so the menu offers the Videos page
+
+
+def nav_items() -> list:
+    """The main menu: NAV, with Videos after Chat while review videos are on."""
+    if not VIDEOS.get("on"):
+        return list(NAV)
+    i = next((n + 1 for n, (p, _) in enumerate(NAV) if p == "/chat"), len(NAV))
+    return NAV[:i] + [("/videos", "Videos")] + NAV[i:]
 
 
 def classifier_banner() -> str:
@@ -176,7 +185,7 @@ def classifier_banner() -> str:
 def page(title: str, body: str, active: str, csrf: str, nav=None, flash: str | None = None, flash_kind: str = "ok", wide: bool = False, badges: dict | None = None, side: str = "",
          bare: bool = False, full: bool = False) -> str:
     """bare: the body draws its own heading (the Factory and Tickets screens)."""
-    items = list(nav or NAV)
+    items = list(nav or nav_items())
     if active in TICKET_PAGES or active.startswith("/runs/"):
         active = "/tickets"
     count = lambda p: f' <span class="navbadge">{int(badges[p])}</span>' if badges and badges.get(p) else ""
