@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Update a release install of Shikumi to the latest (or a given) release, and roll back if the new version does not start.
 #   ./scripts/update.sh              # latest release
-#   ./scripts/update.sh v0.2.0       # a specific release (also how you go back)
+#   ./scripts/update.sh v0.2.0       # a specific release (also how you go back), or a beta: v0.3.0-beta.1
+# With no tag it takes the latest release, or on the beta channel ($FACTORY_HOME/state/UPDATE_CHANNEL, or SHIKUMI_CHANNEL=beta) the newest beta too.
 #   ./scripts/update.sh --images-only   # used by setup.sh: fetch the images of the installed version, change nothing else
 # Run it in the install folder, on the host. It refuses to run while an agent run is in flight (a restart would kill it).
 # In a git checkout it offers to run `git pull` (with the factory's GitHub token) and `docker compose --profile build build` for you, after asking,
@@ -15,6 +16,10 @@ OWNER="$(echo "${REPO%%/*}" | tr 'A-Z' 'a-z')"
 REGISTRY="ghcr.io/$OWNER"
 run() { if [ -n "${DRY_RUN:-}" ]; then echo "+ $*"; else "$@"; fi; }
 die() { echo "$*" >&2; exit 1; }
+# The newest release on the beta channel: the highest tag, a release or a beta (vX.Y.Z-beta.N sorts below vX.Y.Z), from the releases list.
+newest() { python3 -c 'import json,re,sys
+k=lambda t:(lambda m:m and (int(m[1]),int(m[2]),int(m[3]),0 if m[4] else 1,int(m[4] or 0)))(re.match(r"^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$",t))
+print(max((r["tag_name"] for r in json.load(sys.stdin) if not r.get("draft") and k(r["tag_name"])),key=k))'; }
 
 source_update() {  # a source checkout: ask, then fast-forward with the GitHub token and rebuild the images
   echo "This is a source checkout, not a release install (update.sh is meant for release installs)."
@@ -82,17 +87,21 @@ fi
 
 HAVE="$(cat VERSION 2>/dev/null || echo unknown)"
 TAG="${1:-}"
-if [ -z "$TAG" ]; then
+FACTORY_HOME="$(sed -n 's/^FACTORY_HOME=//p' .env 2>/dev/null | tail -1)"; FACTORY_HOME="${FACTORY_HOME:-/srv/factory}"
+CHANNEL="${SHIKUMI_CHANNEL:-$(cat "$FACTORY_HOME/state/UPDATE_CHANNEL" 2>/dev/null || true)}"   # "beta" (Settings > Updates) also takes betas
+if [ -z "$TAG" ] && [ "$CHANNEL" = beta ]; then
+  TAG="$(curl -fsS -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases?per_page=30" | newest)" \
+    || die "could not read the releases of $REPO (offline, or none published yet?)"
+elif [ -z "$TAG" ]; then
   TAG="$(curl -fsS -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')" \
     || die "could not read the latest release of $REPO (offline, or none published yet?)"
 fi
-[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "not a release tag: $TAG"
+[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || die "not a release tag: $TAG"
 [ "v$HAVE" = "$TAG" ] && { echo "Already on $TAG."; exit 0; }
 echo "Updating Shikumi: v$HAVE -> $TAG"
 
 # Never restart over a run in flight. Pause the factory first, so no run can start between this check and the restart; the pause is
 # lifted on every way out unless a person had paused it already.
-FACTORY_HOME="$(sed -n 's/^FACTORY_HOME=//p' .env 2>/dev/null | tail -1)"; FACTORY_HOME="${FACTORY_HOME:-/srv/factory}"
 PAUSED_BY_US=""
 resume() { if [ -n "$PAUSED_BY_US" ]; then rm -f "$FACTORY_HOME/state/PAUSED"; PAUSED_BY_US=""; fi; }
 trap resume EXIT

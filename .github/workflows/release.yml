@@ -1,7 +1,8 @@
 name: release
 # Releases itself: merge a change to VERSION on main and this workflow runs the whole test workflow (test.yml: unit, browser, images).
 # Only if that passes does it publish the images to GitHub's container registry and create the tag and the GitHub Release (with the files
-# an install needs). Pushing a tag like v0.2.0 by hand still works (it must match VERSION).
+# an install needs). Pushing a tag like v0.2.0 by hand still works (it must match VERSION). A VERSION like 0.3.0-beta.1 makes a beta:
+# a GitHub prerelease whose images are tagged :beta, not :latest, so only installs on the beta channel are offered it.
 # On any other merge to main it exits in seconds: the tag for that VERSION already exists (test.yml still runs on its own push trigger).
 # See docs/releasing.md.
 on:
@@ -89,9 +90,10 @@ jobs:
       - name: Build and push the images
         run: |
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"; TAG="${{ needs.decide.outputs.tag }}"
+          MOVING=latest; case "$TAG" in *-beta.*) MOVING=beta ;; esac      # a beta never moves :latest
           build() {  # name, dockerfile, context
-            docker build -t "ghcr.io/$OWNER/$1:$TAG" -t "ghcr.io/$OWNER/$1:latest" -f "$2" "$3"
-            docker push "ghcr.io/$OWNER/$1:$TAG"; docker push "ghcr.io/$OWNER/$1:latest"
+            docker build -t "ghcr.io/$OWNER/$1:$TAG" -t "ghcr.io/$OWNER/$1:$MOVING" -f "$2" "$3"
+            docker push "ghcr.io/$OWNER/$1:$TAG"; docker push "ghcr.io/$OWNER/$1:$MOVING"
           }
           build shikumi Dockerfile .
           build shikumi-agent sandbox/Dockerfile sandbox

@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
 """Release workflow guard: a release made from a merge to main must be a higher version than every existing v<major>.<minor>.<patch> tag.
+A beta is v<major>.<minor>.<patch>-beta.<n> and sorts below the release it leads to (v0.40.0-beta.2 < v0.40.0).
 Usage: release_guard.py <tag> <ref_type>. A hand-pushed tag (ref_type 'tag') is the maintainer's call and is not compared."""
 import re
 import subprocess
 import sys
 
-PAT = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+PAT = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$")
 
 
 def parse(tag: str):
     m = PAT.match(tag)
-    return tuple(int(x) for x in m.groups()) if m else None
+    if not m:
+        return None
+    a, b, c, n = m.groups()
+    return (int(a), int(b), int(c), 0, int(n)) if n is not None else (int(a), int(b), int(c), 1, 0)
+
+
+def name(v) -> str:
+    return f"v{v[0]}.{v[1]}.{v[2]}" + (f"-beta.{v[4]}" if v[3] == 0 else "")
 
 
 def check(tag: str, existing: list[str]) -> str | None:
     """None when `tag` may be released, else the reason it may not."""
     v = parse(tag)
     if v is None:
-        return f"{tag} is not a version tag (v<major>.<minor>.<patch>)"
+        return f"{tag} is not a version tag (v<major>.<minor>.<patch>, or v<major>.<minor>.<patch>-beta.<n>)"
     top = max((parse(t) for t in existing if parse(t)), default=None)
     if top is not None and v <= top:
-        return f"{tag} is not higher than the latest tag v{'.'.join(map(str, top))}: bump VERSION to a newer number"
+        return f"{tag} is not higher than the latest tag {name(top)}: bump VERSION to a newer number"
     return None
 
 

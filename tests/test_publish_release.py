@@ -104,6 +104,13 @@ class Publish(unittest.TestCase):
         self.assertNotIn("target_commitish", made)
         self.assertFalse(self.gh.releases[0]["draft"])
 
+    def test_a_beta_is_a_prerelease_and_a_release_is_not(self):
+        pr.publish(self.dir, "o/r", "v1.3.0-beta.1", "tok")
+        self.assertTrue(self.gh.releases[0]["created"]["prerelease"])
+        self.gh.releases.clear()
+        pr.publish(self.dir, "o/r", "v1.2.3", "tok")
+        self.assertFalse(self.gh.releases[0]["created"]["prerelease"])
+
     def test_tags_the_given_commit(self):
         pr.publish(self.dir, "o/r", "v1.2.3", "tok", "abc123")
         self.assertEqual(self.gh.releases[0]["created"]["target_commitish"], "abc123")

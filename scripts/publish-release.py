@@ -2,6 +2,7 @@
 """Create a GitHub Release for a tag and upload the files in a folder, with no `gh` CLI (standard library only).
 Safe to run again after a failure: it reuses the release for the tag, uploads only the files it does not have yet, and retries a dropped
 connection. The release is a draft until every file is up, so a half-finished release is never the public "latest".
+A beta tag (vX.Y.Z-beta.N) is published as a prerelease: GitHub never makes it "latest", so stable installs do not see it.
 Env: GH_TOKEN, GITHUB_REPOSITORY, RELEASE_TAG (else GITHUB_REF_NAME), GITHUB_SHA (the commit to tag when the tag does not exist yet); GITHUB_API / GITHUB_UPLOADS override the endpoints (tests).
 Usage: publish-release.py <folder-of-assets>"""
 import http.client
@@ -38,7 +39,7 @@ def publish(folder: Path, repo: str, tag: str, token: str, sha: str = "") -> str
     rels = call("GET", f"{API}/repos/{repo}/releases?per_page=100", token)       # drafts included, newest first
     rel = next((r for r in rels if r.get("tag_name") == tag), None)
     if rel is None:
-        body = {"tag_name": tag, "name": f"Shikumi {tag}", "generate_release_notes": True, "draft": True}
+        body = {"tag_name": tag, "name": f"Shikumi {tag}", "generate_release_notes": True, "draft": True, "prerelease": "-beta." in tag}
         if sha:
             body["target_commitish"] = sha          # creates the tag at this commit when it does not exist yet
         rel = call("POST", f"{API}/repos/{repo}/releases", token, json.dumps(body).encode())

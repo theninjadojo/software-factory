@@ -222,10 +222,28 @@ class Page(UiCase):
             (self.state_dir / SU.LOG).write_text("##STAGE 6/6 health\nThe new version did not come up healthy: rolling back to v0.20.0\n")
             self.assertIn("rolled back", self.get("/updates/status")[2])
 
+    def test_the_channel_is_chosen_on_the_page_and_a_beta_is_marked(self):
+        html = self.get()[2]
+        self.assertIn('name="channel" value="stable" checked', html)
+        with mock.patch("factory.updates.refresh") as refresh:
+            self.assertEqual(self.post("/updates/channel", channel="beta")[0], 303)
+            refresh.assert_called()                                       # the page, and the banner refreshing its stale cache
+        self.assertEqual(updates.channel(self.state_dir), "beta")
+        html = self.get()[2]
+        self.assertIn("now takes betas too", html)
+        self.assertIn('name="channel" value="beta" checked', html)
+        self.known("v9.9.9-beta.1")
+        html = self.get()[2]
+        self.assertIn('v9.9.9-beta.1</strong> <span class="badge warn">beta</span> is available', html)
+        with mock.patch("factory.updates.refresh"):
+            self.post("/updates/channel", channel="nightly")
+        self.assertIn("Pick Stable or Beta", self.get()[2])
+        self.assertEqual(updates.channel(self.state_dir), "beta")
+
     def test_everything_needs_a_session_and_a_csrf_token(self):
         for path in ("/updates", "/updates/status"):
             self.assertEqual(self.req("GET", path)[0], 303)
-        for path in ("/updates/check", "/updates/apply", "/updates/auto"):
+        for path in ("/updates/check", "/updates/apply", "/updates/auto", "/updates/channel"):
             self.assertEqual(self.req("POST", path, "tag=v9.9.9")[0], 303, path)
             self.assertEqual(self.req("POST", path, "tag=v9.9.9", cookie=self.cookie)[0], 403, path)
 

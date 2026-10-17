@@ -28,6 +28,26 @@ change is needed.
 
 Use semantic versions: a patch for fixes, a minor for features that need no action, a major when an install must change its config or data.
 
+## Betas
+
+A beta lets installs that opt in try the next version before everyone else. It is cut from `main` like a release, with a suffix:
+
+1. Set `VERSION` to `X.Y.Z-beta.1` (Settings > Updates and releases > **Beta** opens that PR for the next minor version) and merge it.
+2. The release workflow publishes a GitHub **prerelease** `vX.Y.Z-beta.1`. Its images are tagged `vX.Y.Z-beta.1` and `beta`, never `latest`.
+   GitHub never makes a prerelease "latest", so `install.sh`, stable installs and the update banner on them do not see it.
+3. More changes: **Next beta** (`-beta.2`, ...). Ready: **Release this beta** sets `VERSION` to `X.Y.Z` and publishes it as a normal release.
+
+A beta sorts below its release (`0.40.0-beta.2` < `0.40.0`), and every tag must still be higher than the last one. While a beta is out, the next
+version from `main` is therefore another beta or its release: a fix for the stable version ships in that release (`main` already holds the beta's
+changes anyway).
+
+**Taking betas (an install).** Settings > Updates > **Release channel**: **Stable** (the default) or **Beta**. It writes `state/UPDATE_CHANNEL`.
+On Beta, the banner, Check now, Update now, the nightly update and `update.sh` / `update-native.sh` without a version look at the newest release
+*or* beta. The nightly **Patch releases** mode takes the next beta and the release of the beta you run (the same `X.Y`), not a beta of another
+minor version; **Every release** takes any newer one. Switching back to Stable keeps the beta running until the release that follows it.
+`SHIKUMI_CHANNEL=beta` does the same for one run of a script (`update-worker.sh` included). Verification workers follow the factory's version,
+betas too.
+
 ## Installing from a release (user)
 
 ```bash
@@ -41,7 +61,7 @@ build: the images are pulled. Needs Docker with the compose plugin, curl and pyt
 
 ```bash
 cd shikumi && ./scripts/update.sh          # the latest release
-./scripts/update.sh v0.2.0                 # a specific one, also how you go back
+./scripts/update.sh v0.2.0                 # a specific one, also how you go back (or a beta: v0.3.0-beta.1)
 ```
 
 It pauses the factory for the update and refuses to run while an agent run is in flight. It downloads the release files, pulls the new images, restarts, waits for the UI health check and

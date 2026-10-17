@@ -3,6 +3,7 @@
 # Run as the factory user on the host:
 #   sudo -n -u factory /srv/factory/app/deploy/update-native.sh            # the latest release
 #   sudo -n -u factory /srv/factory/app/deploy/update-native.sh v0.2.1     # a specific one (also how you go back)
+#   (with no tag: the latest release, or on the beta channel, $ROOT/state/UPDATE_CHANNEL or SHIKUMI_CHANNEL=beta, the newest beta too)
 #   update-native.sh --auto          # for the optional timer (deploy/systemd/shikumi-update.timer): applies a newer PATCH release only
 #                                    # (or any newer release when $ROOT/state/AUTO_UPDATE says "all", which Settings -> Updates writes),
 #                                    # and quietly does nothing while a run is in flight
@@ -19,6 +20,10 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 cd "$ROOT"      # the caller's directory may be unreadable to the factory user (python then fails to start)
 run() { if [ -n "${DRY_RUN:-}" ]; then echo "+ $*"; else "$@"; fi; }
 die() { echo "$*" >&2; exit 1; }
+# The newest release on the beta channel: the highest tag, a release or a beta (vX.Y.Z-beta.N sorts below vX.Y.Z), from the releases list.
+newest() { python3 -c 'import json,re,sys
+k=lambda t:(lambda m:m and (int(m[1]),int(m[2]),int(m[3]),0 if m[4] else 1,int(m[4] or 0)))(re.match(r"^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$",t))
+print(max((r["tag_name"] for r in json.load(sys.stdin) if not r.get("draft") and k(r["tag_name"])),key=k))'; }
 stage() { echo "##STAGE $1/6 $2"; }   # progress markers the Updates page reads (factory/ui/updatespage.py); keep the count in step with it
 command -v curl >/dev/null && command -v python3 >/dev/null || die "curl and python3 are required"
 
@@ -33,20 +38,28 @@ api() { curl -fsSL ${TOKEN:+-H "Authorization: Bearer $TOKEN"} -H 'Accept: appli
 
 AUTO=""; [ "${1:-}" = "--auto" ] && { AUTO=1; shift; }
 HAVE="$(cat "$APP/VERSION" 2>/dev/null || echo none)"
+CHANNEL="${SHIKUMI_CHANNEL:-$(cat "$ROOT/state/UPDATE_CHANNEL" 2>/dev/null || true)}"   # "beta" (Settings > Updates) also takes betas
 TAG="${1:-}"
 if [ -z "$TAG" ]; then
   [ -n "${SHIKUMI_TARBALL:-}" ] && die "give the tag with SHIKUMI_TARBALL"
-  TAG="$(api "https://api.github.com/repos/$REPO/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')" \
-    || die "no published release found for $REPO (or the token cannot read it)"
+  if [ "$CHANNEL" = beta ]; then
+    TAG="$(api "https://api.github.com/repos/$REPO/releases?per_page=30" | newest)" || die "no published release found for $REPO (or the token cannot read it)"
+  else
+    TAG="$(api "https://api.github.com/repos/$REPO/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')" \
+      || die "no published release found for $REPO (or the token cannot read it)"
+  fi
 fi
-[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "not a release tag: $TAG"
+[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || die "not a release tag: $TAG"
 [ "v$HAVE" = "$TAG" ] && { echo "Already on $TAG."; exit 0; }
 if [ -n "$AUTO" ]; then       # unattended: a newer patch release of the version already running, or any newer one when the mode file says "all"
   MODE="$(cat "$ROOT/state/AUTO_UPDATE" 2>/dev/null || echo patch)"
   python3 - "$HAVE" "$TAG" "$MODE" <<'PY' || { echo "Automatic update ($MODE): $TAG is not an update I may apply to v$HAVE, leaving it for a person (run update-native.sh by hand)."; exit 0; }
-import sys
-have, new = (tuple(int(x) for x in v.lstrip("v").split(".")) for v in sys.argv[1:3])
-ok = new > have if sys.argv[3].strip() == "all" else (new[:2] == have[:2] and new[2] > have[2])
+import re, sys
+def key(v):   # vX.Y.Z-beta.N sorts below vX.Y.Z
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$", v)
+    return (int(m[1]), int(m[2]), int(m[3]), 0 if m[4] else 1, int(m[4] or 0))
+have, new = key(sys.argv[1]), key(sys.argv[2])
+ok = new > have if sys.argv[3].strip() == "all" else (new[:2] == have[:2] and new > have)
 sys.exit(0 if ok else 1)
 PY
 fi

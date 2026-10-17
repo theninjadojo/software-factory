@@ -15,7 +15,7 @@ SERVICE_FILES = ("shikumi-update.service", "shikumi-update.timer")
 AUTO_FILE = "AUTO_UPDATE"             # state/AUTO_UPDATE: "patch" or "all"; update-native.sh --auto reads it
 LOG = "update.log"
 MODES = ("off", "patch", "all")
-TAG = re.compile(r"v\d{1,4}\.\d{1,4}\.\d{1,4}")
+TAG = re.compile(r"v\d{1,4}\.\d{1,4}\.\d{1,4}(?:-beta\.\d{1,4})?")
 
 
 def root_of(state_dir) -> Path:
