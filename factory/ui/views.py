@@ -386,7 +386,7 @@ def merge_form(p: dict, csrf: str, label: str = "Merge") -> str:
         return ""
     n, v = int(p["number"]), p.get("review_verdict")
     warn = (f'<label class="merge-warn"><input type="checkbox" name="anyway" value="1" required><span>Merge anyway: the last review said '
-            f'<strong>{esc(v or "nothing readable")}</strong></span></label>' if reviewgate.needs_warning(v) else "")
+            f'<strong>{esc(v or "nothing readable")}</strong></span></label>' if reviewgate.needs_warning(v, p.get("review_state")) else "")
     return (f'<form method="post" action="/prs/merge" class="inline merge">{csrf_field(csrf)}<input type="hidden" name="repo" value="{esc(p["repo"])}">'
             f'<input type="hidden" name="n" value="{n}">{warn}<button aria-label="{esc(label)} pull request #{n}" '
             'title="Merges this pull request on GitHub with a merge commit">' + esc(label) + "</button></form>")

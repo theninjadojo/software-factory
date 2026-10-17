@@ -122,6 +122,15 @@ timeout_minutes = 90
 queued_warn_minutes = 15     # CI queued this long without starting: warn (self-hosted runners may be offline)
 manual_wait_hours = 24       # keep watching this long for CI that a person starts by hand (repos with manual-only CI)
 
+# Code review (all of this is also on Settings → Code review). Off by default: it costs a run per review.
+# [review]
+# enabled = true
+# auto = true          # review every PR the factory opens; its PRs open as drafts until the review
+# gate = true          # keep a PR a draft until the review says Looks good. false: it is marked ready after any review, and no fix
+#                      # rounds run (the behaviour before the review gate)
+# fix_rounds = 2       # with gate on, after Needs changes / Blocking issues: build fix rounds on the PR branch, each reviewed again
+#                      # (0 to 5; 0 = none, the PRs stay drafts and a person decides at once)
+
 # Health watchdog (factory-health.timer, every 5 min; a separate process, so it still alerts when the orchestrator is hung or dead).
 # Telegram alert when a check turns bad, a reminder every repeat_hours, and a note when it recovers. Event "health" (shown at every
 # verbosity). Checks: free disk and inodes (state, work dir, container storage), free memory, the orchestrator's poll heartbeat,

@@ -1068,7 +1068,7 @@ def merge_pull(h, repo: str, n, anyway: bool = False) -> str:
     row = watched_pr(h, repo, n)
     if row is None or row["status"] != "passed":
         raise Refused("Only a pull request whose checks passed can be merged here.")
-    warned = reviewgate.needs_warning(row.get("review_verdict"))
+    warned = reviewgate.needs_warning(row.get("review_verdict"), row.get("review_state"))
     if warned and not anyway:
         raise Refused(f"The last automated review of {repo}#{n} said {row['review_verdict'] or 'nothing readable'}. "
                       "Tick Merge anyway to merge it regardless.")

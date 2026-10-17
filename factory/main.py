@@ -647,10 +647,10 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
                        + " and ".join(f"{r}#{n}" for r, n in ups) + " is merged and published ("
                        + "; ".join(waves.how(project.repo(r).publish) for r, _ in ups) + f"), the factory builds {later} against the published version.")
             emit("waves:waiting", f"opened {', '.join(waves.short(r) for r, _ in ups)}; {later} waits for the publish", repo, num)
-        gh.comment(repo, num, f"Opened {res.pr_url} for review." + (" Draft until the automated review says Looks good." if draft else "") + waiting)
+        gh.comment(repo, num, f"Opened {res.pr_url} for review." + ((" Draft until the automated review says Looks good." if cfg.review.gate else " Draft until the automated review is done.") if draft else "") + waiting)
         gh.remove_label(repo, num, WORKING)
         if conn is not None:
-            origin.note(cfg, gh, conn, repo, num, f"pr:{res.pr_url}", f"Opened {res.pr_url} for review." + (" Draft until the automated review says Looks good." if draft else ""))
+            origin.note(cfg, gh, conn, repo, num, f"pr:{res.pr_url}", f"Opened {res.pr_url} for review." + ((" Draft until the automated review says Looks good." if cfg.review.gate else " Draft until the automated review is done.") if draft else ""))
             for u in res.pr_url.split():                  # watch each PR's CI; skip anything that is not a PR URL
                 m = PR_URL.match(u)
                 if m:
@@ -1103,17 +1103,17 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
         if res.status != "stage":
             return res
         links = "\n".join(f"https://github.com/{r}/pull/{n}" for r, n in posted)
-        if verdict == reviewgate.GOOD:
+        if verdict == reviewgate.GOOD or not cfg.review.gate:     # gate off: ready after any review, no fix rounds (as before the gate)
             for r, n in posted:                               # a PR the review was not posted on stays a draft
                 try:
                     gh.mark_ready(r, n)
                 except Exception:
                     log.exception("could not mark %s#%s ready for review", r, n)
                     alert(f"Could not mark {r}#{n} ready for review; it is still a draft.", event="failure")
-            reviewgate.record(conn, prs, repo, num, verdict, "ready")
+            reviewgate.record(conn, posted, repo, num, verdict, "ready")
             if used or reviewgate.HELD_LABEL in {lb.get("name") for lb in issue.get("labels", [])}:
                 gh.remove_label(repo, num, reviewgate.HELD_LABEL)
-            alert(f"Review done: {repo}#{num}: {verdict}" + (f" after {used} fix round(s)" if used else "") + "\n" + links, event="review_done")
+            alert(f"Review done: {repo}#{num}: {verdict or 'no readable verdict'}" + (f" after {used} fix round(s)" if used else "") + "\n" + links, event="review_done")
             return res
         if not verdict:
             hold_for_person(cfg, gh, conn, repo, num, prs, verdict, "the review has no readable verdict line", links)

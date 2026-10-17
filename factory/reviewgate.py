@@ -11,6 +11,9 @@ line never counts as Looks good). main.review_changes then decides:
   nothing, the PRs stay drafts, the ticket gets HELD_LABEL and a person is alerted.
 * No readable verdict: the PRs stay drafts and a person is alerted; there is nothing reliable to fix.
 
+With `review.gate` off none of this applies: the PRs are marked ready after any review (state 'ready', the verdict kept for the
+UI only) and no fix round runs.
+
 A person can still mark a PR ready on GitHub, or merge it anyway from the admin UI after a warning (recorded as an override).
 Nothing here talks to GitHub: this module only parses and keeps state."""
 import re
@@ -24,8 +27,9 @@ HELD_LABEL = "factory:review-held"         # on the ticket while its PRs wait fo
 MAX_FINDINGS = 12000                       # characters of the review handed to a fix round
 HEAD_LINES = 15                            # the verdict must be among the document's first lines
 # "**Verdict**: Needs changes - why", "1. **Verdict:** Looks good", "## Verdict\n\nBlocking issues": the word Verdict at the start of a
-# line (after list or emphasis marks), then separators, then one of the three verdicts as whole words.
-LINE = re.compile(r"^[ \t>*_#\d.)-]*verdict[\s*_:\-–—]*(looks good|needs changes|blocking issues)\b", re.I | re.M)
+# line (after list or emphasis marks), then separators (quotes and backticks too: "Verdict: `Looks good`"), then one of the three
+# verdicts as whole words.
+LINE = re.compile(r"^[ \t>*_#\d.)-]*verdict[\s*_:\-–—`'\"“‘]*(looks good|needs changes|blocking issues)\b", re.I | re.M)
 
 
 def parse(text: str) -> str:
@@ -92,6 +96,7 @@ def set_override(db, repo: str, number: int) -> None:
     db.commit()
 
 
-def needs_warning(verdict: str | None) -> bool:
-    """Merging should come with a warning: the PR was reviewed (verdict is not None) and the last review was not Looks good."""
-    return verdict is not None and verdict != GOOD
+def needs_warning(verdict: str | None, state: str | None = None) -> bool:
+    """Merging should come with a warning: the PR was reviewed (verdict is not None), the last review was not Looks good, and the
+    gate holds it (state is not 'ready': with review.gate off a PR is marked ready after any review, and merges as before)."""
+    return verdict is not None and verdict != GOOD and state != "ready"

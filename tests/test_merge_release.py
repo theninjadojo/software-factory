@@ -105,6 +105,14 @@ class MergePastTheReview(MergeFromPrView):
         self.gh.merge_pr.assert_called_once_with(REPO, 5, "abc")
         self.assertEqual(reviewgate.last(self.db, REPO, 5)["state"], "override")
 
+    def test_with_the_gate_off_a_reviewed_pr_merges_as_before(self):
+        self.reviewed("Needs changes", state="ready", rounds=0)                          # review.gate off: marked ready after the review
+        cookie, csrf = self.session()
+        html = self.req("GET", f"/fragment/ticket?repo={REPO}&n=7", cookie=cookie)[2]
+        self.assertNotIn('name="anyway"', html)
+        self.post(cookie, csrf, "/prs/merge", {"repo": REPO, "n": "5"})
+        self.gh.merge_pr.assert_called_once()
+
     def test_a_looks_good_pr_merges_without_a_tick_and_other_drafts_stay_refused(self):
         self.reviewed("Looks good", state="ready", rounds=0)
         cookie, csrf = self.session()

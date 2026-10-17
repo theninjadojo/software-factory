@@ -224,7 +224,9 @@ class VerdictParsing(unittest.TestCase):
                            ("## Verdict\n\nneeds CHANGES: see below", "Needs changes"), ("> **Verdict** \u2014 Looks good.", "Looks good"),
                            ("Looks good to me, but there is no verdict line", ""), ("", ""), (None, ""),
                            ("Verdict: Looks goodish", ""), ("\n" * 20 + "**Verdict**: Looks good", ""),       # too far down: not the verdict
-                           ("**Verdict**: Needs changes\n**Verdict**: Looks good", "Needs changes")):        # the first line wins
+                           ("**Verdict**: Needs changes\n**Verdict**: Looks good", "Needs changes"),         # the first line wins
+                           ("**Verdict:** `Looks good`", "Looks good"), ("Verdict: 'Needs changes' - x", "Needs changes"),
+                           ('Verdict: "Blocking issues"', "Blocking issues"), ("Verdict: not looks good", "")):
             self.assertEqual(G.parse(text), want, text)
 
     def test_the_reviewer_is_told_to_lead_with_the_machine_read_verdict(self):
@@ -248,8 +250,8 @@ class VerdictParsing(unittest.TestCase):
 
 
 class VerdictGate(unittest.TestCase):
-    def go(self, reviews, fixes=(), rounds=2, conn=None, labels=("factory:ready",)):
-        cfg = replace(CFG, review=ReviewCfg(enabled=True, fix_rounds=rounds))
+    def go(self, reviews, fixes=(), rounds=2, conn=None, labels=("factory:ready",), gate=True):
+        cfg = replace(CFG, review=ReviewCfg(enabled=True, fix_rounds=rounds, gate=gate))
         fake, calls = gate_fake(reviews, fixes)
         gh, conn = GH(), conn or dbm.connect(":memory:")
         alerts = []
@@ -345,6 +347,28 @@ class VerdictGate(unittest.TestCase):
         gh.labels = ["factory:review-held", "stage:reviewed"]
         m.redirect(REVIEW, gh, dbm.connect(":memory:"), "o/r", 5, REVIEW.roles[0])
         self.assertIn(("rm", "factory:review-held"), gh.calls)
+
+    def test_with_the_gate_off_any_review_marks_the_prs_ready_and_no_fix_round_runs(self):
+        from factory import reviewgate
+        for text in (NEEDS, BLOCK, "no verdict line at all"):
+            gh, conn, kinds, _, alerts = self.go([text], gate=False)
+            self.assertEqual(kinds, ["build", "review"])                                 # as before the gate: one review, no fix round
+            self.assertEqual(sorted(gh.ready), [("o/m", 4), ("o/r", 9)])
+            self.assertNotIn(("add", ("factory:review-held",)), gh.calls)
+            self.assertFalse(any(e == "needs_human" for e, _ in alerts))
+            self.assertEqual({x[4] for x in self.state(conn)}, {"ready"})
+            v = reviewgate.last(conn, "o/r", 9)
+            self.assertFalse(reviewgate.needs_warning(v["verdict"], v["state"]))       # merges from the UI without a tick, as before
+        self.assertTrue(reviewgate.needs_warning("Needs changes", "held"))
+
+    def test_the_gate_is_validated(self):
+        base = open("config.example.toml").read()
+        for bad in ("1", '"off"'):
+            with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as g:
+                g.write(base + f"\n[review]\ngate = {bad}\n")
+            with self.assertRaises(ValueError):
+                load(g.name)
+        self.assertTrue(ReviewCfg().gate)
 
     def test_the_cap_is_validated(self):
         base = open("config.example.toml").read()

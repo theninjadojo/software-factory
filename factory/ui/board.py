@@ -352,7 +352,7 @@ def _why(state: str, j: dict, prs: list, need, t: dict, at, now: float) -> str:
         return f'{LABEL.get(at or "", "A step")} failed' + (f": {_clip(plain(why), 90)}" if why else "")
     if state == "prs" and prs:
         live = [p for p in prs if views.live_pr(p)] or prs
-        p = next((p for p in live if reviewgate.needs_warning(p.get("review_verdict"))), live[0])   # one the review held comes first
+        p = next((p for p in live if reviewgate.needs_warning(p.get("review_verdict"), p.get("review_state"))), live[0])   # one the review held comes first
         rv = p.get("review_verdict")
         return (f'PR #{int(p["number"])} · ' + ("" if rv is None else f'review: {rv or "no verdict"} · ')   # before CI: the line may be cut short
                 + CI_WORD.get(p.get("status") or "", "checks pending"))
@@ -632,7 +632,7 @@ def prs_fold(prs: list[dict], fix_rounds: int, csrf: str = "", repo: str = "") -
     if not prs:
         return views.fold("prs", "Pull requests", "No pull request yet", prs_list(prs, fix_rounds, csrf, repo), head_id="pr-h")
     words = [f'{_pr_name(p, repo)} {("merged" if p.get("summary") == "merged" else PR_WORD.get(p.get("status") or "", "Checks running").lower())}'
-             + (f', review: {p["review_verdict"] or "no verdict"}' if reviewgate.needs_warning(p.get("review_verdict")) else "") for p in prs]
+             + (f', review: {p["review_verdict"] or "no verdict"}' if reviewgate.needs_warning(p.get("review_verdict"), p.get("review_state")) else "") for p in prs]
     tally: dict = {}
     for p in prs:
         tally[_pr_tone(p.get("status") or "watching")] = tally.get(_pr_tone(p.get("status") or "watching"), 0) + 1

@@ -283,9 +283,13 @@ class ReviewSettings(AdminCase):
                 ("review.harness", "claude-code")]
         page = self.req("GET", "/settings?section=review", cookie=cookie)[2]
         self.assertIn('name="review.fix_rounds"', page)                                    # the fix-round cap is set here, not in a file
-        self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)
+        self.assertIn('name="review.gate"', page)                                          # and the gate's off switch
+        self.assertIn("Keep a pull request a draft until the review says Looks good", page)
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", form)[0], 303)          # the gate box unticked: off
         cfg = load(str(self.root / "config.toml"))
-        self.assertEqual((cfg.review.enabled, cfg.review.model, cfg.review.auto, cfg.review.fix_rounds), (True, "opus", True, 3))
+        self.assertEqual((cfg.review.enabled, cfg.review.model, cfg.review.auto, cfg.review.fix_rounds, cfg.review.gate), (True, "opus", True, 3, False))
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", form + [("review.gate", "1")])[0], 303)
+        self.assertTrue(load(str(self.root / "config.toml")).review.gate)
         bad = [x for x in form if x[0] != "review.effort"] + [("review.effort", "extreme")]
         self.assertEqual(self.post(cookie, csrf, "/settings/save", bad)[0], 422)
         too_many = [x for x in form if x[0] != "review.fix_rounds"] + [("review.fix_rounds", "9")]
