@@ -55,6 +55,11 @@ class Proposal(unittest.TestCase):
         self.assertIn("switched off", F.build_prompt("snap", [], videos=False))
         self.assertIn("factory-proposal", F.build_prompt("snap", [], videos=True))
         self.assertNotIn("VIDEOS.", F.build_prompt("snap", []))
+        on = F.build_prompt("snap", [], videos=True, screens=["o/r: login"])
+        self.assertIn("do not propose it and do not offer a lesser video", on)
+        self.assertIn("- o/r: login", on)
+        self.assertIn("(none)", F.build_prompt("snap", [], videos=True))
+        self.assertNotIn("MISSING.", F.build_prompt("snap", [], videos=False))
 
 
 WRITER = """```factory-video
@@ -113,11 +118,15 @@ class Brief(Base):
         notes = [t for t in F.turns(self.db, self.thread) if t["video_id"] == row["id"] and not t["proposal"]]
         self.assertIn("is ready", notes[0]["body"])
 
-    def test_without_a_usable_writer_the_wording_is_fixed(self):
-        row = self.queued()
-        videos.work_one(self.cfg, FakeGH(), self.db, row, lambda: 2000.0, self.container(), write=lambda p: "no block")
-        row = videos.get(self.db, row["id"])
-        self.assertEqual((row["status"], row["narration"]), ("ready", "fixed"))
+    def test_without_a_usable_writer_it_is_skipped_and_said(self):
+        title_only = '```factory-video\n{"scenes": [{"kind": "title", "title": "T", "say": "S."}, {"kind": "points", "title": "P", "points": ["a"], "say": "S."}]}\n```'
+        for out in ("no block", title_only, None):
+            row = self.queued()
+            videos.work_one(self.cfg, FakeGH(), self.db, row, lambda: 2000.0, self.container(),
+                            write=None if out is None else (lambda p, out=out: out))
+            row = videos.get(self.db, row["id"])
+            self.assertEqual((row["status"], row["reason"]), ("skipped", "writer_failed"), out)
+            self.assertIn("did not write a usable video", F.turns(self.db, self.thread)[-1]["body"])
 
     def test_a_failed_container_is_skipped_with_a_note(self):
         row = self.queued()
@@ -165,9 +174,17 @@ class Brief(Base):
         gh, run, seen = FakeGH(), self.container(), {}
         row = self.queued()
         cfg = replace(self.cfg, screens=sc)
-        videos.work_one(cfg, gh, self.db, row, lambda: 2000.0, run, write=lambda p: seen.setdefault("prompt", p) and "no block")
+        writer = WRITER.replace("x/y#9:home-desktop", "board:o/r:login")
+        videos.work_one(cfg, gh, self.db, row, lambda: 2000.0, run, write=lambda p: seen.setdefault("prompt", p) and writer)
         self.assertIn("- board:o/r:login: login screen", seen["prompt"])
-        self.assertEqual([s["kind"] for s in run.seen["script"]["scenes"]], ["title", "shot", "shot", "points"])
+        self.assertEqual([s.get("title") for s in run.seen["script"]["scenes"] if s["kind"] == "shot"], ["home desktop screen", "login screen"])
+
+    def test_with_nothing_to_show_it_is_skipped_and_said(self):
+        self.db.execute("DELETE FROM run_images")
+        row = self.queued()
+        videos.work_one(self.cfg, FakeGH(), self.db, row, lambda: 2000.0, self.container(), write=lambda p: WRITER)
+        self.assertEqual(videos.get(self.db, row["id"])["reason"], "no_screens")
+        self.assertIn("no screens to show", F.turns(self.db, self.thread)[-1]["body"])
 
     def test_make_again_queues_once(self):
         row = self.queued()

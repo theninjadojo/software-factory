@@ -76,7 +76,19 @@ def reasons(vc) -> dict[str, str]:
             "too_long": f"The video was longer than {_minutes(vc.max_seconds)}.",
             "too_large": f"The video was larger than {vc.max_mb} MB.",
             "closed": "The pull request is no longer open.",
-            "github": "The pull request could not be read from GitHub."}
+            "github": "The pull request could not be read from GitHub.",
+            "demo_unqueued": "The demo tests could not be run: no worker runs this repository's Playwright tests. Set up its "
+                             "Playwright run on Settings → Screens and turn on Workers, then Make again.",
+            "demo_timeout": f"The demo tests did not finish on a worker within {_minutes(DEMO_WAIT)}. Check that a worker is online "
+                            "(Settings → Workers), then Make again.",
+            "demo_failed": "A demo test failed, so the flow cannot be shown as working. Fix the test (its run is under Tests), then "
+                           "Make again.",
+            "demo_no_steps": "The demo run took no step screens (only JavaScript Playwright suites have steps). Check the test and "
+                             "the worker's Playwright run, then Make again.",
+            "no_screens": "There were no screens to show: the Screens board has none of these repositories, the tickets' builds "
+                          "took none, and no demo test was run. Refresh the Screens board (Settings → Screens), or ask for a demo "
+                          "of a flow that has a Playwright test.",
+            "writer_failed": "The video writer did not write a usable video. Make again, or ask for it differently in the chat."}
 
 
 def _minutes(s: int) -> str:
@@ -787,7 +799,8 @@ def work_one(cfg, gh, db, row: dict, now_fn, run=subprocess.run, post=None, writ
 # A person confirms a proposal of the factory chat (title, brief, tickets); the row is kind 'brief'. Its material is what the factory
 # already holds about those tickets: their build PRs' diffs (read from GitHub) and their builds' screenshots. A sealed writer run
 # (no repository, no GitHub token) turns the brief and the material into scenes; that output is untrusted and checked like the
-# reviewer's block, and a scene may only point at material named in its prompt. Fewer than two usable scenes: fixed wording.
+# reviewer's block, and a scene may only point at material named in its prompt. Fewer than two usable scenes, or none showing a
+# screen or code: the video is skipped with a note saying so, never replaced by fixed wording.
 # A video may also name Playwright test files to demo: before it is made, a worker runs them on the default branch with a screenshot
 # after each step (captures.queue_demo), and those steps, in order and with what each did, are material the writer can show.
 # The Screens board's newest shots (the app as it looks now on the default branch) are material too. A video shows code (diff hunks
@@ -987,7 +1000,7 @@ def demo_jobs(row: dict) -> dict[str, int] | None:
 
 def demo_pending(cfg, gh, db, row: dict, now: float) -> bool:
     """True while a brief video waits for its demo runs: the first time, they are queued here. It waits until each run is done, or
-    DEMO_WAIT after the video was asked for; a run that could not be queued or that failed leaves the video without its steps."""
+    DEMO_WAIT after the video was asked for; then demo_missing says what, if anything, stops the video from being made."""
     from . import captures, jobs
     want = demo_of(row) if row.get("kind") == "brief" else {}
     if not want:
@@ -1138,34 +1151,27 @@ def brief_scenes(text: str, mat: dict, cfg=None) -> list[dict]:
     return out[:MAX_SCENES]
 
 
-def fixed_brief(row: dict, mat: dict, cfg=None) -> list[dict]:
-    """The video without the writer: the brief, the start of each file it names (only when code is to be shown), the screens, and the
-    tickets it covers, in fixed wording."""
-    scenes = [{"kind": "title", "title": row["title"], "subtitle": clean(row["brief"], 120), "say": clean(row["brief"], 300) or row["title"]}]
-    for ref in files_of(row)[:3] if mat.get("code", True) else []:
-        s = code_scene(cfg, ref, 1, 30, f"The start of {speakable(ref.partition(':')[2], 160)}.")
-        if s:
-            scenes.append(s)
-    demo = mat.get("demo") or {}
-    for _repo, _test, outcome, keys in (demo.get("tests") or [])[:1]:          # the first test's steps, in order
-        for key in keys[:MAX_SCENES - 2 - len(scenes)]:
-            n, title = demo["steps"][key]
-            scenes.append({"kind": "shot", "screen": key, "title": demo["titles"][key], "say": f"Step {n}. {speakable(title, 200)}."})
-        if outcome == "fail":
-            scenes.append({"kind": "points", "title": "This test failed", "points": ["The screens stop where the test did."],
-                           "say": "The test behind this demo failed, so the screens stop where it did."})
-    for key in [k for k in mat["shots"] if k not in demo.get("steps", {})][:max(0, MAX_SCENES - 1 - len(scenes))]:
-        name = speakable(key.rpartition(":")[2].replace("-", " "), 60)
-        scenes.append({"kind": "shot", "screen": key, "title": f"{name} screen", "say": f"The {name} screen."})
-    names = [clean(t, 140) or ref for ref, t in mat["tickets"]][:MAX_POINTS]
-    if names:
-        scenes.append({"kind": "points", "title": "In this video", "points": names,
-                       "say": f"This video covers {len(mat['tickets'])} ticket{'' if len(mat['tickets']) == 1 else 's'}."})
-    return scenes
+def demo_missing(db, row: dict, demo: dict) -> str:
+    """The reason key (of reasons()) when a demo the video asked for cannot be shown in full, else ''. A video is never made without
+    the steps it promised."""
+    from . import jobs
+    queued = demo_jobs(row) or {}
+    for repo in demo_of(row):
+        job = jobs.get(db, queued[repo]) if queued.get(repo) else None
+        if job is None:
+            return "demo_unqueued"
+        if job["status"] not in jobs.FINAL:
+            return "demo_timeout"
+        if job["status"] != "passed" or any(t.get("outcome") == "fail" for t in jobs.tests(job) if isinstance(t, dict)):
+            return "demo_failed"
+        if not any(r == repo for r, _t, _o, _k in demo.get("tests") or []):
+            return "demo_no_steps"
+    return ""
 
 
 def make_brief(cfg, gh, db, row: dict, write=None, run=subprocess.run, post=None) -> dict:
-    """Make one video asked for in the factory chat (its row is already 'making'). The finished fields; raises Skip with a reason.
+    """Make one video asked for in the factory chat (its row is already 'making'). The finished fields; raises Skip with a reason
+    when anything it needs is missing (a demo that did not run in full, no screens, no usable writer output): never a lesser video.
     `write(prompt)` runs the writer (with the code copies mounted when the chat may read code) and returns its text."""
     from . import codecopy
     mat = material(gh, db, sources_of(row))
@@ -1177,17 +1183,19 @@ def make_brief(cfg, gh, db, row: dict, write=None, run=subprocess.run, post=None
     mat["titles"] = {**board["titles"], **mat["demo"]["titles"]}
     mat["board"] = board["titles"]
     mat["code"] = bool(row.get("show_code"))
+    if (missing := demo_missing(db, row, mat["demo"])):
+        raise Skip(missing)
+    if not mat["shots"] and not mat["code"]:
+        raise Skip("no_screens")
     code = codecopy.listing(cfg) if cfg.chat.factory_code else ""
-    scenes, narration = [], "fixed"
+    scenes, narration = [], "writer"
     if write is not None:
         try:
             scenes = brief_scenes(write(writer_prompt(cfg.videos, row, mat, code)) or "", mat, cfg)
         except Exception:
             log.exception("videos: the writer run failed")
-            scenes = []
-        narration = "writer"
-    if len(scenes) < 2:
-        scenes, narration = fixed_brief(row, mat, cfg), "fixed"
+    if len(scenes) < 2 or not any(sc["kind"] in ("shot", "code") for sc in scenes):
+        raise Skip("writer_failed")
     engine, voice_id = voice_for(cfg.videos, (row.get("ask_voice") or "", row.get("ask_voice_id") or ""))
     images = {f"s{i:02d}.png": mat["shots"][s["screen"]] for i, s in enumerate(scenes, 1) if s["kind"] == "shot"}
     return {**_render(cfg, row, scenes, images, engine, voice_id, run, post), "narration": narration}

@@ -74,8 +74,14 @@ DEMO = ("DEMO. A video can also show a flow running in the app (signing in, chec
         "these repositories has a Playwright test that walks through it. Find that test in the mounted code (spec files that do the "
         "steps, not only check that a page loads) and add \"demo\": [\"owner/repo:path/to/flow.spec.ts\"] (0 to 3 test files, the path "
         "from the repository root) to the proposal. When the person makes the video, a worker runs those tests and the video shows "
-        "their steps. If no test walks through the flow, say so: the video then shows the screens the Screens board has. Repositories "
-        "that can demo:\n")
+        "their steps. If no test walks through the flow, do not propose the video (see MISSING). Repositories that can demo:\n")
+MISSING = (
+    "MISSING. Before proposing a video, check that it can show what the person asked for. If anything is missing, do not propose "
+    "it and do not offer a lesser video instead: say exactly what is missing and what would fix it. For example: a flow (capturing "
+    "a record, signing in) that no Playwright test walks through (fix: a ticket to add a test that does it end to end); a "
+    "repository with no demo runs (fix: set up its Playwright run on Settings → Screens, with Workers on); no screens of the app "
+    "on the Screens board (fix: refresh it on the Screens page). The factory skips a video, with a note saying why, when its "
+    "material turns out to be missing.\nScreens on the Screens board now:\n")
 VIDEOS_OFF = ("VIDEOS. If the person asks for a video, say that videos are switched off and can be turned on in "
               "Settings → Review videos. Do not write a proposal block.\n")
 
@@ -510,12 +516,14 @@ def _neutral(text: str) -> str:
 
 
 def build_prompt(snap: str, conversation: list, secrets: tuple = ((), ()), videos: bool | None = None, code: str = "",
-                 demo: list = ()) -> str:
+                 demo: list = (), screens: list = ()) -> str:
     """videos: None leaves video proposals out of the prompt; True allows one; False says they are switched off. code: the listing of
     the mounted repository copies (codecopy.listing), '' for none. demo: the repositories whose Playwright tests a video can run
-    (only offered with videos on and code to find the tests in)."""
+    (only offered with videos on and code to find the tests in). screens: the Screens board's pages, as 'owner/repo: page', so the
+    chat can tell when a video would have nothing to show."""
     convo = "".join(f'<turn author="{"agent" if a == "agent" else "person"}">\n{_neutral(redact(t, secrets))}\n</turn>\n'
                     for a, t in conversation)
     where = (CODE + _neutral(code)) if code else NO_CODE
     demos = (DEMO + "".join(f"- {r}\n" for r in demo)) if videos and code and demo else ""
+    demos += (MISSING + ("".join(f"- {_neutral(x)}\n" for x in screens) or "(none)\n")) if videos else ""
     return PROMPT + where + ("" if videos is None else VIDEOS_ON if videos else VIDEOS_OFF) + demos + f"\n<factory_snapshot>\n{_neutral(redact(snap, secrets))}\n</factory_snapshot>\n<conversation>\n{convo}</conversation>\n"

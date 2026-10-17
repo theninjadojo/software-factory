@@ -49,16 +49,17 @@ and a test that walks through the flow.
 
 1. Ask for it like any other video ("demo the login, step by step"). The chat looks for a Playwright test that does the steps
    (`*.spec.ts` or `*.test.ts` in the code copy). It adds that test to the proposal under **Showing these tests running in the
-   app**. If no test walks through the flow, it says so.
+   app**. If no test walks through the flow, it proposes no video and says what is missing (a test that does the flow end to end).
 2. When you click **Make video**, the video waits while a worker runs those test files on the default branch (the Videos page says
    *Running the demo tests on a worker first*). The run records a Playwright trace with each action slowed by 400 ms, and the
    worker keeps the screen after each step of each test, with what the step did ("Click Sign in", "Fill Email"). A typed value
    is never kept.
-3. The writer gets those steps in order and narrates the ones that tell the flow. Without the writer, the video shows the first
-   test's steps in order. A test that failed shows the screens up to where it stopped, and the video says it failed.
+3. The writer gets those steps in order and narrates the ones that tell the flow.
 
 The demo run is not shown on the Screens board and does not count as a result in the Tests register. A video waits at most an hour
-for it, then is made without the steps. **Make again** runs the tests again, so the video shows the app as it is now. Step screens
+for it. A video is never made without the steps it promised: if the tests could not be run (no worker runs that repository's
+Playwright tests), did not finish within the hour, failed, or took no step screens, the video is skipped and the conversation says
+which. **Make again** runs the tests again, so the video shows the app as it is now. Step screens
 are taken at the test's viewport size (a video is recorded only for that, and not kept). Only JavaScript Playwright suites have steps; a Python suite in `tests/e2e` does not.
 
 How it is made:
@@ -73,8 +74,11 @@ How it is made:
   material and writes the scenes. Its output is untrusted and checked like the reviewer's block. A code scene must name a pull
   request and file from the material, and the lines shown come from that diff. A screen scene must name a screenshot from the
   material. Anything else is dropped.
-- **Fallback.** With fewer than two usable scenes, the video is the brief, the screens and the list of tickets, in fixed
-  wording (and the start of each named file, only with **Show code in the video**).
+- **Nothing missing, no fallback.** The factory never makes a lesser video in place of the one asked for. Before proposing, the
+  chat checks the video can show what was asked (it knows which pages the Screens board has and which repositories can run
+  demos); if something is missing it says what and how to fix it. When the video is made, it is skipped with a note in the
+  conversation (and the reason on the Videos page) when: a demo did not run in full; there are no screens to show (and code was
+  not asked for); or the writer's scenes show no screen or code.
 - Nothing is posted on GitHub for these videos.
 
 ## Voices

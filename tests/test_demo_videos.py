@@ -201,16 +201,31 @@ class Video(Base):
         self.assertEqual([s["title"] for s in shots], ["Step 1 · Open /login", "Step 3 · Click Sign in"])
         self.assertEqual(run.seen["img"], ["s02.png", "s03.png"])
 
-    def test_without_the_writer_the_steps_are_shown_in_order_and_a_failure_is_said(self):
+    def make(self, vid):
+        self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
+        videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, self.container(), write=lambda p: WRITER)
+        return videos.get(self.db, vid)
+
+    def test_a_failed_demo_test_stops_the_video_and_says_so(self):
         vid = self.queued()
         videos.demo_pending(self.cfg, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
         run_job(self.db, videos.demo_jobs(videos.get(self.db, vid))[REPO], step_body("failed", "fail"))
-        run = self.container()
-        self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
-        videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, run, write=None)
-        scenes = run.seen["script"]["scenes"]
-        self.assertEqual([s.get("title") for s in scenes[1:4]], ["Step 1 · Open /login", "Step 2 · Fill Email", "Step 3 · Click Sign in"])
-        self.assertEqual(scenes[4]["title"], "This test failed")
+        self.assertEqual((self.make(vid)["status"], self.make(vid)["reason"]), ("skipped", "demo_failed"))
+
+    def test_a_demo_that_did_not_run_in_full_stops_the_video(self):
+        vid = self.queued()                                                    # queued, never run: the wait ran out
+        videos.demo_pending(self.cfg, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
+        self.assertEqual(self.make(vid)["reason"], "demo_timeout")
+        off = replace(self.cfg, workers=WorkersCfg(enabled=False))
+        vid = self.queued()                                                    # no worker could take it
+        videos.demo_pending(off, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
+        self.assertEqual(self.make(vid)["reason"], "demo_unqueued")
+
+    def test_a_demo_that_took_no_steps_stops_the_video(self):
+        vid = self.queued()
+        videos.demo_pending(self.cfg, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
+        run_job(self.db, videos.demo_jobs(videos.get(self.db, vid))[REPO], step_body(steps=()))
+        self.assertEqual(self.make(vid)["reason"], "demo_no_steps")
 
     def test_a_run_that_never_finishes_or_cannot_be_queued_does_not_hold_the_video(self):
         vid = self.queued()
