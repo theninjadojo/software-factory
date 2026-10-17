@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, IntakeCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, VideosCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, EFFORT_FLOOR, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, IntakeCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, VideosCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -88,7 +88,15 @@ def _routing_fields(harnesses: tuple = ("claude-code",)) -> list[Field]:
                 Field(f"routing.{tier}.model", f"{tier.title()} tier: model", "text"),
                 Field(f"routing.{tier}.effort", f"{tier.title()} tier: effort", "select", choices=EFFORTS),
                 Field(f"routing.{tier}.fallback_models", f"{tier.title()} tier: fallback models", "models", FALLBACK_HELP, adv=True)]
-    return out
+    return out + [Field(f"effort_floor.{step}", label, "select", help, choices=("none",) + EFFORTS, adv=adv) for step, label, help, adv in FLOOR_FIELDS]
+
+
+FLOOR_HELP = "Runs of this step get at least this effort; a higher one is kept. none: no minimum."
+FLOOR_FIELDS = (("implement", "Minimum effort: build", "Every build runs with at least this effort, whatever the ticket's size or the "
+                 "classifier chose. A higher effort is kept; none: no minimum.", False),
+                ("ci-fix", "Minimum effort: CI fixes", FLOOR_HELP, True), ("conflicts", "Minimum effort: merge conflicts", FLOOR_HELP, True),
+                ("analyze", "Minimum effort: analyst", FLOOR_HELP, True), ("design", "Minimum effort: designer", FLOOR_HELP, True),
+                ("architect", "Minimum effort: architect", FLOOR_HELP, True), ("review", "Minimum effort: code review", FLOOR_HELP, True))
 
 
 PROMPT_DANGER = "Agents follow this text on every run, with write access to their sandbox workspace."
@@ -475,6 +483,8 @@ DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments
 
 def default_for(key: str):
     section, _, name = key.partition(".")
+    if section == "effort_floor":
+        return EFFORT_FLOOR.get(name, "none")
     if section == "harnesses":
         hname, _, field = name.partition(".")
         h = default_harnesses(RunnerCfg()).get(hname)

@@ -2,7 +2,7 @@ import dataclasses
 from dataclasses import dataclass
 
 from .classifier import Classification
-from .config import Config, Route
+from .config import EFFORT_LEVELS, Config, Route
 
 
 @dataclass(frozen=True)
@@ -19,10 +19,25 @@ def decide(cfg: Config, c: Classification) -> Decision:
         return Decision("human", "classifier flagged needs_human")
     if c.confidence < cfg.confidence_threshold:
         return Decision("human", f"low confidence {c.confidence:.2f}")
-    route = cfg.routes[c.complexity]
-    if c.effort:
+    return Decision("dispatch", f"{c.kind}/{c.complexity}", build_route(cfg, c))
+
+
+def floor(cfg: Config, step: str | None, route: Route) -> Route:
+    """The route with its effort raised to the step's minimum ([effort_floor], set in the admin UI). Never lowered; an effort the
+    factory does not rank is left as it is."""
+    least = cfg.effort_floor.get(step or "")
+    if least in EFFORT_LEVELS and route.effort in EFFORT_LEVELS and EFFORT_LEVELS.index(route.effort) < EFFORT_LEVELS.index(least):
+        return dataclasses.replace(route, effort=least)
+    return route
+
+
+def build_route(cfg: Config, c: Classification | None) -> Route:
+    """What a build runs with: the routing row of the ticket's size (the medium row when it was never classified, as when a person
+    approves a build from chat), the classifier's effort if it chose one, then the implement step's minimum effort."""
+    route = cfg.routes[c.complexity if c else "medium"]
+    if c and c.effort:
         route = dataclasses.replace(route, effort=c.effort)
-    return Decision("dispatch", f"{c.kind}/{c.complexity}", route)
+    return floor(cfg, "implement", route)
 
 
 def behind(cfg: Config, role: str | None, done) -> bool:

@@ -28,7 +28,7 @@ from .github import GitHub
 from .jev import JevClassifier
 from .pool import Pool, key as jobkey
 from .roles import MARKER, STAGE_TO_ROLE
-from .router import behind, decide, pick_stage
+from .router import behind, build_route, decide, floor, pick_stage
 from .sanitize import sanitize_markdown
 from .slack import Slack
 from .telegram import Telegram
@@ -569,6 +569,7 @@ def run_chain(cfg: Config, gh: GitHub, kind: str, repo: str, issue: dict, route,
     """Run the task with the route's model, then with each admin-configured fallback while a model is unavailable (rate
     limit or API error). Every attempt is its own run: fresh workspace, container, branch and `runs` row. The last result is
     returned unchanged when the chain ends, so requeue/backoff/failure handling is as without fallbacks."""
+    route = floor(cfg, dbm.step_of(kind, stage) or kind, route)     # the step's minimum effort, whoever chose the route
     models = chain(route)
     if cfg.design_links.enabled and "design_imports" not in kw:
         kw["design_imports"] = ticket_design_imports(cfg, repo, issue)
@@ -590,6 +591,7 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
     that waited for those rows' packages to be published (see waves.py). A build label on a ticket whose second build failed
     runs that second build again."""
     num, trigger_label = issue["number"], trigger_label or cfg.trigger_label
+    route = floor(cfg, "implement", route) if route else build_route(cfg, c)      # no route: the medium row, as for a ticket never sized
     if wave is None and conn is not None:
         wave = waves.rows(conn, repo, num, ("failed", "building")) or None      # building: interrupted (a ticket never runs twice at once)
         if wave is None:
@@ -798,7 +800,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                    trigger_label: str | None = None, chain: bool = False, conn=None) -> runner.RunResult:
     """Run an analyst, designer or architect and put its document on the ticket."""
     num, trigger_label = issue["number"], trigger_label or role.label
-    route = Route(role.harness, role.model, role.effort, role.fallback_models)
+    route = floor(cfg, dbm.step_of("stage", role.name), Route(role.harness, role.model, role.effort, role.fallback_models))   # as run_chain runs it
     alert(f"Starting {role.name}: {repo}#{num}: {issue['title'][:80]}\nAgent: {route.model}, effort {route.effort}"
           + (f"\nchosen by {c.source} (stage {c.stage}, confidence {c.stage_confidence:.2f})" if c and c.stage_confidence else ""), event="started")
     claim(gh, repo, num, trigger_label, role.name)
@@ -1149,7 +1151,7 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
 def review_once(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, branch: str, trigger_label: str | None, conn):
     """One reviewer run, posted on each PR. Returns (result, the PRs it was posted on, the verdict, the review without its blocks)."""
     num = issue["number"]
-    route = Route(cfg.review.harness, cfg.review.model, cfg.review.effort, cfg.review.fallback_models)
+    route = floor(cfg, "review", Route(cfg.review.harness, cfg.review.model, cfg.review.effort, cfg.review.fallback_models))   # as run_chain runs it
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
                            comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num),
@@ -1317,7 +1319,7 @@ def resolve_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, lab
         if limited:
             alert(f"Merge conflicts need a person: {repo}#{num} (attempt limit reached)\n" + "\n".join(limited), event="failure")
         return "no-conflicts"
-    route, outcomes = cfg.routes["medium"], []
+    route, outcomes = floor(cfg, "conflicts", cfg.routes["medium"]), []         # the effort it runs with, as run_chain floors it
     for branch, prs in groups.items():
         alert(f"Resolving merge conflicts: {repo}#{num} on {branch}, {len(prs)} PR(s)\nAgent: {route.model}, effort {route.effort}", event="started")
         res, _ = run_chain(cfg, gh, "conflicts", repo, issue, route, prior=stage_outputs(gh, repo, num), comments=human_comments(gh, repo, num),
@@ -1392,7 +1394,7 @@ def process_approvals(cfg: Config, gh: GitHub, conn, classifier=None) -> None:
                 if role:                            # sent back: the stages after it follow through the normal auto chain
                     res = dispatch_stage(cfg, gh, classifier, repo, issue, role, chain=back, conn=db)
                 else:
-                    res = dispatch(cfg, gh, repo, issue, cfg.routes["medium"], conn=db)
+                    res = dispatch(cfg, gh, repo, issue, None, conn=db)
                 if res.status != "needs-person":        # else ask_person's record is the ticket's latest decision
                     dbm.record(db, repo, num, issue["updated_at"] + "+approved", f"run:{res.status}", f"approved from chat; {res.detail}; {res.pr_url or ''}")
             start(cfg, conn, repo, num, role.name if role else "build", approved, gh)

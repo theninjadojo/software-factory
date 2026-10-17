@@ -241,7 +241,7 @@ SECTION_INTRO = {
     "videos": "A short narrated walkthrough of a ticket's pull requests, made in a sealed container on this machine. Turn it on here, "
               "build the video image once, then tick Make a review video on a ticket's page.",
     "general": "Whether the factory is live, how often it looks for work, where tickets come from and who may start work with a label.",
-    "routing": "The classifier sizes each ticket. Its size picks the model and effort the build runs with.",
+    "routing": "The classifier sizes each ticket. Its size picks the model and effort the build runs with, never below the minimum effort set at the end.",
     "roles": "Before a build a ticket can go through up to three stages. Each stage is an agent that writes one document on the ticket; "
              "start one with its label, or let Auto pick.",
     "classifier": "Decides each ticket's kind and size, and asks you when it is unsure.",
@@ -341,7 +341,8 @@ def settings_form(section: str, eff: dict, base: dict, csrf: str, submitted=None
         head, fields = field_row(fields[0], eff, base, submitted, switch=True), fields[1:]
     if section in ("routing", "roles"):
         cards, rest = _matrix(section, fields, eff, base, submitted)
-        body = cards + (f'<fieldset class="s-group"><legend>Auto</legend>{_rows(rest, eff, base, submitted)}</fieldset>' if rest else "")
+        legend = "Auto" if section == "roles" else "Minimum effort per step"
+        body = cards + (f'<fieldset class="s-group"><legend>{legend}</legend>{_rows(rest, eff, base, submitted)}</fieldset>' if rest else "")
     else:
         body = _rows(fields, eff, base, submitted, errors)
     return (f'{intro}<form method="post" action="/settings/save" class="settings rows" data-dirty>{csrf_field(csrf)}'
