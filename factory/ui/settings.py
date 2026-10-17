@@ -170,7 +170,13 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
     ]),
     "review": ("Code review", [
         Field("review.enabled", "Enable the code reviewer", "bool", "An independent agent reviews the factory's PRs and comments. It never approves or changes code."),
-        Field("review.auto", "Review every PR the factory opens", "bool", "PRs open as drafts and are marked ready once the review is posted. Off: PRs open ready; only the review label starts a review."),
+        Field("review.auto", "Review every PR the factory opens", "bool", "PRs open as drafts until the review (see the next switch). Off: PRs open ready; only the review label starts a review."),
+        Field("review.gate", "Keep a pull request a draft until the review says Looks good", "bool",
+              "On: Needs changes or Blocking issues keeps the PRs drafts and runs the fix rounds below. Off: the PRs are marked ready "
+              "after any review, whatever it says, and no fix rounds run."),
+        Field("review.fix_rounds", "Fix rounds after Needs changes or Blocking issues", "int",
+              "Only with the switch above on. The build fixes the review's findings on the same branch and the review runs again, at most this many times per PR. Then the "
+              "PRs stay drafts, the ticket is labelled factory:review-held and you are told. 0 = no fix rounds: a person decides at once.", lo=0, hi=5),
         Field("review.label", "Review label", "text", "Apply it to a ticket to (re-)review its open factory PRs."),
         Field("review.done_label", "Reviewed label", "text"),
         Field("review.model", "Reviewer model", "text", "Use a different harness and model family from the builder for a genuinely independent opinion."),

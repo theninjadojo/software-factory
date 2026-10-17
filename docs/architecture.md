@@ -53,7 +53,12 @@ A small Python program (standard library only) plus a sandbox image. Nothing els
    offers each canvas as a download (`/design-source`, an attachment, never rendered).
 8. **Review (optional).** After a build opens PRs, or when a person labels the ticket `factory:review`, a read-only reviewer is run with the PR
    branches checked out and its comment is posted on every PR of the change. It is a role like the analyst, so it uses the same sandbox,
-   sanitizer and harness selection; it only ever comments.
+   sanitizer and harness selection; it only ever comments. Its verdict line is read once, strictly (`reviewgate.py`): only **Looks good**
+   marks the draft PRs ready. **Needs changes** or **Blocking issues** keeps them drafts and runs a build fix round on the same branch with
+   the review as its input (the CI fix path, `run_task(fix_branch=..., findings=...)`), then reviews again, at most `[review] fix_rounds`
+   times per PR (default 2, kept in `pr_reviews`). When the rounds are used, a round changes nothing or the verdict cannot be read, the
+   PRs stay drafts, the ticket gets `factory:review-held` and a person is alerted; they can mark a PR ready on GitHub or merge it anyway
+   from the admin UI after a tick.
 . **Merge conflicts (optional).** Every PR the factory opens (build and design) is checked for conflicts with its base branch, whether
     or not CI is watched. GitHub's `mergeable` is read on each poll (`null` means it is still computing and is never treated as a
     conflict). A conflict is reported once per head commit, and the factory applies `factory:fix-conflicts` to the ticket, which goes
