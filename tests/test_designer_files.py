@@ -10,7 +10,7 @@ from factory.runner import RunResult, build_prompt, run_task
 from test_designfiles import VALID
 from test_runner import RunTaskEndToEnd
 
-TICKET = {"number": 3, "title": "Add a reorder button", "body": "please"}
+TICKET = {"number": 3, "title": "Add a reorder button", "body": "Add a reorder button to the list page so people can move items up and down. Checked by moving two items and reloading."}
 ROUTE = Route("claude-code", "sonnet", "medium")
 
 

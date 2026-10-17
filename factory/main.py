@@ -13,9 +13,10 @@ import time
 from pathlib import Path
 
 from . import why as W
-from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videoimage, videos, waves
+from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewgate, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videoimage, videos, waves
 from . import codecopy
 from . import depdetect
+from . import intake
 from . import judges
 from . import recommend
 from . import questions as Q
@@ -135,7 +136,7 @@ def redirect(cfg: Config, gh: GitHub, conn, repo: str, num: int, role, source: s
     names = [r.name for r in cfg.roles]
     redo = names[names.index(role.name):]
     held = {lb["name"] for lb in gh.get_issue(repo, num).get("labels", [])}
-    drop = [r.done_label for r in cfg.roles if r.name in redo] + [DONE, FAILED, Q.NEEDS_ANSWERS, cfg.review.done_label]
+    drop = [r.done_label for r in cfg.roles if r.name in redo] + [DONE, FAILED, Q.NEEDS_ANSWERS, cfg.review.done_label, reviewgate.HELD_LABEL]
     if "designer" in redo:                              # new screens need a new approval
         drop.append(cfg.mockups.approve_label)
     removed = [lb for lb in dict.fromkeys(drop) if lb in held]
@@ -649,10 +650,10 @@ def dispatch(cfg: Config, gh: GitHub, repo: str, issue: dict, route, c=None,
                        + " and ".join(f"{r}#{n}" for r, n in ups) + " is merged and published ("
                        + "; ".join(waves.how(project.repo(r).publish) for r, _ in ups) + f"), the factory builds {later} against the published version.")
             emit("waves:waiting", f"opened {', '.join(waves.short(r) for r, _ in ups)}; {later} waits for the publish", repo, num)
-        gh.comment(repo, num, f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else "") + waiting)
+        gh.comment(repo, num, f"Opened {res.pr_url} for review." + ((" Draft until the automated review says Looks good." if cfg.review.gate else " Draft until the automated review is done.") if draft else "") + waiting)
         gh.remove_label(repo, num, WORKING)
         if conn is not None:
-            origin.note(cfg, gh, conn, repo, num, f"pr:{res.pr_url}", f"Opened {res.pr_url} for review." + (" Draft until the automated review is done." if draft else ""))
+            origin.note(cfg, gh, conn, repo, num, f"pr:{res.pr_url}", f"Opened {res.pr_url} for review." + ((" Draft until the automated review says Looks good." if cfg.review.gate else " Draft until the automated review is done.") if draft else ""))
             for u in res.pr_url.split():                  # watch each PR's CI; skip anything that is not a PR URL
                 m = PR_URL.match(u)
                 if m:
@@ -1084,7 +1085,10 @@ def store_follow_actions(cfg: Config, conn, repo: str, num: int, prs: list, outp
 
 
 def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, trigger_label: str | None = None, conn=None) -> runner.RunResult | None:
-    """Independent review of the factory's PR branches for a ticket. Posts a comment on each PR; changes nothing else."""
+    """Independent review of the factory's PR branches for a ticket, gated on its verdict (reviewgate.py). The review is posted on each
+    PR. Looks good marks them ready; Needs changes or Blocking issues keeps them drafts and runs a build fix round on the branch with
+    the review as input, then reviews again, at most review.fix_rounds times per PR; after that (or when a round changes nothing, or the
+    verdict cannot be read) the PRs stay drafts and a person is asked. It never approves, requests changes or merges."""
     if not prs:
         return None
     num = issue["number"]
@@ -1096,12 +1100,64 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
         return None
     if not branch.startswith("factory/"):                     # never review (or check out) a branch the factory did not create
         return None
+    cap, used = cfg.review.fix_rounds, reviewgate.rounds_used(conn, prs)
+    while True:
+        res, posted, verdict, text = review_once(cfg, gh, repo, issue, prs, branch, trigger_label, conn)
+        if res.status != "stage":
+            return res
+        links = "\n".join(f"https://github.com/{r}/pull/{n}" for r, n in posted)
+        if verdict == reviewgate.GOOD or not cfg.review.gate:     # gate off: ready after any review, no fix rounds (as before the gate)
+            for r, n in posted:                               # a PR the review was not posted on stays a draft
+                try:
+                    gh.mark_ready(r, n)
+                except Exception:
+                    log.exception("could not mark %s#%s ready for review", r, n)
+                    alert(f"Could not mark {r}#{n} ready for review; it is still a draft.", event="failure")
+            reviewgate.record(conn, posted, repo, num, verdict, "ready")
+            if used or reviewgate.HELD_LABEL in {lb.get("name") for lb in issue.get("labels", [])}:
+                gh.remove_label(repo, num, reviewgate.HELD_LABEL)
+            alert(f"Review done: {repo}#{num}: {verdict or 'no readable verdict'}" + (f" after {used} fix round(s)" if used else "") + "\n" + links, event="review_done")
+            return res
+        if not verdict:
+            hold_for_person(cfg, gh, conn, repo, num, prs, verdict, "the review has no readable verdict line", links)
+            return res
+        if used >= cap:
+            hold_for_person(cfg, gh, conn, repo, num, prs, verdict, f"the review says {verdict}"
+                            + (f" after {used} fix round(s), the most allowed" if used else " and automatic fix rounds are off"), links)
+            return res
+        if pause.paused(Path(cfg.db_path).parent):           # paused (by a person, or a rate limit elsewhere): no new run, nothing counted
+            reviewgate.record(conn, prs, repo, num, verdict, "held")
+            alert(f"Review done: {repo}#{num}: {verdict}. The factory is paused, so no fix round started; the PRs stay drafts. "
+                  f"Apply `{cfg.review.label}` to the ticket to review and fix again.\n{links}", event="needs_human")
+            return res
+        used += 1
+        reviewgate.record(conn, prs, repo, num, verdict, "fixing", used)
+        alert(f"Review done: {repo}#{num}: {verdict}. The PRs stay drafts; fix round {used} of {cap} starts.\n{links}", event="review_done")
+        fix = review_fix(cfg, gh, conn, repo, issue, prs, branch, reviewgate.findings(text), used)
+        if fix.status == "rate-limited":                      # the round is not counted; the review label (when it started this) runs it again
+            reviewgate.record(conn, prs, repo, num, verdict, "held", used - 1)
+            if trigger_label:
+                requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
+            else:
+                alert(f"The review fix round of {repo}#{num} hit a rate limit. Apply `{cfg.review.label}` to the ticket to retry.", event="rate_limit")
+            return res
+        if fix.status == "cancelled":                         # the ticket was closed
+            return res
+        if fix.status != "pr":
+            hold_for_person(cfg, gh, conn, repo, num, prs, verdict, f"the review says {verdict} and fix round {used} pushed no change ({fix.status})", links)
+            return res
+
+
+def review_once(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, branch: str, trigger_label: str | None, conn):
+    """One reviewer run, posted on each PR. Returns (result, the PRs it was posted on, the verdict, the review without its blocks)."""
+    num = issue["number"]
     route = floor(cfg, "review", Route(cfg.review.harness, cfg.review.model, cfg.review.effort, cfg.review.fallback_models))   # as run_chain runs it
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
                            comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num),
                            conversation=chat_conversation(cfg, repo, num),
                            follow=reviewactions.prompt(cfg) + (videos.prompt() if cfg.videos.enabled and conn is not None and videos.wanted(conn, prs) else ""))
+    posted: list = []
     if res.status == "rate-limited":
         if trigger_label:
             requeue_rate_limited(cfg, gh, repo, num, trigger_label, "review")
@@ -1109,28 +1165,59 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
             alert(f"Review of {repo}#{num} hit a rate limit. Apply `{cfg.review.label}` to the ticket to retry.", event="rate_limit")
     elif res.status == "stage":
         shown = videos.reviewed(cfg, gh, conn, prs, res.output, time.time()) if cfg.videos.enabled else res.output   # keeps its narration
-        body = review_comment(route, reviewactions.strip(shown) if cfg.review.follow_actions else shown)
+        text = reviewactions.strip(shown) if cfg.review.follow_actions else shown
+        body = review_comment(route, text)
         store_follow_actions(cfg, conn, repo, num, prs, res.output)
-        links = []
         for r, n in prs:
             try:
                 gh.comment(r, n, body)
-                links.append(f"https://github.com/{r}/pull/{n}")
+                posted.append((r, n))
             except Exception:
-                log.exception("could not post the review on %s#%s", r, n)
-                continue                                      # not reviewed: it stays a draft
-            try:
-                gh.mark_ready(r, n)
-            except Exception:
-                log.exception("could not mark %s#%s ready for review", r, n)
-                alert(f"Could not mark {r}#{n} ready for review; it is still a draft.", event="failure")
+                log.exception("could not post the review on %s#%s", r, n)    # not reviewed: it stays a draft
         gh.add_labels(repo, num, [cfg.review.done_label])
-        verdict = next((v for v in ("Blocking issues", "Needs changes", "Looks good") if v.lower() in res.output[:600].lower()), "see the PR")
-        alert(f"Review done: {repo}#{num}: {verdict}\n" + "\n".join(links), event="review_done")
+        return res, posted, reviewgate.parse(res.output), reviewactions.strip(text)
     elif res.status == "cancelled":
         pass                                                  # the ticket was closed: nothing to post
     else:
         alert(f"Review failed: {repo}#{num} ({res.status})\n{res.detail[:300]}", event="failure")
+    return res, posted, "", ""
+
+
+HOLD_COMMENT = ("The automated review is not satisfied: {why}. The pull requests stay drafts. A person should read the review on them, "
+                "then fix the branch and apply `{label}` to review again, mark them ready on GitHub, or merge anyway from the admin UI "
+                "(Tickets, PRs & CI), which asks to confirm first. `{held}` comes off once a review says Looks good.")
+
+
+def hold_for_person(cfg: Config, gh: GitHub, conn, repo: str, num: int, prs: list, verdict: str, why: str, links: str) -> None:
+    """The review gate stops: the PRs stay drafts, the ticket is labelled and a person is told."""
+    reviewgate.record(conn, prs, repo, num, verdict, "held")
+    try:
+        gh.create_label(repo, reviewgate.HELD_LABEL, "d93f0b", "The automated review held the pull requests as drafts: a person decides")
+    except Exception:
+        log.warning("could not create the label %s in %s", reviewgate.HELD_LABEL, repo)      # adding it still works
+    gh.add_labels(repo, num, [reviewgate.HELD_LABEL])
+    gh.comment(repo, num, sanitize_markdown(HOLD_COMMENT.format(why=why, label=cfg.review.label, held=reviewgate.HELD_LABEL)))
+    emit("review:held", why, repo, num)
+    alert(f"Review needs a person: {repo}#{num}: {why}. The PRs stay drafts.\n{links}", event="needs_human")
+
+
+def review_fix(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, prs: list, branch: str, findings: str, round_no: int) -> runner.RunResult:
+    """One build fix round on the PR branch with the review's findings (the CI fix path: same route, same branch checks, a commit
+    added to the branch, never a force-push). A pushed change puts the PRs' CI back under watch."""
+    num = issue["number"]
+    res, _ = run_chain(cfg, gh, "fix", repo, issue, cfg.routes["medium"], None, "review-fix", prior=stage_outputs(gh, repo, num),
+                       comments=human_comments(gh, repo, num), fix_branch=branch, findings=findings)
+    if res.status == "pr":
+        for r, n in prs:
+            if cfg.ci.enabled and conn is not None:
+                dbm.update_pr(conn, r, n, status="watching", watch_started=time.time(), summary=f"review fix round {round_no}")
+            try:
+                gh.comment(r, n, sanitize_markdown(f"Review fix round {round_no} of {cfg.review.fix_rounds} pushed to `{branch}`. "
+                                                   "The automated review runs again; this pull request stays a draft until it says Looks good."))
+            except Exception:
+                log.exception("could not comment on %s#%s", r, n)
+    elif res.status in ("failed", "rejected"):
+        alert(f"Review fix round {round_no} failed for {repo}#{num}: {res.status}\n{res.detail[:200]}", event="failure")
     return res
 
 
@@ -1508,6 +1595,61 @@ def confirm_triage(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: 
         triage.mark(conn, [row["id"]], "failed")
 
 
+ASKED = ": asked the author for more"            # the end of the decision recorded when the thin-ticket question is posted
+
+
+def may_go_ahead(cfg: Config, gh: GitHub, repo: str, num: int, login: str) -> bool:
+    """Whether a commenter may start a thin ticket as it is: a person signed in to the admin UI on a local ticket, else a GitHub
+    user with one of the trusted repository roles."""
+    if tracker.is_local(num):
+        return login == tracker.UI_ACTOR
+    return bool(login) and gh.permission(repo, login) in cfg.trusted_permissions
+
+
+def thin_ticket(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, kind: str, why: str) -> bool:
+    """True when the ticket waits for a better description (intake.py) instead of starting a run. Only a ticket the factory has
+    not worked on yet is held: once a stage or a build has run, its documents say more than the body."""
+    if not cfg.intake.enabled or kind in ("review", "conflicts"):
+        return False
+    labels = [lb["name"] for lb in issue.get("labels", [])]
+    if DONE in labels or FAILED in labels or stages_done(cfg, labels) \
+            or not intake.thin(issue.get("body"), cfg.intake.min_chars, issue.get("title")):
+        return False
+    num, updated = issue["number"], issue["updated_at"]
+    try:
+        me = gh.login()
+    except Exception:
+        me = tracker.FACTORY_AUTHOR                     # a local ticket without a token: the factory's comments keep this author
+    asked, by = intake.state(gh.issue_comments(repo, num), me, lambda login: may_go_ahead(cfg, gh, repo, num, login))
+    if by:
+        emit("decision", f"thin ticket started as it is: {by} said go ahead", repo, num)
+        return False
+    # GitHub returns only a ticket's first 30 comments, so on a long thread the question can be out of sight. The decision recorded
+    # when it was posted still says so: without this check every poll would post it again (each post changes the ticket).
+    asked = asked or conn.execute("SELECT 1 FROM decisions WHERE repo=? AND issue=? AND outcome='human' AND detail LIKE ?",
+                                  (repo, num, "%" + ASKED)).fetchone() is not None
+    size = intake.size(issue.get("title"), issue.get("body"))
+    detail = (f"{why}; the title and description have {size} characters of text, fewer than {cfg.intake.min_chars}"
+              + ASKED)
+    if cfg.dry_run:
+        dbm.record(conn, repo, num, updated, "human", detail + " [dry-run]")
+        emit("decision", f"dry-run: would ask for a better description ({size} characters)", repo, num)
+        return True
+    if not asked:
+        gh.comment(repo, num, intake.ask_comment(cfg.intake.min_chars))
+        try:
+            gh.create_label(repo, Q.NEEDS_ANSWERS, "fbca04", "Open questions are waiting for a person's answers")
+        except Exception:
+            log.warning("could not create the label %s in %s", Q.NEEDS_ANSWERS, repo)      # adding it still works
+        gh.add_labels(repo, num, [Q.NEEDS_ANSWERS])
+        alert(f"Needs a person: {repo}#{num}\n{issue.get('title', '')[:120]}\nReason: the title and description are too short to start "
+              f"({size} characters of text, fewer than {cfg.intake.min_chars}). The factory asked the author for more.", event="needs_human")
+    dbm.record(conn, repo, num, updated, "human", detail)
+    emit("decision", f"needs a person: the title and description are too short ({size} characters of text)", repo, num)
+    log.info("%s#%d waits for a better description (%d characters)", repo, num, size)
+    return True
+
+
 def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: dict, kind: str, label: str) -> str | None:
     """One labeled issue. Returns "paused" if the orchestrator is paused and should stop polling."""
     num, updated = issue["number"], issue["updated_at"]
@@ -1528,6 +1670,8 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
     if not cfg.dry_run and (why_paused := pause.paused(Path(cfg.db_path).parent)):
         log.info("paused (%s); leaving %s#%d queued", why_paused, repo, num)
         return "paused"
+    if thin_ticket(cfg, gh, conn, repo, issue, kind, why):
+        return None
     tracked = (dbm.conflicts_for_issue(conn, repo, num)
                if kind == "auto" and DONE in [lb["name"] for lb in issue.get("labels", [])] else [])
     if tracked or (kind == "auto" and DONE in [lb["name"] for lb in issue.get("labels", [])] and dbm.prs_for_issue(conn, repo, num)):

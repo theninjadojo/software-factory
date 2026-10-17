@@ -21,7 +21,9 @@ ROLE_PROMPTS = {
         "database migration safety and reversibility; missing or weak tests; consistency with the repository's conventions; "
         "consistency across repositories (schema against clients, shared-package release order); and anything the author said it "
         "could not verify. Write:\n1. **Verdict**: exactly one of 'Looks good', 'Needs changes' or 'Blocking issues', with one "
-        "sentence of why.\n2. **Findings**, grouped Blocking / Should fix / Nits, each with file and line, what is wrong, why it "
+        "sentence of why. Make it the very first line of your reply, written as `**Verdict**: Needs changes - <why>`: it is "
+        "machine-read, and only Looks good lets the pull request leave draft (anything else sends your findings back to the "
+        "build for a fix round). Say Looks good only when nothing Blocking or Should fix remains.\n2. **Findings**, grouped Blocking / Should fix / Nits, each with file and line, what is wrong, why it "
         "matters, and a concrete suggestion. Omit empty groups.\n3. **Missing versus the ticket**: what the change does not "
         "cover.\n4. **Not verified**: what you could not check without running the code.\n"
         "Do not rewrite the code, and do not approve or reject: a person decides. Be specific and brief; no padding."
@@ -318,6 +320,10 @@ VERIFY_FIX_PROMPT = ("\nYour first attempt at this ticket was built and then che
                      "satisfies the ticket and the failing check.")
 CI_FIX_PROMPT = ("\nA previous automated change for this ticket is already in the workspace and the repository's CI FAILED "
                  "(see ci_failure below). Fix those failures with the smallest change; do not redo the work.")
+REVIEW_FIX_PROMPT = ("\nA previous automated change for this ticket is already in the workspace, and the automated code review of it "
+                     "said Needs changes or Blocking issues (see review_findings below). Fix the Blocking findings and the Should fix "
+                     "findings, and add what the review says is missing against the ticket, with the smallest change that does it; do "
+                     "not redo the work. A finding you judge wrong after reading the code may be left, but say why in your summary.")
 CONFLICTS_PROMPT = ("\nA previous automated change for this ticket is already in the workspace, and the base branch has just been merged "
                     "into it with conflicts (see merge_conflicts below). Resolve every conflict marker (<<<<<<<, =======, >>>>>>>) in "
                     "the listed files so that both the base branch's changes and this ticket's change are kept and work together. "
@@ -333,7 +339,7 @@ OPERATOR_INTRO = (
 
 
 def agent_key(role: str | None, failures: bool, conflicts: bool) -> str:
-    """Which [prompts] entry a run uses. CI-fix and conflict runs have their own, not the implementer's."""
+    """Which [prompts] entry a run uses. CI-fix and conflict runs have their own, not the implementer's (a review fix round is a fix: failures)."""
     if role:
         return role
     return "conflicts" if conflicts else "ci_fix" if failures else "implementer"

@@ -128,6 +128,15 @@ timeout_minutes = 90
 queued_warn_minutes = 15     # CI queued this long without starting: warn (self-hosted runners may be offline)
 manual_wait_hours = 24       # keep watching this long for CI that a person starts by hand (repos with manual-only CI)
 
+# Code review (all of this is also on Settings → Code review). Off by default: it costs a run per review.
+# [review]
+# enabled = true
+# auto = true          # review every PR the factory opens; its PRs open as drafts until the review
+# gate = true          # keep a PR a draft until the review says Looks good. false: it is marked ready after any review, and no fix
+#                      # rounds run (the behaviour before the review gate)
+# fix_rounds = 2       # with gate on, after Needs changes / Blocking issues: build fix rounds on the PR branch, each reviewed again
+#                      # (0 to 5; 0 = none, the PRs stay drafts and a person decides at once)
+
 # Health watchdog (factory-health.timer, every 5 min; a separate process, so it still alerts when the orchestrator is hung or dead).
 # Telegram alert when a check turns bad, a reminder every repeat_hours, and a note when it recovers. Event "health" (shown at every
 # verbosity). Checks: free disk and inodes (state, work dir, container storage), free memory, the orchestrator's poll heartbeat,
@@ -309,6 +318,15 @@ harness = "claude-code"
 [mockups]
 mode = "block"
 bypass_label = "factory:skip-mockup"
+
+# A ticket whose title and description together are shorter than min_chars characters of text (markup, links and template
+# comments do not count) does not start a run when it gets a factory label. The factory comments once asking for the goal, scope,
+# checks and constraints, adds factory:needs-answers, and starts once the description is long enough or a person with write
+# access comments "go ahead".
+# Set it from the admin UI: Settings > Thin tickets.
+# [intake]
+# enabled = true
+# min_chars = 80
 
 # Design exports linked in a ticket body (a single HTML file). The orchestrator fetches https links on these hosts only, with no
 # credentials, and hands the content to the agents as untrusted intent; the UI shows it in a sandboxed tab without scripts.

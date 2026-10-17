@@ -64,6 +64,67 @@ class MergeFromPrView(AdminCase):
         self.assertNotIn("Merged your-org", html)
 
 
+class MergePastTheReview(MergeFromPrView):
+    """A PR whose last automated review was not Looks good shows the verdict and merges only after a tick (reviewgate.py)."""
+
+    def reviewed(self, verdict, n=5, state="held", rounds=2):
+        from factory import reviewgate
+        self.watch("passed", n)
+        reviewgate.record(self.db, [(REPO, n)], REPO, 7, verdict, state, rounds)
+
+    def test_the_verdict_and_a_merge_anyway_tick_show_on_the_ticket_and_the_prs_page(self):
+        self.reviewed("Needs changes")
+        self.reviewed("Looks good", n=6, state="ready", rounds=0)
+        cookie, _ = self.session()
+        self.assertEqual(self.req("GET", "/prs", cookie=cookie)[1]["Location"], "/tickets?stage=prs")
+        self.assertIn("review: Needs changes", self.req("GET", "/tickets?stage=prs", cookie=cookie)[2])     # /prs is this filter of Tickets
+        html = self.req("GET", f"/fragment/ticket?repo={REPO}&n=7", cookie=cookie)[2]
+        self.assertIn("Needs changes", html)
+        self.assertIn("2 review fix rounds", html)
+        self.assertIn("Looks good", html)
+        self.assertEqual(html.count('name="anyway"'), 1)                                  # only the PR the review did not pass
+        self.assertIn("Merge anyway: the last review said", html)
+        self.assertIn('aria-label="Merge pull request #5"', html)
+        self.assertIn('aria-label="Merge pull request #6"', html)
+
+    def test_merging_without_the_tick_is_refused(self):
+        self.reviewed("Blocking issues")
+        cookie, csrf = self.session()
+        _, h, _ = self.post(cookie, csrf, "/prs/merge", {"repo": REPO, "n": "5"})
+        self.gh.merge_pr.assert_not_called()
+        self.assertIn("said Blocking issues", self.req("GET", h["Location"], cookie=cookie)[2])
+
+    def test_merge_anyway_takes_a_held_draft_out_of_draft_and_records_the_override(self):
+        from factory import reviewgate
+        self.reviewed("Needs changes")
+        self.gh.get_pr.return_value["draft"] = True
+        self.gh.mark_ready.return_value = True
+        cookie, csrf = self.session()
+        self.post(cookie, csrf, "/prs/merge", {"repo": REPO, "n": "5", "anyway": "1"})
+        self.gh.mark_ready.assert_called_once_with(REPO, 5)
+        self.gh.merge_pr.assert_called_once_with(REPO, 5, "abc")
+        self.assertEqual(reviewgate.last(self.db, REPO, 5)["state"], "override")
+
+    def test_with_the_gate_off_a_reviewed_pr_merges_as_before(self):
+        self.reviewed("Needs changes", state="ready", rounds=0)                          # review.gate off: marked ready after the review
+        cookie, csrf = self.session()
+        html = self.req("GET", f"/fragment/ticket?repo={REPO}&n=7", cookie=cookie)[2]
+        self.assertNotIn('name="anyway"', html)
+        self.post(cookie, csrf, "/prs/merge", {"repo": REPO, "n": "5"})
+        self.gh.merge_pr.assert_called_once()
+
+    def test_a_looks_good_pr_merges_without_a_tick_and_other_drafts_stay_refused(self):
+        self.reviewed("Looks good", state="ready", rounds=0)
+        cookie, csrf = self.session()
+        self.post(cookie, csrf, "/prs/merge", {"repo": REPO, "n": "5"})
+        self.gh.merge_pr.assert_called_once()
+        self.gh.merge_pr.reset_mock()
+        self.gh.get_pr.return_value["draft"] = True                                       # a draft the review did not hold
+        self.post(cookie, csrf, "/prs/merge", {"repo": REPO, "n": "5", "anyway": "1"})
+        self.gh.merge_pr.assert_not_called()
+        self.gh.mark_ready.assert_not_called()
+
+
 class Releases(AdminCase):
     def setUp(self):
         super().setUp()

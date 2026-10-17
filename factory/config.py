@@ -110,6 +110,8 @@ class ReviewCfg:
     fallback_models: tuple[str, ...] = ()
     follow_actions: bool = False         # the reviewer may propose labels or send-backs that a person approves on the ticket page
     follow_labels: tuple[str, ...] = ("review:needs-changes", "review:blocking")
+    gate: bool = True                    # a PR leaves draft only when the review says Looks good (reviewgate.py); off: ready after any review
+    fix_rounds: int = 2                  # with gate on, after Needs changes / Blocking issues: build fix rounds on the PR branch, each reviewed again (0 = none)
 
 
 @dataclass(frozen=True)
@@ -138,6 +140,15 @@ class SplitCfg:
     architect: bool = True
     architect_min_areas: int = 3
     architect_min_items: int = 8
+
+
+@dataclass(frozen=True)
+class IntakeCfg:
+    """A ticket whose body says next to nothing (intake.py). With a trigger label on it the factory does not start a run: it asks
+    the author once for the goal, the scope, how the result is checked and any constraints, and waits. It starts once the title
+    and body together are longer than min_chars of real text, or a person with write access comments "go ahead"."""
+    enabled: bool = True
+    min_chars: int = 80                  # characters of real text (no markup, links or HTML comments) title + body need
 
 
 @dataclass(frozen=True)
@@ -641,6 +652,7 @@ class Config:
     review: ReviewCfg = field(default_factory=ReviewCfg)
     mockups: MockupsCfg = field(default_factory=MockupsCfg)
     split: SplitCfg = field(default_factory=SplitCfg)
+    intake: IntakeCfg = field(default_factory=IntakeCfg)
     design_links: DesignLinksCfg = field(default_factory=DesignLinksCfg)
     issue_images: IssueImagesCfg = field(default_factory=IssueImagesCfg)
     updates: UpdatesCfg = field(default_factory=UpdatesCfg)
@@ -1287,6 +1299,10 @@ def parse(raw: dict) -> Config:
     review = ReviewCfg(**_tuples(raw.get("review", {})))
     if review.effort not in ("low", "medium", "high"):
         raise ValueError("review.effort must be low, medium or high")
+    if isinstance(review.fix_rounds, bool) or not isinstance(review.fix_rounds, int) or not 0 <= review.fix_rounds <= 5:
+        raise ValueError("review.fix_rounds must be a whole number from 0 to 5")
+    if not isinstance(review.gate, bool):
+        raise ValueError("review.gate must be true or false")
     from .reviewactions import valid_label
     reserved = {gh["trigger_label"], review.label, review.done_label, *(r.label for r in roles)}
     if (not isinstance(review.follow_actions, bool) or not 1 <= len(review.follow_labels) <= 10
@@ -1305,6 +1321,10 @@ def parse(raw: dict) -> Config:
             or any(not isinstance(v, int) or isinstance(v, bool) for v in (split_cfg.architect_min_areas, split_cfg.architect_min_items))
             or not 2 <= split_cfg.architect_min_areas <= 20 or not 2 <= split_cfg.architect_min_items <= 50):
         raise ValueError("split.architect must be true or false, split.architect_min_areas 2-20 and split.architect_min_items 2-50")
+    intake = IntakeCfg(**raw.get("intake", {}))
+    if not isinstance(intake.enabled, bool) or isinstance(intake.min_chars, bool) or not isinstance(intake.min_chars, int) \
+            or not 1 <= intake.min_chars <= 2000:
+        raise ValueError("intake.enabled must be true or false and intake.min_chars a whole number from 1 to 2000")
     design_links = DesignLinksCfg(**_tuples(raw.get("design_links", {})))
     from .designlinks import valid_host
     if (not all(valid_host(h) for h in design_links.hosts) or not 1 <= design_links.max_links <= 5
@@ -1427,6 +1447,7 @@ def parse(raw: dict) -> Config:
         review=review,
         mockups=mockups,
         split=split_cfg,
+        intake=intake,
         design_links=design_links,
         issue_images=issue_images,
         updates=updates,

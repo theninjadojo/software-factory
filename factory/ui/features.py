@@ -86,6 +86,9 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           _n(len(cfg.projects), "project"), "info", ("Tickets", "A ticket"), "/settings?section=projects", "Projects"),
         F("comments", "source", "Comment triage", "An agent reads new comments on tickets the factory worked on and works out what they ask for.",
           *_onoff(cfg.comments.enabled), ("A ticket",), "/settings?section=comments", "Comment triage"),
+        F("intake", "source", "Thin tickets", f"A ticket with fewer than {cfg.intake.min_chars} characters of title and description waits while "
+          "the factory asks its author for the goal, scope, checks and constraints.",
+          *_onoff(cfg.intake.enabled), ("A ticket", "Needs you"), "/settings?section=intake", "Thin tickets"),
         F("design_links", "source", "Design links", "Design exports linked in a ticket are fetched from hosts you list and shown to agents.",
           *_onoff(cfg.design_links.enabled), ("A ticket",), "/settings?section=design_links", "Design links"),
         F("ticket_review", "source", "Ticket review", "On request, an agent proposes which open tickets are already built or duplicates.",
@@ -106,7 +109,9 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           *_onoff(cfg.workers.enabled), ("Factory", "A ticket"), "/workers", "Workers"),
         F("ci", "checks", "CI feedback", f"Watches CI on factory pull requests; after a failure an agent tries up to {_n(cfg.ci.fix_rounds, 'fix')}.",
           *_onoff(cfg.ci.enabled), ("A ticket", "PRs & CI"), "/settings?section=ci", "CI feedback", "ci.enabled"),
-        F("review", "checks", "Code review", "A second agent reviews each pull request the factory opens. It never approves or changes code.",
+        F("review", "checks", "Code review", ("A second agent reviews each pull request the factory opens. " + (("Until it says Looks good the pull request stays a draft"
+                                            + (f" and the build gets up to {_n(cfg.review.fix_rounds, 'fix round')}." if cfg.review.fix_rounds else "."))
+                                            if cfg.review.gate else "It never approves or changes code.")),
           *_onoff(cfg.review.enabled), ("A ticket", "PRs & CI"), "/settings?section=review", "Code review", "review.enabled"),
         F("conflicts", "checks", "Merge conflicts", f"An agent resolves conflicts with the base branch, at most {cfg.conflicts.max_attempts} times per pull request.",
           *_onoff(cfg.conflicts.enabled), ("A ticket", "PRs & CI"), "/settings?section=conflicts", "Merge conflicts", "conflicts.enabled"),

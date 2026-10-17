@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, EFFORT_FLOOR, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, VideosCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, EFFORT_FLOOR, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, IntakeCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, VideosCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -145,6 +145,16 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("local.auto_import_seconds", "Import GitHub issues every (seconds)", "int",
               "How often the automatic import reads GitHub (default 3600).", lo=600, hi=86400, adv=True),
     ]),
+    "intake": ("Thin tickets", [
+        Field("intake.enabled", "Ask for more before starting on a thin ticket", "bool",
+              "On: when a ticket gets a factory label and its title and description together are shorter than the length below, no "
+              "agent starts. The "
+              "factory comments once asking for the goal, the scope, how the result is checked and any constraints, and adds "
+              "factory:needs-answers. It starts once the description is long enough, or a person with write access comments "
+              "'go ahead'. Tickets the factory already worked on, and tickets it made from an approved split, are never held."),
+        Field("intake.min_chars", "Shortest description it starts on (characters)", "int",
+              "Characters of text in the title and description together, not counting markup, links or template comments.", lo=1, hi=2000),
+    ]),
     "routing": ("Models by ticket size", _routing_fields()),
     "roles": ("Stage agents", _role_fields()),     # the harness choices are filled in by fields_for()
     "classifier": ("Classifier", [
@@ -178,7 +188,13 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
     ]),
     "review": ("Code review", [
         Field("review.enabled", "Enable the code reviewer", "bool", "An independent agent reviews the factory's PRs and comments. It never approves or changes code."),
-        Field("review.auto", "Review every PR the factory opens", "bool", "PRs open as drafts and are marked ready once the review is posted. Off: PRs open ready; only the review label starts a review."),
+        Field("review.auto", "Review every PR the factory opens", "bool", "PRs open as drafts until the review (see the next switch). Off: PRs open ready; only the review label starts a review."),
+        Field("review.gate", "Keep a pull request a draft until the review says Looks good", "bool",
+              "On: Needs changes or Blocking issues keeps the PRs drafts and runs the fix rounds below. Off: the PRs are marked ready "
+              "after any review, whatever it says, and no fix rounds run."),
+        Field("review.fix_rounds", "Fix rounds after Needs changes or Blocking issues", "int",
+              "Only with the switch above on. The build fixes the review's findings on the same branch and the review runs again, at most this many times per PR. Then the "
+              "PRs stay drafts, the ticket is labelled factory:review-held and you are told. 0 = no fix rounds: a person decides at once.", lo=0, hi=5),
         Field("review.label", "Review label", "text", "Apply it to a ticket to (re-)review its open factory PRs."),
         Field("review.done_label", "Reviewed label", "text"),
         Field("review.model", "Reviewer model", "text", "Use a different harness and model family from the builder for a genuinely independent opinion."),
@@ -462,7 +478,7 @@ def del_in(d: dict, dotted: str) -> None:
 
 
 DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "questions": QuestionsCfg, "ticket_review": TicketReviewCfg, "evaluate": EvaluateCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
-                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg, "videos": VideosCfg}
+                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg, "videos": VideosCfg, "intake": IntakeCfg}
 
 
 def default_for(key: str):
