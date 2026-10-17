@@ -304,6 +304,8 @@ def results_env(job: dict, tmp: Path) -> tuple[dict, Path | None]:
     if (files := chosen_files(job)):
         (tmp / "test-files.txt").write_text("\n".join(files) + "\n")
         env["FACTORY_TEST_FILES"] = str(tmp / "test-files.txt")
+    if job["params"].get("steps") is True:              # a demo run for a video: a screenshot after each step of each test
+        env["FACTORY_STEPS"] = "1"
     return env, d
 
 
@@ -363,12 +365,14 @@ def playwright_tests(data, root: Path) -> list[tuple[str, str, str]]:
 
 
 def playwright_shots(data, root: Path) -> dict[str, str]:
-    """{resolved path of a screenshot: id of the test that took it}, from the PNG attachments of a Playwright JSON report."""
+    """{resolved path of a screenshot: id of the test that took it}, from the PNG attachments of a Playwright JSON report, and of a trace
+    (a demo run's step screenshots are made from it)."""
     out = {}
     for tid, t in _playwright_specs(data, root):
         for r in t.get("results") or []:
             for a in (r.get("attachments") or []) if isinstance(r, dict) else []:
-                if isinstance(a, dict) and a.get("contentType") == "image/png" and isinstance(a.get("path"), str) and "\0" not in a["path"]:
+                if (isinstance(a, dict) and a.get("contentType") in ("image/png", "application/zip") and isinstance(a.get("path"), str)
+                        and "\0" not in a["path"]):
                     out[str(Path(a["path"]).resolve())] = tid
     return out
 
@@ -498,6 +502,16 @@ def collect_shot_tests(folder: Path, root: Path, test_ids: set[str]) -> dict[str
     return out
 
 
+def collect_steps(folder: Path) -> dict[str, dict]:
+    """{artifact name: {"n", "label"}} from the steps.tsv a demo run's trace-steps.mjs wrote (PNG file, TAB, step number, TAB, label)."""
+    out: dict[str, dict] = {}
+    for line in _results_lines(folder / "steps.tsv"):
+        f, n, text = (line.split("\t", 2) + ["", ""])[:3]
+        if f.endswith(".png") and "/" not in f and n.isdigit() and 1 <= int(n) <= 99:
+            out[artifact_name(Path(f))] = {"n": int(n), "label": _message(text)[:160]}
+    return out
+
+
 def fit_result(result: dict) -> dict:
     """Drop the HTML reports, then the test messages, while the result is too big for the orchestrator to take."""
     size = lambda: len(json.dumps(result))
@@ -583,9 +597,12 @@ def execute(cfg: Config, api: Api, job: dict) -> dict | None:
         if results_dir:                                      # a Playwright run: per-test results and its HTML reports, failing or not
             result["tests"], result["reports"] = collect_results(results_dir, checkout)
             took = collect_shot_tests(results_dir, checkout, {t["id"] for t in result["tests"]})
+            steps = collect_steps(results_dir)
             for a in result["artifacts"]:
                 if a["name"] in took:
                     a["test"] = took[a["name"]]
+                if a["name"] in steps:
+                    a["step"] = steps[a["name"]]
             result = fit_result(result)
         return result
     except Exception as e:                                   # a worker bug is an error, never a verdict on the patch

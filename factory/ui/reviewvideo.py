@@ -202,13 +202,15 @@ def list_get(h, q: dict, csrf: str) -> None:
     for v in rows:
         word, tone = BADGE.get(v["status"], (v["status"], ""))
         note = esc(videos.reasons(cfg.videos).get(v["reason"], "The video was not made.")) if v["status"] == "skipped" else (
-            "This video is no longer available." if v["status"] == "removed" else "")
+            "This video is no longer available." if v["status"] == "removed" else
+            "Running the demo tests on a worker first." if v["status"] == "queued" and videos.demo_of(v) else "")
         ready = v["status"] in ("ready", "stale")
         acts = (f'<a href="{_link("/ticket/video", v["id"])}">Watch</a> · <a href="{_link("/ticket/video/transcript", v["id"])}">Transcript</a>'
                 if ready else "")
         again = (f'<form method="post" action="/videos/again" class="inline">{csrf_field(csrf)}<input type="hidden" name="id" value="{int(v["id"])}">'
                  '<button class="secondary">Make again</button></form>' if v["status"] in ("ready", "stale", "skipped", "removed") else "")
-        tickets = ", ".join([f"{r}{display(n)}" for r, n, _ in videos.sources_of(v)] + videos.files_of(v))
+        tickets = ", ".join([f"{r}{display(n)}" for r, n, _ in videos.sources_of(v)] + videos.files_of(v)
+                            + [f"{r}:{f} (demo)" for r, fs in videos.demo_of(v).items() for f in fs])
         out += (f'<tr><td data-l="Video"><b>{esc(v["title"])}</b><br><span class="muted">{esc(tickets)}</span></td>'
                 f'<td data-l="Status">{views.badge(word, tone)} <span class="muted">{note}</span></td>'
                 f'<td data-l="Length">{esc(videos.clock(v["seconds"])) if ready and v["seconds"] else ""}</td>'
@@ -237,9 +239,9 @@ def list_get(h, q: dict, csrf: str) -> None:
         intro += (f'<form method="post" action="/videos/ask" class="card fc-reply">{csrf_field(csrf)}'
                   '<div class="field"><label for="va-text">Describe a video</label>'
                   f'<textarea id="va-text" name="text" rows="3" maxlength="{F.MAX_TEXT - len(FCU.VIDEO_ASK)}" required aria-describedby="va-help" '
-                  'placeholder="How the login flow works, from the form to the session, for new developers. About two minutes."></textarea>'
-                  '<p class="muted" id="va-help">What it should show (some tickets, or a part of the code), for whom, and roughly how long. '
-                  'The chat answers here with a proposal you can make.</p></div>'
+                  'placeholder="How signing in works: the screens step by step, then the code behind them, for new developers. About two minutes."></textarea>'
+                  '<p class="muted" id="va-help">What it should show (some tickets, a flow in the app, or a part of the code), for whom, and roughly '
+                  'how long. The chat answers here with a proposal you can make.</p></div>'
                   + (f'<p class="muted">{esc(why)}</p>' if why else '<button>Ask for a video</button>') + '</form>')
     table = (f'<table class="stack" aria-live="polite"><thead><tr><th>Video</th><th>Status</th><th>Length</th><th>Made</th><th></th></tr></thead><tbody>{out}</tbody></table>'
              if out else '<p class="muted">No videos yet.</p>')
