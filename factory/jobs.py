@@ -133,7 +133,7 @@ def enqueue(db, repo: str, issue: int, base_sha: str, patch: str, recipe: str, p
     return cur.lastrowid
 
 
-APP_VERSION = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
+APP_VERSION = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}(?:-beta\.\d{1,4})?")
 
 
 def touch_worker(db, name: str, platform: str, recipes: list[str], version: int, now: float, app_version: str = "", unready: dict | None = None,

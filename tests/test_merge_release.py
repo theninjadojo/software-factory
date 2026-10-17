@@ -143,6 +143,24 @@ class Releases(AdminCase):
         self.assertIsNone(R.bump("dev", "patch"))
         self.assertIsNone(R.bump("1.2.3", "huge"))
 
+    def test_beta_bumps(self):
+        self.assertEqual(R.bump("0.20.1", "beta"), "0.21.0-beta.1")
+        self.assertEqual(R.bump("0.21.0-beta.1", "beta"), "0.21.0-beta.2")
+        self.assertEqual(R.bump("0.21.0-beta.2", "stable"), "0.21.0")
+        self.assertIsNone(R.bump("0.21.0-beta.2", "patch"))                    # it would be lower than the beta already tagged
+        self.assertIsNone(R.bump("0.20.1", "stable"))
+
+    def test_while_a_beta_is_out_only_the_next_beta_or_its_release_is_offered(self):
+        self.gh.raw_file.return_value = b"0.21.0-beta.1\n"
+        cookie, csrf = self.session()
+        html = self.req("GET", "/updates", cookie=cookie)[2]
+        self.assertIn("0.21.0-beta.2", html)
+        self.assertIn('value="stable"', html)
+        self.assertNotIn('value="patch"', html)
+        self.assertIn("A beta is out", html)
+        self.post(cookie, csrf, "/release/bump", {"kind": "stable"})
+        self.assertEqual(self.gh.bump_file.call_args.args[1:4], ("VERSION", "0.21.0\n", "release/v0.21.0"))
+
     def test_page_offers_versions_above_the_highest_of_main_and_latest_release(self):
         cookie, _ = self.session()
         s, _, html = self.req("GET", "/updates", cookie=cookie)

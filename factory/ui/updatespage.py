@@ -1,4 +1,5 @@
-"""The Updates page: the running version, a newer release if there is one, Check now, Update now and the nightly auto-update.
+"""The Updates page: the running version, a newer release if there is one, Check now, Update now, the release channel (stable or beta)
+and the nightly auto-update.
 Everything on it comes from the cached release check and from `factory/selfupdate.py`; the log of a running update is untrusted text
 only in the sense that it is escaped."""
 import re
@@ -14,6 +15,24 @@ MODE_TEXT = {"off": ("Off", "Updates wait for you to press Update now."),
              "all": ("Every release", "Every night any newer release installs itself, minor and major versions too.")}
 
 
+CHANNEL_TEXT = {"stable": ("Stable", "Only releases."),
+                "beta": ("Beta", "Releases and betas: the next version early, to try before everyone else. A beta can have rough edges; "
+                                 "switch back to Stable at any time and you move to the next release when it is out.")}
+
+
+def channel_form(state_dir, csrf: str) -> str:
+    ch = updates.channel(state_dir)
+    radios = "".join(f'<div class="field"><label class="check"><input type="radio" name="channel" value="{c}"{" checked" if c == ch else ""}> {esc(t)}</label>'
+                     f'<div class="muted">{esc(d)}</div></div>' for c, (t, d) in CHANNEL_TEXT.items())
+    return (f'<form method="post" action="/updates/channel" class="card">{csrf_field(csrf)}<h3>Release channel</h3>{radios}'
+            '<p class="muted">The update banner, Update now, the nightly update and <code>update.sh</code> without a version all follow it. '
+            'Verification workers follow the factory.</p><button>Save</button></form>')
+
+
+def _tag(tag: str) -> str:
+    return f'<strong>{esc(tag)}</strong>' + (' <span class="badge warn">beta</span>' if updates.is_beta(tag) else "")
+
+
 def checked_line(state_dir) -> str:
     c = updates._read(state_dir)
     when = float(c.get("checked", 0) or 0)
@@ -23,7 +42,7 @@ def checked_line(state_dir) -> str:
 STAGES = ("Pause and check no agent run is in flight", "Download and check the release", "Back up and install",
           "Rebuild sandbox images", "Restart services", "Health check")
 _MARK = re.compile(r"^##STAGE ([1-6])/6 [a-z]+$", re.M)   # only these exact lines count; deploy/update-native.sh prints them
-_TARGET = re.compile(r"^Updating: \S+ -> (v\d+\.\d+\.\d+)$", re.M)
+_TARGET = re.compile(r"^Updating: \S+ -> (v\d+\.\d+\.\d+(?:-beta\.\d+)?)$", re.M)
 
 
 def parse_log(tail: str):
@@ -85,9 +104,10 @@ def page_body(cfg, state_dir, csrf: str, run=None) -> str:
     got = updates.available(state_dir, have)
     latest = (updates._read(state_dir).get("latest") or {}).get("tag", "")
     native = SU.native(state_dir)
-    head = (f'<p>You are on <strong>{esc(have)}</strong>. '
-            + (f'<strong>{esc(got["tag"])}</strong> is available (<a href="{esc(got["url"])}" rel="noopener noreferrer" target="_blank">release notes</a>).' if got else
-               (f'The latest release is {esc(latest)}: you are up to date.' if latest else "No release is known yet; press Check now."))
+    head = (f'<p>You are on {_tag(have)}. '
+            + (f'{_tag(got["tag"])} is available (<a href="{esc(got["url"])}" rel="noopener noreferrer" target="_blank">release notes</a>).' if got else
+               (f'The latest {"release or beta" if updates.channel(state_dir) == "beta" else "release"} is {esc(latest)}: you are up to date.'
+                if latest else "No release is known yet; press Check now."))
             + f' <span class="muted">{esc(checked_line(state_dir))}</span></p>')
     check = (f'<form method="post" action="/updates/check" class="inline">{csrf_field(csrf)}<button>Check now</button></form>')
     if got and native:
@@ -110,4 +130,5 @@ def page_body(cfg, state_dir, csrf: str, run=None) -> str:
              '<p class="muted">It runs every night around 03:30, tests first like a manual update, and waits (trying again the next night) while an '
              'agent run is in flight. Verification workers follow the factory: see <a href="/workers">Workers</a>.</p><button>Save</button></form>')
             if native else "")
-    return head + f'<p>{check} {apply}</p>' + explain + f'<div id="live" data-src="/updates/status">{live_body(state_dir, csrf, run)}</div>' + auto
+    return (head + f'<p>{check} {apply}</p>' + explain + f'<div id="live" data-src="/updates/status">{live_body(state_dir, csrf, run)}</div>'
+            + channel_form(state_dir, csrf) + auto)

@@ -8,15 +8,24 @@ from .labels import NO_TOKEN, _github_error, flash_set
 from .views import csrf_field, esc
 
 BRANCH = "release/v"
-KINDS = {"patch": "Patch: a fix", "minor": "Minor: a feature that needs no action", "major": "Major: an install must change its config or data"}
+KINDS = {"patch": "Patch: a fix", "minor": "Minor: a feature that needs no action", "major": "Major: an install must change its config or data",
+         "beta": "Beta of the next minor version"}
+BETA_KINDS = {"beta": "Next beta", "stable": "Release this beta"}
+
+
+def kinds_for(current: str) -> dict:
+    """The bumps that make sense after `current`: after a beta only another beta or its release (every tag must be higher than the last)."""
+    return BETA_KINDS if updates.is_beta(current) else KINDS
 
 
 def bump(current: str, kind: str) -> str | None:
     v = updates.parse(current)
-    if not v or kind not in KINDS:
+    if not v or kind not in kinds_for(current):
         return None
-    a, b, c = v
-    return {"patch": f"{a}.{b}.{c + 1}", "minor": f"{a}.{b + 1}.0", "major": f"{a + 1}.0.0"}[kind]
+    a, b, c, _, n = v
+    if updates.is_beta(current):
+        return {"beta": f"{a}.{b}.{c}-beta.{n + 1}", "stable": f"{a}.{b}.{c}"}[kind]
+    return {"patch": f"{a}.{b}.{c + 1}", "minor": f"{a}.{b + 1}.0", "major": f"{a + 1}.0.0", "beta": f"{a}.{b + 1}.0-beta.1"}[kind]
 
 
 def _gh(h):
@@ -29,7 +38,7 @@ def _latest(h, repo: str, gh) -> tuple[str, str]:
     """(highest of VERSION on the default branch and the latest release tag, default branch)."""
     base = gh.default_branch(repo)
     on_main = gh.raw_file(repo, "VERSION", base).decode().strip()
-    tag = ((updates.fetch_latest(repo, token=gh.token or "") or {}).get("tag") or "").lstrip("v")
+    tag = ((updates.fetch_latest(repo, token=gh.token or "", channel="beta") or {}).get("tag") or "").lstrip("v")   # betas count too
     top = max((x for x in (on_main, tag) if updates.parse(x)), key=updates.parse, default="")
     return top, base
 
@@ -40,7 +49,8 @@ def release_body(h, csrf: str) -> str:
     repo = cfg.updates.repo
     gh = _gh(h)
     head = (f'<p>Releases come from <code>{esc(repo)}</code>: merging a change to its <code>VERSION</code> file '
-            'runs the release workflow, which tests, builds and publishes the images and creates the GitHub Release.</p>')
+            'runs the release workflow, which tests, builds and publishes the images and creates the GitHub Release. A beta '
+            '(for example <code>0.40.0-beta.1</code>) is published as a prerelease: only installs on the beta channel are offered it.</p>')
     if gh is None:
         return head + f'<p class="muted">{esc(NO_TOKEN)}</p>'
     try:
@@ -56,8 +66,10 @@ def release_body(h, csrf: str) -> str:
                  f'<button aria-label="Merge and release #{n}">Merge and release</button></form></td></tr>')
     waiting = ('<h3>Waiting to be released</h3><table class="stack"><thead><tr><th>PR</th><th>Title</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>"
               if rows else "")
-    opts = "".join(f'<option value="{k}">{esc(t)}{" → " + esc(bump(top, k) or "") if top else ""}</option>' for k, t in KINDS.items())
-    form = (f'<h3>Bump the version</h3><p class="muted">Latest on <code>{esc(base)}</code> or released: <strong>{esc(top or "unknown")}</strong>.</p>'
+    opts = "".join(f'<option value="{k}">{esc(t)}{" → " + esc(bump(top, k) or "") if top else ""}</option>' for k, t in kinds_for(top).items())
+    during = ('<p class="muted">A beta is out: the next version is another beta or the release of this one. A fix for the stable version '
+              'ships in that release.</p>' if updates.is_beta(top) else "")
+    form = (f'<h3>Bump the version</h3><p class="muted">Latest on <code>{esc(base)}</code> or released: <strong>{esc(top or "unknown")}</strong>.</p>{during}'
             f'<form method="post" action="/release/bump" class="field">{csrf_field(csrf)}<label>Kind of change<select name="kind">{opts}</select></label>'
             '<button>Open the version PR</button></form>' if top else '<p class="muted">Could not read VERSION from the repository.</p>')
     return head + waiting + form
@@ -72,7 +84,7 @@ def bump_post(h, form, csrf: str) -> None:
         top, base = _latest(h, repo, gh)
         new = bump(top, form.get("kind", ""))
         if new is None:
-            return _back(h, csrf, "Choose patch, minor or major.", "bad")
+            return _back(h, csrf, "Choose one of the kinds of change offered.", "bad")
         if any(p["head"]["ref"] == f"{BRANCH}{new}" for p in gh.open_pulls(repo, BRANCH)):
             return _back(h, csrf, f"A pull request for v{new} is already open.", "bad")
         url = gh.bump_file(repo, "VERSION", new + "\n", f"{BRANCH}{new}", base, f"Release v{new}",

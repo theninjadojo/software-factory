@@ -878,6 +878,19 @@ def updates_apply(h, form, csrf: str) -> None:
     h._redirect("/updates")
 
 
+def updates_channel(h, form, csrf: str) -> None:
+    ch, state = form.get("channel", ""), h.app.state_dir()
+    if not updates.set_channel(state, ch):
+        L.flash_set(csrf, "Pick Stable or Beta.", "bad")
+        return h._redirect("/updates")
+    log.info("updates: channel %s", ch)
+    cfg = h.app.cfg()
+    updates.refresh(state, cfg.updates.repo, token=h.app.update_token(cfg))      # the cached check was for the other channel
+    h.app.refresh_update_notice()
+    L.flash_set(csrf, "This install now takes betas too." if ch == "beta" else "This install now takes releases only.")
+    h._redirect("/updates")
+
+
 def updates_auto(h, form, csrf: str) -> None:
     mode = form.get("mode", "")
     why = SU.set_auto(h.app.state_dir(), mode)
@@ -954,7 +967,7 @@ def backup_restore(h, fields: dict, csrf: str, body: Path, span, work: Path) -> 
 
 GET = {"/videos": RVID.list_get, "/ticket/video": RVID.player_get, "/ticket/video/file": RVID.file_get, "/ticket/video/transcript": RVID.transcript_get, "/release": release_redirect, "/updates": updates_get, "/updates/status": updates_status, "/backup": backup_get, "/floor/edit": FE.edit_get, "/schedules": schedules_get, "/schedules/view": schedules_get, "/schedules/edit": schedules_get, "/scans": scans_get, "/scans/edit": scans_get, "/scans/smells": scans_get, "/scans/smells/edit": scans_get, "/workers": workers_get, "/machines/server": server_machine_get, "/workers/machine": worker_machine_get, "/workers/job": workers_get, "/settings": settings_get, "/credentials": credentials_get, "/telegram": telegram_get, "/slack": slack_get, "/harnesses": harnesses_get,
        "/tickets": L.list_get, "/roadmap": RM.get, "/labels": L.list_get, "/labels/issue": L.issue_get, "/tickets/local/attachment": LT.download, "/ticket/review": RV.review_get, "/ticket/design": RV.design_get, "/tickets/review": TRV.review_get, "/tickets/review/live": TRV.live_get, "/fragment/chat": CH.fragment_get, "/screens": SB.board_get, "/screens/edit": SB.edit_get, "/screens/captures": SB.captures_fragment, "/screens/results": SB.results_get, "/screens/canvas": SB.canvas_get, "/screens/review": RV.board_review_get, **TS.GET, **NP.GET, **FC.GET, **EV.GET}
-POST = {"/videos/image/build": video_image_build, "/videos/again": RVID.again_brief_post, "/ticket/video/save": RVID.save_post, "/ticket/video/again": RVID.again_post, "/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
+POST = {"/videos/image/build": video_image_build, "/videos/again": RVID.again_brief_post, "/ticket/video/save": RVID.save_post, "/ticket/video/again": RVID.again_post, "/prs/merge": L.merge_pr, "/release/bump": REL.bump_post, "/release/merge": REL.merge_post, "/updates/check": updates_check, "/updates/apply": updates_apply, "/updates/auto": updates_auto, "/updates/channel": updates_channel, "/backup/download": backup_download, "/floor/layout/save": FE.save, "/floor/layout/reset": FE.reset, "/mode/set": mode_set, "/workers/add": workers_add, "/workers/update": workers_update, "/workers/auto-update": workers_auto_update, "/schedules/run": schedules_run, "/schedules/save": schedules_save, "/schedules/test": schedules_test, "/schedules/delete": schedules_delete, "/scans/run": scans_run, "/scans/enable": scans_enable, "/scans/save": scans_save, "/scans/delete": scans_delete, "/scans/smells/save": smells_save, "/scans/smells/sample": smells_sample, "/scans/smells/delete": smells_delete,
         "/settings/save": settings_save, "/settings/feature": feature_set, "/settings/parallel": parallel_set, "/settings/projects": projects_save, "/settings/projects/detect": projects_detect, "/settings/projects/deps": projects_deps, "/classify/test": classify_test,
         "/credentials/save": credentials_save, "/credentials/api-token/add": api_token_add, "/credentials/api-token/revoke": api_token_revoke, "/harnesses/save": harnesses_save, "/harnesses/credential": harnesses_credential, "/tools/check": tools_check, "/tools/update": tools_update, "/credentials/test": credentials_test,
         "/telegram/save": telegram_save, "/telegram/detect": telegram_detect, "/telegram/use": telegram_use, "/telegram/test": telegram_test, "/slack/save": slack_save, "/slack/token": slack_token, "/slack/check": slack_check, "/slack/use": slack_use, "/slack/test": slack_test,

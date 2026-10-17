@@ -22,6 +22,16 @@ class Guard(unittest.TestCase):
         self.assertIn("not a version tag", guard.check("nightly", tags))
         self.assertIsNone(guard.check("v0.1.0", []))
 
+    def test_a_beta_sorts_below_its_release_and_above_the_one_before(self):
+        tags = ["v0.39.0", "v0.40.0-beta.1"]
+        self.assertIsNone(guard.check("v0.40.0-beta.2", tags))
+        self.assertIsNone(guard.check("v0.40.0", tags))                       # the release of the beta
+        self.assertIsNone(guard.check("v0.40.0-beta.10", tags + ["v0.40.0-beta.9"]))
+        self.assertIn("not higher than the latest tag v0.40.0-beta.1", guard.check("v0.39.1", tags))   # a stable fix waits for the release
+        self.assertIn("not higher", guard.check("v0.40.0-beta.1", tags))
+        self.assertIn("not higher", guard.check("v0.40.0-beta.3", ["v0.40.0"]))
+        self.assertIn("not a version tag", guard.check("v0.40.0-rc.1", tags))
+
     def test_cli_compares_only_branch_releases(self):
         run = lambda *a: subprocess.run(["python3", str(ROOT / "scripts" / "release_guard.py"), *a], capture_output=True, text=True, cwd=ROOT)
         self.assertEqual(run("v99.0.0", "tag").returncode, 0)                 # a hand-pushed tag is the maintainer's call
@@ -38,6 +48,7 @@ class Workflow(unittest.TestCase):
         self.assertIn("already released: nothing to do", text)
         # the tests run (test.yml, called) before anything is published, and only when there is something to release
         self.assertIn("uses: ./.github/workflows/test.yml", text)
+        self.assertIn('MOVING=latest; case "$TAG" in *-beta.*) MOVING=beta ;; esac', text)   # a beta never moves :latest
         self.assertIn("needs: [decide, test, cli-binary]", text)                        # the release waits for the tests and the client
         self.assertEqual(text.count("if: needs.decide.outputs.go == 'true'"), 3)       # the test, client and release jobs
         self.assertIn("workflow_call:", (ROOT / ".github" / "workflows" / "test.yml").read_text())
@@ -104,6 +115,15 @@ class AutoUpdate(unittest.TestCase):
         self.assertIn("leaving it for a person", self.run_auto("v0.2.0").stdout)
         (self.tmp / "state" / "AUTO_UPDATE").write_text("patch\n")
         self.assertIn("leaving it for a person", self.run_auto("v0.3.0").stdout)
+
+    def test_betas_auto_update_on_the_same_version_line(self):
+        (self.tmp / "app" / "VERSION").write_text("0.3.0-beta.1\n")
+        for tag in ("v0.3.0-beta.2", "v0.3.0"):                              # the next beta, and the release of the beta
+            self.assertIn("will try again at the next timer", self.run_auto(tag, busy=True).stdout, tag)
+        for tag in ("v0.2.1", "v0.4.0-beta.1"):                               # older, another minor version
+            self.assertIn("leaving it for a person", self.run_auto(tag).stdout, tag)
+        (self.tmp / "app" / "VERSION").write_text("0.3.0\n")
+        self.assertIn("leaving it for a person", self.run_auto("v0.3.0-beta.2").stdout)    # never back to a beta
 
     def test_an_older_or_same_patch_is_ignored(self):
         self.assertIn("leaving it for a person", self.run_auto("v0.2.0").stdout)

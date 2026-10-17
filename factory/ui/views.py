@@ -158,7 +158,7 @@ UPDATE = {"tag": "", "url": ""}      # set by the server from the cached release
 
 def update_banner() -> str:
     tag, url = UPDATE.get("tag", ""), UPDATE.get("url", "")
-    if not tag or not url.startswith("https://github.com/") or not re.fullmatch(r"v?\d{1,4}\.\d{1,4}\.\d{1,4}", tag):
+    if not tag or not url.startswith("https://github.com/") or not re.fullmatch(r"v?\d{1,4}\.\d{1,4}\.\d{1,4}(?:-beta\.\d{1,4})?", tag):
         return ""
     return (f'<div class="flash ok" role="status">Shikumi {esc(tag)} is available (you have {esc(version.current())}). '
             f'<a href="{esc(url)}" rel="noopener noreferrer" target="_blank">Release notes</a>. <a href="/updates">Update</a>.</div>')

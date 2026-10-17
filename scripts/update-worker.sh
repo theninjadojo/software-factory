@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Update a release install of a Shikumi verification worker to the latest (or a given) release, and roll back if it does not come up.
 #   ./scripts/update-worker.sh            # latest release
-#   ./scripts/update-worker.sh v0.2.1     # a specific release (also how you go back)
+#   ./scripts/update-worker.sh v0.2.1     # a specific release (also how you go back), or a beta: v0.3.0-beta.1
+#   SHIKUMI_CHANNEL=beta ./scripts/update-worker.sh   # the newest release or beta (the factory names the tag itself when it updates a worker)
 # Run it in the install folder, on the worker machine. It refuses while a job is running (a restart would lose it; the factory would
 # re-queue it, wasting the work): FORCE=1 overrides. worker.toml, secrets/ and work/ are never touched.
 # Testing: SHIKUMI_ASSET_BASE=file:///dir serves the release files locally; SKIP_SERVICE=1 and SKIP_IMAGE=1 skip those steps.
@@ -11,15 +12,22 @@ DIR="$PWD"
 REPO="${SHIKUMI_REPO:-$(sed -n 's/^SHIKUMI_REPO=//p' .env 2>/dev/null | tail -1 || true)}"; REPO="${REPO:-theninjadojo/software-factory}"   # .env only exists if SHIKUMI_REPO was set at install
 OWNER="$(echo "${REPO%%/*}" | tr 'A-Z' 'a-z')"
 die() { echo "$*" >&2; exit 1; }
+# The newest release on the beta channel: the highest tag, a release or a beta (vX.Y.Z-beta.N sorts below vX.Y.Z), from the releases list.
+newest() { python3 -c 'import json,re,sys
+k=lambda t:(lambda m:m and (int(m[1]),int(m[2]),int(m[3]),0 if m[4] else 1,int(m[4] or 0)))(re.match(r"^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$",t))
+print(max((r["tag_name"] for r in json.load(sys.stdin) if not r.get("draft") and k(r["tag_name"])),key=k))'; }
 command -v curl >/dev/null || die "curl is required"; command -v python3 >/dev/null || die "python3 is required"
 [ -f worker.toml ] || die "no worker.toml here: run this in the install folder (the one scripts/setup-worker.sh created)"
 
 HAVE="$(cat VERSION 2>/dev/null || echo unknown)"; TAG="${1:-}"
-if [ -z "$TAG" ]; then
+if [ -z "$TAG" ] && [ "${SHIKUMI_CHANNEL:-}" = beta ]; then
+  TAG="$(curl -fsS -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases?per_page=30" | newest)" \
+    || die "could not read the releases of $REPO (offline, or none published yet?)"
+elif [ -z "$TAG" ]; then
   TAG="$(curl -fsS -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')" \
     || die "could not read the latest release of $REPO (offline, or none published yet?)"
 fi
-[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "not a release tag: $TAG"
+[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || die "not a release tag: $TAG"
 [ "v$HAVE" = "$TAG" ] && { echo "Already on $TAG."; exit 0; }
 echo "Updating the worker: v$HAVE -> $TAG"
 

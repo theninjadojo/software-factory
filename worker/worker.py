@@ -51,7 +51,7 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 ROOT = Path(__file__).resolve().parent.parent          # the install folder: worker/, scripts/, VERSION, worker.toml
 UPDATE_EVERY = 60                                       # seconds between "should I update?" questions while idle
 UPDATE_RETRY = 3600                                     # after a failed update of a release, wait this long before trying it again
-APP_VERSION = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
+APP_VERSION = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}(?:-beta\.\d{1,4})?")
 
 
 def app_version() -> str:
@@ -725,7 +725,7 @@ def self_update(cfg: Config, api: Api, tag: str, files: list, root: Path = ROOT)
     credentials for a private repository). Returns '' on success, else why not. The script refuses while a job is running, checks the new
     code and rolls back by itself; its restart step is skipped here because the worker exits afterwards and its service starts it again."""
     script = root / "scripts" / "update-worker.sh"
-    if not script.is_file() or not re.fullmatch(r"v\d{1,4}\.\d{1,4}\.\d{1,4}", tag):
+    if not script.is_file() or not re.fullmatch(r"v\d{1,4}\.\d{1,4}\.\d{1,4}(?:-beta\.\d{1,4})?", tag):
         return "this install has no scripts/update-worker.sh (update it by hand once)"
     tmp = Path(tempfile.mkdtemp(prefix="factory-update-", dir=cfg.work_dir if cfg.work_dir.is_dir() else None))
     try:

@@ -12,7 +12,7 @@ from pathlib import Path
 
 log = logging.getLogger("factory.releasefiles")
 FILES = ("VERSION", "shikumi-worker.tar.gz", "setup-worker.sh", "update-worker.sh")
-TAG = re.compile(r"v\d{1,4}\.\d{1,4}\.\d{1,4}")
+TAG = re.compile(r"v\d{1,4}\.\d{1,4}\.\d{1,4}(?:-beta\.\d{1,4})?")
 MAX_BYTES = 30_000_000
 
 
