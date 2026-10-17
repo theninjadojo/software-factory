@@ -24,7 +24,7 @@
 # suite is given E2E_SHOTS_FILE, where it appends {"file": "<PNG name>", "test": "<pytest node id>"} per PNG (one JSON object a line).
 #
 # When the worker sets FACTORY_STEPS=1 (a demo run for a video), the wrapper config records a trace with screenshots and slows each action
-# by STEP_SLOWMO ms instead of taking the end-of-test screenshot, and trace-steps.mjs (next to this script) turns each trace into one PNG
+# by STEP_SLOWMO ms (and records a video, only so the trace's frames are full size) instead of taking the end-of-test screenshot, and trace-steps.mjs (next to this script) turns each trace into one PNG
 # per step of the test, named <test>-sNN-<sum>.png, with its label in FACTORY_RESULTS_DIR/steps.tsv. Python suites get no steps.
 #
 # When the worker sets FACTORY_TEST_FILES (a file outside the checkout, one test file a line, relative to the repository root, already
@@ -115,7 +115,9 @@ for D in $DIRS; do
   SHOT="{ mode: 'on', fullPage: true }"; EXTRA=""
   if [ "${FACTORY_STEPS:-}" = 1 ]; then
     SHOT="'off'"
-    EXTRA="trace: { mode: 'on', screenshots: true, snapshots: false, sources: false }, launchOptions: { ...((u && u.launchOptions) || {}), slowMo: $STEP_SLOWMO },"
+    # The video is not kept: recording it at the viewport's size makes the trace's screencast that size too (else it is cut to 800 px).
+    EXTRA="trace: { mode: 'on', screenshots: true, snapshots: false, sources: false }, launchOptions: { ...((u && u.launchOptions) || {}), slowMo: $STEP_SLOWMO },
+  video: { mode: 'on', size: (u && u.viewport) || (b.use && b.use.viewport) || { width: 1280, height: 720 } },"
   fi
   case "$EXT" in
     ts|mts|mjs) W="playwright.screens.config.$EXT"; IMPORT="import base from './$CFG';"; [ "$EXT" = ts ] && IMPORT="import base from './$BASE';"; EXPORT="export default" ;;

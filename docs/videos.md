@@ -58,7 +58,7 @@ and a test that walks through the flow.
 
 The demo run is not shown on the Screens board and does not count as a result in the Tests register. A video waits at most an hour
 for it, then is made without the steps. **Make again** runs the tests again, so the video shows the app as it is now. Step screens
-come from the trace's screencast (800 × 450). Only JavaScript Playwright suites have steps; a Python suite in `tests/e2e` does not.
+are taken at the test's viewport size (a video is recorded only for that, and not kept). Only JavaScript Playwright suites have steps; a Python suite in `tests/e2e` does not.
 
 How it is made:
 - **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the

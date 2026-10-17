@@ -98,6 +98,7 @@ class TraceSteps(unittest.TestCase):
         text = (RECIPES / "playwright-screens.sh").read_text()
         self.assertIn('if [ "${FACTORY_STEPS:-}" = 1 ]', text)
         self.assertIn('node "$HERE/trace-steps.mjs"', text)
+        self.assertIn("video: { mode: 'on', size:", text)                # full-size frames, not 800 px
         self.assertIn("...(b.projects ? {", text)                     # a config without projects keeps its tests
 
 
