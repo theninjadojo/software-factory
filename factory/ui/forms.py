@@ -258,7 +258,7 @@ SECTION_INTRO = {
     "comments": "When a person comments on a ticket the factory worked on, an agent can work out what the comment asks for.",
     "ticket_review": "On request, an agent proposes which open tickets are already built or duplicates. Nothing runs until a person asks.",
     "evaluate": "Once a ticket is finished, an agent scores how well each step went and suggests what to change. Results are on the Evaluate page.",
-    "intake": "A ticket whose description says next to nothing does not start an agent. The factory asks its author for more first.",
+    "intake": "A ticket whose title and description say next to nothing does not start an agent. The factory asks its author for more first.",
     "design_links": "Design exports linked in a ticket, fetched only from hosts you list.",
     "scanner": "Limits for code-smell scans. The scans themselves, and what they look for, are on the Scans page.",
     "chat": "Ask about a ticket and get a quick answer, outside the label-driven pipeline. The factory chat answers about every ticket and the settings.",

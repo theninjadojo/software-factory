@@ -106,6 +106,27 @@ class Guard(unittest.TestCase):
         fake, _, _ = self.poll(FakeGH({READY: [ticket("short")]}), cfg=replace(CFG, intake=IntakeCfg(min_chars=3)))
         fake.assert_called_once()
 
+    def test_the_title_counts_toward_the_length(self):
+        t = ticket("")
+        t["title"] = "Checkout: rename the 'Recieve' button to 'Receive' on the payment step, keep its position and colour"
+        fake, _, _ = self.poll(FakeGH({READY: [t]}))
+        fake.assert_called_once()
+
+    def test_a_split_child_or_a_failed_ticket_is_not_held(self):
+        fake, _, _ = self.poll(FakeGH({READY: [ticket("Part of o/r#1 (item 1 of 2).\n\nDo it.\n\n<!-- factory:split=3.1 -->")]}))
+        fake.assert_called_once()
+        fake, _, _ = self.poll(FakeGH({READY: [ticket("", labels=(READY, m.FAILED))]}))
+        fake.assert_called_once()
+
+    def test_the_question_is_not_posted_again_when_it_is_out_of_sight(self):
+        gh = FakeGH({READY: [ticket("")]})
+        conn = self.poll(gh)[1]
+        gh.comments.clear()                                             # GitHub lists only the first 30 comments
+        gh.issues = {READY: [ticket("", updated="t2")]}
+        fake, _, _ = self.poll(gh, conn=conn)
+        fake.assert_not_called()
+        self.assertEqual(len(self.asks(gh)), 1)
+
     def test_dry_run_only_records(self):
         gh = FakeGH({READY: [ticket("")]})
         _, conn, _ = self.poll(gh, cfg=replace(CFG, dry_run=True))

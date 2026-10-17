@@ -1,8 +1,8 @@
-"""Thin tickets: a trigger label on a ticket whose body says next to nothing does not start a run.
+"""Thin tickets: a trigger label on a ticket whose title and body say next to nothing does not start a run.
 
 The factory asks the author once, with a fixed comment (nothing from the ticket is echoed in it), for the goal, the scope, how
 the result is checked and any constraints, and puts the needs-answers label on the ticket. The trigger label stays, so the
-ticket is looked at again whenever it changes: it starts once its body has enough real text, or once a person with write access
+ticket is looked at again whenever it changes: it starts once its title and body together have enough real text, or once a person with write access
 comments "go ahead" after the factory asked. The ticket's text is untrusted and is only measured here, never repeated.
 """
 import re
@@ -16,7 +16,7 @@ GO_AHEAD = re.compile(r"(?:please\s+)?(?:go\s+ahead|proceed|start\s+anyway|run\s
 MAX_GO = 60
 
 ASK = (MARKER + "\n**The factory has not started on this ticket yet: its description is too short to work from** "
-       "(fewer than {min_chars} characters of text). An agent would have to guess what you want. Please edit the description and add:\n\n"
+       "(fewer than {min_chars} characters of text in the title and description together). An agent would have to guess what you want. Please edit the description and add:\n\n"
        "- **Goal:** what should be different when this is done, and why.\n"
        "- **Scope:** which pages, screens, modules or repositories it touches, and what is out of scope.\n"
        "- **How the result is checked:** what a person will look at or test to say it is done.\n"
@@ -34,8 +34,20 @@ def real_text(body) -> str:
     return " ".join(text.split())
 
 
-def thin(body, min_chars: int) -> bool:
-    return len(real_text(body)) < min_chars
+SPLIT = "<!-- factory:split="                   # a child ticket the factory made from an approved split (split.py)
+
+
+def size(title, body) -> int:
+    """Characters of real text in the title and the body together: a clear title says what to do as much as the body does."""
+    return len(" ".join(filter(None, (real_text(title), real_text(body)))))
+
+
+def thin(body, min_chars: int, title=None) -> bool:
+    """Whether a ticket says too little to start on. A child of an approved split is never thin: the factory wrote it from the
+    parent's plan, and holding it would ask the factory itself for more while the items after it wait."""
+    if isinstance(body, str) and SPLIT in body:
+        return False
+    return size(title, body) < min_chars
 
 
 def ask_comment(min_chars: int) -> str:

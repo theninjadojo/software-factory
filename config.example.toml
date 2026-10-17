@@ -304,9 +304,10 @@ harness = "claude-code"
 mode = "block"
 bypass_label = "factory:skip-mockup"
 
-# A ticket whose description is shorter than min_chars characters of text (markup, links and template comments do not count) does
-# not start a run when it gets a factory label. The factory comments once asking for the goal, scope, checks and constraints, adds
-# factory:needs-answers, and starts once the description is long enough or a person with write access comments "go ahead".
+# A ticket whose title and description together are shorter than min_chars characters of text (markup, links and template
+# comments do not count) does not start a run when it gets a factory label. The factory comments once asking for the goal, scope,
+# checks and constraints, adds factory:needs-answers, and starts once the description is long enough or a person with write
+# access comments "go ahead".
 # Set it from the admin UI: Settings > Thin tickets.
 # [intake]
 # enabled = true

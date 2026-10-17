@@ -139,12 +139,13 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
     ]),
     "intake": ("Thin tickets", [
         Field("intake.enabled", "Ask for more before starting on a thin ticket", "bool",
-              "On: when a ticket gets a factory label and its description is shorter than the length below, no agent starts. The "
+              "On: when a ticket gets a factory label and its title and description together are shorter than the length below, no "
+              "agent starts. The "
               "factory comments once asking for the goal, the scope, how the result is checked and any constraints, and adds "
               "factory:needs-answers. It starts once the description is long enough, or a person with write access comments "
-              "'go ahead'. Tickets the factory already worked on are never held."),
+              "'go ahead'. Tickets the factory already worked on, and tickets it made from an approved split, are never held."),
         Field("intake.min_chars", "Shortest description it starts on (characters)", "int",
-              "Characters of text, not counting markup, links or template comments.", lo=1, hi=2000),
+              "Characters of text in the title and description together, not counting markup, links or template comments.", lo=1, hi=2000),
     ]),
     "routing": ("Models by ticket size", _routing_fields()),
     "roles": ("Stage agents", _role_fields()),     # the harness choices are filled in by fields_for()

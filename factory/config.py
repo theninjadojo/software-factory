@@ -143,10 +143,10 @@ class SplitCfg:
 @dataclass(frozen=True)
 class IntakeCfg:
     """A ticket whose body says next to nothing (intake.py). With a trigger label on it the factory does not start a run: it asks
-    the author once for the goal, the scope, how the result is checked and any constraints, and waits. It starts once the body
-    is longer than min_chars of real text, or a person with write access comments "go ahead"."""
+    the author once for the goal, the scope, how the result is checked and any constraints, and waits. It starts once the title
+    and body together are longer than min_chars of real text, or a person with write access comments "go ahead"."""
     enabled: bool = True
-    min_chars: int = 80                  # characters of real text (no markup, links or HTML comments) a body needs
+    min_chars: int = 80                  # characters of real text (no markup, links or HTML comments) title + body need
 
 
 @dataclass(frozen=True)

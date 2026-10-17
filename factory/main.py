@@ -1507,6 +1507,9 @@ def confirm_triage(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: 
         triage.mark(conn, [row["id"]], "failed")
 
 
+ASKED = ": asked the author for more"            # the end of the decision recorded when the thin-ticket question is posted
+
+
 def may_go_ahead(cfg: Config, gh: GitHub, repo: str, num: int, login: str) -> bool:
     """Whether a commenter may start a thin ticket as it is: a person signed in to the admin UI on a local ticket, else a GitHub
     user with one of the trusted repository roles."""
@@ -1521,7 +1524,8 @@ def thin_ticket(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, kind: str
     if not cfg.intake.enabled or kind in ("review", "conflicts"):
         return False
     labels = [lb["name"] for lb in issue.get("labels", [])]
-    if DONE in labels or stages_done(cfg, labels) or not intake.thin(issue.get("body"), cfg.intake.min_chars):
+    if DONE in labels or FAILED in labels or stages_done(cfg, labels) \
+            or not intake.thin(issue.get("body"), cfg.intake.min_chars, issue.get("title")):
         return False
     num, updated = issue["number"], issue["updated_at"]
     try:
@@ -1532,8 +1536,13 @@ def thin_ticket(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, kind: str
     if by:
         emit("decision", f"thin ticket started as it is: {by} said go ahead", repo, num)
         return False
-    size = len(intake.real_text(issue.get("body")))
-    detail = f"{why}; the description has {size} characters of text, fewer than {cfg.intake.min_chars}: asked the author for more"
+    # GitHub returns only a ticket's first 30 comments, so on a long thread the question can be out of sight. The decision recorded
+    # when it was posted still says so: without this check every poll would post it again (each post changes the ticket).
+    asked = asked or conn.execute("SELECT 1 FROM decisions WHERE repo=? AND issue=? AND outcome='human' AND detail LIKE ?",
+                                  (repo, num, "%" + ASKED)).fetchone() is not None
+    size = intake.size(issue.get("title"), issue.get("body"))
+    detail = (f"{why}; the title and description have {size} characters of text, fewer than {cfg.intake.min_chars}"
+              + ASKED)
     if cfg.dry_run:
         dbm.record(conn, repo, num, updated, "human", detail + " [dry-run]")
         emit("decision", f"dry-run: would ask for a better description ({size} characters)", repo, num)
@@ -1545,10 +1554,10 @@ def thin_ticket(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, kind: str
         except Exception:
             log.warning("could not create the label %s in %s", Q.NEEDS_ANSWERS, repo)      # adding it still works
         gh.add_labels(repo, num, [Q.NEEDS_ANSWERS])
-        alert(f"Needs a person: {repo}#{num}\n{issue.get('title', '')[:120]}\nReason: the description is too short to start "
+        alert(f"Needs a person: {repo}#{num}\n{issue.get('title', '')[:120]}\nReason: the title and description are too short to start "
               f"({size} characters of text, fewer than {cfg.intake.min_chars}). The factory asked the author for more.", event="needs_human")
     dbm.record(conn, repo, num, updated, "human", detail)
-    emit("decision", f"needs a person: the description is too short ({size} characters of text)", repo, num)
+    emit("decision", f"needs a person: the title and description are too short ({size} characters of text)", repo, num)
     log.info("%s#%d waits for a better description (%d characters)", repo, num, size)
     return True
 
