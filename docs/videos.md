@@ -28,7 +28,8 @@ in any conversation on the **Chat** page.
 1. The chat reads the tickets it can see on the board and, while **Let the factory chat read the code** is on (Settings → Ticket
    chat, on by default), a read-only copy of each repository's default branch. It answers with a proposal: a title, a brief, and
    the tickets and files it will use.
-2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click. A request made on the Videos page stays
+2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click. **Show code in the video** is off
+   unless you asked the chat for code; leave it off and the video shows only the app's screens. A request made on the Videos page stays
    there: the reply, the proposal and the **Make video** button appear on the Videos page, above the list of videos.
 3. The video is made by the same worker as review videos and counts toward the same daily limit. When it is ready, or if it is
    skipped, the conversation that asked for it says so. Videos are listed on the **Videos** page (`/videos`), with **Watch**,
@@ -62,13 +63,18 @@ are taken at the test's viewport size (a video is recorded only for that, and no
 
 How it is made:
 - **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the
-  changed files and their diff hunks) and the screenshots its builds took.
+  changed files and their diff hunks) and the screenshots its builds took. Also the newest shot of each page on the
+  [Screens board](ui.md) (one viewport per page, the app as it looks on the default branch; up to 12), taken from the
+  video's repositories, or from every repository when those have none. Keep the board fresh (**Settings → Screens**, *board
+  every*) so videos show the app as it is now.
+- **Screens, not code.** Unless **Show code in the video** was ticked, the writer is told to show screens only, and any code
+  scene it writes is dropped. The diffs and the code copies are still given to it, so it understands what changed.
 - **Writer.** A sealed, read-only run with the chat's model and limits (no repository, no GitHub token) gets the brief and the
   material and writes the scenes. Its output is untrusted and checked like the reviewer's block. A code scene must name a pull
   request and file from the material, and the lines shown come from that diff. A screen scene must name a screenshot from the
   material. Anything else is dropped.
-- **Fallback.** With fewer than two usable scenes, the video is the brief, the screenshots and the list of tickets, in fixed
-  wording.
+- **Fallback.** With fewer than two usable scenes, the video is the brief, the screens and the list of tickets, in fixed
+  wording (and the start of each named file, only with **Show code in the video**).
 - Nothing is posted on GitHub for these videos.
 
 ## Voices
