@@ -57,11 +57,14 @@ def _proposal_html(cfg, t: dict, csrf: str, where: str = "chat") -> str:
     from ..tracker import display
     tickets = "".join(f'<li>{esc(r)}{esc(display(n))} {esc(title)}</li>' for r, n, title in p["tickets"])
     files = "".join(f'<li class="mono">{esc(f)}</li>' for f in p.get("files") or [])
+    demo = "".join(f'<li class="mono">{esc(f)}</li>' for f in p.get("demo") or [])
     hidden = (f'{csrf_field(csrf)}<input type="hidden" name="id" value="{int(t["id"])}">'
               f'<input type="hidden" name="c" value="{int(t["thread_id"] or 0)}">' + _in(where))
     return (f'<div class="chat-proposal" aria-label="Video proposal"><p><b>Proposed video: {esc(p["title"])}</b></p><p>{esc(p["brief"])}</p>'
             + (f'<p class="muted">Made from these tickets\' pull requests and screenshots:</p><ul>{tickets}</ul>' if tickets else "")
             + (f'<p class="muted">Explaining this code (default branch):</p><ul>{files}</ul>' if files else "")
+            + (f'<p class="muted">Showing these tests running in the app, a screen after each step (a worker runs them first):</p>'
+               f'<ul>{demo}</ul>' if demo else "")
             + f'<form method="post" action="/chat/video/make" class="field">{hidden}{RVID.voice_fields(cfg, "", "")}'
             '<div class="sd-acts"><button>Make video</button></div></form>'
             f'<form method="post" action="/chat/video/dismiss" class="inline">{hidden}<button class="secondary">Dismiss</button></form></div>')
@@ -294,7 +297,7 @@ def make_video(h, form, csrf: str) -> None:
                 raise L.Refused("That proposal is no longer open.")
             try:
                 vid = videos.queue_brief(db, p["title"], p["brief"], [tuple(x) for x in p["tickets"]], time.time(), voice, voice_id,
-                                         p.get("files") or [])
+                                         p.get("files") or [], p.get("demo") or [])
                 F.link_video(db, p["id"], vid)
             except ValueError:
                 F.set_proposal_state(db, p["id"], "confirmed", "open")          # nothing was queued: let it be tried again
