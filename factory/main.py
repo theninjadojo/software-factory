@@ -16,6 +16,7 @@ from . import why as W
 from . import backup, captures, chat, ci, cleanup, conflicts, designfiles, designlinks, evaluate, factorychat, jobs, mockups, newproject, origin, pause, plan, pm, reviewactions, reviewgate, reviewnotes, runner, scanner, schedules, screenboard, split, subtasks, ticketreview, tools, tracker, triage, usage, verify, videoimage, videos, waves
 from . import codecopy
 from . import depdetect
+from . import intake
 from . import judges
 from . import recommend
 from . import questions as Q
@@ -1592,6 +1593,61 @@ def confirm_triage(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: 
         triage.mark(conn, [row["id"]], "failed")
 
 
+ASKED = ": asked the author for more"            # the end of the decision recorded when the thin-ticket question is posted
+
+
+def may_go_ahead(cfg: Config, gh: GitHub, repo: str, num: int, login: str) -> bool:
+    """Whether a commenter may start a thin ticket as it is: a person signed in to the admin UI on a local ticket, else a GitHub
+    user with one of the trusted repository roles."""
+    if tracker.is_local(num):
+        return login == tracker.UI_ACTOR
+    return bool(login) and gh.permission(repo, login) in cfg.trusted_permissions
+
+
+def thin_ticket(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, kind: str, why: str) -> bool:
+    """True when the ticket waits for a better description (intake.py) instead of starting a run. Only a ticket the factory has
+    not worked on yet is held: once a stage or a build has run, its documents say more than the body."""
+    if not cfg.intake.enabled or kind in ("review", "conflicts"):
+        return False
+    labels = [lb["name"] for lb in issue.get("labels", [])]
+    if DONE in labels or FAILED in labels or stages_done(cfg, labels) \
+            or not intake.thin(issue.get("body"), cfg.intake.min_chars, issue.get("title")):
+        return False
+    num, updated = issue["number"], issue["updated_at"]
+    try:
+        me = gh.login()
+    except Exception:
+        me = tracker.FACTORY_AUTHOR                     # a local ticket without a token: the factory's comments keep this author
+    asked, by = intake.state(gh.issue_comments(repo, num), me, lambda login: may_go_ahead(cfg, gh, repo, num, login))
+    if by:
+        emit("decision", f"thin ticket started as it is: {by} said go ahead", repo, num)
+        return False
+    # GitHub returns only a ticket's first 30 comments, so on a long thread the question can be out of sight. The decision recorded
+    # when it was posted still says so: without this check every poll would post it again (each post changes the ticket).
+    asked = asked or conn.execute("SELECT 1 FROM decisions WHERE repo=? AND issue=? AND outcome='human' AND detail LIKE ?",
+                                  (repo, num, "%" + ASKED)).fetchone() is not None
+    size = intake.size(issue.get("title"), issue.get("body"))
+    detail = (f"{why}; the title and description have {size} characters of text, fewer than {cfg.intake.min_chars}"
+              + ASKED)
+    if cfg.dry_run:
+        dbm.record(conn, repo, num, updated, "human", detail + " [dry-run]")
+        emit("decision", f"dry-run: would ask for a better description ({size} characters)", repo, num)
+        return True
+    if not asked:
+        gh.comment(repo, num, intake.ask_comment(cfg.intake.min_chars))
+        try:
+            gh.create_label(repo, Q.NEEDS_ANSWERS, "fbca04", "Open questions are waiting for a person's answers")
+        except Exception:
+            log.warning("could not create the label %s in %s", Q.NEEDS_ANSWERS, repo)      # adding it still works
+        gh.add_labels(repo, num, [Q.NEEDS_ANSWERS])
+        alert(f"Needs a person: {repo}#{num}\n{issue.get('title', '')[:120]}\nReason: the title and description are too short to start "
+              f"({size} characters of text, fewer than {cfg.intake.min_chars}). The factory asked the author for more.", event="needs_human")
+    dbm.record(conn, repo, num, updated, "human", detail)
+    emit("decision", f"needs a person: the title and description are too short ({size} characters of text)", repo, num)
+    log.info("%s#%d waits for a better description (%d characters)", repo, num, size)
+    return True
+
+
 def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: dict, kind: str, label: str) -> str | None:
     """One labeled issue. Returns "paused" if the orchestrator is paused and should stop polling."""
     num, updated = issue["number"], issue["updated_at"]
@@ -1612,6 +1668,8 @@ def handle_issue(cfg: Config, gh: GitHub, conn, classifier, repo: str, issue: di
     if not cfg.dry_run and (why_paused := pause.paused(Path(cfg.db_path).parent)):
         log.info("paused (%s); leaving %s#%d queued", why_paused, repo, num)
         return "paused"
+    if thin_ticket(cfg, gh, conn, repo, issue, kind, why):
+        return None
     tracked = (dbm.conflicts_for_issue(conn, repo, num)
                if kind == "auto" and DONE in [lb["name"] for lb in issue.get("labels", [])] else [])
     if tracked or (kind == "auto" and DONE in [lb["name"] for lb in issue.get("labels", [])] and dbm.prs_for_issue(conn, repo, num)):

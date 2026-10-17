@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..classifier import KIND_ALIASES, KINDS
-from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, VideosCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
+from ..config import (DEFAULT_ROLES, QUESTION_CATEGORIES, ChatCfg, NewProjectsCfg, CommentsCfg, IntakeCfg, QuestionsCfg, DesignLinksCfg, EvaluateCfg, HealthCfg, ScannerCfg, SplitCfg, SubtasksCfg, TicketReviewCfg, UpdatesCfg, VideosCfg, MAX_FALLBACKS, MODEL_RE, PROMPT_MAX, CiCfg, ConflictsCfg, PmCfg, PromptsCfg, ReviewCfg, RunnerCfg, ScreensCfg, WorkersCfg, deep_merge,
                       default_harnesses, load_raw, overrides_path, parse, prompt_problem)
 from ..events import ALL_EVENTS
 from ..schedules import parse_every
@@ -136,6 +136,16 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
               "The same as the poll interval reads GitHub at every poll.", lo=5, hi=86400, adv=True),
         Field("local.auto_import_seconds", "Import GitHub issues every (seconds)", "int",
               "How often the automatic import reads GitHub (default 3600).", lo=600, hi=86400, adv=True),
+    ]),
+    "intake": ("Thin tickets", [
+        Field("intake.enabled", "Ask for more before starting on a thin ticket", "bool",
+              "On: when a ticket gets a factory label and its title and description together are shorter than the length below, no "
+              "agent starts. The "
+              "factory comments once asking for the goal, the scope, how the result is checked and any constraints, and adds "
+              "factory:needs-answers. It starts once the description is long enough, or a person with write access comments "
+              "'go ahead'. Tickets the factory already worked on, and tickets it made from an approved split, are never held."),
+        Field("intake.min_chars", "Shortest description it starts on (characters)", "int",
+              "Characters of text in the title and description together, not counting markup, links or template comments.", lo=1, hi=2000),
     ]),
     "routing": ("Models by ticket size", _routing_fields()),
     "roles": ("Stage agents", _role_fields()),     # the harness choices are filled in by fields_for()
@@ -460,7 +470,7 @@ def del_in(d: dict, dotted: str) -> None:
 
 
 DATACLASS_DEFAULTS = {"chat": ChatCfg, "new_projects": NewProjectsCfg, "comments": CommentsCfg, "questions": QuestionsCfg, "ticket_review": TicketReviewCfg, "evaluate": EvaluateCfg, "health": HealthCfg, "design_links": DesignLinksCfg,
-                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg, "videos": VideosCfg}
+                      "updates": UpdatesCfg, "subtasks": SubtasksCfg, "scanner": ScannerCfg, "split": SplitCfg, "videos": VideosCfg, "intake": IntakeCfg}
 
 
 def default_for(key: str):

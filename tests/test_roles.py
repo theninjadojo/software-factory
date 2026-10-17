@@ -11,6 +11,8 @@ from factory.runner import RunResult
 from factory.sanitize import sanitize_markdown
 
 R = lambda mod, eff="low": Route("claude-code", mod, eff)
+# Long enough that the thin-ticket check (intake.py) lets it start.
+BODY = "Add a reorder button to the list page so people can move items up and down. Checked by moving two items and reloading."
 CFG = Config("x", 1, False, 0.6, None, "factory:ready", ["o/r"], frozenset({"admin", "write"}),
              {"low": R("haiku"), "medium": R("sonnet"), "high": R("opus")})
 
@@ -65,7 +67,7 @@ class FakeClf:
 
 
 def issue(n=5, labels=()):
-    return {"number": n, "title": "Add thing", "body": "please", "updated_at": f"t{n}", "labels": [{"name": l} for l in labels]}
+    return {"number": n, "title": "Add thing", "body": BODY, "updated_at": f"t{n}", "labels": [{"name": l} for l in labels]}
 
 
 class Flows(unittest.TestCase):

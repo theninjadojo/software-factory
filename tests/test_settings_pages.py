@@ -10,7 +10,7 @@ from factory.ui import schedules as SC
 from factory.ui import settings as S
 from test_ui_admin import AdminCase
 
-NEW = ("comments", "ticket_review", "design_links", "scanner", "chat", "health", "update_check")
+NEW = ("intake", "comments", "ticket_review", "design_links", "scanner", "chat", "health", "update_check")
 
 
 class SettingsPages(AdminCase):

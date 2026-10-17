@@ -85,6 +85,9 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           _n(len(cfg.projects), "project"), "info", ("Tickets", "A ticket"), "/settings?section=projects", "Projects"),
         F("comments", "source", "Comment triage", "An agent reads new comments on tickets the factory worked on and works out what they ask for.",
           *_onoff(cfg.comments.enabled), ("A ticket",), "/settings?section=comments", "Comment triage"),
+        F("intake", "source", "Thin tickets", f"A ticket with fewer than {cfg.intake.min_chars} characters of title and description waits while "
+          "the factory asks its author for the goal, scope, checks and constraints.",
+          *_onoff(cfg.intake.enabled), ("A ticket", "Needs you"), "/settings?section=intake", "Thin tickets"),
         F("design_links", "source", "Design links", "Design exports linked in a ticket are fetched from hosts you list and shown to agents.",
           *_onoff(cfg.design_links.enabled), ("A ticket",), "/settings?section=design_links", "Design links"),
         F("ticket_review", "source", "Ticket review", "On request, an agent proposes which open tickets are already built or duplicates.",
