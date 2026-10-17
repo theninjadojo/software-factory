@@ -799,7 +799,7 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
                    trigger_label: str | None = None, chain: bool = False, conn=None) -> runner.RunResult:
     """Run an analyst, designer or architect and put its document on the ticket."""
     num, trigger_label = issue["number"], trigger_label or role.label
-    route = Route(role.harness, role.model, role.effort, role.fallback_models)
+    route = floor(cfg, dbm.step_of("stage", role.name), Route(role.harness, role.model, role.effort, role.fallback_models))   # as run_chain runs it
     alert(f"Starting {role.name}: {repo}#{num}: {issue['title'][:80]}\nAgent: {route.model}, effort {route.effort}"
           + (f"\nchosen by {c.source} (stage {c.stage}, confidence {c.stage_confidence:.2f})" if c and c.stage_confidence else ""), event="started")
     claim(gh, repo, num, trigger_label, role.name)
@@ -1096,7 +1096,7 @@ def review_changes(cfg: Config, gh: GitHub, repo: str, issue: dict, prs: list, t
         return None
     if not branch.startswith("factory/"):                     # never review (or check out) a branch the factory did not create
         return None
-    route = Route(cfg.review.harness, cfg.review.model, cfg.review.effort, cfg.review.fallback_models)
+    route = floor(cfg, "review", Route(cfg.review.harness, cfg.review.model, cfg.review.effort, cfg.review.fallback_models))   # as run_chain runs it
     alert(f"Reviewing {repo}#{num}: {len(prs)} PR(s)\nReviewer: {route.model}, effort {route.effort} ({route.harness})", event="started")
     res, route = run_chain(cfg, gh, "review", repo, issue, route, None, "reviewer", role="reviewer", prior=stage_outputs(gh, repo, num),
                            comments=human_comments(gh, repo, num), fix_branch=branch, mockups=ticket_mockups(repo, num),
@@ -1232,7 +1232,7 @@ def resolve_conflicts(cfg: Config, gh: GitHub, conn, repo: str, issue: dict, lab
         if limited:
             alert(f"Merge conflicts need a person: {repo}#{num} (attempt limit reached)\n" + "\n".join(limited), event="failure")
         return "no-conflicts"
-    route, outcomes = cfg.routes["medium"], []
+    route, outcomes = floor(cfg, "conflicts", cfg.routes["medium"]), []         # the effort it runs with, as run_chain floors it
     for branch, prs in groups.items():
         alert(f"Resolving merge conflicts: {repo}#{num} on {branch}, {len(prs)} PR(s)\nAgent: {route.model}, effort {route.effort}", event="started")
         res, _ = run_chain(cfg, gh, "conflicts", repo, issue, route, prior=stage_outputs(gh, repo, num), comments=human_comments(gh, repo, num),

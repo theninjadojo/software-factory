@@ -96,6 +96,15 @@ class Chain(unittest.TestCase):
         self.assertEqual(begin.call_args_list[0].args[3].effort, "high")      # the run is recorded with the effort it ran at
         self.assertEqual(fake.call_args_list[-1].args[4].effort, "low")
 
+    def test_the_start_message_shows_the_effort_a_stage_runs_at(self):
+        from factory.config import DEFAULT_ROLES
+        from test_roles import CFG, FakeClf, FakeGH, issue
+        analyst = replace(next(r for r in DEFAULT_ROLES if r.name == "analyst"), effort="low")
+        with mock.patch.object(m.runner, "run_task", return_value=RunResult("stage", "ok", output="# A")), \
+                mock.patch.object(m, "alert") as alert, tempfile.TemporaryDirectory() as d:
+            m.dispatch_stage(replace(CFG, db_path=d + "/f.db", effort_floor={"analyze": "high"}), FakeGH(), FakeClf(), "o/r", issue(), analyst)
+        self.assertIn("effort high", alert.call_args_list[0].args[0])
+
     def test_no_fallbacks_is_one_run(self):
         (res, used), fake, _ = self.run_chain([RunResult("rate-limited", "x")], fallbacks=())
         self.assertEqual((res.status, fake.call_count), ("rate-limited", 1))
