@@ -40,6 +40,26 @@ mounted read-only at `/work/code`, still with no network and no GitHub token, an
 names a file and a line range; the factory reads those lines from its copy (at most 40, text files only, never through a symlink).
 Factory chat replies get more turns and time than a ticket chat for this (Settings → Ticket chat, Advanced).
 
+### Showing a flow in the app
+
+A video can show a flow running in the app, such as signing in or checking out, with a screen after each step. This needs a
+[worker](workers.md) that runs the repository's Playwright tests (**Settings → Screens**, the Playwright run of the Screens board)
+and a test that walks through the flow.
+
+1. Ask for it like any other video ("demo the login, step by step"). The chat looks for a Playwright test that does the steps
+   (`*.spec.ts` or `*.test.ts` in the code copy). It adds that test to the proposal under **Showing these tests running in the
+   app**. If no test walks through the flow, it says so.
+2. When you click **Make video**, the video waits while a worker runs those test files on the default branch (the Videos page says
+   *Running the demo tests on a worker first*). The run records a Playwright trace with each action slowed by 400 ms, and the
+   worker keeps the screen after each step of each test, with what the step did ("Click Sign in", "Fill Email"). A typed value
+   is never kept.
+3. The writer gets those steps in order and narrates the ones that tell the flow. Without the writer, the video shows the first
+   test's steps in order. A test that failed shows the screens up to where it stopped, and the video says it failed.
+
+The demo run is not shown on the Screens board and does not count as a result in the Tests register. A video waits at most an hour
+for it, then is made without the steps. **Make again** runs the tests again, so the video shows the app as it is now. Step screens
+are taken at the test's viewport size (a video is recorded only for that, and not kept). Only JavaScript Playwright suites have steps; a Python suite in `tests/e2e` does not.
+
 How it is made:
 - **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the
   changed files and their diff hunks) and the screenshots its builds took.

@@ -54,6 +54,10 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         """CREATE TABLE IF NOT EXISTS verify_artifacts (
             job_id INTEGER NOT NULL, name TEXT NOT NULL, png BLOB NOT NULL, PRIMARY KEY (job_id, name))"""
     )
+    db.execute(       # a demo run's step screenshots: which test took each, its step number and what the step did (jobs.validate_result checked them)
+        """CREATE TABLE IF NOT EXISTS verify_steps (
+            job_id INTEGER NOT NULL, name TEXT NOT NULL, test TEXT NOT NULL DEFAULT '', n INTEGER NOT NULL, label TEXT NOT NULL,
+            PRIMARY KEY (job_id, name))""")
     db.execute(       # untrusted HTML from a worker: only ever served sandboxed (ui/server.py, /workers/report)
         "CREATE TABLE IF NOT EXISTS verify_reports (job_id INTEGER NOT NULL, name TEXT NOT NULL, html BLOB NOT NULL, PRIMARY KEY (job_id, name))")
     db.execute(
@@ -82,6 +86,16 @@ def get(db, job_id: int) -> dict | None:
 
 def artifacts(db, job_id: int) -> dict[str, bytes]:
     return {n: bytes(b) for n, b in db.execute("SELECT name, png FROM verify_artifacts WHERE job_id=? ORDER BY name", (job_id,))}
+
+
+def steps(db, job_id: int) -> list[dict]:
+    """A demo run's step screenshots in order (by test, then step): {name, test, n, label, png}; [] when it has none."""
+    try:
+        rows = db.execute("SELECT s.name, s.test, s.n, s.label, a.png FROM verify_steps s JOIN verify_artifacts a "
+                          "ON a.job_id = s.job_id AND a.name = s.name WHERE s.job_id=? ORDER BY s.test, s.n, s.name", (job_id,)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [{"name": n, "test": t, "n": k, "label": lb, "png": bytes(p)} for n, t, k, lb, p in rows]
 
 
 def tests(job: dict) -> list[dict]:
@@ -235,6 +249,14 @@ def is_screens(job: dict) -> bool:
         return False
 
 
+def is_steps(job: dict) -> bool:
+    """True for a Playwright run a demo video asked for: a screenshot after each step, kept for the video and not on the Screens board."""
+    try:
+        return is_screens(job) and json.loads(job["params"]).get("steps") is True
+    except (ValueError, AttributeError):
+        return False
+
+
 def purpose(job: dict) -> str:
     try:
         return str(json.loads(job["params"]).get("purpose", "")) if job.get("params") else ""
@@ -281,8 +303,18 @@ def validate_result(body, max_artifacts: int = MAX_ARTIFACTS) -> tuple[dict | No
     ids = {t["id"] for t in ran}                    # an artifact's test (the test that took the screenshot) must be one this run reported;
     took = {a["name"]: a["test"] for a in arts       # anything else loses only the link, never the shot
             if clean_test_id(a.get("test")) is not None and a["test"] in ids}
+    steps = {a["name"]: s for a in arts if (s := clean_step(a.get("step")))}
     return {"status": status, "exit_code": code, "log": clean_log(body.get("log")), "artifacts": out, "findings": found, "patch": patch,
-            "tests": ran, "reports": reports, "artifact_tests": took}, ""
+            "tests": ran, "reports": reports, "artifact_tests": took, "artifact_steps": steps}, ""
+
+
+def clean_step(step) -> dict | None:
+    """A step screenshot's {n, label} as a worker sends it: n a whole number from 1 to 99, the label one line of at most 160 printable
+    characters (it is what a test did, such as "Click getByRole('button')"; untrusted, only ever shown as text). None when it is not one."""
+    if not isinstance(step, dict) or not isinstance(step.get("n"), int) or isinstance(step["n"], bool) or not 1 <= step["n"] <= 99:
+        return None
+    label = " ".join("".join(c if c.isprintable() else " " for c in str(step.get("label") or "")).split())[:160]
+    return {"n": step["n"], "label": label} if label else None
 
 
 def clean_test_id(tid) -> str | None:
@@ -390,16 +422,20 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
                (res["status"], res["exit_code"], res["log"], now, findings, patch, ran, job_id))
     for n, png in res["artifacts"].items():
         db.execute("INSERT OR REPLACE INTO verify_artifacts VALUES (?,?,?)", (job_id, n, png))
+    for n, s in (res["artifact_steps"].items() if is_steps(job) else ()):
+        db.execute("INSERT OR REPLACE INTO verify_steps (job_id, name, test, n, label) VALUES (?,?,?,?,?)",
+                   (job_id, n, res["artifact_tests"].get(n, ""), s["n"], s["label"]))
     for n, html in (res["reports"].items() if screens else ()):
         db.execute("INSERT OR REPLACE INTO verify_reports VALUES (?,?,?)", (job_id, n, html))
     db.commit()
-    if screens and res["tests"]:                              # each test linked to a scenario gets this run's result in the Tests register
+    if screens and res["tests"] and not is_steps(job):       # each test linked to a scenario gets this run's result in the Tests register
+                                                              # (not a demo run's: it runs slowed down, for the pictures)
         try:
             from . import scenarios
             scenarios.record_run(db, job["repo"], job_id, worker, res["tests"])
         except Exception:
             logging.getLogger("factory.jobs").exception("could not record the test results of job %s in the Tests register", job_id)
-    if is_screens(job) and res["artifacts"]:                  # a Playwright run for the Screens board: its screens become board images
+    if is_screens(job) and not is_steps(job) and res["artifacts"]:     # a Playwright run for the Screens board: its screens become board images
         try:
             from . import captures
             captures.import_run(db, job, res["artifacts"], res["artifact_tests"])
