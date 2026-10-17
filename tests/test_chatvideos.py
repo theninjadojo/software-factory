@@ -1,5 +1,6 @@
 """Videos asked for in the factory chat: the proposal, confirming it, the writer's scenes, and the Videos page."""
 import json
+from dataclasses import replace
 import sqlite3
 import time
 import unittest
@@ -28,7 +29,9 @@ class Proposal(unittest.TestCase):
                              "tickets": [["o/r", 3, "Board drag"], ["o/r", 4, "Login fix"]], "files": []})
 
     def test_extra_keys_unknown_tickets_and_videos_off_are_dropped(self):
-        for text in (block(voice="x"), block(tickets=["o/r#99"]), block(tickets=[]), block(tickets=["o/r#3"] * 9),
+        self.assertTrue(F.parse_proposal(block(show_code=True), REFS)[1]["show_code"])
+        self.assertNotIn("show_code", F.parse_proposal(block(show_code=False), REFS)[1])
+        for text in (block(voice="x"), block(show_code="yes"), block(tickets=["o/r#99"]), block(tickets=[]), block(tickets=["o/r#3"] * 9),
                      block(action="redirect"), block(title=""), "```factory-proposal\nnot json\n```"):
             shown, p = F.parse_proposal(text, REFS)
             self.assertIsNone(p, text)
@@ -52,6 +55,11 @@ class Proposal(unittest.TestCase):
         self.assertIn("switched off", F.build_prompt("snap", [], videos=False))
         self.assertIn("factory-proposal", F.build_prompt("snap", [], videos=True))
         self.assertNotIn("VIDEOS.", F.build_prompt("snap", []))
+        on = F.build_prompt("snap", [], videos=True, screens=["o/r: login"])
+        self.assertIn("do not propose it and do not offer a lesser video", on)
+        self.assertIn("- o/r: login", on)
+        self.assertIn("(none)", F.build_prompt("snap", [], videos=True))
+        self.assertNotIn("MISSING.", F.build_prompt("snap", [], videos=False))
 
 
 WRITER = """```factory-video
@@ -106,15 +114,19 @@ class Brief(Base):
         self.assertIn("o/r#3:home-desktop", seen["prompt"])
         self.assertIn("<brief>", seen["prompt"])
         self.assertEqual(gh.comments, [])
-        self.assertEqual(run.seen["img"], ["s03.png"])
+        self.assertEqual(run.seen["img"], ["s02.png"])                         # the code scene was dropped: no code was asked for
         notes = [t for t in F.turns(self.db, self.thread) if t["video_id"] == row["id"] and not t["proposal"]]
         self.assertIn("is ready", notes[0]["body"])
 
-    def test_without_a_usable_writer_the_wording_is_fixed(self):
-        row = self.queued()
-        videos.work_one(self.cfg, FakeGH(), self.db, row, lambda: 2000.0, self.container(), write=lambda p: "no block")
-        row = videos.get(self.db, row["id"])
-        self.assertEqual((row["status"], row["narration"]), ("ready", "fixed"))
+    def test_without_a_usable_writer_it_is_skipped_and_said(self):
+        title_only = '```factory-video\n{"scenes": [{"kind": "title", "title": "T", "say": "S."}, {"kind": "points", "title": "P", "points": ["a"], "say": "S."}]}\n```'
+        for out in ("no block", title_only, None):
+            row = self.queued()
+            videos.work_one(self.cfg, FakeGH(), self.db, row, lambda: 2000.0, self.container(),
+                            write=None if out is None else (lambda p, out=out: out))
+            row = videos.get(self.db, row["id"])
+            self.assertEqual((row["status"], row["reason"]), ("skipped", "writer_failed"), out)
+            self.assertIn("did not write a usable video", F.turns(self.db, self.thread)[-1]["body"])
 
     def test_a_failed_container_is_skipped_with_a_note(self):
         row = self.queued()
@@ -132,6 +144,47 @@ class Brief(Base):
                 raise AssertionError("read a PR")
         self.assertEqual(videos.mark_stale(Boom(), self.db, 99999.0), 0)
         self.assertEqual(videos.get(self.db, row["id"])["status"], "ready")
+
+    def test_code_is_shown_only_when_asked_for(self):
+        mat = videos.material(FakeGH(), self.db, [("o/r", 3, "Board drag")])
+        self.assertEqual([s["kind"] for s in videos.brief_scenes(WRITER, {**mat, "code": False})], ["title", "shot"])
+        self.assertEqual([s["kind"] for s in videos.brief_scenes(WRITER, {**mat, "code": True})], ["title", "code", "shot"])
+        row = {"title": "Tour", "brief": "Show it.", "files": "[]"}
+        self.assertIn("SCREENS, NOT CODE", videos.writer_prompt(self.cfg.videos, row, mat))
+        self.assertNotIn('"kind": "code"', videos.writer_prompt(self.cfg.videos, row, mat))
+        self.assertIn('"kind": "code"', videos.writer_prompt(self.cfg.videos, {**row, "show_code": 1}, mat))
+        vid = videos.queue_brief(self.db, "Tour", "Show it.", [("o/r", 3, "Board drag")], 1000.0, show_code=True)
+        self.db.execute("UPDATE review_videos SET status='ready' WHERE id=?", (vid,))
+        self.assertEqual(videos.get(self.db, videos.again_brief(self.db, vid, 2000.0))["show_code"], 1)
+
+    def test_the_screens_board_shows_the_app_as_it_is_now(self):
+        from factory import screenboard
+        from factory.config import ScreenPage, ScreensCfg
+        screenboard.ensure_tables(self.db)
+        sha = "a" * 40
+        for repo, page, view in (("o/r", "login", "design"), ("o/r", "login", "desktop"), ("o/r", "login", "mobile"),
+                                 ("x/y", "home", "desktop")):
+            screenboard.store(self.db, repo, page, view, sha, png())
+        sc = ScreensCfg(pages=(ScreenPage("o/r", "login", "site/login.html"), ScreenPage("x/y", "home", "site/index.html")))
+        board = videos.board_material(self.db, sc, ["o/r"])
+        self.assertEqual(list(board["shots"]), ["board:o/r:login"])           # one view per page, never the design, the video's repo
+        self.assertEqual(board["titles"]["board:o/r:login"], "login screen")
+        self.assertEqual(list(videos.board_material(self.db, sc, ["z/z"])["shots"]), ["board:x/y:home", "board:o/r:login"])   # the board's order
+        self.assertEqual(videos.board_material(self.db, None, ["o/r"])["shots"], {})
+        gh, run, seen = FakeGH(), self.container(), {}
+        row = self.queued()
+        cfg = replace(self.cfg, screens=sc)
+        writer = WRITER.replace("x/y#9:home-desktop", "board:o/r:login")
+        videos.work_one(cfg, gh, self.db, row, lambda: 2000.0, run, write=lambda p: seen.setdefault("prompt", p) and writer)
+        self.assertIn("- board:o/r:login: login screen", seen["prompt"])
+        self.assertEqual([s.get("title") for s in run.seen["script"]["scenes"] if s["kind"] == "shot"], ["home desktop screen", "login screen"])
+
+    def test_with_nothing_to_show_it_is_skipped_and_said(self):
+        self.db.execute("DELETE FROM run_images")
+        row = self.queued()
+        videos.work_one(self.cfg, FakeGH(), self.db, row, lambda: 2000.0, self.container(), write=lambda p: WRITER)
+        self.assertEqual(videos.get(self.db, row["id"])["reason"], "no_screens")
+        self.assertIn("no screens to show", F.turns(self.db, self.thread)[-1]["body"])
 
     def test_make_again_queues_once(self):
         row = self.queued()
@@ -171,6 +224,18 @@ class Page(UiCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0]["title"], json.loads(rows[0]["sources"])), ("Board tour", [["o/r", 3, "Board drag"]]))
         self.assertIn("Video queued", self.req("GET", "/chat", cookie=cookie)[2])
+        self.assertEqual(rows[0]["show_code"], 0)                              # the box was not ticked
+
+    def test_the_show_code_box_follows_the_proposal_and_the_person(self):
+        self.on()
+        cookie, csrf = self.session()
+        db = self.rw()
+        thread = F.new_thread(db, "show me the login code")
+        F.add_reply(db, {"id": F.add_person(db, "show me the login code", thread)}, block(show_code=True), None, refs=REFS)
+        tid = F.turns(db, thread)[-1]["id"]
+        self.assertIn('name="show_code" value="1" checked', self.req("GET", f"/chat?c={thread}", cookie=cookie)[2])
+        self.req("POST", "/chat/video/make", urlencode([("csrf", csrf), ("id", tid), ("c", thread), ("show_code", "1")]), cookie=cookie)
+        self.assertEqual(videos.briefs(self.rw())[0]["show_code"], 1)
 
     def test_dismiss_and_videos_off(self):
         self.on(videos_on=False)

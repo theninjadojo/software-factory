@@ -97,16 +97,13 @@ class Writer(unittest.TestCase):
         self.assertIn("lines 1 to 2", scenes[1]["subtitle"])
 
     def test_the_writer_prompt_lists_the_code_and_the_files(self):
-        row = {"title": "Login", "brief": "How login works.", "files": json.dumps(["o/r:src/app.py"])}
+        row = {"title": "Login", "brief": "How login works.", "files": json.dumps(["o/r:src/app.py"]), "show_code": 1}
         text = videos.writer_prompt(NS(max_seconds=120), row, {"prs": {}, "shots": {}, "tickets": []}, "- o/r: /work/code/o__r\n")
         self.assertIn('"source": "owner/repo:path/in/repo.py"', text)
+        self.assertNotIn('"source"', videos.writer_prompt(NS(max_seconds=120), {**row, "show_code": 0}, {"prs": {}, "shots": {}, "tickets": []},
+                                                          "- o/r: /work/code/o__r\n"))          # code is read, not shown
         self.assertIn("- o/r:src/app.py", text)
         self.assertNotIn("/work/code", videos.writer_prompt(NS(max_seconds=120), row, {"prs": {}, "shots": {}, "tickets": []}))
-
-    def test_without_a_writer_the_named_files_open_the_video(self):
-        row = {"title": "Login", "brief": "How login works.", "files": json.dumps(["o/r:src/app.py"])}
-        scenes = videos.fixed_brief(row, {"prs": {}, "shots": {}, "tickets": []}, cfg(self.d))
-        self.assertEqual([s["kind"] for s in scenes], ["title", "code"])
 
     def test_the_code_is_mounted_read_only(self):
         cmd = sandbox_cmd(RunnerCfg(), Route("claude-code", "sonnet", "low"), "n", Path("/w"), ro_mounts=[("/s/code/o__r", "/work/code/o__r")])

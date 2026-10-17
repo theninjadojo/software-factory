@@ -28,7 +28,8 @@ in any conversation on the **Chat** page.
 1. The chat reads the tickets it can see on the board and, while **Let the factory chat read the code** is on (Settings → Ticket
    chat, on by default), a read-only copy of each repository's default branch. It answers with a proposal: a title, a brief, and
    the tickets and files it will use.
-2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click. A request made on the Videos page stays
+2. Pick a voice and click **Make video**, or **Dismiss**. Nothing is made until you click. **Show code in the video** is off
+   unless you asked the chat for code; leave it off and the video shows only the app's screens. A request made on the Videos page stays
    there: the reply, the proposal and the **Make video** button appear on the Videos page, above the list of videos.
 3. The video is made by the same worker as review videos and counts toward the same daily limit. When it is ready, or if it is
    skipped, the conversation that asked for it says so. Videos are listed on the **Videos** page (`/videos`), with **Watch**,
@@ -48,27 +49,36 @@ and a test that walks through the flow.
 
 1. Ask for it like any other video ("demo the login, step by step"). The chat looks for a Playwright test that does the steps
    (`*.spec.ts` or `*.test.ts` in the code copy). It adds that test to the proposal under **Showing these tests running in the
-   app**. If no test walks through the flow, it says so.
+   app**. If no test walks through the flow, it proposes no video and says what is missing (a test that does the flow end to end).
 2. When you click **Make video**, the video waits while a worker runs those test files on the default branch (the Videos page says
    *Running the demo tests on a worker first*). The run records a Playwright trace with each action slowed by 400 ms, and the
    worker keeps the screen after each step of each test, with what the step did ("Click Sign in", "Fill Email"). A typed value
    is never kept.
-3. The writer gets those steps in order and narrates the ones that tell the flow. Without the writer, the video shows the first
-   test's steps in order. A test that failed shows the screens up to where it stopped, and the video says it failed.
+3. The writer gets those steps in order and narrates the ones that tell the flow.
 
 The demo run is not shown on the Screens board and does not count as a result in the Tests register. A video waits at most an hour
-for it, then is made without the steps. **Make again** runs the tests again, so the video shows the app as it is now. Step screens
+for it. A video is never made without the steps it promised: if the tests could not be run (no worker runs that repository's
+Playwright tests), did not finish within the hour, failed, or took no step screens, the video is skipped and the conversation says
+which. **Make again** runs the tests again, so the video shows the app as it is now. Step screens
 are taken at the test's viewport size (a video is recorded only for that, and not kept). Only JavaScript Playwright suites have steps; a Python suite in `tests/e2e` does not.
 
 How it is made:
 - **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the
-  changed files and their diff hunks) and the screenshots its builds took.
+  changed files and their diff hunks) and the screenshots its builds took. Also the newest shot of each page on the
+  [Screens board](ui.md) (one viewport per page, the app as it looks on the default branch; up to 12), taken from the
+  video's repositories, or from every repository when those have none. Keep the board fresh (**Settings → Screens**, *board
+  every*) so videos show the app as it is now.
+- **Screens, not code.** Unless **Show code in the video** was ticked, the writer is told to show screens only, and any code
+  scene it writes is dropped. The diffs and the code copies are still given to it, so it understands what changed.
 - **Writer.** A sealed, read-only run with the chat's model and limits (no repository, no GitHub token) gets the brief and the
   material and writes the scenes. Its output is untrusted and checked like the reviewer's block. A code scene must name a pull
   request and file from the material, and the lines shown come from that diff. A screen scene must name a screenshot from the
   material. Anything else is dropped.
-- **Fallback.** With fewer than two usable scenes, the video is the brief, the screenshots and the list of tickets, in fixed
-  wording.
+- **Nothing missing, no fallback.** The factory never makes a lesser video in place of the one asked for. Before proposing, the
+  chat checks the video can show what was asked (it knows which pages the Screens board has and which repositories can run
+  demos); if something is missing it says what and how to fix it. When the video is made, it is skipped with a note in the
+  conversation (and the reason on the Videos page) when: a demo did not run in full; there are no screens to show (and code was
+  not asked for); or the writer's scenes show no screen or code.
 - Nothing is posted on GitHub for these videos.
 
 ## Voices

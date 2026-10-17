@@ -472,7 +472,7 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict, token: st
     code = code_for_chat(cfg, token)
     demo = demo_repos(cfg) if code else []
     prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets, cfg.videos.enabled,
-                                      codecopy.listing(cfg) if code else "", demo)
+                                      codecopy.listing(cfg) if code else "", demo, board_pages(db) if cfg.videos.enabled else [])
     route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
     run_id, sink = begin_run("factory-chat", "factory", {"number": 0, "title": "Factory chat"}, route), {}     # 0: never a ticket on the board
     res = runner.run_factory_chat(cfg, route, prompt, sink, code)
@@ -494,6 +494,12 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict, token: st
 def demo_repos(cfg: Config) -> list[str]:
     """The repositories a chat video can demo a flow of: those whose Playwright run a worker makes ([[screens.captures]])."""
     return [c.repo for c in cfg.screens.captures] if cfg.videos.enabled and cfg.workers.enabled else []
+
+
+def board_pages(db) -> list[str]:
+    """The pages the Screens board has a shot of, as 'owner/repo: page' (the design canvas left out)."""
+    from . import screenboard
+    return sorted({f"{r}: {p}" for r, p, v in screenboard.latest(db) if v != screenboard.DESIGN})
 
 
 def demo_ok(cfg: Config, ref: str, repos: list[str]) -> bool:
