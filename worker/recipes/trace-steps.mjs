@@ -52,9 +52,13 @@ const lines = (buf) => (buf ? buf.toString('utf8').split('\n') : []).flatMap((l)
 
 // A step's label: the action and what it acted on, never the value it typed ('Fill "secret"' -> 'Fill'), at most 160 characters.
 export function label(ev) {
-  const verb = String(ev.title || '').replace(/"(?:[^"\\]|\\.)*"/g, '').replace(/\s+/g, ' ').trim();
+  let verb = String(ev.title || '').replace(/"(?:[^"\\]|\\.)*"/g, '').replace(/\s+/g, ' ').trim();
   let target = String(ev.subtitle || '');
-  if (verb === 'Navigate') target = target.replace(/^[a-z]+:\/\/[^/]*/i, '').replace(/[?#].*$/, '') || '/';
+  if (verb === 'Navigate' || verb === 'Navigate to') {      // newer traces: 'Navigate to "/login"', the URL in params
+    verb = 'Navigate';
+    target = String(target || ev.params?.url || '');
+    target = /^data:/i.test(target) ? '' : target.replace(/^[a-z]+:\/\/[^/]*/i, '').replace(/[?#].*$/, '') || '/';
+  }
   return `${verb} ${target}`.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
@@ -68,9 +72,11 @@ export function steps(entries) {
     return true;
   };
   const acts = events.filter((e) => e.type === 'before' && e.method === 'pw:api' && inBody(e) && ends.has(e.callId));
+  // A frame's picture: `file` in older traces, `sha1` under resources/ in newer ones (Playwright 1.4x and later).
+  const image = (e) => typeof e.file === 'string' ? e.file : typeof e.sha1 === 'string' ? `resources/${e.sha1}` : '';
   const frames = Object.keys(entries).filter((k) => k.endsWith('.trace') && k !== 'test.trace')
-    .flatMap((k) => lines(entries[k])).filter((e) => e.type === 'screencast-frame' && typeof e.file === 'string' && entries[e.file])
-    .sort((a, b) => a.timestamp - b.timestamp);
+    .flatMap((k) => lines(entries[k])).filter((e) => e.type === 'screencast-frame' && entries[image(e)])
+    .map((e) => ({...e, file: image(e)})).sort((a, b) => a.timestamp - b.timestamp);
   const out = [];
   let last = '';
   for (const a of acts) {

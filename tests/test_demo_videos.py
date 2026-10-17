@@ -94,6 +94,32 @@ class TraceSteps(unittest.TestCase):
                                                   [2, "Fill getByPlaceholder('Password')", "frame 25"],
                                                   [3, "Click getByRole('button')", "frame 35"]])
 
+    def test_newer_traces_name_frames_by_sha1_and_put_the_target_in_the_title(self):
+        """Playwright 1.4x and later (1.62 here): frames are resources/<sha1>, a step's target is in its title, a URL in its params."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        ev = lambda **d: json.dumps(d)
+        test = "\n".join([
+            ev(type="before", callId="a", startTime=10, method="pw:api", title='Navigate to "/login"', params={"url": "http://localhost:3000/login?x=1"}),
+            ev(type="after", callId="a", endTime=20),
+            ev(type="before", callId="b", startTime=21, method="pw:api", title='Fill "hunter2" getByPlaceholder(\'Password\')'),
+            ev(type="after", callId="b", endTime=30)])
+        frames = "\n".join(ev(type="screencast-frame", sha1=f"page@1-{t}.jpeg", timestamp=t, width=1280, height=720) for t in (15, 25))
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        with zipfile.ZipFile(d / "trace.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("test.trace", test)
+            z.writestr("0-trace.trace", frames)
+            for t in (15, 25):
+                z.writestr(f"resources/page@1-{t}.jpeg", f"frame {t}")
+        js = ("import {readFileSync} from 'node:fs'; const m = await import(process.argv[2]);"
+              "const s = m.steps(m.unzip(readFileSync(process.argv[3]), () => true));"
+              "console.log(JSON.stringify(s.map((x) => [x.n, x.label, x.frame.toString()])));")
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs"), str(d / "trace.zip")],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [[1, "Navigate /login", "frame 15"], [2, "Fill getByPlaceholder('Password')", "frame 25"]])
+
     def test_the_recipe_runs_it_only_for_a_demo_run(self):
         text = (RECIPES / "playwright-screens.sh").read_text()
         self.assertIn('if [ "${FACTORY_STEPS:-}" = 1 ]', text)
