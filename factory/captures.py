@@ -21,6 +21,7 @@ from .sanitize import sanitize_markdown
 
 log = logging.getLogger("factory.captures")
 KEEP_RUNS = 3                                       # finished runs kept per repo: the newest is shown, the others let you compare
+KEEP_STEP_RUNS = 5                                  # finished demo runs (videos/queue_demo) kept per repo; a video that waits for one is newer
 LOG_TAIL = 6000                                     # characters of the end of a failed run's log quoted in its ticket
 REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
@@ -98,13 +99,28 @@ def requested(db) -> set[str]:
         return set()
 
 
-def _screens_jobs(db, repo: str, limit: int) -> list[dict]:
+def _screens_jobs(db, repo: str, limit: int, steps: bool = False) -> list[dict]:
+    """The newest Playwright runs of `repo`: the Screens board's, or with `steps` the demo runs videos asked for."""
     try:
         cur = db.execute("SELECT * FROM verify_jobs WHERE repo=? AND params != '' ORDER BY id DESC LIMIT 200", (repo,))
         rows = [dict(zip([c[0] for c in cur.description], r)) for r in cur.fetchall()]
     except sqlite3.OperationalError:
         return []
-    return [j for j in rows if jobs.is_screens(j)][:limit]
+    return [j for j in rows if jobs.is_screens(j) and jobs.is_steps(j) == steps][:limit]
+
+
+def queue_demo(cfg, gh, db, repo: str, files: list[str], now: float) -> int | None:
+    """Queue a demo run for a video: `repo`'s Playwright tests in `files` on the default branch, with a screenshot after each step
+    (the worker recipe of [[screens.captures]], params steps). The job id, or None when `repo` has no capture or workers are off."""
+    cap = next((c for c in cfg.screens.captures if c.repo == repo), None)
+    files = [f for f in files if jobs.clean_test_file(f)][:jobs.MAX_TEST_FILES]
+    if cap is None or not cfg.workers.enabled or not files:
+        return None
+    sha = gh.branch_sha(repo, gh.default_branch(repo))
+    jid = jobs.enqueue(db, repo, 0, sha, "", cap.recipe, cap.platform, now,
+                       json.dumps({"purpose": jobs.SCREENS_PURPOSE, "files": files, "steps": True}))
+    log.info("screens: queued a demo run of %s at %s (%d test files)", repo, sha[:7], len(files))
+    return jid
 
 
 def active(db, repo: str) -> dict | None:
@@ -179,7 +195,9 @@ def tick(cfg, gh, db, now: float) -> int:
         except Exception:
             log.exception("screens: could not open a ticket for the failing Playwright run of %s", repo)
         finished = [j["id"] for j in _screens_jobs(db, repo, 200) if j["status"] in jobs.FINAL]
-        for jid in finished[KEEP_RUNS:]:
+        demos = [j["id"] for j in _screens_jobs(db, repo, 200, steps=True) if j["status"] in jobs.FINAL]
+        for jid in finished[KEEP_RUNS:] + demos[KEEP_STEP_RUNS:]:
+            db.execute("DELETE FROM verify_steps WHERE job_id=?", (jid,))
             db.execute("DELETE FROM verify_artifacts WHERE job_id=?", (jid,))
             db.execute("DELETE FROM verify_reports WHERE job_id=?", (jid,))
             db.execute("DELETE FROM verify_jobs WHERE id=?", (jid,))

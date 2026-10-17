@@ -469,15 +469,17 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict, token: st
     snap, cut = factorychat.snapshot(db, raw, cfg, now, secrets)
     refs = factorychat.ticket_refs(factorychat.ticket_rows(db, now, cfg.github_issues_enabled)) if cfg.videos.enabled else None
     code = code_for_chat(cfg, token)
+    demo = demo_repos(cfg) if code else []
     prompt = factorychat.build_prompt(snap, factorychat.prompt_turns(db, cfg.chat.context_turns, turn["id"]), secrets, cfg.videos.enabled,
-                                      codecopy.listing(cfg) if code else "")
+                                      codecopy.listing(cfg) if code else "", demo)
     route = Route(cfg.chat.harness, cfg.chat.model, cfg.chat.effort)
     run_id, sink = begin_run("factory-chat", "factory", {"number": 0, "title": "Factory chat"}, route), {}     # 0: never a ticket on the board
     res = runner.run_factory_chat(cfg, route, prompt, sink, code)
     end_run(run_id, res, sink)
     if res.status == "stage":
         factorychat.add_reply(db, turn, res.output, run_id, secrets, now, cut, refs,
-                              (lambda ref: codecopy.resolve(cfg, ref) is not None) if code else None)
+                              (lambda ref: codecopy.resolve(cfg, ref) is not None) if code else None,
+                              (lambda ref: demo_ok(cfg, ref, demo)) if demo else None)
         emit("chat", "replied in the factory chat", None, None, run_id)
     elif res.status == "rate-limited":
         factorychat.settle(db, turn["id"], "failed", "The model is rate limited. Try again later.")
@@ -486,6 +488,18 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict, token: st
     else:
         log.warning("factory chat: turn %s: %s %s", turn["id"], res.status, res.detail[:300])
         factorychat.settle(db, turn["id"], "failed", "The reply could not be written. Try again.")
+
+
+def demo_repos(cfg: Config) -> list[str]:
+    """The repositories a chat video can demo a flow of: those whose Playwright run a worker makes ([[screens.captures]])."""
+    return [c.repo for c in cfg.screens.captures] if cfg.videos.enabled and cfg.workers.enabled else []
+
+
+def demo_ok(cfg: Config, ref: str, repos: list[str]) -> bool:
+    """True for 'owner/repo:path' naming a Playwright test file (as testfind finds them) that is in that repository's code copy."""
+    from . import testfind
+    got = videos.demo_ref(ref)
+    return bool(got and got[0] in repos and testfind.JS_FILE.search(got[1]) and codecopy.resolve(cfg, ref) is not None)
 
 
 def code_for_chat(cfg: Config, token: str | None) -> list:

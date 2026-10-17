@@ -23,11 +23,17 @@
 # can be shown with the test that took it, this recipe also writes shots.tsv there (the file each PNG was copied from), and a Python
 # suite is given E2E_SHOTS_FILE, where it appends {"file": "<PNG name>", "test": "<pytest node id>"} per PNG (one JSON object a line).
 #
+# When the worker sets FACTORY_STEPS=1 (a demo run for a video), the wrapper config records a trace with screenshots and slows each action
+# by STEP_SLOWMO ms instead of taking the end-of-test screenshot, and trace-steps.mjs (next to this script) turns each trace into one PNG
+# per step of the test, named <test>-sNN-<sum>.png, with its label in FACTORY_RESULTS_DIR/steps.tsv. Python suites get no steps.
+#
 # When the worker sets FACTORY_TEST_FILES (a file outside the checkout, one test file a line, relative to the repository root, already
 # checked by the worker to be plain paths), only those files run: a feature of the Tests register. A folder holding none of them is
 # skipped. Exit 2 when none of them is in a suite this recipe runs.
 set -u
-. "$(dirname "$0")/lib.sh"
+HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/lib.sh"
+STEP_SLOWMO=400                              # ms between the actions of a demo run, so each step's screen is painted before the next
 ONLY=""
 BROWSER=""
 PREFLIGHT=0
@@ -106,7 +112,11 @@ for D in $DIRS; do
 
   NAME=$(slug "$D"); [ -n "$NAME" ] || NAME=root
   BASE="${CFG%.*}"; EXT="${CFG##*.}"
-  SHOT="{ mode: 'on', fullPage: true }"
+  SHOT="{ mode: 'on', fullPage: true }"; EXTRA=""
+  if [ "${FACTORY_STEPS:-}" = 1 ]; then
+    SHOT="'off'"
+    EXTRA="trace: { mode: 'on', screenshots: true, snapshots: false, sources: false }, launchOptions: { ...((u && u.launchOptions) || {}), slowMo: $STEP_SLOWMO },"
+  fi
   case "$EXT" in
     ts|mts|mjs) W="playwright.screens.config.$EXT"; IMPORT="import base from './$CFG';"; [ "$EXT" = ts ] && IMPORT="import base from './$BASE';"; EXPORT="export default" ;;
     *) if grep -q '"type"[[:space:]]*:[[:space:]]*"module"' package.json; then W="playwright.screens.config.mjs"; IMPORT="import base from './$CFG';"; EXPORT="export default"
@@ -117,10 +127,11 @@ $IMPORT
 const shot = $SHOT;
 const b = base;
 const results = process.env.FACTORY_RESULTS_DIR;
+const use = (u) => ({ ...(u || {}), screenshot: shot, $EXTRA });
 $EXPORT {
   ...b,
-  use: { ...(b.use || {}), screenshot: shot },
-  projects: (b.projects || []).map((p) => ({ ...p, use: { ...(p.use || {}), screenshot: shot } })),
+  use: use(b.use),
+  ...(b.projects ? { projects: b.projects.map((p) => ({ ...p, use: use(p.use) })) } : {}),
   outputDir: 'test-results-screens',
   reporter: results ? [['line'], ['json', { outputFile: results + '/pw-$NAME.json' }], ['html', { outputFolder: results + '/report-$NAME', open: 'never' }]] : 'line',
 };
@@ -130,6 +141,10 @@ JS
   npx --no-install playwright test --config "$W" $ARGS || { echo "[playwright-screens] some tests failed in $D (their screenshots are kept)" >&2; [ "$status" = 0 ] && status=1; }
 
   PREFIX=""; [ "$D" != "." ] && PREFIX="$(slug "$D")-"
+  if [ "${FACTORY_STEPS:-}" = 1 ]; then
+    node "$HERE/trace-steps.mjs" test-results-screens "$OUT" "$PREFIX" || { echo "[playwright-screens] FAILED: the step screenshots of $D" >&2; status=1; }
+    cd "$ROOT"; continue
+  fi
   find test-results-screens -name '*.png' 2>/dev/null | sort | while IFS= read -r f; do
     dir=$(dirname "$f" | sed 's#^test-results-screens/*##'); stem=$(basename "$f" .png)
     label="$PREFIX$(slug "$dir")"; [ "$stem" != "test-finished-1" ] && label="$label-$(slug "$stem")"
