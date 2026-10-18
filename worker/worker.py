@@ -503,12 +503,19 @@ def collect_shot_tests(folder: Path, root: Path, test_ids: set[str]) -> dict[str
 
 
 def collect_steps(folder: Path) -> dict[str, dict]:
-    """{artifact name: {"n", "label"}} from the steps.tsv a demo run's trace-steps.mjs wrote (PNG file, TAB, step number, TAB, label)."""
+    """{artifact name: {"n", "label", "motion"?}} from the steps.tsv a demo run's trace-steps.mjs wrote (PNG file, TAB, step number, TAB,
+    label, TAB, motion: what the step did and where, as JSON, for the video to animate; the factory checks it)."""
     out: dict[str, dict] = {}
     for line in _results_lines(folder / "steps.tsv"):
-        f, n, text = (line.split("\t", 2) + ["", ""])[:3]
+        f, n, text, motion = (line.split("\t", 3) + ["", "", ""])[:4]
         if f.endswith(".png") and "/" not in f and n.isdigit() and 1 <= int(n) <= 99:
             out[artifact_name(Path(f))] = {"n": int(n), "label": _message(text)[:160]}
+            try:
+                m = json.loads(motion) if motion.strip() else None
+            except ValueError:
+                m = None
+            if isinstance(m, dict):
+                out[artifact_name(Path(f))]["motion"] = m
     return out
 
 

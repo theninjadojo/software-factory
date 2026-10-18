@@ -58,6 +58,8 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         """CREATE TABLE IF NOT EXISTS verify_steps (
             job_id INTEGER NOT NULL, name TEXT NOT NULL, test TEXT NOT NULL DEFAULT '', n INTEGER NOT NULL, label TEXT NOT NULL,
             PRIMARY KEY (job_id, name))""")
+    if "motion" not in {r[1] for r in db.execute("PRAGMA table_info(verify_steps)")}:      # what the step did and where (clean_motion), as JSON
+        db.execute("ALTER TABLE verify_steps ADD COLUMN motion TEXT NOT NULL DEFAULT ''")
     db.execute(       # untrusted HTML from a worker: only ever served sandboxed (ui/server.py, /workers/report)
         "CREATE TABLE IF NOT EXISTS verify_reports (job_id INTEGER NOT NULL, name TEXT NOT NULL, html BLOB NOT NULL, PRIMARY KEY (job_id, name))")
     db.execute(
@@ -89,13 +91,21 @@ def artifacts(db, job_id: int) -> dict[str, bytes]:
 
 
 def steps(db, job_id: int) -> list[dict]:
-    """A demo run's step screenshots in order (by test, then step): {name, test, n, label, png}; [] when it has none."""
+    """A demo run's step screenshots in order (by test, then step): {name, test, n, label, motion, png}; [] when it has none. motion is
+    clean_motion's dict, or None."""
     try:
-        rows = db.execute("SELECT s.name, s.test, s.n, s.label, a.png FROM verify_steps s JOIN verify_artifacts a "
+        rows = db.execute("SELECT s.name, s.test, s.n, s.label, s.motion, a.png FROM verify_steps s JOIN verify_artifacts a "
                           "ON a.job_id = s.job_id AND a.name = s.name WHERE s.job_id=? ORDER BY s.test, s.n, s.name", (job_id,)).fetchall()
     except sqlite3.OperationalError:
         return []
-    return [{"name": n, "test": t, "n": k, "label": lb, "png": bytes(p)} for n, t, k, lb, p in rows]
+    out = []
+    for n, t, k, lb, m, p in rows:
+        try:
+            motion = clean_motion(json.loads(m)) if m else None
+        except ValueError:
+            motion = None
+        out.append({"name": n, "test": t, "n": k, "label": lb, "motion": motion, "png": bytes(p)})
+    return out
 
 
 def tests(job: dict) -> list[dict]:
@@ -314,7 +324,29 @@ def clean_step(step) -> dict | None:
     if not isinstance(step, dict) or not isinstance(step.get("n"), int) or isinstance(step["n"], bool) or not 1 <= step["n"] <= 99:
         return None
     label = " ".join("".join(c if c.isprintable() else " " for c in str(step.get("label") or "")).split())[:160]
-    return {"n": step["n"], "label": label} if label else None
+    if not label:
+        return None
+    motion = clean_motion(step.get("motion"))
+    return {"n": step["n"], "label": label, **({"motion": motion} if motion else {})}
+
+
+MOTION_ACTS = ("click", "fill", "type", "press", "check", "select", "other")
+
+
+def clean_motion(m) -> dict | None:
+    """What a step did and where, as a demo video animates it: {"act": one of MOTION_ACTS, "x", "y" (the pointer, both or neither),
+    "box": [x, y, w, h] (where a typed value appeared)}, all whole pixels of the step's screenshot from 0 to 10000. Untrusted (from a
+    worker): anything else is dropped. None when there is no usable act."""
+    if not isinstance(m, dict) or m.get("act") not in MOTION_ACTS:
+        return None
+    px = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 10000
+    out: dict = {"act": m["act"]}
+    if px(m.get("x")) and px(m.get("y")):
+        out["x"], out["y"] = m["x"], m["y"]
+    box = m.get("box")
+    if isinstance(box, list) and len(box) == 4 and all(px(v) for v in box) and box[2] > 0 and box[3] > 0:
+        out["box"] = list(box)
+    return out
 
 
 def clean_test_id(tid) -> str | None:
@@ -423,8 +455,8 @@ def complete(db, job_id: int, worker: str, body, now: float) -> str:
     for n, png in res["artifacts"].items():
         db.execute("INSERT OR REPLACE INTO verify_artifacts VALUES (?,?,?)", (job_id, n, png))
     for n, s in (res["artifact_steps"].items() if is_steps(job) else ()):
-        db.execute("INSERT OR REPLACE INTO verify_steps (job_id, name, test, n, label) VALUES (?,?,?,?,?)",
-                   (job_id, n, res["artifact_tests"].get(n, ""), s["n"], s["label"]))
+        db.execute("INSERT OR REPLACE INTO verify_steps (job_id, name, test, n, label, motion) VALUES (?,?,?,?,?,?)",
+                   (job_id, n, res["artifact_tests"].get(n, ""), s["n"], s["label"], json.dumps(s["motion"]) if s.get("motion") else ""))
     for n, html in (res["reports"].items() if screens else ()):
         db.execute("INSERT OR REPLACE INTO verify_reports VALUES (?,?,?)", (job_id, n, html))
     db.commit()
