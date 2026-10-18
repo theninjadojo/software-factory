@@ -33,12 +33,13 @@ TEST = "web/e2e/auth.spec.ts › signing in"
 
 
 def step_body(status="passed", outcome="pass", steps=(("Navigate /login", 1), ("Fill getByPlaceholder('Email')", 2),
-                                                       ("Click getByRole('button', { name: 'Sign in' })", 3))):
-    """A worker's result for a demo run: one test, a PNG and a step label per step."""
+                                                       ("Click getByRole('button', { name: 'Sign in' })", 3)), motion=None):
+    """A worker's result for a demo run: one test, a PNG and a step label per step (and `motion` {step number: motion})."""
     return {"status": status, "exit_code": 0 if status == "passed" else 1, "log": "ok",
             "tests": [{"id": TEST, "outcome": outcome, "message": ""}],
             "artifacts": [{"name": f"auth-signing-in-s{n:02d}-abc123", "png_b64": base64.b64encode(png()).decode(), "test": TEST,
-                           "step": {"n": n, "label": label}} for label, n in steps]}
+                           "step": {"n": n, "label": label, **({"motion": motion[n]} if n in (motion or {}) else {})}}
+                          for label, n in steps]}
 
 
 def run_job(db, jid, body):
@@ -120,6 +121,36 @@ class TraceSteps(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(json.loads(out.stdout), [[1, "Navigate /login", "frame 15"], [2, "Fill getByPlaceholder('Password')", "frame 25"]])
 
+    def test_a_step_says_what_it_did_and_where_the_pointer_went_in_the_frame(self):
+        """A click's point comes from the context trace's input event (by its stepId) and is scaled from the page to the frame."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        ev = lambda **d: json.dumps(d)
+        test = "\n".join([
+            ev(type="before", callId="pw:api@1", startTime=10, method="pw:api", title='Fill "x" getByPlaceholder(\'Email\')'),
+            ev(type="after", callId="pw:api@1", endTime=20),
+            ev(type="before", callId="pw:api@2", startTime=21, method="pw:api", title="Click getByRole('button')"),
+            ev(type="after", callId="pw:api@2", endTime=30)])
+        ctx = "\n".join([
+            ev(type="context-options", options={"viewport": {"width": 1280, "height": 720}}),
+            ev(type="before", callId="call@5", stepId="pw:api@2", method="click"),
+            ev(type="input", callId="call@5", point={"x": 600.4, "y": 300}),
+            *(ev(type="screencast-frame", sha1=f"p-{t}.jpeg", timestamp=t, width=640, height=360) for t in (15, 25))])
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        with zipfile.ZipFile(d / "trace.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("test.trace", test)
+            z.writestr("0-trace.trace", ctx)
+            for t in (15, 25):
+                z.writestr(f"resources/p-{t}.jpeg", f"frame {t}")
+        js = ("import {readFileSync} from 'node:fs'; const m = await import(process.argv[2]);"
+              "const s = m.steps(m.unzip(readFileSync(process.argv[3]), () => true));"
+              "console.log(JSON.stringify(s.map((x) => [x.act, x.point, x.before && x.before.toString()])));")
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs"), str(d / "trace.zip")],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [["fill", None, None], ["click", [300, 150], "frame 15"]])
+
     def test_the_recipe_runs_it_only_for_a_demo_run(self):
         text = (RECIPES / "playwright-screens.sh").read_text()
         self.assertIn('if [ "${FACTORY_STEPS:-}" = 1 ]', text)
@@ -138,6 +169,19 @@ class Worker(unittest.TestCase):
         self.assertNotIn("FACTORY_STEPS", W.results_env({"params": {"purpose": "screens"}}, tmp / "x")[0])
         (d / "steps.tsv").write_text("a-s01-x.png\t1\tClick\x1b[31m it\nbad\t0\tx\n../e.png\t2\ty\n")
         self.assertEqual(W.collect_steps(d), {"a-s01-x": {"n": 1, "label": "Click it"}})
+        (d / "steps.tsv").write_text('a-s01-x.png\t1\tClick\t{"act": "click", "x": 3, "y": 4}\nb-s01-x.png\t1\tFill\tnot json\n')
+        self.assertEqual(W.collect_steps(d), {"a-s01-x": {"n": 1, "label": "Click", "motion": {"act": "click", "x": 3, "y": 4}},
+                                              "b-s01-x": {"n": 1, "label": "Fill"}})
+
+    def test_the_factory_keeps_only_a_well_formed_motion(self):
+        self.assertEqual(jobs.clean_motion({"act": "fill", "box": [1, 2, 30, 10], "x": 5, "extra": "<b>"}), {"act": "fill", "box": [1, 2, 30, 10]})
+        self.assertEqual(jobs.clean_motion({"act": "click", "x": 5, "y": True}), {"act": "click"})
+        self.assertEqual(jobs.clean_motion({"act": "click", "x": 5, "y": 6}), {"act": "click", "x": 5, "y": 6})
+        self.assertEqual(jobs.clean_motion({"act": "fill", "box": [1, 2, 0, 10]}), {"act": "fill"})
+        self.assertIsNone(jobs.clean_motion({"act": "rm -rf"}))
+        self.assertIsNone(jobs.clean_motion("click"))
+        self.assertEqual(jobs.clean_step({"n": 2, "label": "Click", "motion": {"act": "click", "x": 99999, "y": 1}}),
+                         {"n": 2, "label": "Click", "motion": {"act": "click"}})
 
     def test_a_trace_attachment_links_its_step_shots_to_the_test(self):
         root = Path("/repo")
@@ -226,6 +270,23 @@ class Video(Base):
         shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
         self.assertEqual([s["title"] for s in shots], ["Step 1 · Open /login", "Step 3 · Click Sign in"])
         self.assertEqual(run.seen["img"], ["s02.png", "s03.png"])
+
+    def test_a_step_that_says_what_it_did_is_animated_from_the_picture_before_it(self):
+        vid = self.queued()
+        videos.demo_pending(self.cfg, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
+        jid = videos.demo_jobs(videos.get(self.db, vid))[REPO]
+        run_job(self.db, jid, step_body(motion={1: {"act": "other"}, 3: {"act": "click", "x": 10, "y": 12}}))
+        self.assertEqual([s["motion"] for s in jobs.steps(self.db, jid)], [{"act": "other"}, None, {"act": "click", "x": 10, "y": 12}])
+        run = self.container()
+        self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
+        videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, run, write=lambda p: WRITER)
+        self.assertEqual(videos.get(self.db, vid)["status"], "ready")
+        shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
+        self.assertNotIn("before", shots[0])                     # the first step has no picture before it
+        w, h = videos.png_size(png())
+        self.assertEqual({k: shots[1].get(k) for k in ("before", "size", "act", "x", "y")},
+                         {"before": "s03-before.png", "size": [w, h], "act": "click", "x": 10, "y": 12})
+        self.assertEqual(run.seen["img"], ["s02.png", "s03-before.png", "s03.png"])
 
     def make(self, vid):
         self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))

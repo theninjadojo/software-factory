@@ -23,6 +23,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import struct
 import subprocess
 import tempfile
 import threading
@@ -632,6 +633,9 @@ def spec(vc, scenes: list[dict], voice: str) -> dict:
             c["lines"] = s.get("lines") or []                    # empty: a binary or very large file, shown as "no text diff"
         if s["kind"] == "shot":
             c["image"] = f"s{i:02d}.png"
+            if s.get("motion"):                                  # a demo step: animated from the picture before it (Video.jsx Shot)
+                c["before"], c["size"] = f"s{i:02d}-before.png", list(s["size"])
+                c.update({k: s["motion"][k] for k in ("act", "x", "y", "box") if k in s["motion"]})
         if voice == "files" and c["say"]:
             c["audio"] = f"s{i:02d}.wav"
         out.append(c)
@@ -1034,9 +1038,11 @@ def step_title(label: str) -> str:
 
 def demo_material(db, row: dict) -> dict:
     """The step screenshots of a brief video's finished demo runs: {"tests": [(repo, test id, outcome, [step key])], "shots": {key:
-    PNG}, "titles": {key: title}, "steps": {key: (n, title)}}, at most MAX_DEMO_STEPS steps, each PNG checked again."""
+    PNG}, "titles": {key: title}, "steps": {key: (n, title)}, "motion": {key: (motion, PNG of the step before in the same test)}},
+    at most MAX_DEMO_STEPS steps, each PNG checked again. A step has motion (what it did and where, for the video to animate from the
+    picture before it) only when the worker said and the step before is there, the same size."""
     from . import jobs
-    out = {"tests": [], "shots": {}, "titles": {}, "steps": {}}
+    out = {"tests": [], "shots": {}, "titles": {}, "steps": {}, "motion": {}}
     for repo, jid in (demo_jobs(row) or {}).items():
         job = jobs.get(db, jid) if jid else None
         if not job or job["status"] not in ("passed", "failed"):
@@ -1049,9 +1055,17 @@ def demo_material(db, row: dict) -> dict:
             key = f"{repo}:{st['name']}"
             title = step_title(st["label"])
             out["shots"][key], out["titles"][key], out["steps"][key] = st["png"], f"Step {st['n']} · {title}", (st["n"], title)
+            prev = by_test.get(st["test"], [])[-1:]
+            if st.get("motion") and prev and png_size(out["shots"][prev[0]]) == png_size(st["png"]):
+                out["motion"][key] = (st["motion"], out["shots"][prev[0]])
             by_test.setdefault(st["test"], []).append(key)
         out["tests"] += [(repo, t, outcome.get(t, ""), keys) for t, keys in by_test.items()]
     return out
+
+
+def png_size(png: bytes) -> tuple[int, int]:
+    """(width, height) from a PNG's IHDR chunk (render.png_ok checked it is there)."""
+    return struct.unpack(">II", png[16:24])
 
 
 def _neutral(text: str) -> str:
@@ -1198,6 +1212,10 @@ def make_brief(cfg, gh, db, row: dict, write=None, run=subprocess.run, post=None
         raise Skip("writer_failed")
     engine, voice_id = voice_for(cfg.videos, (row.get("ask_voice") or "", row.get("ask_voice_id") or ""))
     images = {f"s{i:02d}.png": mat["shots"][s["screen"]] for i, s in enumerate(scenes, 1) if s["kind"] == "shot"}
+    for i, s in enumerate(scenes, 1):
+        if s["kind"] == "shot" and (got := mat["demo"]["motion"].get(s["screen"])):
+            s["motion"], s["size"] = got[0], png_size(mat["shots"][s["screen"]])
+            images[f"s{i:02d}-before.png"] = got[1]
     return {**_render(cfg, row, scenes, images, engine, voice_id, run, post), "narration": narration}
 
 

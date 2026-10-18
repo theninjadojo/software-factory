@@ -3,6 +3,9 @@
 //
 // /in/script.json  {width, height, fps, max_seconds, voice: "piper" | "files" | "none", scenes: [scene]}
 //   scene          {kind: title | shot | code | points, say, title?, subtitle?, image?, lines?: [{t, text}], points?: [text], audio?}
+//   a shot of a demo step may add what the step did, to animate it from the picture before:
+//                  before (a file in /in/img), size: [w, h] of both pictures, act: click | fill | type | press | check | select | other,
+//                  x, y (the pointer), box: [x, y, w, h] (where a value was typed), in the pictures' pixels
 // /in/img/*.png    pictures named by the scenes (shot)
 // /in/audio/*.wav  the spoken text of each scene, when the factory made it (voice "files", e.g. ElevenLabs)
 // With voice "piper" this container speaks each scene's `say` itself with the voice baked into the image.
@@ -16,6 +19,7 @@ const OUT = process.env.VIDEO_OUT || '/out';
 const SITE = '/tmp/site';
 const NAME = /^[a-z0-9][a-z0-9-]{0,40}\.(png|wav)$/;
 const KINDS = new Set(['title', 'shot', 'code', 'points']);
+const ACTS = new Set(['click', 'fill', 'type', 'press', 'check', 'select', 'other']);
 const PIPER = ['/opt/piper/bin/python', '-m', 'piper', '-m', '/opt/voices/en_US-ljspeech-medium.onnx'];
 
 class Bad extends Error {}
@@ -56,6 +60,18 @@ export function check(spec) {
     const c = {kind: s.kind, say: str(s.say, 600, `${w} say`), title: str(s.title, 200, `${w} title`, s.kind !== 'shot'),
                subtitle: str(s.subtitle, 300, `${w} subtitle`)};
     if (s.kind === 'shot') c.image = file('img', s.image, `${w} image`);
+    if (s.kind === 'shot' && s.before !== undefined) {
+      c.before = file('img', s.before, `${w} before`);
+      if (!Array.isArray(s.size) || s.size.length !== 2) throw new Bad(`${w}: size must be [width, height]`);
+      c.size = s.size.map((v, j) => int(v, 1, 10000, `${w} size ${j + 1}`));
+      if (!ACTS.has(s.act)) throw new Bad(`${w}: act must be one of ${[...ACTS].join(', ')}`);
+      c.act = s.act;
+      if (s.x !== undefined || s.y !== undefined) [c.x, c.y] = [int(s.x, 0, c.size[0], `${w} x`), int(s.y, 0, c.size[1], `${w} y`)];
+      if (s.box !== undefined) {
+        if (!Array.isArray(s.box) || s.box.length !== 4) throw new Bad(`${w}: box must be [x, y, width, height]`);
+        c.box = s.box.map((v, j) => int(v, 0, 10000, `${w} box ${j + 1}`));
+      }
+    }
     if (s.kind === 'code') {
       const lines = s.lines ?? [];
       if (!Array.isArray(lines) || lines.length > 60) throw new Bad(`${w}: lines must be a list of at most 60 lines`);
@@ -109,7 +125,7 @@ async function main() {
   const scenes = [], seconds = [];
   for (const [i, s] of spec.scenes.entries()) {
     const sc = {...s};
-    if (s.image) copyFileSync(`${IN}/img/${s.image}`, `${SITE}/public/img/${s.image}`);
+    for (const f of [s.image, s.before]) if (f) copyFileSync(`${IN}/img/${f}`, `${SITE}/public/img/${f}`);
     let talk = 0;
     if (s.say && spec.voice !== 'none') {
       sc.audio = spec.voice === 'files' ? s.audio : `s${String(i + 1).padStart(2, '0')}.wav`;
