@@ -65,7 +65,8 @@ and a test that walks through the flow.
    the run took play in their own time, or the next screen fades in when there are none) or types (the field is outlined and the
    value appears in it letter by letter behind a caret, just as the app showed it: a password stays dots). The camera then eases
    back out to the whole screen. Steps of one test that follow each other cut straight on, with the pointer where the last step
-   left it; anything else fades through black. A test's first step, and a step whose screen size changed, is shown as a still.
+   left it; when the next step acts on something close by (email, then password), the camera stays in and pans across instead of
+   pulling out and pushing back in. Anything else fades through black. A test's first step, and a step whose screen size changed, is shown as a still.
    The page sits in a browser window whose address bar shows the page's path while it is known (blank after a click that may have
    left it). Just before a step acts, the page around what it acts on dims and a label names it ("Sign in"); a key press shows its
    keycap ("⏎ Enter"). The step waits until its narration is about half said, so the click lands on the words, and waits in the

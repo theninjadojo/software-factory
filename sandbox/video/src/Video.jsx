@@ -67,6 +67,14 @@ const targetOf = (s) => (!s || !s.before ? null
   : (s.act === 'fill' || s.act === 'type') && s.box ? [s.box[0] + Math.min(14, s.box[2] / 4), s.box[1] + s.box[3] / 2]
   : s.x !== undefined ? [s.x, s.y] : null);
 
+// Where the camera looks for a demo step, in its pictures' pixels: the pointer's target, else the middle of the element it acted on.
+const focusOf = (s) => targetOf(s) || (s?.before && s.field ? [s.field[0] + s.field[2] / 2, s.field[1] + s.field[3] / 2] : null);
+
+// The camera stays in between two steps of one flow whose targets are close (both in view at once when zoomed in): it pans from one
+// to the other instead of pulling out and pushing back in.
+const ZOOM = 1.5;
+const near = (a, b, s) => Boolean(a && b) && Math.abs(a[0] - b[0]) < s.size[0] * 0.3 && Math.abs(a[1] - b[1]) < s.size[1] * 0.3;
+
 const arc = Easing.bezier(0.35, 0, 0.15, 1);
 
 // A pressed key as a keycap reads it: "Control+Shift+Z" -> "Ctrl + Shift + Z", "Enter" -> "⏎ Enter".
@@ -92,7 +100,7 @@ const Browser = ({url, width}) => (
 // glides in on a slight arc (from where the step before left it, when this scene carries on from that one). Then a click (a press
 // and a ripple), a key (its keycap pops up) or a value typed into its field behind a caret, then the frames the run took while the
 // step ran (a menu opening, a page loading; their waits sped up) and the camera easing back out to the whole page.
-const Step = ({s, from, keep}) => {
+const Step = ({s, from, keep, look, hold}) => {
   const lead = s.lead || 0;
   const f = useCurrentFrame() - lead;
   const len = s.frames - lead;
@@ -117,12 +125,14 @@ const Step = ({s, from, keep}) => {
   const done = typing ? arrive + 4 + reveal : s.clip ? click + ms(s.end) : focus ? arrive + 2 : 12;
 
   // The camera: in on the target as the pointer travels, held through the step, back out once its result has been seen.
-  const Z = focus ? (typing ? 1.6 : 1.5) : 1;
+  const Z = focus ? ZOOM : 1;
+  const L = look && [look[0] * k, look[1] * k];          // already in on the step before's target: pan from there
   // (with a clip, as it starts playing: the page it leads to is seen whole, not a corner of it)
   const out0 = s.clip ? click + 6 : Math.max(arrive + 8, Math.min(done + 18, len - 26));
-  const p = focus ? ease(f, 2, arrive + 4) * (1 - ease(f, out0, out0 + 22)) : 0;
+  const p = focus ? (L ? 1 : ease(f, 2, arrive + 4)) * (hold ? 1 : 1 - ease(f, out0, out0 + 22)) : 0;
   const z = focus ? 1 + (Z - 1) * p : keep ? 1 : interpolate(f, [0, len], [1, 1.04]);
-  const o = focus || [dw / 2, dh / 2];
+  const m0 = L ? ease(f, 2, arrive + 2) : 1;
+  const o = focus && L ? [L[0] + (focus[0] - L[0]) * m0, L[1] + (focus[1] - L[1]) * m0] : focus || [dw / 2, dh / 2];
   const pan = (lo, hi, want) => Math.max(lo, Math.min(hi, want));
   const tx = pan(-(z - 1) * (dw - o[0]), (z - 1) * o[0], (dw / 2 - o[0]) * p * 0.6);
   const ty = pan(-(z - 1) * (dh - o[1]), (z - 1) * o[1], (dh / 2 - o[1]) * p * 0.6);
@@ -223,8 +233,8 @@ const Step = ({s, from, keep}) => {
   );
 };
 
-const Shot = ({s, from, keep}) => {
-  if (s.before) return <Step s={s} from={from} keep={keep} />;
+const Shot = ({s, from, keep, look, hold}) => {
+  if (s.before) return <Step s={s} from={from} keep={keep} look={look} hold={hold} />;
   return (
     <AbsoluteFill style={{padding: '40px 64px 120px', fontFamily: SANS}}>
       {s.title ? <div style={{color: C.text, fontSize: 30, fontWeight: 700, marginBottom: 16}}>{s.title}</div> : null}
@@ -275,11 +285,11 @@ const Points = ({s}) => (
 const KINDS = {title: Title, shot: Shot, code: Code, points: Points};
 
 // A scene; a demo step that carries on from the one before (chain) cuts straight in, keeping the pointer where that one left it.
-const Scene = ({s, from, keep}) => {
+const Scene = ({s, from, keep, look, hold}) => {
   const Body = KINDS[s.kind];
   return (
     <AbsoluteFill style={{background: C.bg, opacity: useFade(s.frames, !s.chain, !keep)}}>
-      <Body s={s} from={from} keep={keep} />
+      <Body s={s} from={from} keep={keep} look={look} hold={hold} />
       <Subtitle text={s.say} />
       {s.audio ? <Audio src={staticFile(`audio/${s.audio}`)} /> : null}
     </AbsoluteFill>
@@ -295,9 +305,12 @@ export const Video = ({scenes}) => {
         at += s.frames;
         const from = s.chain ? left : null;
         left = targetOf(s) || from;
+        const next = scenes[i + 1];
+        const hold = Boolean(next?.chain) && near(focusOf(s), focusOf(next), s);
+        const look = s.chain && i > 0 && Boolean(scenes[i - 1].before) && near(focusOf(scenes[i - 1]), focusOf(s), s) ? focusOf(scenes[i - 1]) : null;
         return (
           <Sequence key={i} from={start} durationInFrames={s.frames}>
-            <Scene s={s} from={from} keep={Boolean(scenes[i + 1]?.chain)} />
+            <Scene s={s} from={from} keep={Boolean(next?.chain)} look={look} hold={hold} />
           </Sequence>
         );
       })}
