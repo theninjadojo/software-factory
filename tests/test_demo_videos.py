@@ -151,6 +151,44 @@ class TraceSteps(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(json.loads(out.stdout), [["fill", None, None], ["click", [300, 150], "frame 15"]])
 
+    def test_a_step_shows_what_the_page_settled_on_with_its_key_path_and_element(self):
+        """A step's screen is the last frame before the next step (the last step's: before the body's last check ends); a press names
+        its key only when it is a named key; the path is known after a navigation until a click; the element comes from the input box."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        ev = lambda **d: json.dumps(d)
+        test = "\n".join([
+            ev(type="before", callId="x@1", startTime=10, method="pw:api", title="Navigate", subtitle="/login", params={"url": "/login"}),
+            ev(type="after", callId="x@1", endTime=20),
+            ev(type="before", callId="x@2", startTime=30, method="pw:api", title='Press "h"', subtitle="getByPlaceholder('Password')",
+               params={"key": "h"}),
+            ev(type="after", callId="x@2", endTime=40),
+            ev(type="before", callId="x@3", startTime=50, method="pw:api", title='Press "Enter"', subtitle="getByPlaceholder('Password')",
+               params={"key": "Enter"}),
+            ev(type="after", callId="x@3", endTime=60),
+            ev(type="before", callId="x@4", startTime=61, method="expect", title='Expect "toBeVisible"'),
+            ev(type="after", callId="x@4", endTime=200)])
+        ctx = "\n".join([ev(type="context-options", options={"viewport": {"width": 640, "height": 360}}),
+                         ev(type="before", callId="x@3", method="press"),
+                         ev(type="input", callId="x@3", box={"x": 10, "y": 20, "width": 100, "height": 30}),
+                         *(ev(type="screencast-frame", sha1=f"p-{t}.jpeg", timestamp=t, width=640, height=360) for t in (15, 25, 35, 55, 150))])
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        with zipfile.ZipFile(d / "trace.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("test.trace", test)
+            z.writestr("0-trace.trace", ctx)
+            for t in (15, 25, 35, 55, 150):
+                z.writestr(f"resources/p-{t}.jpeg", f"frame {t}")
+        js = ("import {readFileSync} from 'node:fs'; const m = await import(process.argv[2]);"
+              "const s = m.steps(m.unzip(readFileSync(process.argv[3]), () => true));"
+              "console.log(JSON.stringify(s.map((x) => [x.frame.toString(), x.key, x.url, x.field, x.clip.map((c) => c.at), x.end])));")
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs"), str(d / "trace.zip")],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [["frame 25", None, "/login", None, [], 15],          # settled after the navigation
+                                                  ["frame 35", None, None, None, [], 5],             # a lone letter is never named
+                                                  ["frame 150", "Enter", None, [10, 20, 100, 30], [5], 100]])   # "Welcome back"
+
     def test_newer_traces_key_a_click_point_by_the_test_steps_own_call_id(self):
         """Playwright 1.64: no stepId; the context trace's call and input events reuse the test step's call id."""
         if not shutil.which("node"):
@@ -242,6 +280,10 @@ class Worker(unittest.TestCase):
                     {"clip": [[20, "zz-f1"]], "end": None}, {"clip": [[20, "zz-f1"]] * 2}, {"clip": [[i, f"zz-f{i}"] for i in range(7)]},
                     {"clip": [[-1, "zz-f1"]]}, {"clip": [[20, "zz-f1"]], "end": 99999}):
             self.assertEqual(jobs.clean_motion({"act": "click", "end": 350, **bad}), {"act": "click"}, bad)
+        self.assertEqual(jobs.clean_motion({"act": "press", "key": "Control+Shift+Z", "url": "/a/b-c"}),
+                         {"act": "press", "key": "Control+Shift+Z", "url": "/a/b-c"})
+        for bad in ({"key": "h"}, {"key": "Enter; rm"}, {"url": "https://x/y"}, {"url": "/" + "a" * 200}, {"url": "/a b"}, {"key": 1}):
+            self.assertEqual(jobs.clean_motion({"act": "press", **bad}), {"act": "press"}, bad)
         self.assertIsNone(jobs.clean_motion({"act": "rm -rf"}))
         self.assertIsNone(jobs.clean_motion("click"))
         self.assertEqual(jobs.clean_step({"n": 2, "label": "Click", "motion": {"act": "click", "x": 99999, "y": 1}}),
@@ -333,7 +375,7 @@ class Video(Base):
         self.assertIn("- o/r:auth-signing-in-s03-abc123: step 3, Click Sign in", seen["prompt"])
         shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
         self.assertEqual([s["title"] for s in shots], ["Step 1 · Open /login", "Step 3 · Click Sign in"])
-        self.assertEqual(run.seen["img"], ["s02.png", "s03.png"])
+        self.assertEqual(run.seen["img"], ["s02-before.png", "s02.png", "s03.png"])
 
     def test_a_step_that_says_what_it_did_is_animated_from_the_picture_before_it(self):
         vid = self.queued()
@@ -346,11 +388,12 @@ class Video(Base):
         videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, run, write=lambda p: WRITER)
         self.assertEqual(videos.get(self.db, vid)["status"], "ready")
         shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
-        self.assertNotIn("before", shots[0])                     # the first step has no picture before it
+        self.assertEqual({k: shots[0].get(k) for k in ("before", "act", "x")}, {"before": "s02-before.png", "act": "other", "x": None})
+                                                                  # the first step: a still (its own picture before it)
         w, h = videos.png_size(png())
         self.assertEqual({k: shots[1].get(k) for k in ("before", "size", "act", "x", "y")},
                          {"before": "s03-before.png", "size": [w, h], "act": "click", "x": 10, "y": 12})
-        self.assertEqual(run.seen["img"], ["s02.png", "s03-before.png", "s03.png"])
+        self.assertEqual(run.seen["img"], ["s02-before.png", "s02.png", "s03-before.png", "s03.png"])
 
     def test_a_step_plays_the_frames_its_run_took_and_carries_on_from_the_step_before(self):
         vid = self.queued()
@@ -371,7 +414,22 @@ class Video(Base):
         shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
         self.assertEqual({k: shots[1].get(k) for k in ("clip", "end", "chain")},
                          {"clip": [{"at": 20, "image": "s03-c1.png"}, {"at": 200, "image": "s03-c2.png"}], "end": 350, "chain": True})
-        self.assertEqual(run.seen["img"], ["s02.png", "s03-before.png", "s03-c1.png", "s03-c2.png", "s03.png"])
+        self.assertEqual(run.seen["img"], ["s02-before.png", "s02.png", "s03-before.png", "s03-c1.png", "s03-c2.png", "s03.png"])
+
+    def test_a_step_names_what_it_acts_on_and_a_press_its_key(self):
+        vid = self.queued()
+        videos.demo_pending(self.cfg, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
+        jid = videos.demo_jobs(videos.get(self.db, vid))[REPO]
+        run_job(self.db, jid, step_body(steps=(("Navigate /login", 1), ("Fill getByPlaceholder('Email')", 2), ("Press getByPlaceholder('Email')", 3)),
+                                        motion={1: {"act": "other", "url": "/login"}, 3: {"act": "press", "key": "Enter", "field": [1, 2, 10, 5]}}))
+        run = self.container()
+        self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
+        videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, run, write=lambda p: WRITER)
+        shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
+        self.assertEqual([s["title"] for s in shots], ["Step 1 · Open /login", "Step 3 · Press Enter"])
+        self.assertEqual({k: shots[0].get(k) for k in ("act", "url")}, {"act": "other", "url": "/login"})
+        self.assertEqual({k: shots[1].get(k) for k in ("act", "key", "field", "callout")},
+                         {"act": "press", "key": "Enter", "field": [1, 2, 10, 5], "callout": None})     # a key press has no label
 
     def make(self, vid):
         self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))

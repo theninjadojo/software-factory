@@ -16,7 +16,9 @@
 //               the label is the action and its target, never a typed value; the motion (JSON, may be empty) is what a video animates:
 //               {"act": click | fill | type | press | check | select | other, "x", "y": the pointer (click), "box": [x, y, w, h] where a
 //               typed value appeared (fill, type: the pixels that changed from the step before, inside the field when the trace
-//               says where it is), "field": [x, y, w, h] that field (fill, type; newer Playwright)}, in the PNG's pixels, and for a step
+//               says where it is), "field": [x, y, w, h] the element the step acted on (newer Playwright), "key": the key a press
+//               pressed (named keys only, see keyName), "url": the page's path while it is known (after a navigation, until a click,
+//               press, check or select may have left it)}, in the PNG's pixels, and for a step
 //               with a clip "clip": [[ms after the step began, <frame name>], ...] and "end": ms after it began of the step's own frame
 //   a clip's frames are <out>/zz-<name>-fN.png: named to sort after every step, so a worker's byte budget drops frames before steps
 import {createHash} from 'node:crypto';
@@ -83,6 +85,14 @@ export function jpegSize(buf) {
   return null;
 }
 
+// A pressed key as a video may show it ("Enter", "Control+A"): a named key, or a letter or digit only with a modifier, so a value
+// typed one key at a time is never shown; null for anything else.
+export function keyName(k) {
+  const named = 'Enter|Tab|Escape|Backspace|Delete|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|F[1-9]|F1[0-2]';
+  const re = new RegExp(`^(?:(?:(?:Control|Meta|Shift|Alt|ControlOrMeta)\\+){1,3}(?:${named}|[A-Za-z0-9])|(?:(?:Control|Meta|Shift|Alt|ControlOrMeta)\\+){0,3}(?:${named}))$`);
+  return typeof k === 'string' && re.test(k) ? k : null;
+}
+
 // What a step did, from its title: click, fill, type, press, check, select or other.
 export function act(ev) {
   const verb = String(ev.title || '').split(/\s/)[0].toLowerCase();
@@ -132,11 +142,17 @@ export function steps(entries) {
   const image = (e) => typeof e.file === 'string' ? e.file : typeof e.sha1 === 'string' ? `resources/${e.sha1}` : '';
   const frames = ctx.filter((e) => e.type === 'screencast-frame' && entries[image(e)])
     .map((e) => ({...e, file: image(e)})).sort((a, b) => a.timestamp - b.timestamp);
+  // A step's own frame is the last one before the next step starts (the last step's: before the test body's last check ends), so
+  // what it set off and the page settled into after it (a page loading, a "Welcome back") is its screen, not the step after it's.
+  const bodyEnd = Math.max(...events.filter((e) => e.type === 'before' && inBody(e) && ends.has(e.callId)).map((e) => ends.get(e.callId)));
   const out = [];
-  let last = '', before = null;
-  for (const a of acts) {
-    const end = ends.get(a.callId);
-    const f = frames.filter((x) => x.timestamp >= a.startTime && x.timestamp <= end).pop();
+  let last = '', before = null, url = null;
+  for (const [i, a] of acts.entries()) {
+    const next = acts[i + 1]?.startTime;
+    const f = frames.filter((x) => x.timestamp >= a.startTime && (next === undefined ? x.timestamp <= bodyEnd : x.timestamp < next)).pop();
+    const kind = act(a);
+    const where = label(a).match(/^Navigate (\S+)$/);
+    url = where ? where[1] : kind === 'fill' || kind === 'type' || kind === 'other' ? url : null;   // a click may have left the page
     if (!f || out.length >= MAX_STEPS) continue;
     const digest = createHash('sha1').update(entries[f.file]).digest('hex');
     if (digest === last) continue;
@@ -144,12 +160,13 @@ export function steps(entries) {
     const [fw, fh] = jpegSize(entries[f.file]) || [f.width, f.height];
     const p = points.get(a.callId), sx = view?.width ? fw / view.width : 1, sy = view?.height ? fh / view.height : 1;
     const point = p && Number.isFinite(p.x) && Number.isFinite(p.y) ? [Math.round(p.x * sx), Math.round(p.y * sy)] : null;
-    const b = fields.get(a.callId);         // the element a value was typed into, when the trace says (newer Playwright)
+    const b = fields.get(a.callId);         // the element the step acted on, when the trace says (newer Playwright)
     const field = b && [b.x, b.y, b.width, b.height].every((v) => Number.isFinite(v) && v >= 0) && b.width > 0 && b.height > 0
       ? [Math.round(b.x * sx), Math.round(b.y * sy), Math.round(b.width * sx), Math.round(b.height * sy)] : null;
-    const kind = act(a), took = Math.round(f.timestamp - a.startTime);
+    const took = Math.round(f.timestamp - a.startTime);
     const moving = before && kind !== 'fill' && kind !== 'type' && took <= MAX_CLIP_MS;      // a typed value is animated from its box instead
-    out.push({n: out.length + 1, label: label(a), act: kind, point, field, frame: entries[f.file], before, width: f.width, height: f.height,
+    const k = kind === 'press' ? keyName(a.params?.key) : null;
+    out.push({n: out.length + 1, label: label(a), act: kind, point, field, key: k, url, frame: entries[f.file], before, width: f.width, height: f.height,
               clip: moving ? clip(entries, frames, a.startTime, f, before) : [], end: took});
     before = entries[f.file];
   }
@@ -254,7 +271,8 @@ async function main([dir, out, prefix = '']) {
       await png(s.frame, s.name);
       const typed = s.act === 'fill' || s.act === 'type';
       const box = typed && s.before ? await changed(page, s.before, s.frame, s.field) : null;
-      const m = {act: s.act, ...(s.point ? {x: s.point[0], y: s.point[1]} : {}), ...(box ? {box} : {}), ...(typed && s.field ? {field: s.field} : {})};
+      const m = {act: s.act, ...(s.point ? {x: s.point[0], y: s.point[1]} : {}), ...(box ? {box} : {}), ...(s.field ? {field: s.field} : {}),
+                 ...(s.key ? {key: s.key} : {}), ...(s.url ? {url: s.url} : {})};
       const kept = s.clip.slice(0, Math.max(0, MAX_CLIP_TOTAL - frames));
       if (kept.length) {
         m.clip = [];
