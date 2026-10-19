@@ -296,10 +296,27 @@ const Scene = ({s, from, keep, look, hold}) => {
   );
 };
 
-export const Video = ({scenes}) => {
+// The background track's volume at a frame: quiet, quieter while the voice speaks, faded in at the start and out at the end.
+const BED = 0.2, UNDER = 0.07, RAMP = 9;
+const musicVolume = (scenes, fps) => {
+  const talk = [];
+  let at = 0;
+  for (const s of scenes) {
+    if (s.talk) talk.push([at, at + s.talk]);
+    at += s.frames;
+  }
+  return (f) => {
+    const dip = Math.max(0, ...talk.map(([a, b]) => interpolate(f, [a - RAMP, a, b, b + RAMP], [0, 1, 1, 0], clamp)));
+    const edge = interpolate(f, [0, fps, Math.max(fps + 1, at - 2 * fps), Math.max(fps + 2, at)], [0, 1, 1, 0], clamp);
+    return (BED - (BED - UNDER) * dip) * edge;
+  };
+};
+
+export const Video = ({scenes, music, fps = 30}) => {
   let at = 0, left = null;                      // where the pointer was left: the last chained step's target
   return (
     <AbsoluteFill style={{background: C.bg}}>
+      {music ? <Audio src={staticFile(`audio/${music}`)} loop volume={musicVolume(scenes, fps)} /> : null}
       {scenes.map((s, i) => {
         const start = at;
         at += s.frames;
