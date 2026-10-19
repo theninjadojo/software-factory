@@ -41,6 +41,46 @@ const Title = ({s}) => {
   );
 };
 
+// A phone's screen (taller than wide) in a landscape video: shown in a phone on the left, with the scene's title and words beside it
+// instead of over it. Anything else keeps the full-width layout.
+const PHONE = {margin: 34, bezel: 12, gap: 72};
+const portraitOf = (s, width, height) => s.kind === 'shot' && Array.isArray(s.size) && s.size[1] > s.size[0] * 1.2 && width > height;
+
+// Where a shot's picture goes: its scale k, its size dw x dh and its top left corner (ox, oy) in the video.
+const frameOf = (s, width, height) => {
+  const [fw, fh] = s.size;
+  if (portraitOf(s, width, height)) {
+    const ah = height - 2 * (PHONE.margin + PHONE.bezel);
+    const k = Math.min(ah / fh, (width * 0.42) / fw), dw = fw * k, dh = fh * k;
+    return {k, dw, dh, ox: Math.round(width * 0.31 - dw / 2), oy: Math.round((height - dh) / 2), phone: true};
+  }
+  const top = 40 + (s.title ? 52 : 0), aw = width - 128, ah = height - top - 120;
+  const k = Math.min(aw / fw, ah / fh), dw = fw * k, dh = fh * k;
+  return {k, dw, dh, ox: 64 + (aw - dw) / 2, oy: top + (ah - dh) / 2, phone: false};
+};
+
+// The phone around a portrait screen: a dark body with rounded corners, the screen inset by the bezel.
+const Phone = ({g}) => (
+  <div style={{position: 'absolute', left: g.ox - PHONE.bezel, top: g.oy - PHONE.bezel, width: g.dw + 2 * PHONE.bezel,
+               height: g.dh + 2 * PHONE.bezel, borderRadius: 34, background: '#07090b', border: `2px solid ${C.line}`,
+               boxShadow: '0 22px 60px rgba(0,0,0,0.55)'}} />
+);
+
+// The title and the narration beside a phone.
+const Beside = ({s, g}) => {
+  const {width, height} = useVideoConfig();
+  const r = useRise(4);
+  const left = g.ox + g.dw + PHONE.bezel + PHONE.gap;
+  return (
+    <div style={{position: 'absolute', left, width: width - left - 72, top: 0, height, display: 'flex', flexDirection: 'column',
+                 justifyContent: 'center', fontFamily: SANS, opacity: r, transform: `translateX(${(1 - r) * 18}px)`}}>
+      {s.title ? <div style={{color: C.text, fontSize: 34, fontWeight: 700, lineHeight: 1.25, marginBottom: 22}}>{s.title}</div> : null}
+      {s.title && s.say ? <div style={{width: 56, height: 5, background: C.accent, marginBottom: 22}} /> : null}
+      {s.say ? <div style={{color: C.muted, fontSize: 27, lineHeight: 1.45}}>{s.say}</div> : null}
+    </div>
+  );
+};
+
 const Picture = ({s}) => {
   const f = useCurrentFrame();
   const zoom = interpolate(f, [0, s.frames], [1, 1.06]);
@@ -76,10 +116,8 @@ const arc = Easing.bezier(0.35, 0, 0.15, 1);
 const Step = ({s, from, keep}) => {
   const f = useCurrentFrame();
   const {width, height, fps} = useVideoConfig();
-  const [fw, fh] = s.size;
-  const top = 40 + (s.title ? 52 : 0), aw = width - 128, ah = height - top - 120;
-  const k = Math.min(aw / fw, ah / fh), dw = fw * k, dh = fh * k;
-  const ox = 64 + (aw - dw) / 2, oy = top + (ah - dh) / 2;
+  const g = frameOf(s, width, height);
+  const {k, dw, dh, ox, oy} = g;
   const typing = (s.act === 'fill' || s.act === 'type') && s.box;
   const target = targetOf(s);
   const T = target && [target[0] * k, target[1] * k];
@@ -141,9 +179,10 @@ const Step = ({s, from, keep}) => {
   }
   return (
     <AbsoluteFill style={{fontFamily: SANS}}>
-      {s.title ? <div style={{position: 'absolute', left: 64, top: 40, right: 64, color: C.text, fontSize: 30, fontWeight: 700}}>{s.title}</div> : null}
-      <div style={{position: 'absolute', left: ox, top: oy, width: dw, height: dh, overflow: 'hidden', border: `1px solid ${C.line}`,
-                   borderRadius: 10, background: C.panel, boxShadow: '0 18px 50px rgba(0,0,0,0.45)'}}>
+      {s.title && !g.phone ? <div style={{position: 'absolute', left: 64, top: 40, right: 64, color: C.text, fontSize: 30, fontWeight: 700}}>{s.title}</div> : null}
+      {g.phone ? <Phone g={g} /> : null}
+      <div style={{position: 'absolute', left: ox, top: oy, width: dw, height: dh, overflow: 'hidden', border: g.phone ? 'none' : `1px solid ${C.line}`,
+                   borderRadius: g.phone ? 24 : 10, background: C.panel, boxShadow: g.phone ? 'none' : '0 18px 50px rgba(0,0,0,0.45)'}}>
         <div style={{position: 'absolute', inset: 0, transform: `translate(${tx}px, ${ty}px) scale(${z})`, transformOrigin: `${o[0]}px ${o[1]}px`}}>
           <Img src={staticFile(`img/${s.before}`)} style={{position: 'absolute', inset: 0, width: dw, height: dh}} />
           {shown ? <Img src={staticFile(`img/${shown.image}`)} style={{position: 'absolute', inset: 0, width: dw, height: dh}} /> : null}
@@ -164,8 +203,26 @@ const Step = ({s, from, keep}) => {
   );
 };
 
+// A still portrait screen: in the phone, slowly pushing in like the landscape picture does.
+const PhoneShot = ({s}) => {
+  const f = useCurrentFrame();
+  const {width, height} = useVideoConfig();
+  const g = frameOf(s, width, height);
+  const zoom = interpolate(f, [0, s.frames], [1, 1.04]);
+  return (
+    <AbsoluteFill>
+      <Phone g={g} />
+      <div style={{position: 'absolute', left: g.ox, top: g.oy, width: g.dw, height: g.dh, overflow: 'hidden', borderRadius: 24, background: C.panel}}>
+        <Img src={staticFile(`img/${s.image}`)} style={{width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${zoom})`}} />
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 const Shot = ({s, from, keep}) => {
+  const {width, height} = useVideoConfig();
   if (s.before) return <Step s={s} from={from} keep={keep} />;
+  if (portraitOf(s, width, height)) return <PhoneShot s={s} />;
   return (
     <AbsoluteFill style={{padding: '40px 64px 120px', fontFamily: SANS}}>
       {s.title ? <div style={{color: C.text, fontSize: 30, fontWeight: 700, marginBottom: 16}}>{s.title}</div> : null}
@@ -218,10 +275,12 @@ const KINDS = {title: Title, shot: Shot, code: Code, points: Points};
 // A scene; a demo step that carries on from the one before (chain) cuts straight in, keeping the pointer where that one left it.
 const Scene = ({s, from, keep}) => {
   const Body = KINDS[s.kind];
+  const {width, height} = useVideoConfig();
+  const phone = portraitOf(s, width, height);
   return (
     <AbsoluteFill style={{background: C.bg, opacity: useFade(s.frames, !s.chain, !keep)}}>
       <Body s={s} from={from} keep={keep} />
-      <Subtitle text={s.say} />
+      {phone ? <Beside s={s} g={frameOf(s, width, height)} /> : <Subtitle text={s.say} />}
       {s.audio ? <Audio src={staticFile(`audio/${s.audio}`)} /> : null}
     </AbsoluteFill>
   );

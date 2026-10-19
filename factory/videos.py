@@ -78,17 +78,18 @@ def reasons(vc) -> dict[str, str]:
             "too_large": f"The video was larger than {vc.max_mb} MB.",
             "closed": "The pull request is no longer open.",
             "github": "The pull request could not be read from GitHub.",
-            "demo_unqueued": "The demo tests could not be run: no worker runs this repository's Playwright tests. Set up its "
-                             "Playwright run on Settings → Screens and turn on Workers, then Make again.",
+            "demo_unqueued": "The demo tests could not be run: no worker runs this repository's tests. Set up its run on "
+                             "Settings → Screens (Playwright, or the Android recipe for an Android app) and turn on Workers, then Make again.",
             "demo_timeout": f"The demo tests did not finish on a worker within {_minutes(DEMO_WAIT)}. Check that a worker is online "
                             "(Settings → Workers), then Make again.",
             "demo_failed": "A demo test failed, so the flow cannot be shown as working. Fix the test (its run is under Tests), then "
                            "Make again.",
-            "demo_no_steps": "The demo run took no step screens (only JavaScript Playwright suites have steps). Check the test and "
-                             "the worker's Playwright run, then Make again.",
+            "demo_no_steps": "The demo run took no step screens (steps come from JavaScript Playwright suites, and from Android "
+                             "Espresso tests run on the worker's emulator; a Python suite or a Jetpack Compose test has none). Check the "
+                             "test and the worker's run, then Make again.",
             "no_screens": "There were no screens to show: the Screens board has none of these repositories, the tickets' builds "
                           "took none, and no demo test was run. Refresh the Screens board (Settings → Screens), or ask for a demo "
-                          "of a flow that has a Playwright test.",
+                          "of a flow that has a Playwright or Android instrumented test.",
             "writer_failed": "The video writer did not write a usable video. Make again, or ask for it differently in the chat."}
 
 
@@ -633,6 +634,8 @@ def spec(vc, scenes: list[dict], voice: str) -> dict:
             c["lines"] = s.get("lines") or []                    # empty: a binary or very large file, shown as "no text diff"
         if s["kind"] == "shot":
             c["image"] = f"s{i:02d}.png"
+            if s.get("size"):                                    # a phone's portrait screen gets a layout of its own (Video.jsx)
+                c["size"] = list(s["size"])
             if s.get("motion"):                                  # a demo step: animated from the picture before it (Video.jsx Shot)
                 c["before"], c["size"] = f"s{i:02d}-before.png", list(s["size"])
                 c.update({k: s["motion"][k] for k in ("act", "x", "y", "box", "field") if k in s["motion"]})
@@ -810,7 +813,7 @@ def work_one(cfg, gh, db, row: dict, now_fn, run=subprocess.run, post=None, writ
 # (no repository, no GitHub token) turns the brief and the material into scenes; that output is untrusted and checked like the
 # reviewer's block, and a scene may only point at material named in its prompt. Fewer than two usable scenes, or none showing a
 # screen or code: the video is skipped with a note saying so, never replaced by fixed wording.
-# A video may also name Playwright test files to demo: before it is made, a worker runs them on the default branch with a screenshot
+# A video may also name Playwright test files (or an Android app's instrumented tests) to demo: before it is made, a worker runs them on the default branch with a screenshot
 # after each step (captures.queue_demo), and those steps, in order and with what each did, are material the writer can show.
 # The Screens board's newest shots (the app as it looks now on the default branch) are material too. A video shows code (diff hunks
 # or excerpts of a repository copy) only when the person asked for it (show_code); otherwise every code scene is dropped.
@@ -1221,8 +1224,10 @@ def make_brief(cfg, gh, db, row: dict, write=None, run=subprocess.run, post=None
     engine, voice_id = voice_for(cfg.videos, (row.get("ask_voice") or "", row.get("ask_voice_id") or ""))
     images = {f"s{i:02d}.png": mat["shots"][s["screen"]] for i, s in enumerate(scenes, 1) if s["kind"] == "shot"}
     for i, s in enumerate(scenes, 1):
+        if s["kind"] == "shot":
+            s["size"] = png_size(mat["shots"][s["screen"]])
         if s["kind"] == "shot" and (got := mat["demo"]["motion"].get(s["screen"])):
-            s["motion"], s["size"] = got[0], png_size(mat["shots"][s["screen"]])
+            s["motion"] = got[0]
             images[f"s{i:02d}-before.png"] = got[1]
             s["clip"] = [ms for ms, _ in got[2]]
             images.update({f"s{i:02d}-c{k}.png": p for k, (_, p) in enumerate(got[2], 1)})

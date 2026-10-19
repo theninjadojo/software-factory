@@ -45,10 +45,10 @@ Factory chat replies get more turns and time than a ticket chat for this (Settin
 
 A video can show a flow running in the app, such as signing in or checking out, with a screen after each step. This needs a
 [worker](workers.md) that runs the repository's Playwright tests (**Settings → Screens**, the Playwright run of the Screens board)
-and a test that walks through the flow.
+and a test that walks through the flow, or for an Android app its Espresso tests on an emulator (below).
 
 1. Ask for it like any other video ("demo the login, step by step"). The chat looks for a Playwright test that does the steps
-   (`*.spec.ts` or `*.test.ts` in the code copy). It adds that test to the proposal under **Showing these tests running in the
+   (`*.spec.ts` or `*.test.ts` in the code copy), or an Android instrumented test (see *An Android app* below). It adds that test to the proposal under **Showing these tests running in the
    app**. If no test walks through the flow, it proposes no video and says what is missing (a test that does the flow end to end).
 2. When you click **Make video**, the video waits while a worker runs those test files on the default branch (the Videos page says
    *Running the demo tests on a worker first*). The run records a Playwright trace with each action slowed by 400 ms, and the
@@ -68,7 +68,23 @@ The demo run is not shown on the Screens board and does not count as a result in
 for it. A video is never made without the steps it promised: if the tests could not be run (no worker runs that repository's
 Playwright tests), did not finish within the hour, failed, or took no step screens, the video is skipped and the conversation says
 which. **Make again** runs the tests again, so the video shows the app as it is now. Step screens
-are taken at the test's viewport size (a video is recorded only for that, and not kept). Only JavaScript Playwright suites have steps; a Python suite in `tests/e2e` does not.
+are taken at the test's viewport size (a video is recorded only for that, and not kept). JavaScript Playwright suites and Android
+Espresso tests have steps; a Python suite in `tests/e2e` and a Jetpack Compose UI test do not.
+
+#### An Android app
+
+The same works for an Android app whose Screens board run is the Android recipe (`android-screens`), on a Linux worker with
+`/dev/kvm` and a `factory-android` image built with the emulator (`WITH_EMULATOR=1`; see [workers](workers.md#android-demo-steps)).
+The chat proposes an instrumented test (`app/src/androidTest/.../SignInTest.kt` or `.java`) that walks through the flow. The worker
+runs that test class on the headless emulator, unchanged: the recipe adds a small step recorder to the run, which keeps the phone's
+screen after each Espresso action (`typeText`, `click`, `pressBack`...) once it has settled (700 ms), with what the action did
+("Click Sign in", "Fill Email": a button's text, a field's hint or id, never the typed value), where the finger touched, the field
+a value went into and where the value appeared, and the frames that changed while the screen settled (a screen sliding in). Each
+test also starts with the screen it opened on ("Open Demo"), so its first action plays from a real picture. Screens are scaled so
+their long side is at most 1600 px (a 1080 x 2400 phone gives 720 x 1600).
+
+A phone's screen is taller than wide, so in the video it stands in a simple phone on the left, with the step's title and the
+narration beside it instead of as a subtitle over it. Wide screens keep the full-width layout.
 
 How it is made:
 - **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the

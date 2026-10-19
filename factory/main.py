@@ -492,7 +492,8 @@ def factory_chat_answer(cfg: Config, config_path: str, db, turn: dict, token: st
 
 
 def demo_repos(cfg: Config) -> list[str]:
-    """The repositories a chat video can demo a flow of: those whose Playwright run a worker makes ([[screens.captures]])."""
+    """The repositories a chat video can demo a flow of: those whose test run a worker makes ([[screens.captures]]: Playwright, or the
+    Android recipe on its emulator)."""
     return [c.repo for c in cfg.screens.captures] if cfg.videos.enabled and cfg.workers.enabled else []
 
 
@@ -503,10 +504,12 @@ def board_pages(db) -> list[str]:
 
 
 def demo_ok(cfg: Config, ref: str, repos: list[str]) -> bool:
-    """True for 'owner/repo:path' naming a Playwright test file (as testfind finds them) that is in that repository's code copy."""
+    """True for 'owner/repo:path' naming a test file whose steps a demo run can take, that is in that repository's code copy: a
+    Playwright test (as testfind finds them) or an Android instrumented test (src/androidTest*/...kt or .java, run with Espresso)."""
     from . import testfind
     got = videos.demo_ref(ref)
-    return bool(got and got[0] in repos and testfind.JS_FILE.search(got[1]) and codecopy.resolve(cfg, ref) is not None)
+    return bool(got and got[0] in repos and (testfind.JS_FILE.search(got[1]) or testfind.ANDROID_FILE.search(got[1]))
+                and codecopy.resolve(cfg, ref) is not None)
 
 
 def code_for_chat(cfg: Config, token: str | None) -> list:
