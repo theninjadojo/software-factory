@@ -140,6 +140,8 @@ def features(cfg, slack_conn=None) -> list[Feature]:
           f"{cfg.poll_seconds} s", "info", ("Factory",), "/settings?section=general", "General"),
         F("labels", "run", "Labels", "The labels the factory reads and writes.", "", "info", ("Tickets",), "/settings?section=labels", "Labels"),
         F("prompts", "work", "Agent instructions", "Your own instructions for each agent, before its built-in ones.", "", "info", ("A ticket",), "/settings?section=prompts", "Agent instructions"),
+        F("skills", "work", "Agent skills", "Instructions an agent reads only when they fit its work.",
+          _n(len(cfg.skills), "skill", "skills") if cfg.skills else "", "info", ("A ticket",), "/skills", "Agent skills"),
         F("health", "run", "Health alerts", "Telegram alerts when disk, memory, polling or runs go wrong.",
           *_onoff(cfg.health.enabled), ("Telegram",), "/settings?section=health", "Health alerts"),
         F("update_check", "run", "Update checks", "A banner when a newer release is out.",

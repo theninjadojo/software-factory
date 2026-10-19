@@ -1060,8 +1060,8 @@ def save_harness(cfg_path: str, state_dir: Path, name: str, form: Form) -> None:
     errors = []
     if not IMAGE_RE.match(image):
         errors.append("Image: a container image name such as localhost/factory-agent-codex:latest.")
-    if not command or len(command) > 4000 or "\x00" in command or "/task/prompt.txt" not in command:
-        errors.append("Command: required, and it must read the task from /task/prompt.txt.")
+    if not command or len(command) > 4000 or "\x00" in command or not ("/task/prompt.txt" in command or "/task/user.txt" in command):
+        errors.append("Command: required, and it must read the task from /task/prompt.txt (or /task/user.txt with /task/system.txt).")
     try:
         hosts = parse_value(Field("hosts", "Allowed hosts", "hosts"), Form({"hosts": form.get("allow_hosts", "")}))
     except ValueError as e:

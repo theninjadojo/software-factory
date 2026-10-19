@@ -12,6 +12,7 @@ MAX_FILE_BYTES = 500_000
 SKIP_DIRS = ("/node_modules/", "/.venv/", "/venv/", "/site-packages/", "/dist/", "/build/", "/.git/")
 PY_FILE = re.compile(r"(?:^|/)(test_[\w-]+|[\w-]+_test)\.py$")
 JS_FILE = re.compile(r"(?:^|/)([\w.-]+)\.(?:spec|test)\.[cm]?[jt]sx?$")
+ANDROID_FILE = re.compile(r"(?:^|/)src/androidTest\w*/(?:[\w.-]+/)*([\w-]+)\.(?:kt|java)$")    # an instrumented test (Espresso), for demo steps
 JS_TEST = re.compile(r"""(?<![\w.$])(?:test|it)(?:\.(?:only|skip|fixme|fail|slow))?\s*\(\s*(['"`])((?:\\.|(?!\1).){1,300})\1""")
 JS_DESCRIBE = re.compile(r"""(?<![\w.$])(?:test\.)?describe(?:\.(?:only|skip|serial|parallel))?\s*\(\s*(['"`])((?:\\.|(?!\1).){1,200})\1""")
 

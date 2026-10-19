@@ -46,6 +46,7 @@ SIDE_GROUPS = [
     ("How the work is done", [("routing", "Models by ticket size", "/settings?section=routing"), ("roles", "Stage agents", "/settings?section=roles"),
                               ("classifier", "Classifier", "/settings?section=classifier"), ("runner", "Sandbox & limits", "/settings?section=runner"),
                               ("questions", "Second opinions", "/settings?section=questions"), ("harnesses", "Harnesses", "/harnesses"), ("prompts", "Agent instructions", "/settings?section=prompts"),
+                              ("skills", "Agent skills", "/skills"),
                               ("new_projects", "New project interviews", "/settings?section=new_projects")]),
     ("Before a pull request is done", [("review", "Code review", "/settings?section=review"), ("ci", "CI feedback", "/settings?section=ci"),
                                        ("conflicts", "Merge conflicts", "/settings?section=conflicts"), ("mockups", "Design mockups", "/settings?section=mockups"),
@@ -723,7 +724,7 @@ def harnesses_page(cfg, eff: dict, csrf: str, errors=None, state_dir=None) -> st
             f'<div class="field"><label class="check"><input type="checkbox" name="enabled" value="1"{" checked" if h.enabled else ""}> Enabled</label></div>'
             f'<div class="field"><label>Image</label><input name="image" value="{esc(h.image)}" class="wide"></div>'
             f'<div class="field"><label>Command run in the sandbox</label><textarea name="command" rows="4">{esc(h.command)}</textarea>'
-            '<div class="muted">Set by you, never by ticket text. Reads the task from <code>/task/prompt.txt</code>; <code>$MODEL</code> and <code>$MAX_TURNS</code> are available.</div></div>'
+            '<div class="muted">Set by you, never by ticket text. Reads the task from <code>/task/prompt.txt</code>, or from its two halves: the factory\'s rules in <code>/task/system.txt</code> (for a system prompt) and the ticket in <code>/task/user.txt</code>. <code>$MODEL</code> and <code>$MAX_TURNS</code> are available.</div></div>'
             f'<div class="field"><label>Hosts it may reach</label><textarea name="allow_hosts" rows="2">{esc(chr(10).join(h.allow_hosts))}</textarea></div>'
             '<label class="check danger"><input type="checkbox" name="confirm" value="1"> I understand: enabling a harness or changing its command, image or hosts changes what runs in the sandbox and what it can reach.</label>'
             f'<div><button>Save {esc(name)}</button></div></form>{credential}')

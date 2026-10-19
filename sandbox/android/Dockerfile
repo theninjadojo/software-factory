@@ -33,7 +33,9 @@ RUN yes | sdkmanager --licenses >/dev/null \
     && chmod -R a+rX /opt/android-sdk
 
 COPY android-run.sh /usr/local/bin/android-run
-RUN chmod 755 /usr/local/bin/android-run
+# The step recorder of a demo run (android-run ... steps): Java source the run adds to the project's instrumented tests, nothing to build here.
+COPY steps/src /opt/shikumi-steps/src
+RUN chmod 755 /usr/local/bin/android-run && chmod -R a+rX /opt/shikumi-steps
 # No USER line: the recipe runs the container with --user <the worker's uid> so files in the checkout stay owned by the worker.
 WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/android-run"]

@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 from factory import captures as CP, jobs, videos
 from factory import factorychat as F
 from factory import screenboard as SB
-from factory.config import ScreenCapture, ScreensCfg, WorkersCfg, overrides_path
+from factory.config import ScreenCapture, ScreensCfg, VideosCfg, WorkersCfg, overrides_path
 
 from test_captures import FakeGh
 from test_chatvideos import REFS, block
@@ -30,6 +30,16 @@ import worker as W                                                       # noqa:
 RECIPES = Path(__file__).resolve().parent.parent / "worker" / "recipes"
 REPO = "o/r"
 TEST = "web/e2e/auth.spec.ts › signing in"
+
+
+# steps.tsv as the Android step recorder wrote it on a real emulator run of a sample app's Espresso test (a pixel_6 screen, kept at 720 x 1600).
+ANDROID_STEPS = """logintest-signinandorder-s01-e139a9.png	1	Open Demo	{"act":"other"}
+logintest-signinandorder-s02-e139a9.png	2	Fill Email	{"act":"fill","x":360,"y":373,"box":[49,351,269,42],"field":[42,334,636,79]}
+logintest-signinandorder-s03-e139a9.png	3	Fill Password	{"act":"fill","x":360,"y":452,"box":[49,430,75,42],"field":[42,413,636,79]}
+logintest-signinandorder-s04-e139a9.png	4	Click Sign in	{"act":"click","x":360,"y":561,"clip":[[301,"zz-logintest-signinandorder-s04-e139a9-f1"],[634,"zz-logintest-signinandorder-s04-e139a9-f2"]],"end":952}
+logintest-signinandorder-s05-e139a9.png	5	Check Remind me tomorrow	{"act":"check","x":188,"y":338,"clip":[[300,"zz-logintest-signinandorder-s05-e139a9-f1"],[520,"zz-logintest-signinandorder-s05-e139a9-f2"]],"end":809}
+logintest-signinandorder-s06-e139a9.png	6	Click Order coffee	{"act":"click","x":360,"y":436,"clip":[[305,"zz-logintest-signinandorder-s06-e139a9-f1"],[612,"zz-logintest-signinandorder-s06-e139a9-f2"],[839,"zz-logintest-signinandorder-s06-e139a9-f3"]],"end":1127}
+"""
 
 
 def step_body(status="passed", outcome="pass", steps=(("Navigate /login", 1), ("Fill getByPlaceholder('Email')", 2),
@@ -151,6 +161,100 @@ class TraceSteps(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(json.loads(out.stdout), [["fill", None, None], ["click", [300, 150], "frame 15"]])
 
+    def test_a_step_shows_what_the_page_settled_on_with_its_key_path_and_element(self):
+        """A step's screen is the last frame before the next step (the last step's: before the body's last check ends); a press names
+        its key only when it is a named key; the path is known after a navigation until a click; the element comes from the input box."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        ev = lambda **d: json.dumps(d)
+        test = "\n".join([
+            ev(type="before", callId="x@1", startTime=10, method="pw:api", title="Navigate", subtitle="/login", params={"url": "/login"}),
+            ev(type="after", callId="x@1", endTime=20),
+            ev(type="before", callId="x@2", startTime=30, method="pw:api", title='Press "h"', subtitle="getByPlaceholder('Password')",
+               params={"key": "h"}),
+            ev(type="after", callId="x@2", endTime=40),
+            ev(type="before", callId="x@3", startTime=50, method="pw:api", title='Press "Enter"', subtitle="getByPlaceholder('Password')",
+               params={"key": "Enter"}),
+            ev(type="after", callId="x@3", endTime=60),
+            ev(type="before", callId="x@4", startTime=61, method="expect", title='Expect "toBeVisible"'),
+            ev(type="after", callId="x@4", endTime=200)])
+        ctx = "\n".join([ev(type="context-options", options={"viewport": {"width": 640, "height": 360}}),
+                         ev(type="before", callId="x@3", method="press"),
+                         ev(type="input", callId="x@3", box={"x": 10, "y": 20, "width": 100, "height": 30}),
+                         *(ev(type="screencast-frame", sha1=f"p-{t}.jpeg", timestamp=t, width=640, height=360) for t in (15, 25, 35, 55, 150))])
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        with zipfile.ZipFile(d / "trace.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("test.trace", test)
+            z.writestr("0-trace.trace", ctx)
+            for t in (15, 25, 35, 55, 150):
+                z.writestr(f"resources/p-{t}.jpeg", f"frame {t}")
+        js = ("import {readFileSync} from 'node:fs'; const m = await import(process.argv[2]);"
+              "const s = m.steps(m.unzip(readFileSync(process.argv[3]), () => true));"
+              "console.log(JSON.stringify(s.map((x) => [x.frame.toString(), x.key, x.url, x.field, x.clip.map((c) => c.at), x.end])));")
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs"), str(d / "trace.zip")],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [["frame 25", None, "/login", None, [], 15],          # settled after the navigation
+                                                  ["frame 35", None, None, None, [], 5],             # a lone letter is never named
+                                                  ["frame 150", "Enter", None, [10, 20, 100, 30], [5], 100]])   # "Welcome back"
+
+    def test_newer_traces_key_a_click_point_by_the_test_steps_own_call_id(self):
+        """Playwright 1.64: no stepId; the context trace's call and input events reuse the test step's call id."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        ev = lambda **d: json.dumps(d)
+        test = "\n".join([ev(type="before", callId="x@1", startTime=10, method="pw:api", title="Navigate", subtitle="/"),
+                          ev(type="after", callId="x@1", endTime=20),
+                          ev(type="before", callId="x@2", startTime=21, method="pw:api", title="Click", subtitle="getByRole('button')"),
+                          ev(type="after", callId="x@2", endTime=30)])
+        ctx = "\n".join([ev(type="context-options", options={"viewport": {"width": 1280, "height": 720}}),
+                         ev(type="before", callId="x@2", method="click"), ev(type="input", callId="x@2", point={"x": 1193.86, "y": 38.5}),
+                         *(ev(type="screencast-frame", sha1=f"p-{t}.jpeg", timestamp=t, width=1280, height=720) for t in (15, 25))])
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        with zipfile.ZipFile(d / "trace.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("test.trace", test)
+            z.writestr("0-trace.trace", ctx)
+            for t in (15, 25):
+                z.writestr(f"resources/p-{t}.jpeg", f"frame {t}")
+        js = ("import {readFileSync} from 'node:fs'; const m = await import(process.argv[2]);"
+              "console.log(JSON.stringify(m.steps(m.unzip(readFileSync(process.argv[3]), () => true)).map((x) => x.point)));")
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs"), str(d / "trace.zip")],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [None, [1194, 39]])
+
+    def test_a_click_keeps_the_frames_taken_while_it_ran_and_a_typed_value_does_not(self):
+        """The clip: frames from the step's start until its own frame, each new, with their time; never for a fill (its box animates)."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        ev = lambda **d: json.dumps(d)
+        test = "\n".join([
+            ev(type="before", callId="a", startTime=100, method="pw:api", title="Navigate", subtitle="/"),
+            ev(type="after", callId="a", endTime=200),
+            ev(type="before", callId="b", startTime=300, method="pw:api", title="Fill getByPlaceholder('Email')"),
+            ev(type="after", callId="b", endTime=400),
+            ev(type="before", callId="c", startTime=500, method="pw:api", title="Click getByRole('button')"),
+            ev(type="after", callId="c", endTime=900)])
+        pics = {150: "home", 310: "typing", 390: "typed", 520: "hover", 600: "hover", 700: "menu half", 850: "menu open"}
+        frames = "\n".join(ev(type="screencast-frame", sha1=f"p-{t}.jpeg", timestamp=t, width=640, height=360) for t in pics)
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        with zipfile.ZipFile(d / "trace.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("test.trace", test)
+            z.writestr("0-trace.trace", frames)
+            for t, what in pics.items():
+                z.writestr(f"resources/p-{t}.jpeg", what)
+        js = ("import {readFileSync} from 'node:fs'; const m = await import(process.argv[2]);"
+              "const s = m.steps(m.unzip(readFileSync(process.argv[3]), () => true));"
+              "console.log(JSON.stringify(s.map((x) => [x.act, x.clip.map((c) => [c.at, c.frame.toString()]), x.end])));")
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs"), str(d / "trace.zip")],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [["other", [], 50], ["fill", [], 90],
+                                                  ["click", [[20, "hover"], [200, "menu half"]], 350]])
+
     def test_the_recipe_runs_it_only_for_a_demo_run(self):
         text = (RECIPES / "playwright-screens.sh").read_text()
         self.assertIn('if [ "${FACTORY_STEPS:-}" = 1 ]', text)
@@ -173,11 +277,52 @@ class Worker(unittest.TestCase):
         self.assertEqual(W.collect_steps(d), {"a-s01-x": {"n": 1, "label": "Click", "motion": {"act": "click", "x": 3, "y": 4}},
                                               "b-s01-x": {"n": 1, "label": "Fill"}})
 
+    def test_an_android_demo_run_is_read_and_kept_like_a_playwright_one(self):
+        """What the Android step recorder wrote in a real run on the emulator (sandbox/android/steps/), read by the worker and the factory."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "steps.tsv").write_text(ANDROID_STEPS)
+        test = "app/src/androidTest/java/com/example/demo/LoginTest.java::signInAndOrder"
+        (tmp / "junit.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="android">\n<testcase file="app/src/androidTest/'
+                                       'java/com/example/demo/LoginTest.java" classname="" name="signInAndOrder"></testcase>\n</testsuite>\n')
+        (tmp / "e2e-shots.jsonl").write_text("".join(json.dumps({"file": f"logintest-signinandorder-s0{n}-e139a9.png", "test": test}) + "\n"
+                                                     for n in range(1, 7)))
+        repo = tmp / "repo"
+        (repo / "app/src/androidTest/java/com/example/demo").mkdir(parents=True)
+        (repo / "app/src/androidTest/java/com/example/demo/LoginTest.java").write_text("package com.example.demo;\n")
+        tests, _ = W.collect_results(tmp, repo)
+        self.assertEqual(tests, [{"id": test, "outcome": "pass", "message": ""}])
+        took = W.collect_shot_tests(tmp, repo, {test})
+        got = W.collect_steps(tmp)
+        self.assertEqual([(v["n"], v["label"]) for v in got.values()],
+                         [(1, "Open Demo"), (2, "Fill Email"), (3, "Fill Password"), (4, "Click Sign in"), (5, "Check Remind me tomorrow"),
+                          (6, "Click Order coffee")])
+        self.assertEqual(set(took), set(got))
+        for name, st in got.items():                           # every motion the recorder wrote passes the factory's check unchanged
+            self.assertEqual(jobs.clean_step(st), st, name)
+        self.assertEqual(got["logintest-signinandorder-s02-e139a9"]["motion"],
+                         {"act": "fill", "x": 360, "y": 373, "box": [49, 351, 269, 42], "field": [42, 334, 636, 79]})
+        self.assertEqual(len(got["logintest-signinandorder-s06-e139a9"]["motion"]["clip"]), 3)
+        self.assertEqual(jobs.clean_test_id(test), test)
+        self.assertEqual(videos.step_title("Check Remind me tomorrow"), "Check Remind me tomorrow")
+
     def test_the_factory_keeps_only_a_well_formed_motion(self):
         self.assertEqual(jobs.clean_motion({"act": "fill", "box": [1, 2, 30, 10], "x": 5, "extra": "<b>"}), {"act": "fill", "box": [1, 2, 30, 10]})
         self.assertEqual(jobs.clean_motion({"act": "click", "x": 5, "y": True}), {"act": "click"})
         self.assertEqual(jobs.clean_motion({"act": "click", "x": 5, "y": 6}), {"act": "click", "x": 5, "y": 6})
         self.assertEqual(jobs.clean_motion({"act": "fill", "box": [1, 2, 0, 10]}), {"act": "fill"})
+        self.assertEqual(jobs.clean_motion({"act": "fill", "box": [5, 6, 30, 10], "field": [1, 2, 300, 40]}),
+                         {"act": "fill", "box": [5, 6, 30, 10], "field": [1, 2, 300, 40]})
+        clip = {"act": "click", "x": 5, "y": 6, "clip": [[20, "zz-a-s01-x-f1"], [200, "zz-a-s01-x-f2"]], "end": 350}
+        self.assertEqual(jobs.clean_motion(clip), clip)
+        for bad in ({"clip": [[200, "zz-f1"], [20, "zz-f2"]]}, {"clip": [[20, "../x"]]}, {"clip": [[20, "zz-f1"]], "end": 10},
+                    {"clip": [[20, "zz-f1"]], "end": None}, {"clip": [[20, "zz-f1"]] * 2}, {"clip": [[i, f"zz-f{i}"] for i in range(7)]},
+                    {"clip": [[-1, "zz-f1"]]}, {"clip": [[20, "zz-f1"]], "end": 99999}):
+            self.assertEqual(jobs.clean_motion({"act": "click", "end": 350, **bad}), {"act": "click"}, bad)
+        self.assertEqual(jobs.clean_motion({"act": "press", "key": "Control+Shift+Z", "url": "/a/b-c"}),
+                         {"act": "press", "key": "Control+Shift+Z", "url": "/a/b-c"})
+        for bad in ({"key": "h"}, {"key": "Enter; rm"}, {"url": "https://x/y"}, {"url": "/" + "a" * 200}, {"url": "/a b"}, {"key": 1}):
+            self.assertEqual(jobs.clean_motion({"act": "press", **bad}), {"act": "press"}, bad)
         self.assertIsNone(jobs.clean_motion({"act": "rm -rf"}))
         self.assertIsNone(jobs.clean_motion("click"))
         self.assertEqual(jobs.clean_step({"n": 2, "label": "Click", "motion": {"act": "click", "x": 99999, "y": 1}}),
@@ -269,7 +414,7 @@ class Video(Base):
         self.assertIn("- o/r:auth-signing-in-s03-abc123: step 3, Click Sign in", seen["prompt"])
         shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
         self.assertEqual([s["title"] for s in shots], ["Step 1 · Open /login", "Step 3 · Click Sign in"])
-        self.assertEqual(run.seen["img"], ["s02.png", "s03.png"])
+        self.assertEqual(run.seen["img"], ["s02-before.png", "s02.png", "s03.png"])
 
     def test_a_step_that_says_what_it_did_is_animated_from_the_picture_before_it(self):
         vid = self.queued()
@@ -282,11 +427,49 @@ class Video(Base):
         videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, run, write=lambda p: WRITER)
         self.assertEqual(videos.get(self.db, vid)["status"], "ready")
         shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
-        self.assertNotIn("before", shots[0])                     # the first step has no picture before it
+        self.assertEqual({k: shots[0].get(k) for k in ("before", "act", "x")}, {"before": "s02-before.png", "act": "other", "x": None})
+                                                                  # the first step: a still (its own picture before it)
         w, h = videos.png_size(png())
+        self.assertEqual(shots[0]["size"], [w, h])                # but its size, so a phone's portrait screen gets its own layout
         self.assertEqual({k: shots[1].get(k) for k in ("before", "size", "act", "x", "y")},
                          {"before": "s03-before.png", "size": [w, h], "act": "click", "x": 10, "y": 12})
-        self.assertEqual(run.seen["img"], ["s02.png", "s03-before.png", "s03.png"])
+        self.assertEqual(run.seen["img"], ["s02-before.png", "s02.png", "s03-before.png", "s03.png"])
+
+    def test_a_step_plays_the_frames_its_run_took_and_carries_on_from_the_step_before(self):
+        vid = self.queued()
+        videos.demo_pending(self.cfg, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
+        jid = videos.demo_jobs(videos.get(self.db, vid))[REPO]
+        body = step_body(motion={3: {"act": "click", "x": 10, "y": 12, "end": 350,
+                                     "clip": [[20, "zz-auth-signing-in-s03-abc123-f1"], [200, "zz-auth-signing-in-s03-abc123-f2"],
+                                              [300, "zz-gone-f3"]]}})
+        frame = base64.b64encode(png()).decode()
+        body["artifacts"] += [{"name": "zz-auth-signing-in-s03-abc123-f1", "png_b64": frame},
+                              {"name": "zz-auth-signing-in-s03-abc123-f2", "png_b64": frame}]
+        run_job(self.db, jid, body)
+        self.assertEqual([at for at, _ in jobs.steps(self.db, jid)[2]["clip"]], [20, 200])        # a frame the run did not send is left out
+        run = self.container()
+        self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
+        videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, run, write=lambda p: WRITER)
+        self.assertEqual(videos.get(self.db, vid)["status"], "ready")
+        shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
+        self.assertEqual({k: shots[1].get(k) for k in ("clip", "end", "chain")},
+                         {"clip": [{"at": 20, "image": "s03-c1.png"}, {"at": 200, "image": "s03-c2.png"}], "end": 350, "chain": True})
+        self.assertEqual(run.seen["img"], ["s02-before.png", "s02.png", "s03-before.png", "s03-c1.png", "s03-c2.png", "s03.png"])
+
+    def test_a_step_names_what_it_acts_on_and_a_press_its_key(self):
+        vid = self.queued()
+        videos.demo_pending(self.cfg, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
+        jid = videos.demo_jobs(videos.get(self.db, vid))[REPO]
+        run_job(self.db, jid, step_body(steps=(("Navigate /login", 1), ("Fill getByPlaceholder('Email')", 2), ("Press getByPlaceholder('Email')", 3)),
+                                        motion={1: {"act": "other", "url": "/login"}, 3: {"act": "press", "key": "Enter", "field": [1, 2, 10, 5]}}))
+        run = self.container()
+        self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
+        videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, run, write=lambda p: WRITER)
+        shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
+        self.assertEqual([s["title"] for s in shots], ["Step 1 · Open /login", "Step 3 · Press Enter"])
+        self.assertEqual({k: shots[0].get(k) for k in ("act", "url")}, {"act": "other", "url": "/login"})
+        self.assertEqual({k: shots[1].get(k) for k in ("act", "key", "field", "callout")},
+                         {"act": "press", "key": "Enter", "field": [1, 2, 10, 5], "callout": None})     # a key press has no label
 
     def make(self, vid):
         self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
@@ -345,6 +528,26 @@ class Proposal(unittest.TestCase):
             self.assertIsNone(F.parse_proposal(block(tickets=[], demo=demo), REFS, None, ok)[1], demo)
         self.assertIsNone(F.parse_proposal(block(demo=["o/r:web/e2e/auth.spec.ts"]), REFS)[1])          # nothing accepts a demo
         self.assertNotIn("demo", F.parse_proposal(block(), REFS)[1])
+
+    def test_an_android_instrumented_test_can_be_demoed_and_a_unit_test_cannot(self):
+        from unittest import mock
+        from factory import main, testfind
+        for path in ("app/src/androidTest/java/com/example/SignInTest.kt", "src/androidTest/java/a/B.java",
+                     "feature/home/src/androidTestDebug/kotlin/com/x/HomeTest.kt", "web/e2e/auth.spec.ts"):
+            with mock.patch.object(main.codecopy, "resolve", return_value=Path("/x")):
+                self.assertTrue(main.demo_ok(None, f"o/r:{path}", ["o/r"]), path)
+        for path in ("app/src/test/java/com/example/SignInTest.kt", "app/src/main/java/com/example/Main.kt",
+                     "app/src/androidTest/res/layout/a.xml", "app/src/androidTest/java/a/$B.kt"):
+            with mock.patch.object(main.codecopy, "resolve", return_value=Path("/x")):
+                self.assertFalse(main.demo_ok(None, f"o/r:{path}", ["o/r"]), path)
+        with mock.patch.object(main.codecopy, "resolve", return_value=None):           # not in the code copy
+            self.assertFalse(main.demo_ok(None, "o/r:app/src/androidTest/java/a/B.kt", ["o/r"]))
+        self.assertFalse(main.demo_ok(None, "o/x:app/src/androidTest/java/a/B.kt", ["o/r"]))   # not a repo that can demo
+        self.assertEqual(testfind.ANDROID_FILE.search("app/src/androidTest/java/a/SignInTest.kt").group(1), "SignInTest")
+        prompt = F.build_prompt("s", [], videos=True, code="o/r at /work/code/o/r", demo=["o/r"])
+        self.assertIn("src/androidTest", prompt)
+        self.assertIn("Playwright or Android instrumented test", prompt)
+        self.assertIn("Android", videos.reasons(VideosCfg())["demo_no_steps"])
 
     def test_the_prompt_offers_demos_only_with_videos_code_and_a_repo(self):
         self.assertIn("DEMO.", F.build_prompt("s", [], videos=True, code="o/r at /work/code/o/r", demo=["o/r"]))

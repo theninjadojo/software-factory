@@ -2,14 +2,22 @@
 # Runs inside the sandbox. No network except a unix socket to the host allowlist proxy.
 # /work holds one git repository per directory (a multi-repo project).
 # AGENT_COMMAND is set by the orchestrator from the selected harness's configuration (never from ticket text) and
-# reads the task from /task/prompt.txt; $MODEL and $MAX_TURNS are available to it.
+# reads the task from /task/prompt.txt (or its two halves, /task/system.txt and /task/user.txt); $MODEL and $MAX_TURNS are
+# available to it.
 socat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:/run/proxy.sock &
 export HTTPS_PROXY=http://127.0.0.1:3128 HTTP_PROXY=http://127.0.0.1:3128
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 HOME=/home/agent
 cd /work || exit 1
 git config --global --add safe.directory '*'
+# The run's skills (factory/skills.py), copied to where each agent CLI looks for a user's skills. The prompt also lists their
+# /task/skills paths, so an agent that finds none here still reads them.
+if [ -d /task/skills ]; then
+  for p in .claude .codex .gemini .agents .config/opencode; do
+    mkdir -p "$HOME/$p" && cp -R /task/skills "$HOME/$p/skills"
+  done
+fi
 if [ -z "$AGENT_COMMAND" ]; then
-  AGENT_COMMAND='claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions --output-format json'
+  AGENT_COMMAND='claude -p "$(cat /task/user.txt)" --append-system-prompt-file /task/system.txt --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions --output-format json'
 fi
 sh -c "$AGENT_COMMAND" > /out/agent.log 2>&1
 echo $? > /out/exit_code

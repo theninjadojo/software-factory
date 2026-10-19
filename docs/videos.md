@@ -45,27 +45,54 @@ Factory chat replies get more turns and time than a ticket chat for this (Settin
 
 A video can show a flow running in the app, such as signing in or checking out, with a screen after each step. This needs a
 [worker](workers.md) that runs the repository's Playwright tests (**Settings → Screens**, the Playwright run of the Screens board)
-and a test that walks through the flow.
+and a test that walks through the flow, or for an Android app its Espresso tests on an emulator (below).
 
 1. Ask for it like any other video ("demo the login, step by step"). The chat looks for a Playwright test that does the steps
-   (`*.spec.ts` or `*.test.ts` in the code copy). It adds that test to the proposal under **Showing these tests running in the
+   (`*.spec.ts` or `*.test.ts` in the code copy), or an Android instrumented test (see *An Android app* below). It adds that test to the proposal under **Showing these tests running in the
    app**. If no test walks through the flow, it proposes no video and says what is missing (a test that does the flow end to end).
 2. When you click **Make video**, the video waits while a worker runs those test files on the default branch (the Videos page says
    *Running the demo tests on a worker first*). The run records a Playwright trace with each action slowed by 400 ms, and the
    worker keeps the screen after each step of each test, with what the step did ("Click Sign in", "Fill Email"). A typed value
    is never kept as text. The worker also notes where each step acted: the point a click landed on, and the field a value was typed
-   into (the part of the screen that changed).
+   into (the part of the screen that changed). For a click, a key press or a page load it also keeps up to six of the frames
+   taken while the step ran, with their times: a menu opening, a page loading. A step's screen is the one the page settled on
+   before the next step started (for the last step, once the test's last check is done), so a "Welcome back" after a short wait is
+   shown. It also notes the element each step acted on, the key a press pressed (a named key such as Enter or Control+A, never a
+   letter on its own, so a value typed key by key is not shown) and the page's path while it is known.
 3. The writer gets those steps in order and narrates the ones that tell the flow.
-4. Each step plays out on the real screens: the video starts on the screen before the step, a pointer moves to what the step acted
-   on, then either clicks (a ripple, and the next screen fades in) or types (the value appears in its field letter by letter behind
-   a caret, just as the app showed it: a password stays dots). A test's first step, and a step whose screen size changed, is shown
-   as a still.
+4. Each step plays out on the real screens like a screen recording: the video starts on the screen before the step, the camera
+   pushes in on what the step acts on while a pointer glides there, then it either clicks (a press and a ripple, then the frames
+   the run took play in their own time, or the next screen fades in when there are none) or types (the field is outlined and the
+   value appears in it letter by letter behind a caret, just as the app showed it: a password stays dots). The camera then eases
+   back out to the whole screen. Steps of one test that follow each other cut straight on, with the pointer where the last step
+   left it; when the next step acts on something close by (email, then password), the camera stays in and pans across instead of
+   pulling out and pushing back in. Anything else fades through black. A test's first step, and a step whose screen size changed, is shown as a still.
+   The page sits in a browser window whose address bar shows the page's path while it is known (blank after a click that may have
+   left it). Just before a step acts, the page around what it acts on dims and a label names it ("Sign in"); a key press shows its
+   keycap ("⏎ Enter"). The step waits until its narration is about half said, so the click lands on the words, and waits in the
+   frames it plays (a page loading for two seconds) are sped up, while quick changes such as a menu opening keep their speed.
 
 The demo run is not shown on the Screens board and does not count as a result in the Tests register. A video waits at most an hour
 for it. A video is never made without the steps it promised: if the tests could not be run (no worker runs that repository's
 Playwright tests), did not finish within the hour, failed, or took no step screens, the video is skipped and the conversation says
 which. **Make again** runs the tests again, so the video shows the app as it is now. Step screens
-are taken at the test's viewport size (a video is recorded only for that, and not kept). Only JavaScript Playwright suites have steps; a Python suite in `tests/e2e` does not.
+are taken at the test's viewport size (a video is recorded only for that, and not kept). JavaScript Playwright suites and Android
+Espresso tests have steps; a Python suite in `tests/e2e` and a Jetpack Compose UI test do not.
+
+#### An Android app
+
+The same works for an Android app whose Screens board run is the Android recipe (`android-screens`), on a Linux worker with
+`/dev/kvm` and a `factory-android` image built with the emulator (`WITH_EMULATOR=1`; see [workers](workers.md#android-demo-steps)).
+The chat proposes an instrumented test (`app/src/androidTest/.../SignInTest.kt` or `.java`) that walks through the flow. The worker
+runs that test class on the headless emulator, unchanged: the recipe adds a small step recorder to the run, which keeps the phone's
+screen after each Espresso action (`typeText`, `click`, `pressBack`...) once it has settled (700 ms), with what the action did
+("Click Sign in", "Fill Email": a button's text, a field's hint or id, never the typed value), where the finger touched, the field
+a value went into and where the value appeared, and the frames that changed while the screen settled (a screen sliding in). Each
+test also starts with the screen it opened on ("Open Demo"), so its first action plays from a real picture. Screens are scaled so
+their long side is at most 1600 px (a 1080 x 2400 phone gives 720 x 1600).
+
+A phone's screen is taller than wide, so in the video it stands in a simple phone on the left, with the step's title and the
+narration beside it instead of as a subtitle over it. Wide screens keep the full-width layout.
 
 How it is made:
 - **Material.** For each ticket: its build pull requests that are open or merged (up to two per ticket, six in all, with the

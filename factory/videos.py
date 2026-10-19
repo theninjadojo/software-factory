@@ -78,17 +78,18 @@ def reasons(vc) -> dict[str, str]:
             "too_large": f"The video was larger than {vc.max_mb} MB.",
             "closed": "The pull request is no longer open.",
             "github": "The pull request could not be read from GitHub.",
-            "demo_unqueued": "The demo tests could not be run: no worker runs this repository's Playwright tests. Set up its "
-                             "Playwright run on Settings → Screens and turn on Workers, then Make again.",
+            "demo_unqueued": "The demo tests could not be run: no worker runs this repository's tests. Set up its run on "
+                             "Settings → Screens (Playwright, or the Android recipe for an Android app) and turn on Workers, then Make again.",
             "demo_timeout": f"The demo tests did not finish on a worker within {_minutes(DEMO_WAIT)}. Check that a worker is online "
                             "(Settings → Workers), then Make again.",
             "demo_failed": "A demo test failed, so the flow cannot be shown as working. Fix the test (its run is under Tests), then "
                            "Make again.",
-            "demo_no_steps": "The demo run took no step screens (only JavaScript Playwright suites have steps). Check the test and "
-                             "the worker's Playwright run, then Make again.",
+            "demo_no_steps": "The demo run took no step screens (steps come from JavaScript Playwright suites, and from Android "
+                             "Espresso tests run on the worker's emulator; a Python suite or a Jetpack Compose test has none). Check the "
+                             "test and the worker's run, then Make again.",
             "no_screens": "There were no screens to show: the Screens board has none of these repositories, the tickets' builds "
                           "took none, and no demo test was run. Refresh the Screens board (Settings → Screens), or ask for a demo "
-                          "of a flow that has a Playwright test.",
+                          "of a flow that has a Playwright or Android instrumented test.",
             "writer_failed": "The video writer did not write a usable video. Make again, or ask for it differently in the chat."}
 
 
@@ -633,9 +634,18 @@ def spec(vc, scenes: list[dict], voice: str) -> dict:
             c["lines"] = s.get("lines") or []                    # empty: a binary or very large file, shown as "no text diff"
         if s["kind"] == "shot":
             c["image"] = f"s{i:02d}.png"
+            if s.get("size"):                                    # a phone's portrait screen gets a layout of its own (Video.jsx)
+                c["size"] = list(s["size"])
             if s.get("motion"):                                  # a demo step: animated from the picture before it (Video.jsx Shot)
                 c["before"], c["size"] = f"s{i:02d}-before.png", list(s["size"])
-                c.update({k: s["motion"][k] for k in ("act", "x", "y", "box") if k in s["motion"]})
+                c.update({k: s["motion"][k] for k in ("act", "x", "y", "box", "field", "key", "url") if k in s["motion"]})
+                if s.get("callout"):
+                    c["callout"] = s["callout"]
+                if s.get("clip"):                                # frames taken while the step ran, played in its time
+                    c["clip"] = [{"at": ms, "image": f"s{i:02d}-c{k}.png"} for k, ms in enumerate(s["clip"], 1)]
+                    c["end"] = s["motion"]["end"]
+                if s.get("chain"):
+                    c["chain"] = True
         if voice == "files" and c["say"]:
             c["audio"] = f"s{i:02d}.wav"
         out.append(c)
@@ -805,7 +815,7 @@ def work_one(cfg, gh, db, row: dict, now_fn, run=subprocess.run, post=None, writ
 # (no repository, no GitHub token) turns the brief and the material into scenes; that output is untrusted and checked like the
 # reviewer's block, and a scene may only point at material named in its prompt. Fewer than two usable scenes, or none showing a
 # screen or code: the video is skipped with a note saying so, never replaced by fixed wording.
-# A video may also name Playwright test files to demo: before it is made, a worker runs them on the default branch with a screenshot
+# A video may also name Playwright test files (or an Android app's instrumented tests) to demo: before it is made, a worker runs them on the default branch with a screenshot
 # after each step (captures.queue_demo), and those steps, in order and with what each did, are material the writer can show.
 # The Screens board's newest shots (the app as it looks now on the default branch) are material too. A video shows code (diff hunks
 # or excerpts of a repository copy) only when the person asked for it (show_code); otherwise every code scene is dropped.
@@ -1038,9 +1048,10 @@ def step_title(label: str) -> str:
 
 def demo_material(db, row: dict) -> dict:
     """The step screenshots of a brief video's finished demo runs: {"tests": [(repo, test id, outcome, [step key])], "shots": {key:
-    PNG}, "titles": {key: title}, "steps": {key: (n, title)}, "motion": {key: (motion, PNG of the step before in the same test)}},
-    at most MAX_DEMO_STEPS steps, each PNG checked again. A step has motion (what it did and where, for the video to animate from the
-    picture before it) only when the worker said and the step before is there, the same size."""
+    PNG}, "titles": {key: title}, "steps": {key: (n, title)}, "motion": {key: (motion, PNG of the step before in the same test,
+    [(ms, PNG)] of the frames taken while it ran)}}, at most MAX_DEMO_STEPS steps, each PNG checked again. A step has motion (what it
+    did and where, for the video to animate from the picture before it) only when the worker said and the step before is there, the
+    same size; its frames only those that are good PNGs of that size too."""
     from . import jobs
     out = {"tests": [], "shots": {}, "titles": {}, "steps": {}, "motion": {}}
     for repo, jid in (demo_jobs(row) or {}).items():
@@ -1054,10 +1065,17 @@ def demo_material(db, row: dict) -> dict:
                 continue
             key = f"{repo}:{st['name']}"
             title = step_title(st["label"])
+            if (st.get("motion") or {}).get("key"):           # a key press reads as its key: "Press Enter", not "Press Password"
+                title = f"Press {st['motion']['key']}"
             out["shots"][key], out["titles"][key], out["steps"][key] = st["png"], f"Step {st['n']} · {title}", (st["n"], title)
             prev = by_test.get(st["test"], [])[-1:]
             if st.get("motion") and prev and png_size(out["shots"][prev[0]]) == png_size(st["png"]):
-                out["motion"][key] = (st["motion"], out["shots"][prev[0]])
+                size = png_size(st["png"])
+                clip = [(ms, p) for ms, p in st.get("clip") or () if render.png_ok(p) and png_size(p) == size]
+                out["motion"][key] = (st["motion"], out["shots"][prev[0]], clip)
+            elif not prev:          # a test's first step: still, but in the same browser window as the steps after it
+                url = (st.get("motion") or {}).get("url")
+                out["motion"][key] = ({"act": "other", **({"url": url} if url else {})}, st["png"], [])
             by_test.setdefault(st["test"], []).append(key)
         out["tests"] += [(repo, t, outcome.get(t, ""), keys) for t, keys in by_test.items()]
     return out
@@ -1213,9 +1231,16 @@ def make_brief(cfg, gh, db, row: dict, write=None, run=subprocess.run, post=None
     engine, voice_id = voice_for(cfg.videos, (row.get("ask_voice") or "", row.get("ask_voice_id") or ""))
     images = {f"s{i:02d}.png": mat["shots"][s["screen"]] for i, s in enumerate(scenes, 1) if s["kind"] == "shot"}
     for i, s in enumerate(scenes, 1):
+        if s["kind"] == "shot":
+            s["size"] = png_size(mat["shots"][s["screen"]])
         if s["kind"] == "shot" and (got := mat["demo"]["motion"].get(s["screen"])):
-            s["motion"], s["size"] = got[0], png_size(mat["shots"][s["screen"]])
+            s["motion"] = got[0]
             images[f"s{i:02d}-before.png"] = got[1]
+            s["clip"] = [ms for ms, _ in got[2]]
+            images.update({f"s{i:02d}-c{k}.png": p for k, (_, p) in enumerate(got[2], 1)})
+            s["chain"] = images.get(f"s{i - 1:02d}.png") == got[1]       # it carries on from the scene before: no fade, same pointer
+            if got[0]["act"] in ("click", "fill", "type", "check", "select"):    # what it acted on, named on the screen: "Sign in"
+                s["callout"] = clean(mat["demo"]["steps"][s["screen"]][1].partition(" ")[2], 60)
     return {**_render(cfg, row, scenes, images, engine, voice_id, run, post), "narration": narration}
 
 

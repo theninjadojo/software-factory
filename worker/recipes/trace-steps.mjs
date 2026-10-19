@@ -7,13 +7,20 @@
 // test body, not its hooks or fixtures) and the page's screencast frames, and keeps, for each step, the last frame taken while that step
 // ran (the run uses slowMo so the page has settled by then). A step with no frame of its own changed nothing visible and is left out,
 // as is a frame the same as the one before. Each kept frame (a JPEG) is turned into a PNG with the project's own Playwright Chromium.
+// A click, press, check, select or navigation also keeps a few of the frames taken while it ran, before that last one (its clip: a
+// menu opening, a page loading), so the video plays what really happened instead of fading one picture into the next.
 //
 // Writes <out>/<name>.png and, when FACTORY_RESULTS_DIR is set, appends to it:
 //   shots.tsv   <trace.zip path> TAB <name>.png         the worker links the PNG to the test whose trace it is
 //   steps.tsv   <name>.png TAB <step number> TAB <label> TAB <motion>
 //               the label is the action and its target, never a typed value; the motion (JSON, may be empty) is what a video animates:
 //               {"act": click | fill | type | press | check | select | other, "x", "y": the pointer (click), "box": [x, y, w, h] where a
-//               typed value appeared (fill, type: the pixels that changed from the step before)}, in the PNG's pixels
+//               typed value appeared (fill, type: the pixels that changed from the step before, inside the field when the trace
+//               says where it is), "field": [x, y, w, h] the element the step acted on (newer Playwright), "key": the key a press
+//               pressed (named keys only, see keyName), "url": the page's path while it is known (after a navigation, until a click,
+//               press, check or select may have left it)}, in the PNG's pixels, and for a step
+//               with a clip "clip": [[ms after the step began, <frame name>], ...] and "end": ms after it began of the step's own frame
+//   a clip's frames are <out>/zz-<name>-fN.png: named to sort after every step, so a worker's byte budget drops frames before steps
 import {createHash} from 'node:crypto';
 import {appendFileSync, readdirSync, readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
@@ -23,6 +30,9 @@ import {inflateRawSync} from 'node:zlib';
 const MAX_STEPS = 20;                         // per test
 const MAX_TOTAL = 120;                        // per run
 const MAX_ENTRY = 20_000_000;
+const MAX_CLIP = 6;                           // in-between frames per step
+const MAX_CLIP_TOTAL = 150;                   // per run (with MAX_TOTAL steps, under the worker's 300 artifacts)
+const MAX_CLIP_MS = 10_000;
 
 // The entries of a zip file: {name: Buffer}, only those `want` accepts (stored or deflated; anything else is skipped).
 export function unzip(buf, want) {
@@ -75,6 +85,14 @@ export function jpegSize(buf) {
   return null;
 }
 
+// A pressed key as a video may show it ("Enter", "Control+A"): a named key, or a letter or digit only with a modifier, so a value
+// typed one key at a time is never shown; null for anything else.
+export function keyName(k) {
+  const named = 'Enter|Tab|Escape|Backspace|Delete|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|F[1-9]|F1[0-2]';
+  const re = new RegExp(`^(?:(?:(?:Control|Meta|Shift|Alt|ControlOrMeta)\\+){1,3}(?:${named}|[A-Za-z0-9])|(?:(?:Control|Meta|Shift|Alt|ControlOrMeta)\\+){0,3}(?:${named}))$`);
+  return typeof k === 'string' && re.test(k) ? k : null;
+}
+
 // What a step did, from its title: click, fill, type, press, check, select or other.
 export function act(ev) {
   const verb = String(ev.title || '').split(/\s/)[0].toLowerCase();
@@ -85,7 +103,24 @@ export function act(ev) {
   return 'other';
 }
 
-// [{n, label, act, point, frame, before}] for one trace: the test body's steps that have a frame of their own, in order.
+// The frames of a clip: those taken from the step's start until its own frame, each different from the one before it (and from the
+// picture before the step), at most MAX_CLIP spread evenly over the time and always ending with the last; [{at, frame}], at in ms.
+export function clip(entries, frames, start, own, before) {
+  const size = String(jpegSize(entries[own.file]));
+  let last = before ? createHash('sha1').update(before).digest('hex') : '';
+  const got = [];
+  for (const x of frames) {
+    if (x.timestamp < start || x.timestamp >= own.timestamp || x.timestamp - start > MAX_CLIP_MS) continue;
+    const digest = createHash('sha1').update(entries[x.file]).digest('hex');
+    if (digest === last || String(jpegSize(entries[x.file])) !== size) continue;
+    last = digest;
+    got.push({at: Math.round(x.timestamp - start), frame: entries[x.file]});
+  }
+  if (got.length <= MAX_CLIP) return got;
+  return Array.from({length: MAX_CLIP}, (_, i) => got[Math.round(((i + 1) * got.length) / MAX_CLIP) - 1]);
+}
+
+// [{n, label, act, point, field, frame, before, clip, end}] for one trace: the test body's steps that have a frame of their own, in order.
 export function steps(entries) {
   const events = lines(entries['test.trace']);
   const byId = new Map(events.filter((e) => e.type === 'before').map((e) => [e.callId, e]));
@@ -96,20 +131,28 @@ export function steps(entries) {
   };
   const acts = events.filter((e) => e.type === 'before' && e.method === 'pw:api' && inBody(e) && ends.has(e.callId));
   // Where the pointer went: the context trace's input events carry a point for a click, keyed by its own call id, which its `before`
-  // event links to the test step (stepId). The point is in the page's CSS pixels; the viewport says how those map onto a frame.
+  // event links to the test step (stepId; from Playwright 1.6x the call id is the test step's own). The point is in the page's CSS
+  // pixels; the viewport says how those map onto a frame.
   const ctx = Object.keys(entries).filter((k) => k.endsWith('.trace') && k !== 'test.trace').flatMap((k) => lines(entries[k]));
-  const stepOf = new Map(ctx.filter((e) => e.type === 'before' && e.stepId).map((e) => [e.callId, e.stepId]));
+  const stepOf = new Map(ctx.filter((e) => e.type === 'before').map((e) => [e.callId, e.stepId || e.callId]));
   const points = new Map(ctx.filter((e) => e.type === 'input' && e.point && stepOf.has(e.callId)).map((e) => [stepOf.get(e.callId), e.point]));
+  const fields = new Map(ctx.filter((e) => e.type === 'input' && e.box && stepOf.has(e.callId)).map((e) => [stepOf.get(e.callId), e.box]));
   const view = ctx.find((e) => e.type === 'context-options' && e.options?.viewport)?.options.viewport;
   // A frame's picture: `file` in older traces, `sha1` under resources/ in newer ones (Playwright 1.4x and later).
   const image = (e) => typeof e.file === 'string' ? e.file : typeof e.sha1 === 'string' ? `resources/${e.sha1}` : '';
   const frames = ctx.filter((e) => e.type === 'screencast-frame' && entries[image(e)])
     .map((e) => ({...e, file: image(e)})).sort((a, b) => a.timestamp - b.timestamp);
+  // A step's own frame is the last one before the next step starts (the last step's: before the test body's last check ends), so
+  // what it set off and the page settled into after it (a page loading, a "Welcome back") is its screen, not the step after it's.
+  const bodyEnd = Math.max(...events.filter((e) => e.type === 'before' && inBody(e) && ends.has(e.callId)).map((e) => ends.get(e.callId)));
   const out = [];
-  let last = '', before = null;
-  for (const a of acts) {
-    const end = ends.get(a.callId);
-    const f = frames.filter((x) => x.timestamp >= a.startTime && x.timestamp <= end).pop();
+  let last = '', before = null, url = null;
+  for (const [i, a] of acts.entries()) {
+    const next = acts[i + 1]?.startTime;
+    const f = frames.filter((x) => x.timestamp >= a.startTime && (next === undefined ? x.timestamp <= bodyEnd : x.timestamp < next)).pop();
+    const kind = act(a);
+    const where = label(a).match(/^Navigate (\S+)$/);
+    url = where ? where[1] : kind === 'fill' || kind === 'type' || kind === 'other' ? url : null;   // a click may have left the page
     if (!f || out.length >= MAX_STEPS) continue;
     const digest = createHash('sha1').update(entries[f.file]).digest('hex');
     if (digest === last) continue;
@@ -117,7 +160,14 @@ export function steps(entries) {
     const [fw, fh] = jpegSize(entries[f.file]) || [f.width, f.height];
     const p = points.get(a.callId), sx = view?.width ? fw / view.width : 1, sy = view?.height ? fh / view.height : 1;
     const point = p && Number.isFinite(p.x) && Number.isFinite(p.y) ? [Math.round(p.x * sx), Math.round(p.y * sy)] : null;
-    out.push({n: out.length + 1, label: label(a), act: act(a), point, frame: entries[f.file], before, width: f.width, height: f.height});
+    const b = fields.get(a.callId);         // the element the step acted on, when the trace says (newer Playwright)
+    const field = b && [b.x, b.y, b.width, b.height].every((v) => Number.isFinite(v) && v >= 0) && b.width > 0 && b.height > 0
+      ? [Math.round(b.x * sx), Math.round(b.y * sy), Math.round(b.width * sx), Math.round(b.height * sy)] : null;
+    const took = Math.round(f.timestamp - a.startTime);
+    const moving = before && kind !== 'fill' && kind !== 'type' && took <= MAX_CLIP_MS;      // a typed value is animated from its box instead
+    const k = kind === 'press' ? keyName(a.params?.key) : null;
+    out.push({n: out.length + 1, label: label(a), act: kind, point, field, key: k, url, frame: entries[f.file], before, width: f.width, height: f.height,
+              clip: moving ? clip(entries, frames, a.startTime, f, before) : [], end: took});
     before = entries[f.file];
   }
   return out;
@@ -127,8 +177,9 @@ export function steps(entries) {
 // in the browser on a canvas); null when nothing changed or a large part of the page did (a new page, not a value in one field).
 // The changed pixels are grouped into patches that touch (in 4-pixel cells); the field left behind only loses its focus ring, a thin
 // outline, so the patch kept is the one with the most changed pixels inside its own outline: the typed text.
-export async function changed(page, a, b) {
-  return page.evaluate(async ([a, b]) => {
+// With `within` (the field's own box) only the pixels inside it count, so a focus ring leaving another field is not mistaken for it.
+export async function changed(page, a, b, within = null) {
+  return page.evaluate(async ([a, b, within]) => {
     const load = (src) => new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = src; });
     const [x, y] = await Promise.all([load(a), load(b)]);
     if (x.width !== y.width || x.height !== y.height) return null;
@@ -143,6 +194,7 @@ export async function changed(page, a, b) {
     for (let i = 0; i < p.length; i += 4) {
       if (Math.abs(p[i] - q[i]) + Math.abs(p[i + 1] - q[i + 1]) + Math.abs(p[i + 2] - q[i + 2]) < 90) continue;   // JPEG noise
       const k = i / 4, px = k % W, py = (k - px) / W;
+      if (within && (px < within[0] + 4 || py < within[1] + 4 || px >= within[0] + within[2] - 4 || py >= within[1] + within[3] - 4)) continue;
       on.push(px, py);
       cell[Math.floor(py / S) * CW + Math.floor(px / S)]++;
     }
@@ -170,7 +222,7 @@ export async function changed(page, a, b) {
     const best = boxes.reduce((m, bx) => (bx.inside > m.inside ? bx : m));
     const w = best.x1 - best.x0 + 1, h = best.y1 - best.y0 + 1;
     return !best.inside || w * h > W * H / 4 || h > H / 3 ? null : [best.x0, best.y0, w, h];
-  }, [`data:image/jpeg;base64,${a.toString('base64')}`, `data:image/jpeg;base64,${b.toString('base64')}`]);
+  }, [`data:image/jpeg;base64,${a.toString('base64')}`, `data:image/jpeg;base64,${b.toString('base64')}`, within]);
 }
 
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -207,14 +259,31 @@ async function main([dir, out, prefix = '']) {
   const req = createRequire(resolve('package.json'));
   const {chromium} = req('@playwright/test');
   const browser = await chromium.launch();
+  let frames = 0;
   try {
     const page = await browser.newPage();
+    const png = async (jpeg, name) => {
+      await page.setContent(`<body style="margin:0"><img style="display:block" src="data:image/jpeg;base64,${jpeg.toString('base64')}"></body>`);
+      await page.locator('img').screenshot({path: join(out, `${name}.png`)});
+    };
     for (const s of all) {
       await page.setViewportSize({width: s.width || 1280, height: s.height || 720});
-      await page.setContent(`<body style="margin:0"><img style="display:block" src="data:image/jpeg;base64,${s.frame.toString('base64')}"></body>`);
-      await page.locator('img').screenshot({path: join(out, `${s.name}.png`)});
-      const box = (s.act === 'fill' || s.act === 'type') && s.before ? await changed(page, s.before, s.frame) : null;
-      const m = {act: s.act, ...(s.point ? {x: s.point[0], y: s.point[1]} : {}), ...(box ? {box} : {})};
+      await png(s.frame, s.name);
+      const typed = s.act === 'fill' || s.act === 'type';
+      const box = typed && s.before ? await changed(page, s.before, s.frame, s.field) : null;
+      const m = {act: s.act, ...(s.point ? {x: s.point[0], y: s.point[1]} : {}), ...(box ? {box} : {}), ...(s.field ? {field: s.field} : {}),
+                 ...(s.key ? {key: s.key} : {}), ...(s.url ? {url: s.url} : {})};
+      const kept = s.clip.slice(0, Math.max(0, MAX_CLIP_TOTAL - frames));
+      if (kept.length) {
+        m.clip = [];
+        for (const [i, c] of kept.entries()) {
+          const name = `zz-${s.name}-f${i + 1}`;
+          await png(c.frame, name);
+          m.clip.push([c.at, name]);
+        }
+        m.end = s.end;
+        frames += kept.length;
+      }
       if (results) {
         appendFileSync(join(results, 'shots.tsv'), `${s.trace}\t${s.name}.png\n`);
         appendFileSync(join(results, 'steps.tsv'), `${s.name}.png\t${s.n}\t${s.label}\t${JSON.stringify(m)}\n`);
@@ -223,7 +292,7 @@ async function main([dir, out, prefix = '']) {
   } finally {
     await browser.close();
   }
-  console.log(`[trace-steps] ${all.length} step screenshot(s) kept`);
+  console.log(`[trace-steps] ${all.length} step screenshot(s) and ${frames} in-between frame(s) kept`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

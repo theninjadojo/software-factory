@@ -16,8 +16,13 @@ class Route:
     fallback_models: tuple[str, ...] = ()   # admin-set; tried in order on the same harness and effort when a model is unavailable
 
 
-CLAUDE_COMMAND = ('claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions '
-                  '--output-format json')
+# The factory's own rules go in as the system prompt (/task/system.txt) and the ticket and its context as the message
+# (/task/user.txt), so text from a ticket never sits beside the rules. /task/prompt.txt still holds both, for other harnesses.
+CLAUDE_COMMAND = ('claude -p "$(cat /task/user.txt)" --append-system-prompt-file /task/system.txt --model "$MODEL" '
+                  '--max-turns "$MAX_TURNS" --dangerously-skip-permissions --output-format json')
+# The command before the split. A claude-code card saved on the Harnesses page stored it as an override; it is read as the new one.
+OLD_CLAUDE_COMMAND = ('claude -p "$(cat /task/prompt.txt)" --model "$MODEL" --max-turns "$MAX_TURNS" --dangerously-skip-permissions '
+                      '--output-format json')
 CODEX_COMMAND = 'codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -m "$MODEL" "$(cat /task/prompt.txt)"'
 OPENCODE_COMMAND = 'opencode run --model "$MODEL" "$(cat /task/prompt.txt)"'
 OPENCODE_IMAGE = "localhost/factory-agent-opencode:latest"
@@ -30,7 +35,8 @@ GEMINI_COMMAND = 'gemini --yolo --model "$MODEL" --prompt "$(cat /task/prompt.tx
 @dataclass(frozen=True)
 class HarnessCfg:
     """An agent CLI the sandbox can run. The command is configuration (admin-set), never derived from ticket text; it runs
-    inside the locked-down sandbox with $MODEL, $MAX_TURNS and the prompt at /task/prompt.txt."""
+    inside the locked-down sandbox with $MODEL, $MAX_TURNS and the prompt at /task/prompt.txt (the same prompt split in two:
+    the factory's rules at /task/system.txt, the ticket and its context at /task/user.txt)."""
     name: str
     image: str
     env_file: str                        # KEY=value lines handed to the sandbox (the agent's credential)
@@ -207,6 +213,68 @@ def prompt_problem(text) -> str | None:
     if any((ord(c) < 32 and c not in "\n\t") or c == "\x7f" or 0xD800 <= ord(c) <= 0xDFFF for c in text):
         return "must not contain control characters other than line breaks and tabs"
     return None
+
+
+SKILL_MAX = 20000
+SKILLS_MAX = 30
+SKILL_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+SKILL_AGENTS = ("analyst", "designer", "architect", "reviewer", "implementer", "ci_fix", "conflicts")   # the [prompts] agents
+
+
+@dataclass(frozen=True)
+class SkillCfg:
+    """An operator's skill: instructions the agent reads when its description fits the work (trusted config, like [prompts]).
+    agents and projects narrow where it is offered; empty means every agent and every project."""
+    name: str
+    description: str
+    body: str
+    agents: tuple[str, ...] = ()
+    projects: tuple[str, ...] = ()
+
+
+def skill_problems(s: dict) -> list[str]:
+    """What is wrong with one [[skills]] entry, in words a person can act on; empty when it is fine."""
+    out = []
+    name, desc, body = s.get("name"), s.get("description"), s.get("body")
+    if not isinstance(name, str) or not SKILL_NAME_RE.fullmatch(name):
+        out.append("Name: lower-case letters, digits and dashes, starting with a letter or digit, at most 63 characters.")
+    elif name.startswith("factory-"):
+        out.append("Name: names starting with factory- are kept for the factory's own skills.")
+    if not isinstance(desc, str) or not desc.strip() or len(desc) > 500 or any(ord(c) < 32 or c == "\x7f" for c in desc):
+        out.append("Description: one line of at most 500 characters that says when to use the skill.")
+    if not isinstance(body, str) or not body.strip():
+        out.append("Instructions: required.")
+    elif len(body) > SKILL_MAX:
+        out.append(f"Instructions: at most {SKILL_MAX} characters.")
+    elif any((ord(c) < 32 and c not in "\n\t\r") or c == "\x7f" or 0xD800 <= ord(c) <= 0xDFFF for c in body):
+        out.append("Instructions: no control characters other than line breaks and tabs.")
+    agents, projects = s.get("agents", []), s.get("projects", [])
+    if not isinstance(agents, (list, tuple)) or not set(agents) <= set(SKILL_AGENTS):
+        out.append(f"Agents: only {', '.join(SKILL_AGENTS)}.")
+    if not isinstance(projects, (list, tuple)) or not all(isinstance(x, str) and 0 < len(x) <= 100 for x in projects):
+        out.append("Projects: a list of project names.")
+    return out
+
+
+def _skills(v) -> tuple:
+    if not isinstance(v, list):
+        raise ValueError("[[skills]] must be a list of tables")
+    if len(v) > SKILLS_MAX:
+        raise ValueError(f"at most {SKILLS_MAX} skills")
+    out, seen = [], set()
+    for s in v:
+        if not isinstance(s, dict):
+            raise ValueError("each [[skills]] entry must be a table")
+        if (unknown := sorted(set(s) - {f.name for f in dataclasses.fields(SkillCfg)})):
+            raise ValueError(f"skills: unknown keys {unknown}")
+        if (problems := skill_problems(s)):
+            raise ValueError(f"skills.{s.get('name')!r}: " + " ".join(problems))
+        if s["name"] in seen:
+            raise ValueError(f"skills: {s['name']!r} is named twice")
+        seen.add(s["name"])
+        out.append(SkillCfg(s["name"], s["description"].strip(), s["body"].replace("\r\n", "\n").strip(),
+                            tuple(dict.fromkeys(s.get("agents", []))), tuple(dict.fromkeys(s.get("projects", [])))))
+    return tuple(out)
 
 
 def _prompts(v) -> "PromptsCfg":
@@ -671,6 +739,7 @@ class Config:
     schedules: tuple[ScheduleCfg, ...] = ()
     scanner: ScannerCfg = field(default_factory=ScannerCfg)
     prompts: PromptsCfg = field(default_factory=PromptsCfg)
+    skills: tuple[SkillCfg, ...] = ()
     harnesses: dict = field(default_factory=dict)      # name -> HarnessCfg (claude-code is always available)
     telegram_verbosity: str = "normal"          # quiet | normal | verbose
     telegram_events: tuple[str, ...] | None = None   # explicit allow-list; overrides verbosity
@@ -788,6 +857,8 @@ def _harnesses(raw: dict, rn: "RunnerCfg") -> dict:
     out = default_harnesses(rn)
     for name, over in raw.get("harnesses", {}).items():
         over = {k: (tuple(v) if k == "allow_hosts" else v) for k, v in over.items()}
+        if name == "claude-code" and over.get("command", "").strip() == OLD_CLAUDE_COMMAND:
+            over = {k: x for k, x in over.items() if k != "command"}
         if name in out:
             out[name] = dataclasses.replace(out[name], **over)
         else:
@@ -1464,6 +1535,7 @@ def parse(raw: dict) -> Config:
         schedules=_schedules(raw.get("schedules", []), repos),
         scanner=_scanner(raw.get("scanner", {}), repos, workers),
         prompts=_prompts(raw.get("prompts", {})),
+        skills=_skills(raw.get("skills", [])),
         harnesses=harnesses,
         telegram_verbosity=_verbosity(raw.get("telegram", {}).get("verbosity", "normal")),
         telegram_events=_events(raw.get("telegram", {}).get("events")),

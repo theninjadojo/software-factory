@@ -35,7 +35,7 @@ class HarnessConfig(unittest.TestCase):
         self.assertTrue(h["codex"].experimental and h["gemini"].experimental)
         self.assertEqual(h["codex"].env_var, "CODEX_API_KEY")
         self.assertTrue(h["codex"].env_file.endswith("/codex.env"))
-        self.assertIn("$(cat /task/prompt.txt)", h["claude-code"].command)
+        self.assertIn("-p \"$(cat /task/user.txt)\" --append-system-prompt-file /task/system.txt", h["claude-code"].command)
 
     def test_enabling_and_overriding(self):
         cfg = load_with('\n[harnesses.codex]\nenabled = true\nallow_hosts = ["api.openai.com", "chatgpt.com"]\n')

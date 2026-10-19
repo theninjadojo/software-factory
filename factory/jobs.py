@@ -91,8 +91,8 @@ def artifacts(db, job_id: int) -> dict[str, bytes]:
 
 
 def steps(db, job_id: int) -> list[dict]:
-    """A demo run's step screenshots in order (by test, then step): {name, test, n, label, motion, png}; [] when it has none. motion is
-    clean_motion's dict, or None."""
+    """A demo run's step screenshots in order (by test, then step): {name, test, n, label, motion, png, clip}; [] when it has none.
+    motion is clean_motion's dict, or None; clip is [(ms, PNG)] of the frames its motion names that the run sent (the rest are left out)."""
     try:
         rows = db.execute("SELECT s.name, s.test, s.n, s.label, s.motion, a.png FROM verify_steps s JOIN verify_artifacts a "
                           "ON a.job_id = s.job_id AND a.name = s.name WHERE s.job_id=? ORDER BY s.test, s.n, s.name", (job_id,)).fetchall()
@@ -104,7 +104,11 @@ def steps(db, job_id: int) -> list[dict]:
             motion = clean_motion(json.loads(m)) if m else None
         except ValueError:
             motion = None
-        out.append({"name": n, "test": t, "n": k, "label": lb, "motion": motion, "png": bytes(p)})
+        names = dict((c[1], c[0]) for c in (motion or {}).get("clip", []))
+        got = db.execute(f"SELECT name, png FROM verify_artifacts WHERE job_id=? AND name IN ({','.join('?' * len(names))})",
+                         (job_id, *names)).fetchall() if names else []
+        out.append({"name": n, "test": t, "n": k, "label": lb, "motion": motion, "png": bytes(p),
+                    "clip": sorted((names[a], bytes(b)) for a, b in got)})
     return out
 
 
@@ -331,21 +335,39 @@ def clean_step(step) -> dict | None:
 
 
 MOTION_ACTS = ("click", "fill", "type", "press", "check", "select", "other")
+MAX_CLIP, MAX_CLIP_MS = 6, 10_000           # a demo step's in-between frames (worker/recipes/trace-steps.mjs)
+_KEYS = r"(?:Enter|Tab|Escape|Backspace|Delete|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|F[1-9]|F1[0-2])"
+_MOD = r"(?:Control|Meta|Shift|Alt|ControlOrMeta)\+"
+MOTION_KEY = re.compile(rf"(?:{_MOD}){{1,3}}(?:{_KEYS}|[A-Za-z0-9])|(?:{_MOD}){{0,3}}{_KEYS}")     # never a value typed key by key
+MOTION_URL = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,119}")
 
 
 def clean_motion(m) -> dict | None:
     """What a step did and where, as a demo video animates it: {"act": one of MOTION_ACTS, "x", "y" (the pointer, both or neither),
-    "box": [x, y, w, h] (where a typed value appeared)}, all whole pixels of the step's screenshot from 0 to 10000. Untrusted (from a
-    worker): anything else is dropped. None when there is no usable act."""
+    "box": [x, y, w, h] (where a typed value appeared), "field": the same for the element the step acted on, "key": the key a press
+    pressed (MOTION_KEY), "url": the page's path while it is known (MOTION_URL)}, all whole pixels of the step's screenshot from 0 to 10000, and "clip":
+    [[ms, artifact name], ...] (frames taken while the step ran, in time order, at most MAX_CLIP) with "end" (ms of the step's own
+    screenshot), all ms from 0 to MAX_CLIP_MS after the step began. Untrusted (from a worker): anything else is dropped. None when
+    there is no usable act."""
     if not isinstance(m, dict) or m.get("act") not in MOTION_ACTS:
         return None
     px = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 10000
     out: dict = {"act": m["act"]}
     if px(m.get("x")) and px(m.get("y")):
         out["x"], out["y"] = m["x"], m["y"]
-    box = m.get("box")
-    if isinstance(box, list) and len(box) == 4 and all(px(v) for v in box) and box[2] > 0 and box[3] > 0:
-        out["box"] = list(box)
+    for k in ("box", "field"):
+        box = m.get(k)
+        if isinstance(box, list) and len(box) == 4 and all(px(v) for v in box) and box[2] > 0 and box[3] > 0:
+            out[k] = list(box)
+    for k, pattern in (("key", MOTION_KEY), ("url", MOTION_URL)):
+        if isinstance(m.get(k), str) and pattern.fullmatch(m[k]):
+            out[k] = m[k]
+    ms = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= MAX_CLIP_MS
+    clip, end = m.get("clip"), m.get("end")
+    if (isinstance(clip, list) and 0 < len(clip) <= MAX_CLIP and ms(end)
+            and all(isinstance(c, list) and len(c) == 2 and ms(c[0]) and isinstance(c[1], str) and NAME.fullmatch(c[1]) for c in clip)
+            and all(a[0] < b[0] for a, b in zip(clip, clip[1:])) and clip[-1][0] <= end and len({c[1] for c in clip}) == len(clip)):
+        out["clip"], out["end"] = [list(c) for c in clip], end
     return out
 
 
