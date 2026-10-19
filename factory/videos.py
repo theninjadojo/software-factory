@@ -635,7 +635,9 @@ def spec(vc, scenes: list[dict], voice: str) -> dict:
             c["image"] = f"s{i:02d}.png"
             if s.get("motion"):                                  # a demo step: animated from the picture before it (Video.jsx Shot)
                 c["before"], c["size"] = f"s{i:02d}-before.png", list(s["size"])
-                c.update({k: s["motion"][k] for k in ("act", "x", "y", "box", "field") if k in s["motion"]})
+                c.update({k: s["motion"][k] for k in ("act", "x", "y", "box", "field", "key", "url") if k in s["motion"]})
+                if s.get("callout"):
+                    c["callout"] = s["callout"]
                 if s.get("clip"):                                # frames taken while the step ran, played in its time
                     c["clip"] = [{"at": ms, "image": f"s{i:02d}-c{k}.png"} for k, ms in enumerate(s["clip"], 1)]
                     c["end"] = s["motion"]["end"]
@@ -1060,12 +1062,17 @@ def demo_material(db, row: dict) -> dict:
                 continue
             key = f"{repo}:{st['name']}"
             title = step_title(st["label"])
+            if (st.get("motion") or {}).get("key"):           # a key press reads as its key: "Press Enter", not "Press Password"
+                title = f"Press {st['motion']['key']}"
             out["shots"][key], out["titles"][key], out["steps"][key] = st["png"], f"Step {st['n']} · {title}", (st["n"], title)
             prev = by_test.get(st["test"], [])[-1:]
             if st.get("motion") and prev and png_size(out["shots"][prev[0]]) == png_size(st["png"]):
                 size = png_size(st["png"])
                 clip = [(ms, p) for ms, p in st.get("clip") or () if render.png_ok(p) and png_size(p) == size]
                 out["motion"][key] = (st["motion"], out["shots"][prev[0]], clip)
+            elif not prev:          # a test's first step: still, but in the same browser window as the steps after it
+                url = (st.get("motion") or {}).get("url")
+                out["motion"][key] = ({"act": "other", **({"url": url} if url else {})}, st["png"], [])
             by_test.setdefault(st["test"], []).append(key)
         out["tests"] += [(repo, t, outcome.get(t, ""), keys) for t, keys in by_test.items()]
     return out
@@ -1227,6 +1234,8 @@ def make_brief(cfg, gh, db, row: dict, write=None, run=subprocess.run, post=None
             s["clip"] = [ms for ms, _ in got[2]]
             images.update({f"s{i:02d}-c{k}.png": p for k, (_, p) in enumerate(got[2], 1)})
             s["chain"] = images.get(f"s{i - 1:02d}.png") == got[1]       # it carries on from the scene before: no fade, same pointer
+            if got[0]["act"] in ("click", "fill", "type", "check", "select"):    # what it acted on, named on the screen: "Sign in"
+                s["callout"] = clean(mat["demo"]["steps"][s["screen"]][1].partition(" ")[2], 60)
     return {**_render(cfg, row, scenes, images, engine, voice_id, run, post), "narration": narration}
 
 

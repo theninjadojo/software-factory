@@ -8,7 +8,8 @@
 //                  x, y (the pointer), box: [x, y, w, h] (where a value was typed), field: [x, y, w, h] (the field it went into), in
 //                  the pictures' pixels,
 //                  clip: [{at, image}] frames taken while the step ran (ms after it began, in order) with end: ms of `image`,
-//                  chain: true when `before` is the scene before's picture (the video carries on from it, no fade)
+//                  chain: true when `before` is the scene before's picture (the video carries on from it, no fade),
+//                  key: the key a press pressed ("Enter"), url: the page's path when known, callout: the name of what it acted on
 // /in/img/*.png    pictures named by the scenes (shot)
 // /in/audio/*.wav  the spoken text of each scene, when the factory made it (voice "files", e.g. ElevenLabs)
 // With voice "piper" this container speaks each scene's `say` itself with the voice baked into the image.
@@ -23,6 +24,24 @@ const SITE = '/tmp/site';
 const NAME = /^[a-z0-9][a-z0-9-]{0,40}\.(png|wav)$/;
 const KINDS = new Set(['title', 'shot', 'code', 'points']);
 const ACTS = new Set(['click', 'fill', 'type', 'press', 'check', 'select', 'other']);
+const KEYS = '(?:Enter|Tab|Escape|Backspace|Delete|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|F[1-9]|F1[0-2])';
+const MOD = '(?:Control|Meta|Shift|Alt|ControlOrMeta)\\+';
+const KEY = new RegExp(`^(?:(?:${MOD}){1,3}(?:${KEYS}|[A-Za-z0-9])|(?:${MOD}){0,3}${KEYS})$`);
+const URL_PATH = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%\/-]{0,119}$/;
+const QUICK = 300, PACE = 0.25;               // a clip's gaps: the first QUICK ms play in real time, the rest at PACE (waiting is skipped)
+
+// A clip's times with its waits sped up: each gap between frames (and before the first, and to `end`) keeps its first QUICK ms and
+// the rest plays PACE times as long, so a menu opening keeps its speed and a page that takes 2 s to load takes 0.7 s.
+export function ramp(clip, end) {
+  let was = 0, now = 0;
+  const step = (t) => {
+    const g = t - was;
+    was = t;
+    now = Math.max(now + 1, Math.round(now + Math.min(g, QUICK) + Math.max(0, g - QUICK) * PACE));
+    return now;
+  };
+  return {clip: clip.map((c) => ({...c, at: step(c.at)})), end: step(end)};
+}
 const PIPER = ['/opt/piper/bin/python', '-m', 'piper', '-m', '/opt/voices/en_US-ljspeech-medium.onnx'];
 
 class Bad extends Error {}
@@ -82,6 +101,12 @@ export function check(spec) {
         c.end = int(s.end, c.clip[c.clip.length - 1].at, 10000, `${w} end`);
       }
       if (s.chain !== undefined && typeof s.chain !== 'boolean') throw new Bad(`${w}: chain must be true or false`);
+      if (s.key !== undefined && (typeof s.key !== 'string' || !KEY.test(s.key))) throw new Bad(`${w}: key is not a key name`);
+      if (s.key) c.key = s.key;
+      if (s.url !== undefined && (typeof s.url !== 'string' || !URL_PATH.test(s.url))) throw new Bad(`${w}: url must be a path`);
+      if (s.url) c.url = s.url;
+      const callout = str(s.callout, 60, `${w} callout`);
+      if (callout) c.callout = callout;
       if (s.chain) c.chain = true;
     }
     if (s.kind === 'code') {
@@ -149,7 +174,11 @@ async function main() {
       delete sc.audio;
       talk = s.say ? s.say.split(/\s+/).length / 2.6 : 0;      // time to read the subtitle
     }
-    const secs = Math.max(2.5, talk + 0.8, s.clip ? 2.6 + s.end / 1000 : 0);      // a clip plays in full after the pointer gets there
+    if (s.clip) Object.assign(sc, ramp(s.clip, s.end));
+    // A step that acts on something waits for the narration to be about half said before it does it, so the click lands on the words.
+    const lead = s.before && (s.x !== undefined || s.box || s.field) ? Math.max(0, talk * 0.5 - 1) : 0;
+    sc.lead = Math.round(lead * spec.fps);
+    const secs = Math.max(2.5, talk + 0.8, s.before ? lead + 2.5 : 0, sc.clip ? lead + 2.6 + sc.end / 1000 : 0);  // a clip plays in full
     sc.frames = Math.ceil(secs * spec.fps);
     seconds.push(sc.frames / spec.fps);
     scenes.push(sc);

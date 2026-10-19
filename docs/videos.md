@@ -55,14 +55,22 @@ and a test that walks through the flow.
    worker keeps the screen after each step of each test, with what the step did ("Click Sign in", "Fill Email"). A typed value
    is never kept as text. The worker also notes where each step acted: the point a click landed on, and the field a value was typed
    into (the part of the screen that changed). For a click, a key press or a page load it also keeps up to six of the frames
-   taken while the step ran, with their times: a menu opening, a page loading.
+   taken while the step ran, with their times: a menu opening, a page loading. A step's screen is the one the page settled on
+   before the next step started (for the last step, once the test's last check is done), so a "Welcome back" after a short wait is
+   shown. It also notes the element each step acted on, the key a press pressed (a named key such as Enter or Control+A, never a
+   letter on its own, so a value typed key by key is not shown) and the page's path while it is known.
 3. The writer gets those steps in order and narrates the ones that tell the flow.
 4. Each step plays out on the real screens like a screen recording: the video starts on the screen before the step, the camera
    pushes in on what the step acts on while a pointer glides there, then it either clicks (a press and a ripple, then the frames
    the run took play in their own time, or the next screen fades in when there are none) or types (the field is outlined and the
    value appears in it letter by letter behind a caret, just as the app showed it: a password stays dots). The camera then eases
    back out to the whole screen. Steps of one test that follow each other cut straight on, with the pointer where the last step
-   left it; anything else fades through black. A test's first step, and a step whose screen size changed, is shown as a still.
+   left it; when the next step acts on something close by (email, then password), the camera stays in and pans across instead of
+   pulling out and pushing back in. Anything else fades through black. A test's first step, and a step whose screen size changed, is shown as a still.
+   The page sits in a browser window whose address bar shows the page's path while it is known (blank after a click that may have
+   left it). Just before a step acts, the page around what it acts on dims and a label names it ("Sign in"); a key press shows its
+   keycap ("⏎ Enter"). The step waits until its narration is about half said, so the click lands on the words, and waits in the
+   frames it plays (a page loading for two seconds) are sped up, while quick changes such as a menu opening keep their speed.
 
 The demo run is not shown on the Screens board and does not count as a result in the Tests register. A video waits at most an hour
 for it. A video is never made without the steps it promised: if the tests could not be run (no worker runs that repository's

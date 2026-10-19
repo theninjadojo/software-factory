@@ -336,11 +336,16 @@ def clean_step(step) -> dict | None:
 
 MOTION_ACTS = ("click", "fill", "type", "press", "check", "select", "other")
 MAX_CLIP, MAX_CLIP_MS = 6, 10_000           # a demo step's in-between frames (worker/recipes/trace-steps.mjs)
+_KEYS = r"(?:Enter|Tab|Escape|Backspace|Delete|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|F[1-9]|F1[0-2])"
+_MOD = r"(?:Control|Meta|Shift|Alt|ControlOrMeta)\+"
+MOTION_KEY = re.compile(rf"(?:{_MOD}){{1,3}}(?:{_KEYS}|[A-Za-z0-9])|(?:{_MOD}){{0,3}}{_KEYS}")     # never a value typed key by key
+MOTION_URL = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,119}")
 
 
 def clean_motion(m) -> dict | None:
     """What a step did and where, as a demo video animates it: {"act": one of MOTION_ACTS, "x", "y" (the pointer, both or neither),
-    "box": [x, y, w, h] (where a typed value appeared), "field": the same for the field it was typed into}, all whole pixels of the step's screenshot from 0 to 10000, and "clip":
+    "box": [x, y, w, h] (where a typed value appeared), "field": the same for the element the step acted on, "key": the key a press
+    pressed (MOTION_KEY), "url": the page's path while it is known (MOTION_URL)}, all whole pixels of the step's screenshot from 0 to 10000, and "clip":
     [[ms, artifact name], ...] (frames taken while the step ran, in time order, at most MAX_CLIP) with "end" (ms of the step's own
     screenshot), all ms from 0 to MAX_CLIP_MS after the step began. Untrusted (from a worker): anything else is dropped. None when
     there is no usable act."""
@@ -354,6 +359,9 @@ def clean_motion(m) -> dict | None:
         box = m.get(k)
         if isinstance(box, list) and len(box) == 4 and all(px(v) for v in box) and box[2] > 0 and box[3] > 0:
             out[k] = list(box)
+    for k, pattern in (("key", MOTION_KEY), ("url", MOTION_URL)):
+        if isinstance(m.get(k), str) and pattern.fullmatch(m[k]):
+            out[k] = m[k]
     ms = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= MAX_CLIP_MS
     clip, end = m.get("clip"), m.get("end")
     if (isinstance(clip, list) and 0 < len(clip) <= MAX_CLIP and ms(end)
