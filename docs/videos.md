@@ -112,6 +112,18 @@ To use ElevenLabs:
 
 A video whose voice cannot be made is skipped with a note on the ticket. Common causes are a refused key, an unknown voice, or a used-up quota.
 
+## Background music
+
+Set **Background music** on **Settings > Review videos** to calm, bright or focused (it is off by default). Each video then gets its
+own instrumental track from ElevenLabs Music, made to about the video's length. It plays quietly under the whole video, drops further
+while the voice speaks, fades in at the start and out at the end, and loops if the video runs longer than the track.
+
+- It needs the ElevenLabs key, whichever voice speaks (Piper narration with ElevenLabs music works).
+- What leaves the machine is a fixed prompt for the chosen mood and a length; never text from the ticket or the code.
+- If the track cannot be made (a refused key, a used-up quota, no network), the video is made without music. Music never stops a
+  video.
+- The track is checked to be an MP3 of at most 20 MB before the sealed container plays it.
+
 ## How a video is made
 
 1. **Narration.** When a ticket has videos turned on, the automated review ends with a `factory-video` block. It holds plain-text

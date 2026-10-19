@@ -5,6 +5,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 import urllib.error
 import wave
 import io
@@ -156,6 +157,37 @@ class ElevenLabs(unittest.TestCase):
                 voices.elevenlabs("k", "voiceABCDEF12", "m_1", "hi", post=lambda *a, r=reply: r)
 
 
+class Music(unittest.TestCase):
+    MP3 = b"ID3" + b"\0" * 2000
+
+    def test_a_track_is_asked_for_with_the_moods_fixed_prompt_and_checked(self):
+        sent = []
+
+        def post(url, key, body, timeout):
+            sent.append((url, key, body))
+            return self.MP3
+        self.assertEqual(voices.music("sk_key", "calm", 42.4, post=post), self.MP3)
+        self.assertEqual(sent, [("https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128", "sk_key",
+                                 {"prompt": voices.MOODS["calm"], "music_length_ms": 42400, "force_instrumental": True})])
+        voices.music("k", "bright", 9999, post=post)
+        self.assertEqual(sent[-1][2]["music_length_ms"], 300000)                    # at most five minutes
+        for args, reply in ((("", "calm", 30), self.MP3), (("k", "jazz", 30), self.MP3), (("k", "calm", 30), b"<html>" * 400),
+                            (("k", "calm", 30), b"ID3")):
+            with self.assertRaises(voices.VoiceError):
+                voices.music(*args, post=lambda *a, r=reply: r)
+
+        def refused(*a):
+            raise urllib.error.HTTPError("u", 401, "no", {}, None)
+        with self.assertRaisesRegex(voices.VoiceError, "refused the key"):
+            voices.music("k", "calm", 30, post=refused)
+
+    def test_the_setting_is_off_or_a_mood(self):
+        self.assertEqual(parse(Config.raw(Config(), music="focused")).videos.music, "focused")
+        self.assertEqual(parse(Config.raw(Config())).videos.music, "off")
+        with self.assertRaises(ValueError):
+            parse(Config.raw(Config(), music="loud"))
+
+
 class ReviewBlock(unittest.TestCase):
     def test_only_checked_scenes_of_reviewed_prs_are_kept(self):
         found = videos.parse_block(BLOCK, [("o/r", 7)])
@@ -243,6 +275,32 @@ class Making(Base):
         self.assertEqual(run.seen["audio"], [s["audio"] for s in spec["scenes"]])
         self.assertTrue(all(k == "sk_test_key" and v == "otherVoice123" for v, k, _ in asked))   # the ticket's voice over the config's
         self.assertEqual(videos.newest_for_pr(self.db, "o/r", 7)["voice"], "elevenlabs")
+
+    def test_background_music_goes_in_with_the_video_and_its_failure_does_not_stop_it(self):
+        (self.t / "secrets" / "elevenlabs_key").write_text("sk_test_key\n")
+        self.cfg = replace(self.cfg, videos=replace(self.cfg.videos, music="calm"))
+        asked = []
+
+        def music(key, mood, seconds, **kw):
+            asked.append((key, mood, seconds))
+            return Music.MP3
+        videos.store_notes(self.db, videos.parse_block(BLOCK, [("o/r", 7)]), 1000.0)
+        run = self.container()
+        with mock.patch.object(videos.voices, "music", music):
+            videos.work_one(self.cfg, FakeGH(), self.db, self.row(), lambda: 2000.0, run)
+        self.assertEqual(run.seen["script"]["music"], "music.mp3")
+        self.assertEqual(run.seen["audio"], ["music.mp3"])                             # Piper speaks in the container
+        self.assertEqual(asked[0][:2], ("sk_test_key", "calm"))
+        self.assertTrue(5 < asked[0][2] <= 120)
+
+        def broken(*a, **kw):
+            raise voices.VoiceError("ElevenLabs rate limit or quota reached")
+        self.db.execute("DELETE FROM review_videos")
+        run = self.container()
+        with mock.patch.object(videos.voices, "music", broken):
+            videos.work_one(self.cfg, FakeGH(), self.db, self.row(), lambda: 4000.0, run)
+        self.assertNotIn("music", run.seen["script"])
+        self.assertEqual(videos.newest_for_pr(self.db, "o/r", 7)["status"], "ready")
 
     def test_a_voice_that_fails_skips_the_video_with_a_note(self):
         videos.set_enabled(self.db, "o/r", 3, True, "admin", 1000.0, "elevenlabs")      # no key saved

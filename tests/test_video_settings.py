@@ -89,21 +89,22 @@ class Page(AdminCase):
         cookie, csrf = self.session()
         s, _, html = self.req("GET", "/settings?section=videos", cookie=cookie)
         self.assertEqual(s, 200)
-        for needle in ("Enable review videos", "Default voice", "ElevenLabs voice id", "Videos per day", "Video image", "ElevenLabs key"):
+        for needle in ("Enable review videos", "Default voice", "ElevenLabs voice id", "Videos per day", "Video image", "ElevenLabs key", "Background music"):
             self.assertIn(needle, html)
         form = {"section": "videos", "videos.enabled": "1", "videos.voice": "piper", "videos.elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM",
                 "videos.elevenlabs_model": "eleven_multilingual_v2", "videos.max_per_day": "4", "videos.max_seconds": "90", "videos.max_mb": "50",
-                "videos.retention_days": "30", "videos.timeout_seconds": "600", "videos.ui_url": "", "videos.image": VI.DEFAULT}
+                "videos.retention_days": "30", "videos.timeout_seconds": "600", "videos.ui_url": "", "videos.image": VI.DEFAULT, "videos.music": "calm"}
         s, h, _ = self.post(cookie, csrf, "/settings/save", form)
         self.assertEqual(s, 303, h)
         v = load(str(self.root / "config.toml")).videos
-        self.assertEqual((v.enabled, v.max_per_day, v.max_seconds, v.elevenlabs_voice_id), (True, 4, 90, "21m00Tcm4TlvDq8ikWAM"))
+        self.assertEqual((v.enabled, v.max_per_day, v.max_seconds, v.elevenlabs_voice_id, v.music), (True, 4, 90, "21m00Tcm4TlvDq8ikWAM", "calm"))
 
     def test_piper_needs_no_elevenlabs_voice_id(self):
         cookie, csrf = self.session()
         form = {"section": "videos", "videos.enabled": "1", "videos.voice": "piper", "videos.elevenlabs_voice_id": "",
                 "videos.elevenlabs_model": "eleven_multilingual_v2", "videos.max_per_day": "10", "videos.max_seconds": "120", "videos.max_mb": "50",
-                "videos.retention_days": "30", "videos.timeout_seconds": "600", "videos.ui_url": "", "videos.image": VI.DEFAULT}
+                "videos.retention_days": "30", "videos.timeout_seconds": "600", "videos.ui_url": "", "videos.image": VI.DEFAULT,
+                "videos.music": "off"}
         s, h, _ = self.post(cookie, csrf, "/settings/save", form)
         self.assertEqual(s, 303, h)
         v = load(str(self.root / "config.toml")).videos

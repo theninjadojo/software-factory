@@ -622,7 +622,7 @@ class Skip(Exception):
     """A video that will not be made; args[0] is a key of reasons()."""
 
 
-def spec(vc, scenes: list[dict], voice: str) -> dict:
+def spec(vc, scenes: list[dict], voice: str, music: bool = False) -> dict:
     """script.json for the container (sandbox/video/render.mjs checks it again): only the fields its templates use."""
     keep = {"title": ("title", "subtitle"), "shot": ("title",), "code": ("title", "subtitle", "lines"), "points": ("title", "points")}
     out = []
@@ -646,7 +646,27 @@ def spec(vc, scenes: list[dict], voice: str) -> dict:
         if voice == "files" and c["say"]:
             c["audio"] = f"s{i:02d}.wav"
         out.append(c)
-    return {"width": 1280, "height": 720, "fps": 30, "max_seconds": vc.max_seconds, "voice": voice, "scenes": out}
+    return {"width": 1280, "height": 720, "fps": 30, "max_seconds": vc.max_seconds, "voice": voice, "scenes": out,
+            **({"music": "music.mp3"} if music else {})}
+
+
+def estimate_seconds(scenes: list[dict]) -> float:
+    """About how long a video of these scenes runs (render.mjs decides; a short guess only means the music loops): the words at an
+    unhurried pace, at least three seconds a scene, plus a margin."""
+    return sum(max(3.0, len((s.get("say") or "").split()) / 2.2 + 1.5) for s in scenes) + 5
+
+
+def background(vc, scenes: list[dict], post=None) -> dict[str, bytes]:
+    """{"music.mp3": MP3} when videos.music names a mood and ElevenLabs makes the track; {} otherwise. Never stops the video: music
+    is extra, so a failure is logged and the video is made without it."""
+    if vc.music == "off":
+        return {}
+    try:
+        key = voices.read_key(vc.elevenlabs_key_file)
+        return {"music.mp3": voices.music(key, vc.music, min(estimate_seconds(scenes), vc.max_seconds), **({"post": post} if post else {}))}
+    except voices.VoiceError as e:
+        log.warning("videos: no background music: %s", e)
+        return {}
 
 
 def speech(vc, engine: str, voice_id: str, scenes: list[dict], post=None) -> dict[str, bytes]:
@@ -720,11 +740,12 @@ def make(cfg, gh, db, row: dict, run=subprocess.run, post=None) -> dict:
             "narration": narration}
 
 
-def _render(cfg, row: dict, scenes: list[dict], images: dict[str, bytes], engine: str, voice_id: str, run, post) -> dict:
+def _render(cfg, row: dict, scenes: list[dict], images: dict[str, bytes], engine: str, voice_id: str, run, post, music_post=None) -> dict:
     """Speak, compose and check one video, and store its file. The finished fields; raises Skip with a reason."""
     vc = cfg.videos
     audio = speech(vc, engine, voice_id, scenes, post)
-    work, mp4, tim = _compose(cfg, spec(vc, scenes, "files" if engine == "elevenlabs" else "piper"), images, audio, run)
+    audio.update(bed := background(vc, scenes, music_post))
+    work, mp4, tim = _compose(cfg, spec(vc, scenes, "files" if engine == "elevenlabs" else "piper", bool(bed)), images, audio, run)
     try:
         if mp4.is_file() and not mp4.is_symlink() and mp4.stat().st_size > vc.max_mb * 1024 * 1024:
             raise Skip("too_large")
