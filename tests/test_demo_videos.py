@@ -151,6 +151,62 @@ class TraceSteps(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(json.loads(out.stdout), [["fill", None, None], ["click", [300, 150], "frame 15"]])
 
+    def test_newer_traces_key_a_click_point_by_the_test_steps_own_call_id(self):
+        """Playwright 1.64: no stepId; the context trace's call and input events reuse the test step's call id."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        ev = lambda **d: json.dumps(d)
+        test = "\n".join([ev(type="before", callId="x@1", startTime=10, method="pw:api", title="Navigate", subtitle="/"),
+                          ev(type="after", callId="x@1", endTime=20),
+                          ev(type="before", callId="x@2", startTime=21, method="pw:api", title="Click", subtitle="getByRole('button')"),
+                          ev(type="after", callId="x@2", endTime=30)])
+        ctx = "\n".join([ev(type="context-options", options={"viewport": {"width": 1280, "height": 720}}),
+                         ev(type="before", callId="x@2", method="click"), ev(type="input", callId="x@2", point={"x": 1193.86, "y": 38.5}),
+                         *(ev(type="screencast-frame", sha1=f"p-{t}.jpeg", timestamp=t, width=1280, height=720) for t in (15, 25))])
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        with zipfile.ZipFile(d / "trace.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("test.trace", test)
+            z.writestr("0-trace.trace", ctx)
+            for t in (15, 25):
+                z.writestr(f"resources/p-{t}.jpeg", f"frame {t}")
+        js = ("import {readFileSync} from 'node:fs'; const m = await import(process.argv[2]);"
+              "console.log(JSON.stringify(m.steps(m.unzip(readFileSync(process.argv[3]), () => true)).map((x) => x.point)));")
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs"), str(d / "trace.zip")],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [None, [1194, 39]])
+
+    def test_a_click_keeps_the_frames_taken_while_it_ran_and_a_typed_value_does_not(self):
+        """The clip: frames from the step's start until its own frame, each new, with their time; never for a fill (its box animates)."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        ev = lambda **d: json.dumps(d)
+        test = "\n".join([
+            ev(type="before", callId="a", startTime=100, method="pw:api", title="Navigate", subtitle="/"),
+            ev(type="after", callId="a", endTime=200),
+            ev(type="before", callId="b", startTime=300, method="pw:api", title="Fill getByPlaceholder('Email')"),
+            ev(type="after", callId="b", endTime=400),
+            ev(type="before", callId="c", startTime=500, method="pw:api", title="Click getByRole('button')"),
+            ev(type="after", callId="c", endTime=900)])
+        pics = {150: "home", 310: "typing", 390: "typed", 520: "hover", 600: "hover", 700: "menu half", 850: "menu open"}
+        frames = "\n".join(ev(type="screencast-frame", sha1=f"p-{t}.jpeg", timestamp=t, width=640, height=360) for t in pics)
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        with zipfile.ZipFile(d / "trace.zip", "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("test.trace", test)
+            z.writestr("0-trace.trace", frames)
+            for t, what in pics.items():
+                z.writestr(f"resources/p-{t}.jpeg", what)
+        js = ("import {readFileSync} from 'node:fs'; const m = await import(process.argv[2]);"
+              "const s = m.steps(m.unzip(readFileSync(process.argv[3]), () => true));"
+              "console.log(JSON.stringify(s.map((x) => [x.act, x.clip.map((c) => [c.at, c.frame.toString()]), x.end])));")
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs"), str(d / "trace.zip")],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [["other", [], 50], ["fill", [], 90],
+                                                  ["click", [[20, "hover"], [200, "menu half"]], 350]])
+
     def test_the_recipe_runs_it_only_for_a_demo_run(self):
         text = (RECIPES / "playwright-screens.sh").read_text()
         self.assertIn('if [ "${FACTORY_STEPS:-}" = 1 ]', text)
@@ -178,6 +234,14 @@ class Worker(unittest.TestCase):
         self.assertEqual(jobs.clean_motion({"act": "click", "x": 5, "y": True}), {"act": "click"})
         self.assertEqual(jobs.clean_motion({"act": "click", "x": 5, "y": 6}), {"act": "click", "x": 5, "y": 6})
         self.assertEqual(jobs.clean_motion({"act": "fill", "box": [1, 2, 0, 10]}), {"act": "fill"})
+        self.assertEqual(jobs.clean_motion({"act": "fill", "box": [5, 6, 30, 10], "field": [1, 2, 300, 40]}),
+                         {"act": "fill", "box": [5, 6, 30, 10], "field": [1, 2, 300, 40]})
+        clip = {"act": "click", "x": 5, "y": 6, "clip": [[20, "zz-a-s01-x-f1"], [200, "zz-a-s01-x-f2"]], "end": 350}
+        self.assertEqual(jobs.clean_motion(clip), clip)
+        for bad in ({"clip": [[200, "zz-f1"], [20, "zz-f2"]]}, {"clip": [[20, "../x"]]}, {"clip": [[20, "zz-f1"]], "end": 10},
+                    {"clip": [[20, "zz-f1"]], "end": None}, {"clip": [[20, "zz-f1"]] * 2}, {"clip": [[i, f"zz-f{i}"] for i in range(7)]},
+                    {"clip": [[-1, "zz-f1"]]}, {"clip": [[20, "zz-f1"]], "end": 99999}):
+            self.assertEqual(jobs.clean_motion({"act": "click", "end": 350, **bad}), {"act": "click"}, bad)
         self.assertIsNone(jobs.clean_motion({"act": "rm -rf"}))
         self.assertIsNone(jobs.clean_motion("click"))
         self.assertEqual(jobs.clean_step({"n": 2, "label": "Click", "motion": {"act": "click", "x": 99999, "y": 1}}),
@@ -287,6 +351,27 @@ class Video(Base):
         self.assertEqual({k: shots[1].get(k) for k in ("before", "size", "act", "x", "y")},
                          {"before": "s03-before.png", "size": [w, h], "act": "click", "x": 10, "y": 12})
         self.assertEqual(run.seen["img"], ["s02.png", "s03-before.png", "s03.png"])
+
+    def test_a_step_plays_the_frames_its_run_took_and_carries_on_from_the_step_before(self):
+        vid = self.queued()
+        videos.demo_pending(self.cfg, FakeGh(), self.db, videos.get(self.db, vid), 1001.0)
+        jid = videos.demo_jobs(videos.get(self.db, vid))[REPO]
+        body = step_body(motion={3: {"act": "click", "x": 10, "y": 12, "end": 350,
+                                     "clip": [[20, "zz-auth-signing-in-s03-abc123-f1"], [200, "zz-auth-signing-in-s03-abc123-f2"],
+                                              [300, "zz-gone-f3"]]}})
+        frame = base64.b64encode(png()).decode()
+        body["artifacts"] += [{"name": "zz-auth-signing-in-s03-abc123-f1", "png_b64": frame},
+                              {"name": "zz-auth-signing-in-s03-abc123-f2", "png_b64": frame}]
+        run_job(self.db, jid, body)
+        self.assertEqual([at for at, _ in jobs.steps(self.db, jid)[2]["clip"]], [20, 200])        # a frame the run did not send is left out
+        run = self.container()
+        self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))
+        videos.work_one(self.cfg, FakeGH(), self.db, videos.get(self.db, vid), lambda: 2000.0, run, write=lambda p: WRITER)
+        self.assertEqual(videos.get(self.db, vid)["status"], "ready")
+        shots = [s for s in run.seen["script"]["scenes"] if s["kind"] == "shot"]
+        self.assertEqual({k: shots[1].get(k) for k in ("clip", "end", "chain")},
+                         {"clip": [{"at": 20, "image": "s03-c1.png"}, {"at": 200, "image": "s03-c2.png"}], "end": 350, "chain": True})
+        self.assertEqual(run.seen["img"], ["s02.png", "s03-before.png", "s03-c1.png", "s03-c2.png", "s03.png"])
 
     def make(self, vid):
         self.db.execute("UPDATE review_videos SET status='making' WHERE id=?", (vid,))

@@ -5,7 +5,10 @@
 //   scene          {kind: title | shot | code | points, say, title?, subtitle?, image?, lines?: [{t, text}], points?: [text], audio?}
 //   a shot of a demo step may add what the step did, to animate it from the picture before:
 //                  before (a file in /in/img), size: [w, h] of both pictures, act: click | fill | type | press | check | select | other,
-//                  x, y (the pointer), box: [x, y, w, h] (where a value was typed), in the pictures' pixels
+//                  x, y (the pointer), box: [x, y, w, h] (where a value was typed), field: [x, y, w, h] (the field it went into), in
+//                  the pictures' pixels,
+//                  clip: [{at, image}] frames taken while the step ran (ms after it began, in order) with end: ms of `image`,
+//                  chain: true when `before` is the scene before's picture (the video carries on from it, no fade)
 // /in/img/*.png    pictures named by the scenes (shot)
 // /in/audio/*.wav  the spoken text of each scene, when the factory made it (voice "files", e.g. ElevenLabs)
 // With voice "piper" this container speaks each scene's `say` itself with the voice baked into the image.
@@ -67,10 +70,19 @@ export function check(spec) {
       if (!ACTS.has(s.act)) throw new Bad(`${w}: act must be one of ${[...ACTS].join(', ')}`);
       c.act = s.act;
       if (s.x !== undefined || s.y !== undefined) [c.x, c.y] = [int(s.x, 0, c.size[0], `${w} x`), int(s.y, 0, c.size[1], `${w} y`)];
-      if (s.box !== undefined) {
-        if (!Array.isArray(s.box) || s.box.length !== 4) throw new Bad(`${w}: box must be [x, y, width, height]`);
-        c.box = s.box.map((v, j) => int(v, 0, 10000, `${w} box ${j + 1}`));
+      for (const k of ['box', 'field']) {
+        if (s[k] === undefined) continue;
+        if (!Array.isArray(s[k]) || s[k].length !== 4) throw new Bad(`${w}: ${k} must be [x, y, width, height]`);
+        c[k] = s[k].map((v, j) => int(v, 0, 10000, `${w} ${k} ${j + 1}`));
       }
+      if (s.clip !== undefined) {
+        if (!Array.isArray(s.clip) || s.clip.length < 1 || s.clip.length > 6) throw new Bad(`${w}: clip must be 1 to 6 frames`);
+        c.clip = s.clip.map((x, j) => ({at: int(x?.at, 0, 10000, `${w} clip ${j + 1} at`), image: file('img', x?.image, `${w} clip ${j + 1}`)}));
+        c.clip.forEach((x, j) => { if (j && x.at <= c.clip[j - 1].at) throw new Bad(`${w}: clip frames must be in time order`); });
+        c.end = int(s.end, c.clip[c.clip.length - 1].at, 10000, `${w} end`);
+      }
+      if (s.chain !== undefined && typeof s.chain !== 'boolean') throw new Bad(`${w}: chain must be true or false`);
+      if (s.chain) c.chain = true;
     }
     if (s.kind === 'code') {
       const lines = s.lines ?? [];
@@ -125,7 +137,7 @@ async function main() {
   const scenes = [], seconds = [];
   for (const [i, s] of spec.scenes.entries()) {
     const sc = {...s};
-    for (const f of [s.image, s.before]) if (f) copyFileSync(`${IN}/img/${f}`, `${SITE}/public/img/${f}`);
+    for (const f of [s.image, s.before, ...(s.clip || []).map((x) => x.image)]) if (f) copyFileSync(`${IN}/img/${f}`, `${SITE}/public/img/${f}`);
     let talk = 0;
     if (s.say && spec.voice !== 'none') {
       sc.audio = spec.voice === 'files' ? s.audio : `s${String(i + 1).padStart(2, '0')}.wav`;
@@ -137,7 +149,7 @@ async function main() {
       delete sc.audio;
       talk = s.say ? s.say.split(/\s+/).length / 2.6 : 0;      // time to read the subtitle
     }
-    const secs = Math.max(2.5, talk + 0.8);
+    const secs = Math.max(2.5, talk + 0.8, s.clip ? 2.6 + s.end / 1000 : 0);      // a clip plays in full after the pointer gets there
     sc.frames = Math.ceil(secs * spec.fps);
     seconds.push(sc.frames / spec.fps);
     scenes.push(sc);
