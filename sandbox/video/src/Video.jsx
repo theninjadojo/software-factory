@@ -41,6 +41,47 @@ const Title = ({s}) => {
   );
 };
 
+// A phone's screen (taller than wide) in a landscape video: shown in a phone on the left, with the scene's title and words beside it
+// instead of over it. Anything else keeps the full-width layout.
+const PHONE = {margin: 34, bezel: 12, gap: 72};
+const BAR = 34;                                     // the height of the browser window's bar above a page
+const portraitOf = (s, width, height) => s.kind === 'shot' && Array.isArray(s.size) && s.size[1] > s.size[0] * 1.2 && width > height;
+
+// Where a shot's picture goes: its scale k, its size dw x dh and its top left corner (ox, oy) in the video.
+const frameOf = (s, width, height) => {
+  const [fw, fh] = s.size;
+  if (portraitOf(s, width, height)) {
+    const ah = height - 2 * (PHONE.margin + PHONE.bezel);
+    const k = Math.min(ah / fh, (width * 0.42) / fw), dw = fw * k, dh = fh * k;
+    return {k, dw, dh, ox: Math.round(width * 0.31 - dw / 2), oy: Math.round((height - dh) / 2), phone: true};
+  }
+  const top = 40 + (s.title ? 52 : 0), aw = width - 128, ah = height - top - 120 - BAR;     // a page sits in a browser window
+  const k = Math.min(aw / fw, ah / fh), dw = fw * k, dh = fh * k;
+  return {k, dw, dh, ox: 64 + (aw - dw) / 2, oy: top + (ah - dh) / 2, phone: false};
+};
+
+// The phone around a portrait screen: a dark body with rounded corners, the screen inset by the bezel.
+const Phone = ({g}) => (
+  <div style={{position: 'absolute', left: g.ox - PHONE.bezel, top: g.oy - PHONE.bezel, width: g.dw + 2 * PHONE.bezel,
+               height: g.dh + 2 * PHONE.bezel, borderRadius: 34, background: '#07090b', border: `2px solid ${C.line}`,
+               boxShadow: '0 22px 60px rgba(0,0,0,0.55)'}} />
+);
+
+// The title and the narration beside a phone.
+const Beside = ({s, g}) => {
+  const {width, height} = useVideoConfig();
+  const r = useRise(4);
+  const left = g.ox + g.dw + PHONE.bezel + PHONE.gap;
+  return (
+    <div style={{position: 'absolute', left, width: width - left - 72, top: 0, height, display: 'flex', flexDirection: 'column',
+                 justifyContent: 'center', fontFamily: SANS, opacity: r, transform: `translateX(${(1 - r) * 18}px)`}}>
+      {s.title ? <div style={{color: C.text, fontSize: 34, fontWeight: 700, lineHeight: 1.25, marginBottom: 22}}>{s.title}</div> : null}
+      {s.title && s.say ? <div style={{width: 56, height: 5, background: C.accent, marginBottom: 22}} /> : null}
+      {s.say ? <div style={{color: C.muted, fontSize: 27, lineHeight: 1.45}}>{s.say}</div> : null}
+    </div>
+  );
+};
+
 const Picture = ({s}) => {
   const f = useCurrentFrame();
   const zoom = interpolate(f, [0, s.frames], [1, 1.06]);
@@ -55,6 +96,13 @@ const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'};
 const ease = (f, a, b) => interpolate(f, [a, b], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
 
 // The pointer: an arrow with its tip at (0, 0).
+// A finger on a phone screen: a soft dot that lands on the target and presses, instead of an arrow gliding in.
+const Touch = ({x, y, opacity, press}) => (
+  <div style={{position: 'absolute', left: x - 22, top: y - 22, width: 44, height: 44, borderRadius: '50%', opacity,
+               background: 'rgba(255,255,255,0.55)', border: '2px solid rgba(17,17,17,0.35)', transform: `scale(${press})`,
+               boxShadow: '0 3px 10px rgba(0,0,0,0.35)'}} />
+);
+
 const Pointer = ({x, y, opacity, press}) => (
   <svg width="30" height="30" viewBox="0 0 24 24" style={{position: 'absolute', left: x, top: y, opacity, overflow: 'visible',
        transform: `scale(${press})`, transformOrigin: '0 0', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.45))'}}>
@@ -83,7 +131,6 @@ const GLYPH = {Enter: '⏎ Enter', Tab: '⇥ Tab', Escape: 'Esc', Backspace: '�
 const keycap = (k) => k.split('+').map((p) => (p === 'ControlOrMeta' || p === 'Control' ? 'Ctrl' : p === 'Meta' ? '⌘' : GLYPH[p] || p)).join(' + ');
 
 // The browser around a demo step's page: window buttons and the address bar, with the page's path when it is known.
-const BAR = 34;
 const Browser = ({url, width}) => (
   <div style={{position: 'absolute', left: 0, top: 0, width, height: BAR, background: '#dde1e5', borderBottom: '1px solid #c3c8cd',
                display: 'flex', alignItems: 'center', gap: 7, padding: '0 12px', boxSizing: 'border-box'}}>
@@ -105,10 +152,9 @@ const Step = ({s, from, keep, look, hold}) => {
   const f = useCurrentFrame() - lead;
   const len = s.frames - lead;
   const {width, height, fps} = useVideoConfig();
-  const [fw, fh] = s.size;
-  const top = 40 + (s.title ? 52 : 0), aw = width - 128, ah = height - top - 120 - BAR;
-  const k = Math.min(aw / fw, ah / fh), dw = fw * k, dh = fh * k;
-  const ox = 64 + (aw - dw) / 2, oy = top + (ah - dh) / 2;
+  const g = frameOf(s, width, height);
+  const {k, dw, dh, ox, oy} = g;
+  const bar = g.phone ? 0 : BAR;
   const typing = (s.act === 'fill' || s.act === 'type') && s.box;
   const target = targetOf(s);
   const T = target && [target[0] * k, target[1] * k];
@@ -124,13 +170,14 @@ const Step = ({s, from, keep, look, hold}) => {
   const clip = (s.clip || []).map((c) => ({...c, from: click + ms(c.at)}));
   const done = typing ? arrive + 4 + reveal : s.clip ? click + ms(s.end) : focus ? arrive + 2 : 12;
 
-  // The camera: in on the target as the pointer travels, held through the step, back out once its result has been seen.
-  const Z = focus ? ZOOM : 1;
+  // The camera: in on the target as the pointer travels, held through the step, back out once its result has been seen. Not on a
+  // phone: the phone already fills the height, and zooming the screen inside a still phone body reads as the screen being wrong.
+  const Z = focus && !g.phone ? ZOOM : 1;
   const L = look && [look[0] * k, look[1] * k];          // already in on the step before's target: pan from there
   // (with a clip, as it starts playing: the page it leads to is seen whole, not a corner of it)
   const out0 = s.clip ? click + 6 : Math.max(arrive + 8, Math.min(done + 18, len - 26));
   const p = focus ? (L ? 1 : ease(f, 2, arrive + 4)) * (hold ? 1 : 1 - ease(f, out0, out0 + 22)) : 0;
-  const z = focus ? 1 + (Z - 1) * p : keep ? 1 : interpolate(f, [0, len], [1, 1.04]);
+  const z = focus ? 1 + (Z - 1) * p : keep || g.phone ? 1 : interpolate(f, [0, len], [1, 1.04]);
   const m0 = L ? ease(f, 2, arrive + 2) : 1;
   const o = focus && L ? [L[0] + (focus[0] - L[0]) * m0, L[1] + (focus[1] - L[1]) * m0] : focus || [dw / 2, dh / 2];
   const pan = (lo, hi, want) => Math.max(lo, Math.min(hi, want));
@@ -138,7 +185,11 @@ const Step = ({s, from, keep, look, hold}) => {
   const ty = pan(-(z - 1) * (dh - o[1]), (z - 1) * o[1], (dh / 2 - o[1]) * p * 0.6);
 
   let pointer = null;
-  if (start) {
+  if (g.phone && T) {                // a tap: the finger comes down just before the target is touched and lifts after it
+    const opacity = interpolate(f, [arrive - 8, arrive - 2, done + 4, done + 12], [0, 1, 1, 0], clamp);
+    const press = interpolate(f, [arrive - 8, arrive - 2, arrive, arrive + 3, arrive + 7], [1.5, 1, 1, 0.8, 1], clamp);
+    pointer = <Touch x={T[0]} y={T[1]} opacity={opacity} press={press} />;
+  } else if (start && !g.phone) {
     const [ex, ey] = T || start;
     const dl = Math.hypot(ex - start[0], ey - start[1]) || 1;
     const c = [(start[0] + ex) / 2 + ((ey - start[1]) / dl) * dl * 0.18, (start[1] + ey) / 2 - ((ex - start[0]) / dl) * dl * 0.18];
@@ -199,11 +250,12 @@ const Step = ({s, from, keep, look, hold}) => {
   const keyOut = s.key ? 1 - interpolate(f, [arrive + 40, arrive + 50], [0, 1], clamp) : 0;
   return (
     <AbsoluteFill style={{fontFamily: SANS}}>
-      {s.title ? <div style={{position: 'absolute', left: 64, top: 40, right: 64, color: C.text, fontSize: 30, fontWeight: 700}}>{s.title}</div> : null}
-      <div style={{position: 'absolute', left: ox, top: oy, width: dw, height: dh + BAR, overflow: 'hidden', border: `1px solid ${C.line}`,
-                   borderRadius: 10, background: C.panel, boxShadow: '0 18px 50px rgba(0,0,0,0.45)'}}>
-        <Browser url={s.url} width={dw} />
-        <div style={{position: 'absolute', left: 0, top: BAR, width: dw, height: dh, overflow: 'hidden'}}>
+      {s.title && !g.phone ? <div style={{position: 'absolute', left: 64, top: 40, right: 64, color: C.text, fontSize: 30, fontWeight: 700}}>{s.title}</div> : null}
+      {g.phone ? <Phone g={g} /> : null}
+      <div style={{position: 'absolute', left: ox, top: oy, width: dw, height: dh + bar, overflow: 'hidden', border: g.phone ? 'none' : `1px solid ${C.line}`,
+                   borderRadius: g.phone ? 24 : 10, background: C.panel, boxShadow: g.phone ? 'none' : '0 18px 50px rgba(0,0,0,0.45)'}}>
+        {g.phone ? null : <Browser url={s.url} width={dw} />}
+        <div style={{position: 'absolute', left: 0, top: bar, width: dw, height: dh, overflow: 'hidden'}}>
           <div style={{position: 'absolute', inset: 0, transform: `translate(${tx}px, ${ty}px) scale(${z})`, transformOrigin: `${o[0]}px ${o[1]}px`}}>
             <Img src={staticFile(`img/${s.before}`)} style={{position: 'absolute', inset: 0, width: dw, height: dh}} />
             {shown ? <Img src={staticFile(`img/${shown.image}`)} style={{position: 'absolute', inset: 0, width: dw, height: dh}} /> : null}
@@ -233,8 +285,24 @@ const Step = ({s, from, keep, look, hold}) => {
   );
 };
 
+// A still portrait screen: in the phone, held still (a phone's screen never zooms inside its body).
+const PhoneShot = ({s}) => {
+  const {width, height} = useVideoConfig();
+  const g = frameOf(s, width, height);
+  return (
+    <AbsoluteFill>
+      <Phone g={g} />
+      <div style={{position: 'absolute', left: g.ox, top: g.oy, width: g.dw, height: g.dh, overflow: 'hidden', borderRadius: 24, background: C.panel}}>
+        <Img src={staticFile(`img/${s.image}`)} style={{width: '100%', height: '100%', objectFit: 'contain'}} />
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 const Shot = ({s, from, keep, look, hold}) => {
+  const {width, height} = useVideoConfig();
   if (s.before) return <Step s={s} from={from} keep={keep} look={look} hold={hold} />;
+  if (portraitOf(s, width, height)) return <PhoneShot s={s} />;
   return (
     <AbsoluteFill style={{padding: '40px 64px 120px', fontFamily: SANS}}>
       {s.title ? <div style={{color: C.text, fontSize: 30, fontWeight: 700, marginBottom: 16}}>{s.title}</div> : null}
@@ -287,10 +355,12 @@ const KINDS = {title: Title, shot: Shot, code: Code, points: Points};
 // A scene; a demo step that carries on from the one before (chain) cuts straight in, keeping the pointer where that one left it.
 const Scene = ({s, from, keep, look, hold}) => {
   const Body = KINDS[s.kind];
+  const {width, height} = useVideoConfig();
+  const phone = portraitOf(s, width, height);
   return (
     <AbsoluteFill style={{background: C.bg, opacity: useFade(s.frames, !s.chain, !keep)}}>
       <Body s={s} from={from} keep={keep} look={look} hold={hold} />
-      <Subtitle text={s.say} />
+      {phone ? <Beside s={s} g={frameOf(s, width, height)} /> : <Subtitle text={s.say} />}
       {s.audio ? <Audio src={staticFile(`audio/${s.audio}`)} /> : null}
     </AbsoluteFill>
   );

@@ -201,6 +201,33 @@ images are deleted first, so only this run's show. `--task` names another Gradle
 module and the test (`app-com-example-hometest-home-<checksum>.png`). Exit codes as `android-test`: 0 passed, 1 tests failed (screenshots kept),
 2 nothing to run or the environment is wrong. A screenshot wider than 1600 px (a tablet at full density) is dropped by the worker's size check.
 
+### Android demo steps
+
+A demo video ([videos](videos.md#showing-a-flow-in-the-app)) of an Android repository runs on the same `android-screens` recipe: the
+worker sets `FACTORY_STEPS=1` (and `FACTORY_TEST_FILES`), and the recipe then runs the chosen instrumented tests on the emulator
+(`connectedDebugAndroidTest` of the modules they are in, limited to their classes), whatever `--emulator` and `--task` say. So the
+worker needs Linux with `/dev/kvm` and a `factory-android` image built with `WITH_EMULATOR=1` (the release image is built without
+the emulator; without it the run stops with exit 2 and says so). Nothing in the project changes: the image holds a step recorder
+(`sandbox/android/steps/`, one Java file), and the run adds it to every Android module's instrumented test sources through a Gradle
+init script and names it as the test runner's listener (`-Pandroid.testInstrumentationRunnerArguments.listener=...`, which replaces a
+listener the project sets itself). It needs only JUnit 4 and androidx.test, which every `AndroidJUnitRunner` project has.
+
+The emulator is a `pixel_6` profile (1080 x 2400; screens are kept at 720 x 1600), and its container gets a 16 GB `/tmp` limit
+(a tmpfs only uses what is written, but the emulator refuses to boot without room for its data partition). The recorder listens to
+Espresso's own tracing (Espresso 3.5 or newer): after each action it waits until the screen has had 700 ms to settle and has stopped
+changing, keeps it, and writes it through the shell user to the emulator, where the recipe pulls it. The test waits for that at its
+next interaction, so a demo run takes about a second more per action. The recorder's log (`[recorder] ...`: each step it kept, and
+the Espresso calls it saw) ends the job log, which is where to look when a run kept no steps. Where a click landed comes from the activity's
+touch events (its window callback is wrapped, nothing else). Jetpack Compose tests do not use Espresso actions, so they give no steps,
+and the video is skipped as *took no step screens*. Recording the screen and input from outside the app (`screenrecord`,
+`getevent`) would need no recorder, but is not used: Espresso injects its input inside the app, so `getevent` sees no touches, and a
+recording alone has no labels, fields or test boundaries to animate.
+
+What the run returns is what a Playwright demo run returns: step PNGs and their `zz-...` frames in `screens-out/`, and in
+`FACTORY_RESULTS_DIR` the same `steps.tsv` (as `trace-steps.mjs` writes it), with `junit.xml` (each test, its file and outcome) and
+`e2e-shots.jsonl` (which test took each PNG). A test id is the test file from the repository root, `::` and the method
+(`app/src/androidTest/java/com/example/SignInTest.kt::signsIn`). These files leave the checkout only as regular files, never a link.
+
 ## Tools the recipes need
 
 A worker offers the factory only the recipes it can run. Each shipped recipe answers `--preflight` (exit 3 and one line per missing tool,
@@ -353,8 +380,9 @@ Recipes ship in `worker/recipes/` and are copied to the worker, outside any chec
   folder). It has a network, because Gradle must fetch dependencies. `--emulator` adds a single `--device /dev/kvm` (Linux only; Docker on a
   Mac has no KVM, so Macs run unit tests) and boots a headless AVD, runs the task, and returns a final screenshot even when the tests
   fail. Exit codes follow the web recipe: 1 = build or tests failed, 2 = the environment is wrong (no engine, image not built, no
-  `gradlew`, no KVM, the emulator did not boot), which is never retried. **Not yet run against a real SDK, image or emulator**: the tests use
-  stub `docker`, `gradlew`, `adb`, `emulator` and `avdmanager`.
+  `gradlew`, no KVM, the emulator did not boot), which is never retried. The tests use stub `docker`, `gradlew`, `adb`, `emulator` and
+  `avdmanager`. The emulator path has since run for real (demo runs on Linux with KVM, the image built with `WITH_EMULATOR=1`), which
+  found and fixed two things: the AVD needs a bigger `/tmp`, and an emulator that dies while booting is now noticed at once.
 - `ios-test.sh` (done, **stub-tested only: never run against Tart or Xcode**): builds and tests inside a throwaway macOS VM, because Xcode runs only
   on macOS and cannot be containerised. [Tart](https://tart.run) runs macOS VMs on Apple Silicon. Per job the recipe clones a prepared golden VM
   (copy-on-write, fast), boots the clone headless, copies the checkout in (without `.git`) over `tart exec`, runs

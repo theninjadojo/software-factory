@@ -1,8 +1,11 @@
 """The Android recipe (host side) and the script inside the image, with stub docker/adb/emulator/gradlew: no SDK, no emulator, no downloads."""
+import json
 import os
 import re
+import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 RECIPE = ROOT / "worker" / "recipes" / "android-test.sh"
 INNER = ROOT / "sandbox" / "android" / "android-run.sh"
 DOCKERFILE = ROOT / "sandbox" / "android" / "Dockerfile"
+sys.path.insert(0, str(ROOT / "worker"))
+import worker as W                                                       # noqa: E402
 
 
 def stub(path: Path, body: str) -> Path:
@@ -31,8 +36,8 @@ class HostRecipe(unittest.TestCase):
     def docker(self, code):
         stub(self.bin / "docker", f'echo "$@" >> "{self.calls}"\nexit {code}\n')
 
-    def run_recipe(self, *args, path=None, cwd=None):
-        env = {"PATH": path if path is not None else f"{self.bin}:/usr/bin:/bin", "HOME": str(self.tmp)}
+    def run_recipe(self, *args, path=None, cwd=None, **more):
+        env = {"PATH": path if path is not None else f"{self.bin}:/usr/bin:/bin", "HOME": str(self.tmp), **more}
         r = subprocess.run([str(RECIPE), "--cache", str(self.cache), *args], cwd=cwd or self.proj, env=env, capture_output=True, text=True, timeout=30)
         called = self.calls.read_text().strip() if self.calls.exists() else ""
         return r.returncode, r.stdout + r.stderr, called
@@ -106,6 +111,51 @@ class HostRecipe(unittest.TestCase):
         code, out, _ = self.run_recipe("--screens", "--dir", "android")
         self.assertEqual(code, 1)                                           # failing tests stay a failure, the screenshots are still kept
         self.assertEqual([f.name for f in (self.proj / "screens-out").iterdir()], ["home-1.png"])
+
+    def demo(self, files, *args, docker_body=""):
+        """A demo run (FACTORY_STEPS=1) of the Screens recipe limited to `files`; (exit code, output, docker call, results folder)."""
+        kvm, results, listed = self.tmp / "kvm", self.tmp / "results", self.tmp / "test-files.txt"
+        kvm.write_text("")
+        results.mkdir(exist_ok=True)
+        listed.write_text("".join(f + "\n" for f in files))
+        if docker_body:
+            stub(self.bin / "docker", f'echo "$@" >> "{self.calls}"\n{docker_body}\nexit 0\n')
+        code, out, call = self.run_recipe("--screens", "--kvm-device", str(kvm), *args, FACTORY_STEPS="1",
+                                          FACTORY_RESULTS_DIR=str(results), FACTORY_TEST_FILES=str(listed))
+        return code, out, call, results
+
+    def test_a_demo_run_records_steps_on_the_emulator_and_hands_over_what_they_show(self):
+        steps = self.proj / ".factory-steps"
+        body = (f'mkdir -p "{steps}" && printf "a.png\\t1\\tOpen\\t\\n" > "{steps}/steps.tsv" && printf "<testsuite/>" > "{steps}/junit.xml"'
+                f' && ln -s "{self.tmp}/secret" "{steps}/e2e-shots.jsonl"')
+        (self.tmp / "secret").write_text("SECRET")
+        code, out, call, results = self.demo(["app/src/androidTest/java/a/LoginTest.kt", "web/e2e/x.spec.ts", "../x", "a b"],
+                                             docker_body=body)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(call.endswith("factory-android:latest emulator connectedDebugAndroidTest steps"), call)   # without --emulator
+        self.assertIn(f"--device {self.tmp / 'kvm'}", call)
+        self.assertIn("-e STEP_FILES=app/src/androidTest/java/a/LoginTest.kt web/e2e/x.spec.ts -e STEP_PREFIX= ", call)
+        self.assertIn("--tmpfs /tmp:rw,exec,size=16g", call)                 # the AVD needs room for its data partition
+        self.assertEqual(sorted(f.name for f in results.iterdir()), ["junit.xml", "steps.tsv"])     # never what a link points at
+        self.assertEqual((results / "steps.tsv").read_text(), "a.png\t1\tOpen\t\n")
+        self.assertFalse(steps.exists())                                    # nothing of it stays in the checkout
+
+    def test_a_demo_run_in_a_subfolder_runs_only_its_files(self):
+        (self.proj / "android").mkdir()
+        (self.proj / "android" / "gradlew").write_text("")
+        code, out, call, _ = self.demo(["android/app/src/androidTest/java/a/LoginTest.kt", "app/src/androidTest/java/b/Other.kt"], "--dir", "android")
+        self.assertEqual(code, 0, out)
+        self.assertIn("-e STEP_FILES=app/src/androidTest/java/a/LoginTest.kt -e STEP_PREFIX=android/ ", call)
+        self.calls.unlink()
+        code, out, call, _ = self.demo(["app/src/androidTest/java/b/Other.kt"], "--dir", "android")
+        self.assertEqual((code, call), (2, ""), out)                          # none of them is there: nothing runs
+
+    def test_a_demo_run_keeps_a_connected_task_it_was_given(self):
+        code, out, call, _ = self.demo(["app/src/androidTest/java/a/T.kt"], "--task", ":app:connectedStagingAndroidTest")
+        self.assertTrue(call.endswith("emulator :app:connectedStagingAndroidTest steps"), call)
+        self.calls.unlink()
+        code, out, call, _ = self.demo(["app/src/androidTest/java/a/T.kt"], "--task", ":app:recordRoborazziDebug")
+        self.assertTrue(call.endswith("emulator connectedDebugAndroidTest steps"), call)
 
     def test_bad_arguments_never_reach_docker(self):
         for args in (["--dir", "../x"], ["--dir", "/etc"], ["--dir", ""], ["--task", "test; rm -rf /"], ["--task", "$(id)"], ["--task", ""],
@@ -208,6 +258,13 @@ class InsideImage(unittest.TestCase):
         self.assertIn("did not boot", out)
         self.assertFalse(any(l.startswith("gradlew") for l in log))
 
+    def test_an_emulator_that_dies_while_booting_is_exit_2_at_once(self):
+        stub(self.bin / "emulator", f'echo "emulator $@" >> "{self.log}"\necho "FATAL | Not enough space"\nexit 1\n')
+        code, out, log = self.run_inner("emulator", "connectedDebugAndroidTest", BOOTED="0", BOOT_TIMEOUT="300")
+        self.assertEqual(code, 2)
+        self.assertIn("the emulator exited", out)
+        self.assertIn("Not enough space", out)
+
     def test_missing_avd_or_emulator_is_exit_2(self):
         self.assertEqual(self.run_inner("emulator", "t", AVD_CODE="1")[0], 2)
         (self.bin / "emulator").unlink()
@@ -278,6 +335,104 @@ class InsideImage(unittest.TestCase):
         self.assertEqual(list((self.proj / "screens-out").iterdir()), [])
 
 
+class Steps(unittest.TestCase):
+    """android-run.sh ... steps: the step recorder added to a stub project's run, and its output turned into what the worker reads."""
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin, self.proj, self.log, self.pulled = self.tmp / "bin", self.tmp / "work", self.tmp / "log", self.tmp / "device"
+        for d in (self.bin, self.proj, self.pulled, self.tmp / "src"):
+            d.mkdir()
+        stub(self.proj / "gradlew", f'echo "gradlew $@" >> "{self.log}"\nexit ${{GRADLE_CODE:-0}}\n')
+        stub(self.bin / "adb", f'echo "adb $@" >> "{self.log}"\ncase "$1" in\n shell) echo 1;;\n pull) cp -R "{self.pulled}/." "$3";;\n'
+                               ' exec-out) printf PNG;;\nesac\nexit 0\n')
+        stub(self.bin / "emulator", 'exec sleep 30\n')
+        stub(self.bin / "avdmanager", f'echo "avdmanager $@" >> "{self.log}"\nexit 0\n')
+        for rel, text in (("app/src/androidTest/java/com/example/demo/LoginTest.java", "package com.example.demo;\n\npublic class LoginTest {}\n"),
+                          ("feature/home/src/androidTestDebug/kotlin/com/example/home/HomeTest.kt", "package com.example.home\nclass HomeTest\n"),
+                          ("app/src/test/java/com/example/demo/UnitTest.java", "package com.example.demo;\n")):
+            (self.proj / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.proj / rel).write_text(text)
+
+    def run_steps(self, files="app/src/androidTest/java/com/example/demo/LoginTest.java", mode="emulator", **env):
+        e = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.tmp), "ANDROID_HOME": str(self.tmp / "sdk"), "TMPDIR": str(self.tmp),
+             "ANDROID_USER_HOME": str(self.tmp / "ah"), "ANDROID_AVD_HOME": str(self.tmp / "ah" / "avd"), "BOOT_POLL": "0",
+             "STEPS_SRC": str(self.tmp / "src"), "STEP_FILES": files, "STEP_PREFIX": "", **env}
+        r = subprocess.run([str(INNER), mode, "connectedDebugAndroidTest", "steps"], cwd=self.proj, env=e, capture_output=True, text=True, timeout=60)
+        return r.returncode, r.stdout + r.stderr, self.log.read_text().splitlines() if self.log.exists() else []
+
+    def device(self, name, data=b"PNG"):
+        (self.pulled / name).write_bytes(data)
+
+    def test_the_chosen_classes_run_unchanged_with_the_recorder_as_a_listener(self):
+        code, out, log = self.run_steps("app/src/androidTest/java/com/example/demo/LoginTest.java "
+                                        "feature/home/src/androidTestDebug/kotlin/com/example/home/HomeTest.kt app/src/test/java/com/example/demo/UnitTest.java")
+        self.assertEqual(code, 0, out)
+        self.assertIn("-d pixel_6 --force", next(l for l in log if l.startswith("avdmanager")))    # a phone-sized screen for the video
+        gradle = next(l for l in log if l.startswith("gradlew"))
+        self.assertEqual(gradle, f"gradlew --no-daemon --console=plain --init-script {self.tmp}/shikumi-steps.gradle "
+                                 ":app:connectedDebugAndroidTest :feature:home:connectedDebugAndroidTest")
+        init = (self.tmp / "shikumi-steps.gradle").read_text()
+        self.assertIn(f"android.sourceSets.androidTest.java.srcDir('{self.tmp}/src')", init)
+        self.assertIn("a.get('listener') + ',shikumi.steps.StepListener'", init)       # after the project's own listener
+        self.assertIn("a.put('class', 'com.example.demo.LoginTest,com.example.home.HomeTest')", init)
+        self.assertIn("not an instrumented test", out)                                  # the unit test is left out, said so
+        self.assertIn("adb shell rm -rf /data/local/tmp/shikumi-steps; mkdir -p /data/local/tmp/shikumi-steps", log)
+        self.assertLess(log.index("adb shell rm -rf /data/local/tmp/shikumi-steps; mkdir -p /data/local/tmp/shikumi-steps"), log.index(gradle))
+        self.assertTrue(any(l.startswith("adb pull /data/local/tmp/shikumi-steps/.") for l in log), log)
+        steps = (Path(__file__).resolve().parent.parent / "sandbox/android/steps/src/shikumi/steps/StepListener.java").read_text()
+        self.assertIn("package shikumi.steps;", steps)
+        self.assertIn("public final class StepListener extends RunListener", steps)
+
+    def test_the_whole_suite_runs_when_no_file_is_chosen_and_none_usable_is_exit_2(self):
+        code, out, log = self.run_steps("")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"gradlew --no-daemon --console=plain --init-script {self.tmp}/shikumi-steps.gradle connectedDebugAndroidTest", log)
+        self.assertIn("if ('')", (self.tmp / "shikumi-steps.gradle").read_text())
+        self.log.unlink()
+        code, out, log = self.run_steps("app/src/test/java/com/example/demo/UnitTest.java web/x.spec.ts")
+        self.assertEqual((code, [l for l in log if not l.startswith("avdmanager")]), (2, []), out)
+        self.assertEqual(self.run_steps(mode="unit")[0], 2)                             # steps need the emulator
+        self.assertEqual(self.run_steps(STEPS_SRC=str(self.tmp / "missing"))[0], 2)      # an image without the recorder
+
+    def test_what_the_recorder_wrote_becomes_what_the_worker_reads(self):
+        tab = "\t"
+        name = "logintest-signin-s02-0a1b2c"
+        self.device(f"{name}.png")
+        self.device(f"zz-{name}-f1.png")
+        self.device("Bad Name.png")
+        self.device("notes.txt", b"x")
+        motion = '{"act":"fill","x":360,"y":420,"box":[110,400,180,40],"field":[96,390,540,92]}'
+        self.device("steps.tsv", f"{name}.png{tab}2{tab}Fill Email{tab}{motion}\n".encode())
+        self.device("shots.tsv", f"{name}.png{tab}com.example.demo.LoginTest{tab}signIn\nx.png{tab}com.example.Gone{tab}t\n".encode())
+        self.device("results.tsv", f"com.example.demo.LoginTest{tab}signIn{tab}pass{tab}\ncom.example.home.HomeTest{tab}opens{tab}fail{tab}"
+                                   f"expected <a & \"b\">\ncom.example.Gone{tab}t{tab}pass{tab}\n".encode())
+        code, out, _ = self.run_steps("", STEP_PREFIX="android/", GRADLE_CODE="1")
+        self.assertEqual(code, 1, out)                                     # a failing test fails the run, its steps are still kept
+        self.assertEqual(sorted(f.name for f in (self.proj / "screens-out").iterdir()), [f"{name}.png", f"zz-{name}-f1.png"])
+        self.assertIn("1 step screenshot(s) and 1 in-between frame(s) kept", out)
+        got = self.proj / ".factory-steps"
+        self.assertEqual(W.collect_steps(got), {name: {"n": 2, "label": "Fill Email", "motion": json.loads(motion)}})
+        login = "android/app/src/androidTest/java/com/example/demo/LoginTest.java::signIn"
+        home = "android/feature/home/src/androidTestDebug/kotlin/com/example/home/HomeTest.kt::opens"
+        repo = self.tmp / "repo"
+        (repo / "android").mkdir(parents=True)
+        shutil.copytree(self.proj / "app", repo / "android" / "app")
+        shutil.copytree(self.proj / "feature", repo / "android" / "feature")
+        self.assertEqual(W.junit_tests((got / "junit.xml").read_text(), repo),
+                         [(login, "pass", ""), (home, "fail", 'expected <a & "b">')])
+        self.assertEqual([W.suite_shot_test(l, repo) for l in (got / "e2e-shots.jsonl").read_text().splitlines()], [(f"{name}.png", login)])
+        self.assertEqual(W.collect_shot_tests(got, repo, {login, home}), {name: login})
+        tests, _ = W.collect_results(got, repo)
+        self.assertEqual({t["id"]: t["outcome"] for t in tests}, {login: "pass", home: "fail"})
+
+    def test_a_link_on_the_device_side_is_never_followed(self):
+        (self.tmp / "secret.png").write_bytes(b"SECRET")
+        (self.pulled / "x-s01-abc.png").symlink_to(self.tmp / "secret.png")
+        code, out, _ = self.run_steps()
+        self.assertEqual(list((self.proj / "screens-out").iterdir()), [])
+
+
 class ImageDefinition(unittest.TestCase):
     def test_dockerfile_pins_verifies_and_stays_small_in_privilege(self):
         d = DOCKERFILE.read_text()
@@ -287,6 +442,7 @@ class ImageDefinition(unittest.TestCase):
         self.assertIn('test -n "$CMDLINE_TOOLS_SHA256"', d)                      # and the build fails without a checksum
         self.assertNotIn("curl | sh", d.replace("curl -fsSL -o", ""))
         self.assertIn("ENTRYPOINT", d)
+        self.assertIn("COPY steps/src /opt/shikumi-steps/src", d)              # the step recorder of a demo run, as source
         self.assertTrue(os.access(INNER, os.X_OK))
 
 

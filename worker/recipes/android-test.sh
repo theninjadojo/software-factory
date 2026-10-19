@@ -16,6 +16,14 @@
 #   command = ["/path/to/android-test.sh", "--screens"]
 #   artifacts = ["screens-out/*.png"]
 #
+# When the worker sets FACTORY_STEPS=1 on a --screens run (a demo run for a video, docs/videos.md) the recipe runs the instrumented tests on
+# the emulator whatever --emulator and --task say (connectedDebugAndroidTest, unless --task names another connected...AndroidTest task),
+# with the image's step recorder (sandbox/android/steps/), and returns one PNG per Espresso action of each test, plus its in-between
+# frames, in screens-out/. It writes what they show into FACTORY_RESULTS_DIR in the files the worker reads for a Playwright demo run:
+# steps.tsv (as worker/recipes/trace-steps.mjs), junit.xml (each test's outcome; the id is the test file from the repository root,
+# then :: and the method) and e2e-shots.jsonl (which test took each PNG). FACTORY_TEST_FILES (one test file a line, from the repository
+# root) limits the run to those test classes; a file outside --dir, or not under src/androidTest*, is left out (exit 2 when all are).
+#
 # Options: --image NAME  --engine docker|podman  --dir SUBFOLDER  --task GRADLE_TASK  --emulator  --screens  --cache DIR  --kvm-device PATH
 #          --memory 6g  --cpus 4
 # Exit 0 = passed; 1 = the build or tests failed (a failure: gets a fix round); 2 = the environment is wrong (no engine, no image, no
@@ -46,6 +54,19 @@ if [ "$TASKSET" = 0 ]; then
   TASK=test
   [ -n "$SCREENS" ] && { TASK=auto; [ "$EMULATOR" = 1 ] && TASK=connectedDebugAndroidTest; }
 fi
+STEP_FILES=""
+if [ -n "$SCREENS" ] && [ "${FACTORY_STEPS:-}" = 1 ]; then      # a demo run: the step recorder needs the emulator
+  SCREENS=steps; EMULATOR=1
+  case "$TASK" in *connected*AndroidTest) ;; *) TASK=connectedDebugAndroidTest ;; esac
+  if [ -n "${FACTORY_TEST_FILES:-}" ] && [ -f "$FACTORY_TEST_FILES" ]; then
+    while IFS= read -r f; do              # the worker checked them; checked again, as they are passed on to the container
+      case "$f" in ""|/*|*..*|*[!A-Za-z0-9_.@+/-]*) continue ;; esac
+      if [ "$DIR" != . ]; then case "$f" in "$DIR"/*) f=${f#"$DIR"/} ;; *) continue ;; esac; fi
+      STEP_FILES="${STEP_FILES:+$STEP_FILES }$f"
+    done < "$FACTORY_TEST_FILES"
+    [ -n "$STEP_FILES" ] || die "none of the chosen test files is in $DIR"
+  fi
+fi
 case "$TASK" in ""|*[!A-Za-z0-9:_-]*) die "--task must be a Gradle task name such as test or :app:testDebugUnitTest" ;; esac
 case "$IMAGE" in ""|*[!A-Za-z0-9._:/@-]*) die "--image has characters an image name cannot have" ;; esac
 case "$MEMORY" in *[!0-9gGmM]*|"") die "--memory must look like 6g" ;; esac
@@ -66,25 +87,35 @@ fi
 ROOT="$(pwd)"; WORK="$(cd "$DIR" && pwd)"
 mkdir -p "$CACHE" || die "cannot create the Gradle cache folder $CACHE"
 
-MODE=unit; DEVICE=""
+MODE=unit; DEVICE=""; TMPSIZE=4g
 if [ "$EMULATOR" = 1 ]; then
-  MODE=emulator
+  MODE=emulator; TMPSIZE=16g          # the AVD lives in /tmp: the emulator refuses to boot without twice its 6 GB data partition free
+                                      # there (a tmpfs only uses what is written, and that counts against --memory)
   [ -e "$KVM" ] || die "$KVM does not exist: emulator tests need KVM (Linux). Docker on a Mac cannot provide it"
   [ -r "$KVM" ] && [ -w "$KVM" ] || die "$KVM is not readable and writable by this user (add it to the kvm group)"
   DEVICE="--device $KVM"
 fi
 
+STEP_PREFIX=""; [ "$DIR" != . ] && STEP_PREFIX="${DIR%/}/"
+rm -rf "$WORK/.factory-steps"
 # /home/builder holds what Robolectric (Roborazzi, Paparazzi, many unit tests) downloads: the Android framework, a few hundred MB.
 echo "[android-test] == $ENGINE run $IMAGE ($MODE: gradlew $TASK${SCREENS:+, keeping screenshots})"
 # shellcheck disable=SC2086   # $DEVICE is either empty or one fixed "--device PATH" pair
 "$ENGINE" run --rm --pull=never \
   --user "$(id -u):$(id -g)" \
   --read-only --cap-drop=all --security-opt=no-new-privileges --pids-limit=2048 --memory="$MEMORY" --cpus="$CPUS" \
-  --tmpfs /tmp:rw,exec,size=4g --tmpfs /home/builder:rw,size=2g \
-  -e HOME=/home/builder -e GRADLE_USER_HOME=/gradle-cache -e CI=true \
+  --tmpfs /tmp:rw,exec,size=$TMPSIZE --tmpfs /home/builder:rw,size=2g \
+  -e HOME=/home/builder -e GRADLE_USER_HOME=/gradle-cache -e CI=true -e STEP_FILES="$STEP_FILES" -e STEP_PREFIX="$STEP_PREFIX" \
   -v "$WORK:/work:rw" -v "$CACHE:/gradle-cache:rw" $DEVICE \
   "$IMAGE" "$MODE" "$TASK" $SCREENS
 code=$?
+if [ "$SCREENS" = steps ]; then                 # what the steps show, out of the checkout for the worker: regular files only, never a link
+  for f in steps.tsv junit.xml e2e-shots.jsonl; do
+    src="$WORK/.factory-steps/$f"
+    [ -n "${FACTORY_RESULTS_DIR:-}" ] && [ -f "$src" ] && [ ! -L "$src" ] && [ ! -L "$WORK/.factory-steps" ] && cp "$src" "$FACTORY_RESULTS_DIR/$f"
+  done
+  rm -rf "$WORK/.factory-steps"
+fi
 if [ -n "$SCREENS" ] && [ "$WORK" != "$ROOT" ] && [ -d "$WORK/screens-out" ]; then      # the worker collects them from the checkout's top
   mkdir -p "$ROOT/screens-out" && find "$WORK/screens-out" -maxdepth 1 -type f -name '*.png' -exec mv {} "$ROOT/screens-out/" \;
 fi

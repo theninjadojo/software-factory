@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 from factory import captures as CP, jobs, videos
 from factory import factorychat as F
 from factory import screenboard as SB
-from factory.config import ScreenCapture, ScreensCfg, WorkersCfg, overrides_path
+from factory.config import ScreenCapture, ScreensCfg, VideosCfg, WorkersCfg, overrides_path
 
 from test_captures import FakeGh
 from test_chatvideos import REFS, block
@@ -30,6 +30,16 @@ import worker as W                                                       # noqa:
 RECIPES = Path(__file__).resolve().parent.parent / "worker" / "recipes"
 REPO = "o/r"
 TEST = "web/e2e/auth.spec.ts › signing in"
+
+
+# steps.tsv as the Android step recorder wrote it on a real emulator run of a sample app's Espresso test (a pixel_6 screen, kept at 720 x 1600).
+ANDROID_STEPS = """logintest-signinandorder-s01-e139a9.png	1	Open Demo	{"act":"other"}
+logintest-signinandorder-s02-e139a9.png	2	Fill Email	{"act":"fill","x":360,"y":373,"box":[49,351,269,42],"field":[42,334,636,79]}
+logintest-signinandorder-s03-e139a9.png	3	Fill Password	{"act":"fill","x":360,"y":452,"box":[49,430,75,42],"field":[42,413,636,79]}
+logintest-signinandorder-s04-e139a9.png	4	Click Sign in	{"act":"click","x":360,"y":561,"clip":[[301,"zz-logintest-signinandorder-s04-e139a9-f1"],[634,"zz-logintest-signinandorder-s04-e139a9-f2"]],"end":952}
+logintest-signinandorder-s05-e139a9.png	5	Check Remind me tomorrow	{"act":"check","x":188,"y":338,"clip":[[300,"zz-logintest-signinandorder-s05-e139a9-f1"],[520,"zz-logintest-signinandorder-s05-e139a9-f2"]],"end":809}
+logintest-signinandorder-s06-e139a9.png	6	Click Order coffee	{"act":"click","x":360,"y":436,"clip":[[305,"zz-logintest-signinandorder-s06-e139a9-f1"],[612,"zz-logintest-signinandorder-s06-e139a9-f2"],[839,"zz-logintest-signinandorder-s06-e139a9-f3"]],"end":1127}
+"""
 
 
 def step_body(status="passed", outcome="pass", steps=(("Navigate /login", 1), ("Fill getByPlaceholder('Email')", 2),
@@ -267,6 +277,35 @@ class Worker(unittest.TestCase):
         self.assertEqual(W.collect_steps(d), {"a-s01-x": {"n": 1, "label": "Click", "motion": {"act": "click", "x": 3, "y": 4}},
                                               "b-s01-x": {"n": 1, "label": "Fill"}})
 
+    def test_an_android_demo_run_is_read_and_kept_like_a_playwright_one(self):
+        """What the Android step recorder wrote in a real run on the emulator (sandbox/android/steps/), read by the worker and the factory."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "steps.tsv").write_text(ANDROID_STEPS)
+        test = "app/src/androidTest/java/com/example/demo/LoginTest.java::signInAndOrder"
+        (tmp / "junit.xml").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="android">\n<testcase file="app/src/androidTest/'
+                                       'java/com/example/demo/LoginTest.java" classname="" name="signInAndOrder"></testcase>\n</testsuite>\n')
+        (tmp / "e2e-shots.jsonl").write_text("".join(json.dumps({"file": f"logintest-signinandorder-s0{n}-e139a9.png", "test": test}) + "\n"
+                                                     for n in range(1, 7)))
+        repo = tmp / "repo"
+        (repo / "app/src/androidTest/java/com/example/demo").mkdir(parents=True)
+        (repo / "app/src/androidTest/java/com/example/demo/LoginTest.java").write_text("package com.example.demo;\n")
+        tests, _ = W.collect_results(tmp, repo)
+        self.assertEqual(tests, [{"id": test, "outcome": "pass", "message": ""}])
+        took = W.collect_shot_tests(tmp, repo, {test})
+        got = W.collect_steps(tmp)
+        self.assertEqual([(v["n"], v["label"]) for v in got.values()],
+                         [(1, "Open Demo"), (2, "Fill Email"), (3, "Fill Password"), (4, "Click Sign in"), (5, "Check Remind me tomorrow"),
+                          (6, "Click Order coffee")])
+        self.assertEqual(set(took), set(got))
+        for name, st in got.items():                           # every motion the recorder wrote passes the factory's check unchanged
+            self.assertEqual(jobs.clean_step(st), st, name)
+        self.assertEqual(got["logintest-signinandorder-s02-e139a9"]["motion"],
+                         {"act": "fill", "x": 360, "y": 373, "box": [49, 351, 269, 42], "field": [42, 334, 636, 79]})
+        self.assertEqual(len(got["logintest-signinandorder-s06-e139a9"]["motion"]["clip"]), 3)
+        self.assertEqual(jobs.clean_test_id(test), test)
+        self.assertEqual(videos.step_title("Check Remind me tomorrow"), "Check Remind me tomorrow")
+
     def test_the_factory_keeps_only_a_well_formed_motion(self):
         self.assertEqual(jobs.clean_motion({"act": "fill", "box": [1, 2, 30, 10], "x": 5, "extra": "<b>"}), {"act": "fill", "box": [1, 2, 30, 10]})
         self.assertEqual(jobs.clean_motion({"act": "click", "x": 5, "y": True}), {"act": "click"})
@@ -391,6 +430,7 @@ class Video(Base):
         self.assertEqual({k: shots[0].get(k) for k in ("before", "act", "x")}, {"before": "s02-before.png", "act": "other", "x": None})
                                                                   # the first step: a still (its own picture before it)
         w, h = videos.png_size(png())
+        self.assertEqual(shots[0]["size"], [w, h])                # but its size, so a phone's portrait screen gets its own layout
         self.assertEqual({k: shots[1].get(k) for k in ("before", "size", "act", "x", "y")},
                          {"before": "s03-before.png", "size": [w, h], "act": "click", "x": 10, "y": 12})
         self.assertEqual(run.seen["img"], ["s02-before.png", "s02.png", "s03-before.png", "s03.png"])
@@ -488,6 +528,26 @@ class Proposal(unittest.TestCase):
             self.assertIsNone(F.parse_proposal(block(tickets=[], demo=demo), REFS, None, ok)[1], demo)
         self.assertIsNone(F.parse_proposal(block(demo=["o/r:web/e2e/auth.spec.ts"]), REFS)[1])          # nothing accepts a demo
         self.assertNotIn("demo", F.parse_proposal(block(), REFS)[1])
+
+    def test_an_android_instrumented_test_can_be_demoed_and_a_unit_test_cannot(self):
+        from unittest import mock
+        from factory import main, testfind
+        for path in ("app/src/androidTest/java/com/example/SignInTest.kt", "src/androidTest/java/a/B.java",
+                     "feature/home/src/androidTestDebug/kotlin/com/x/HomeTest.kt", "web/e2e/auth.spec.ts"):
+            with mock.patch.object(main.codecopy, "resolve", return_value=Path("/x")):
+                self.assertTrue(main.demo_ok(None, f"o/r:{path}", ["o/r"]), path)
+        for path in ("app/src/test/java/com/example/SignInTest.kt", "app/src/main/java/com/example/Main.kt",
+                     "app/src/androidTest/res/layout/a.xml", "app/src/androidTest/java/a/$B.kt"):
+            with mock.patch.object(main.codecopy, "resolve", return_value=Path("/x")):
+                self.assertFalse(main.demo_ok(None, f"o/r:{path}", ["o/r"]), path)
+        with mock.patch.object(main.codecopy, "resolve", return_value=None):           # not in the code copy
+            self.assertFalse(main.demo_ok(None, "o/r:app/src/androidTest/java/a/B.kt", ["o/r"]))
+        self.assertFalse(main.demo_ok(None, "o/x:app/src/androidTest/java/a/B.kt", ["o/r"]))   # not a repo that can demo
+        self.assertEqual(testfind.ANDROID_FILE.search("app/src/androidTest/java/a/SignInTest.kt").group(1), "SignInTest")
+        prompt = F.build_prompt("s", [], videos=True, code="o/r at /work/code/o/r", demo=["o/r"])
+        self.assertIn("src/androidTest", prompt)
+        self.assertIn("Playwright or Android instrumented test", prompt)
+        self.assertIn("Android", videos.reasons(VideosCfg())["demo_no_steps"])
 
     def test_the_prompt_offers_demos_only_with_videos_code_and_a_repo(self):
         self.assertIn("DEMO.", F.build_prompt("s", [], videos=True, code="o/r at /work/code/o/r", demo=["o/r"]))
