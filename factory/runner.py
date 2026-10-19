@@ -25,6 +25,7 @@ from .config import Config, HarnessCfg, Project, Route, RunnerCfg, default_harne
 from . import designfiles, issueimages, lockfiles, origin, pool, screens, tracker, verify, waves
 from . import mockups as mockups_mod
 from . import reviewnotes
+from . import skills as skills_mod
 from .render import render as preview_render
 from .roles import (CI_FIX_PROMPT, REVIEW_FIX_PROMPT, VERIFY_FIX_PROMPT, CONFLICTS_PROMPT, SCREEN_FIX_PROMPT, IMPLEMENTER_PROMPT, OPERATOR_INTRO, QUESTIONS_RULES, ROLE_PROMPTS, STAGE_TO_ROLE,
                     agent_key, common_for, design_files_rules, operator_prompt, SUMMARY_RULES, stage_rules)
@@ -300,7 +301,13 @@ def _repo_attr(t: dict) -> str:
     return f' repo="{_neutral(t["repo"])}"' if t.get("repo") else ""
 
 
-def build_prompt(title: str, body: str, project: Project, issue_repo: str, role: str | None = None,
+def build_prompt(*a, **k) -> str:
+    """The whole prompt as one text (/task/prompt.txt): the rules, a blank line, then the context and the ticket."""
+    system, user = build_prompt_parts(*a, **k)
+    return system + "\n\n" + user
+
+
+def build_prompt_parts(title: str, body: str, project: Project, issue_repo: str, role: str | None = None,
                  prior: dict | None = None, comments: list | None = None, failures: str | None = None,
                  ticket: tuple | None = None, design_files: bool = False, design_dir: str = designfiles.DEFAULT_DIR,
                  conflicts: dict | None = None, answers: str = "", backlog: list | None = None, operator: str = "",
@@ -308,8 +315,12 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                  review: dict | None = None, attachments: list | None = None,
                  design_imports: list | None = None, conversation: list | None = None, stages: tuple = (), released: str = "", follow: str = "",
                  missed_images: int = 0, judge: str = "", history: list | None = None, notes: bool = False,
-                 milestones: list | None = None, split_at: tuple | None = None, findings: str = "") -> str:
-    """judge: the open questions put to the second-opinion role (judges.agent_brief); history: a person's earlier answers in the repository.
+                 milestones: list | None = None, split_at: tuple | None = None, findings: str = "",
+                 skills: list | None = None) -> tuple[str, str]:
+    """(system, user): the trusted part (operator text, workspace, role, rules) and the part that carries untrusted text (context
+    and ticket), so a harness can give them as the system prompt and the message. skills: the run's skills (skills.for_run), listed
+    after the rules.
+    judge: the open questions put to the second-opinion role (judges.agent_brief); history: a person's earlier answers in the repository.
     conversation: (author, text) turns of the ticket chat (chat.prompt_turns), untrusted data; stages: the names the chat may propose.
     missed_images: how many pictures in the GitHub issue could not be copied in (a fixed line says so).
     notes: the ticket carries the meeting notes label (split.notes_label), so the analyst always considers a split.
@@ -354,6 +365,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
         task += REVIEW_FIX_PROMPT
     if conflicts and not role:
         task += CONFLICTS_PROMPT
+    task += skills_mod.prompt_index(skills or [])
     ctx = ""
     if released and not role:
         ctx += "<published_dependencies>\n" + _neutral(released[:4000]) + "\n</published_dependencies>\n\n"
@@ -411,7 +423,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                     + "".join(f'{i}. {_neutral(ms["name"][:130])} (made by {"you" if ms.get("by") == "pm" else "a person"})\n'
                               for i, ms in enumerate(milestones, 1))
                     + ("(none yet)\n" if not milestones else "") + "</milestones>\n")
-        return head + task + "\n\n" + ctx
+        return head + task, ctx
     if review and role == "designer":
         ctx += reviewnotes.prompt_context(review, _neutral)
     if attachments or missed_images:
@@ -436,7 +448,7 @@ def build_prompt(title: str, body: str, project: Project, issue_repo: str, role:
                 + "</conversation>\n\n")
     if operator.strip():             # trusted config, so not neutralised: it comes before every wrapper that holds untrusted text
         head = f"<operator_instructions>\n{OPERATOR_INTRO}\n{operator.strip()}\n</operator_instructions>\n\n" + head
-    return (head + task + "\n\n" + ctx +
+    return (head + task, ctx +
             f"<issue>\n<title>{_neutral(title[:300])}</title>\n<body>\n{_neutral(body[:20000])}\n</body>\n</issue>\n")
 
 
@@ -550,7 +562,7 @@ def run_chat(cfg: Config, repo: str, issue: dict, route: Route, comments: list, 
     sandbox as a role run (no network, model access only through the proxy). Anything it writes is thrown away with the
     workspace; only its text comes back (status "stage")."""
     num = issue["number"]
-    prompt = build_prompt(issue["title"], issue.get("body") or "", project_for(cfg, repo), repo, "chat", prior, comments, None, (repo, num),
+    prompt = build_prompt_parts(issue["title"], issue.get("body") or "", project_for(cfg, repo), repo, "chat", prior, comments, None, (repo, num),
                           answers=answers, operator=operator_prompt(cfg.prompts, "chat"), conversation=conversation,
                           stages=tuple(r.name for r in cfg.roles))
     return _quick_run(cfg, route, f"chat-{num}", prompt, cfg.chat.max_turns, cfg.chat.timeout_seconds, sink)
@@ -584,9 +596,19 @@ def run_evaluation(cfg: Config, route: Route, prompt: str, sink: dict | None = N
     return _quick_run(cfg, route, "evaluate", prompt, ev.max_turns, ev.timeout_seconds, sink)
 
 
-def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: int, timeout: int, sink: dict | None,
+def write_prompt(task: Path, prompt: str | tuple) -> None:
+    """The prompt for the sandbox: whole in prompt.txt, and split into system.txt (the trusted rules) and user.txt (the context and
+    ticket) for a harness that takes a system prompt. A plain text has no trusted part of its own: all of it is the message."""
+    system, user = prompt if isinstance(prompt, tuple) else ("", prompt)
+    (task / "prompt.txt").write_text(system + "\n\n" + user if system else user)
+    (task / "system.txt").write_text(system)
+    (task / "user.txt").write_text(user)
+
+
+def _quick_run(cfg: Config, route: Route, label: str, prompt: str | tuple, max_turns: int, timeout: int, sink: dict | None,
                ro_mounts: list | None = None) -> RunResult:
-    """A read-only run with no repository: an empty /work (plus `ro_mounts`, read-only), the prompt, and only the agent's text back."""
+    """A read-only run with no repository: an empty /work (plus `ro_mounts`, read-only), the prompt (a text, or the (system, user)
+    pair of build_prompt_parts), and only the agent's text back."""
     rn = cfg.runner
     harness = harness_for(cfg, route.harness)
     if harness is None or not harness.enabled:
@@ -601,7 +623,7 @@ def _quick_run(cfg: Config, route: Route, label: str, prompt: str, max_turns: in
         made = True
         for sub in ("task", "out", "work"):
             (d / sub).mkdir()
-        (d / "task" / "prompt.txt").write_text(prompt)
+        write_prompt(d / "task", prompt)
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{label}-{secrets.token_hex(3)}"
@@ -776,14 +798,17 @@ def run_task(cfg: Config, gh: GitHub, repo: str, issue: dict, route: Route, role
             if imp.get("png"):
                 (d / "task" / "design" / f"import-{i}.png").write_bytes(imp["png"])
                 imported.append(f"import-{i}.png")
-        (d / "task" / "prompt.txt").write_text(
-            build_prompt(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
+        run_skills = skills_mod.for_run(cfg, agent_key(role, bool(failures or findings), bool(conflicts)), project.name, want_design)
+        skills_mod.write(d / "task", run_skills)
+        write_prompt(d / "task",
+            build_prompt_parts(issue["title"], issue.get("body") or "", project, repo, role, prior, comments, failures,
                          (repo, num), want_design, design_dir, conflicts, answers, backlog, operator, shown, built_names,
                          screen_retry["text"] if screen_retry else "", verify_retry["text"] if verify_retry else "", review, attached, imported,
                          conversation, released=released, follow=follow, missed_images=missed_images, judge=judge, history=history,
                          notes=role == "analyst" and cfg.split.notes_label in {lb.get("name") for lb in issue.get("labels") or [] if isinstance(lb, dict)},
                          milestones=milestones, findings=findings,
-                         split_at=(cfg.split.architect_min_areas, cfg.split.architect_min_items) if role == "architect" and cfg.split.architect else None))
+                         split_at=(cfg.split.architect_min_areas, cfg.split.architect_min_items) if role == "architect" and cfg.split.architect else None,
+                         skills=run_skills))
         for p in (d / "work", d / "out"):
             subprocess.run(["chmod", "-R", "a+rwX", str(p)], check=True)
         name = f"factory-{num}-{stamp}"
