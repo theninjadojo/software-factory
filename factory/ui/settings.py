@@ -378,9 +378,10 @@ SECTIONS: dict[str, tuple[str, list[Field]]] = {
         Field("videos.elevenlabs_voice_id", "ElevenLabs voice id", "text",
               "8 to 40 letters and digits, from your ElevenLabs voice library. Used unless a ticket names another.", group="Voice"),
         Field("videos.elevenlabs_model", "ElevenLabs model", "text", "For example eleven_multilingual_v2.", group="Voice", adv=True),
-        Field("videos.music", "Background music", "select",
+        Field("videos.music", "Default background music", "select",
               "A quiet instrumental track under the voice, made for each video by ElevenLabs Music (needs the ElevenLabs key, whichever "
-              "voice speaks). Calm, bright or focused. If it cannot be made, the video is made without it.",
+              "voice speaks, with Music allowed for it). Calm, bright or focused. A video can choose another when it is made. If the "
+              "track cannot be made, the video is made without it and says why.",
               choices=("off", "calm", "bright", "focused"), group="Voice"),
         Field("videos.max_per_day", "Videos per day", "int", "Videos started in any 24 hours, Make again included.", lo=1, hi=1000, group="Limits"),
         Field("videos.max_seconds", "Longest video (seconds)", "int", "A longer video is not kept.", lo=10, hi=600, group="Limits"),

@@ -286,12 +286,14 @@ def _open_proposal(db, form) -> dict:
 def make_video(h, form, csrf: str) -> None:
     """Queue the proposed video once (open -> confirmed); the orchestrator makes it with the review video worker."""
     cfg = h.app.cfg()
-    voice, voice_id = form.get("voice", ""), form.get("voice_id", "").strip()
+    voice, voice_id, music = form.get("voice", ""), form.get("voice_id", "").strip(), form.get("music", "")
     try:
         if not cfg.videos.enabled:
             raise L.Refused("Videos are switched off. Turn them on in Settings, Review videos.")
         if voice == "elevenlabs" and not (voice_id or cfg.videos.elevenlabs_voice_id):
             raise L.Refused("Give an ElevenLabs voice id, or set one in Settings, Review videos.")
+        if not videos.music_ok(music):
+            raise L.Refused("That is not a music choice the factory knows (off, calm, bright or focused).")
         db = sqlite3.connect(cfg.db_path, timeout=10)
         try:
             p = _open_proposal(db, form)
@@ -299,7 +301,8 @@ def make_video(h, form, csrf: str) -> None:
                 raise L.Refused("That proposal is no longer open.")
             try:
                 vid = videos.queue_brief(db, p["title"], p["brief"], [tuple(x) for x in p["tickets"]], time.time(), voice, voice_id,
-                                         p.get("files") or [], p.get("demo") or [], form.get("show_code") == "1")
+                                         p.get("files") or [], p.get("demo") or [], form.get("show_code") == "1",
+                                         music=music)
                 F.link_video(db, p["id"], vid)
             except ValueError:
                 F.set_proposal_state(db, p["id"], "confirmed", "open")          # nothing was queued: let it be tried again

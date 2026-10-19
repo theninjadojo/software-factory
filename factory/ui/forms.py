@@ -760,7 +760,7 @@ def video_setup_card(cfg, image: dict, key: dict, csrf: str) -> str:
     test = (f'<form method="post" action="/credentials/test" class="inline">{csrf_field(csrf)}<input type="hidden" name="name" value="elevenlabs">'
             f'<input type="hidden" name="back" value="videos"><button class="secondary">Test key</button></form>' if key.get("set") else "")
     key_html = (f'<section class="card" aria-labelledby="ve-h"><h3 id="ve-h">ElevenLabs key {kstate}</h3>'
-                '<p class="muted">Only for ElevenLabs voices. Stored in a private file on this machine; it is never shown again.</p>'
+                '<p class="muted">For ElevenLabs voices and background music. Stored in a private file on this machine; it is never shown again.</p>'
                 + (f'<form method="post" action="/credentials/save" class="field">{csrf_field(csrf)}<input type="hidden" name="name" value="elevenlabs">'
                    f'<input type="hidden" name="back" value="videos"><label for="ve-key">{"Replace the key" if key.get("set") else "API key"}</label>'
                    '<input id="ve-key" type="password" name="value" autocomplete="off" required minlength="8" maxlength="500"> '

@@ -130,14 +130,16 @@ A video whose voice cannot be made is skipped with a note on the ticket. Common 
 
 ## Background music
 
-Set **Background music** on **Settings > Review videos** to calm, bright or focused (it is off by default). Each video then gets its
-own instrumental track from ElevenLabs Music, made to about the video's length. It plays quietly under the whole video, drops further
+Choose **Background music** (off, calm, bright or focused) where you make a video: next to **Voice** on a chat video proposal, and in
+a ticket's **Review video** card. **Default** there follows **Default background music** on **Settings > Review videos** (off unless
+you change it). A video with music gets its own instrumental track from ElevenLabs Music, made to about the video's length. It plays quietly under the whole video, drops further
 while the voice speaks, fades in at the start and out at the end, and loops if the video runs longer than the track.
 
-- It needs the ElevenLabs key, whichever voice speaks (Piper narration with ElevenLabs music works).
+- It needs the ElevenLabs key, whichever voice speaks (Piper narration with ElevenLabs music works). A restricted key must have
+  **Music** allowed (ElevenLabs, Developers, API keys); a key that can speak but not make music gives videos without music.
 - What leaves the machine is a fixed prompt for the chosen mood and a length; never text from the ticket or the code.
-- If the track cannot be made (a refused key, a used-up quota, no network), the video is made without music. Music never stops a
-  video.
+- If the track cannot be made (a refused key, a used-up quota, no network), the video is made without music and says why on the
+  Videos page, under the video and in the chat. Music never stops a video.
 - The track is checked to be an MP3 of at most 20 MB before the sealed container plays it.
 
 ## How a video is made

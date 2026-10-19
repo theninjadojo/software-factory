@@ -68,6 +68,16 @@ def mp3_ok(data) -> bool:
             and (data[:3] == b"ID3" or (data[0] == 0xFF and data[1] & 0xE0 == 0xE0)))
 
 
+def _missing_permission(e: urllib.error.HTTPError) -> bool:
+    """True when ElevenLabs refused because the key lacks a permission (a restricted key), not because the key is wrong. Only the
+    status field of its answer is read."""
+    try:
+        detail = json.loads(e.read(4096) or b"{}").get("detail")
+    except (OSError, ValueError, AttributeError):
+        return False
+    return isinstance(detail, dict) and detail.get("status") == "missing_permissions"
+
+
 def music(key: str, mood: str, seconds: float, post=_post_mp3, timeout: int = 180) -> bytes:
     """One instrumental background track (MP3) in `mood` (a key of MOODS), about `seconds` long (5 to 300; the video loops it)."""
     if not key:
@@ -79,6 +89,8 @@ def music(key: str, mood: str, seconds: float, post=_post_mp3, timeout: int = 18
         data = post(f"{API}/v1/music?output_format=mp3_44100_128", key,
                     {"prompt": MOODS[mood], "music_length_ms": ms, "force_instrumental": True}, timeout)
     except urllib.error.HTTPError as e:
+        if e.code == 401 and _missing_permission(e):
+            raise VoiceError("the ElevenLabs key may not make music; turn on Music for this key in ElevenLabs (Developers, API keys)") from None
         raise VoiceError({401: "ElevenLabs refused the key", 429: "ElevenLabs rate limit or quota reached"}.get(
             e.code, f"ElevenLabs answered {e.code}")) from None
     except (OSError, ValueError):

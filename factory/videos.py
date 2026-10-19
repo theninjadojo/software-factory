@@ -108,6 +108,7 @@ def ensure_tables(db: sqlite3.Connection) -> None:
         updated REAL NOT NULL, updated_by TEXT NOT NULL DEFAULT '', PRIMARY KEY (repo, issue))""")
     _column(db, "review_video_tickets", "voice", "TEXT NOT NULL DEFAULT ''")          # '' = the config's voice
     _column(db, "review_video_tickets", "voice_id", "TEXT NOT NULL DEFAULT ''")       # an ElevenLabs voice id; '' = the config's
+    _column(db, "review_video_tickets", "music", "TEXT NOT NULL DEFAULT ''")          # off or a mood; '' = the config's
     db.execute("""CREATE TABLE IF NOT EXISTS review_videos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         issue_repo TEXT NOT NULL, issue_num INTEGER NOT NULL, pr_repo TEXT NOT NULL, pr_number INTEGER NOT NULL,
@@ -127,6 +128,9 @@ def ensure_tables(db: sqlite3.Connection) -> None:
     _column(db, "review_videos", "sources", "TEXT NOT NULL DEFAULT '[]'")             # brief: JSON [[repo, issue, title], ...]
     _column(db, "review_videos", "ask_voice", "TEXT NOT NULL DEFAULT ''")             # brief: the voice chosen when confirmed
     _column(db, "review_videos", "ask_voice_id", "TEXT NOT NULL DEFAULT ''")
+    _column(db, "review_videos", "ask_music", "TEXT NOT NULL DEFAULT ''")             # brief: the music chosen when confirmed
+    _column(db, "review_videos", "music", "TEXT NOT NULL DEFAULT ''")                 # the mood under it, as made; '' = none
+    _column(db, "review_videos", "music_note", "TEXT NOT NULL DEFAULT ''")            # why it has none though music was asked for
     _column(db, "review_videos", "files", "TEXT NOT NULL DEFAULT '[]'")               # brief: JSON ["owner/repo:path", ...] to explain
     _column(db, "review_videos", "demo", "TEXT NOT NULL DEFAULT '[]'")                # brief: JSON ["owner/repo:test/file.spec.ts", ...] to run
     _column(db, "review_videos", "demo_jobs", "TEXT NOT NULL DEFAULT ''")             # brief: JSON {repo: worker job id (0: none)} once queued
@@ -161,6 +165,24 @@ def ticket_voice(db, repo: str, issue: int) -> tuple[str, str]:
     return (row[0] or "", row[1] or "") if row else ("", "")
 
 
+def ticket_music(db, repo: str, issue: int) -> str:
+    """The background music a ticket chose for its videos (off or a mood); '' means the config's."""
+    try:
+        row = db.execute("SELECT music FROM review_video_tickets WHERE repo=? AND issue=?", (repo, int(issue))).fetchone()
+    except sqlite3.OperationalError:
+        return ""
+    return (row[0] or "") if row else ""
+
+
+def music_ok(music: str) -> bool:
+    return music in ("", "off", *voices.MOODS)
+
+
+def music_for(vc, chosen: str) -> str:
+    """The music a video is made with: its own choice over the config's; off or a mood."""
+    return chosen if chosen in ("off", *voices.MOODS) else vc.music
+
+
 def voice_for(vc, chosen: tuple[str, str]) -> tuple[str, str]:
     """The engine and voice id a video is spoken with: the ticket's choice over the config's."""
     engine = chosen[0] if chosen[0] in voices.ENGINES else vc.voice
@@ -188,16 +210,19 @@ def queue(db, issue_repo: str, issue_num: int, pr_repo: str, pr_number: int, now
     return cur.lastrowid
 
 
-def set_enabled(db, repo: str, issue: int, on: bool, who: str, now: float, voice: str = "", voice_id: str = "") -> int:
-    """Save the switch and the voice. Turned on, every open build PR of the ticket without a video gets one queued. Returns how
-    many were. `voice` is '' (the config's), piper or elevenlabs; `voice_id` '' or an ElevenLabs voice id (checked here)."""
+def set_enabled(db, repo: str, issue: int, on: bool, who: str, now: float, voice: str = "", voice_id: str = "", music: str = "") -> int:
+    """Save the switch, the voice and the music. Turned on, every open build PR of the ticket without a video gets one queued.
+    Returns how many were. `voice` is '' (the config's), piper or elevenlabs; `voice_id` '' or an ElevenLabs voice id; `music` ''
+    (the config's), off or a mood (each checked here)."""
     if voice not in ("", *voices.ENGINES) or voice_id and not voices.VOICE_ID.fullmatch(voice_id):
         raise ValueError("not a voice")
+    if not music_ok(music):
+        raise ValueError("not a music choice")
     ensure_tables(db)
-    db.execute("INSERT INTO review_video_tickets (repo, issue, enabled, updated, updated_by, voice, voice_id) VALUES (?,?,?,?,?,?,?) "
+    db.execute("INSERT INTO review_video_tickets (repo, issue, enabled, updated, updated_by, voice, voice_id, music) VALUES (?,?,?,?,?,?,?,?) "
                "ON CONFLICT(repo, issue) DO UPDATE SET enabled=excluded.enabled, updated=excluded.updated, updated_by=excluded.updated_by, "
-               "voice=excluded.voice, voice_id=excluded.voice_id",
-               (repo, int(issue), int(bool(on)), now, who, voice, voice_id))
+               "voice=excluded.voice, voice_id=excluded.voice_id, music=excluded.music",
+               (repo, int(issue), int(bool(on)), now, who, voice, voice_id, music))
     db.commit()
     if not on:
         return 0
@@ -659,17 +684,17 @@ def estimate_seconds(scenes: list[dict]) -> float:
     return sum(max(3.0, len((s.get("say") or "").split()) / 2.2 + 1.5) for s in scenes) + 5
 
 
-def background(vc, scenes: list[dict], post=None) -> dict[str, bytes]:
-    """{"music.mp3": MP3} when videos.music names a mood and ElevenLabs makes the track; {} otherwise. Never stops the video: music
-    is extra, so a failure is logged and the video is made without it."""
-    if vc.music == "off":
-        return {}
+def background(vc, scenes: list[dict], mood: str, post=None) -> tuple[dict[str, bytes], str]:
+    """({"music.mp3": MP3}, "") when `mood` names one and ElevenLabs makes the track; ({}, why not) when it does not; ({}, "") for
+    off. Never stops the video: music is extra, so a failure is logged and noted, and the video is made without it."""
+    if mood not in voices.MOODS:
+        return {}, ""
     try:
         key = voices.read_key(vc.elevenlabs_key_file)
-        return {"music.mp3": voices.music(key, vc.music, min(estimate_seconds(scenes), vc.max_seconds), **({"post": post} if post else {}))}
+        return {"music.mp3": voices.music(key, mood, min(estimate_seconds(scenes), vc.max_seconds), **({"post": post} if post else {}))}, ""
     except voices.VoiceError as e:
         log.warning("videos: no background music: %s", e)
-        return {}
+        return {}, str(e)
 
 
 def speech(vc, engine: str, voice_id: str, scenes: list[dict], post=None) -> dict[str, bytes]:
@@ -738,16 +763,20 @@ def make(cfg, gh, db, row: dict, run=subprocess.run, post=None) -> dict:
     scenes, narration = script(row["pr_number"], pr.get("title") or "", files, sorted(shots), notes(db, row["pr_repo"], row["pr_number"]))
     engine, voice_id = voice_for(vc, ticket_voice(db, row["issue_repo"], row["issue_num"]))
     images = {f"s{i:02d}.png": shots[s["screen"]] for i, s in enumerate(scenes, 1) if s["kind"] == "shot"}
-    done = _render(cfg, row, scenes, images, engine, voice_id, run, post)
+    done = _render(cfg, row, scenes, images, engine, voice_id, run, post, mood=music_for(vc, ticket_music(db, row["issue_repo"], row["issue_num"])))
     return {**done, "head_sha": str((pr.get("head") or {}).get("sha") or "")[:64], "pr_title": speakable(pr.get("title"), 120),
             "narration": narration}
 
 
-def _render(cfg, row: dict, scenes: list[dict], images: dict[str, bytes], engine: str, voice_id: str, run, post, music_post=None) -> dict:
-    """Speak, compose and check one video, and store its file. The finished fields; raises Skip with a reason."""
+def _render(cfg, row: dict, scenes: list[dict], images: dict[str, bytes], engine: str, voice_id: str, run, post, music_post=None,
+            mood: str | None = None) -> dict:
+    """Speak, compose and check one video, and store its file. `mood` is the music (off or a mood; None: the config's). The finished
+    fields; raises Skip with a reason."""
     vc = cfg.videos
+    mood = vc.music if mood is None else mood
     audio = speech(vc, engine, voice_id, scenes, post)
-    audio.update(bed := background(vc, scenes, music_post))
+    bed, why = background(vc, scenes, mood, music_post)
+    audio.update(bed)
     work, mp4, tim = _compose(cfg, spec(vc, scenes, "files" if engine == "elevenlabs" else "piper", bool(bed)), images, audio, run)
     try:
         if mp4.is_file() and not mp4.is_symlink() and mp4.stat().st_size > vc.max_mb * 1024 * 1024:
@@ -771,7 +800,7 @@ def _render(cfg, row: dict, scenes: list[dict], images: dict[str, bytes], engine
         part.chmod(0o600)
         part.replace(dest)
         return {"mode": "ui" if images else "diff", "seconds": seconds, "bytes": dest.stat().st_size, "transcript": json.dumps(lines),
-                "voice": engine}
+                "voice": engine, "music": mood if bed else "", "music_note": why}
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -819,9 +848,9 @@ def work_one(cfg, gh, db, row: dict, now_fn, run=subprocess.run, post=None, writ
         log.exception("videos: making the video of %s#%s failed", row["pr_repo"], row["pr_number"])
         return _skip(cfg, gh, db, row, "tool_failed", now_fn())
     db.execute("UPDATE review_videos SET status='ready', reason='', finished=?, checked=?, head_sha=?, pr_title=?, mode=?, seconds=?, bytes=?, "
-               "transcript=?, narration=?, voice=? WHERE id=?",
+               "transcript=?, narration=?, voice=?, music=?, music_note=? WHERE id=?",
                (now_fn(), now_fn(), done["head_sha"], done["pr_title"], done["mode"], done["seconds"], done["bytes"], done["transcript"],
-                done["narration"], done["voice"], row["id"]))
+                done["narration"], done["voice"], done.get("music", ""), done.get("music_note", ""), row["id"]))
     db.commit()
     row = get(db, row["id"])
     _say(cfg, gh, row["pr_repo"], row["pr_number"], links(cfg, row))
@@ -885,20 +914,22 @@ CODE_SCENES = (
 
 
 def queue_brief(db, title: str, brief: str, sources: list, now: float, voice: str = "", voice_id: str = "", files: list = (),
-                demo: list = (), show_code: bool = False) -> int:
+                demo: list = (), show_code: bool = False, music: str = "") -> int:
     """Queue a video a person confirmed in the factory chat. `sources` is [(repo, issue, title)] of known tickets (the caller
     checked them), `demo` the Playwright test files ('owner/repo:path') to run for step screenshots, `show_code` whether the person
     asked to see code (else the video shows only screens); every text is cleaned here. The new row's id."""
     if voice not in ("", *voices.ENGINES) or voice_id and not voices.VOICE_ID.fullmatch(voice_id):
         raise ValueError("not a voice")
+    if not music_ok(music):
+        raise ValueError("not a music choice")
     ensure_tables(db)
     src = [[str(r), int(n), clean(t, TITLE_CHARS)] for r, n, t in list(sources)[:MAX_SOURCES]]
     fs = [str(f)[:400] for f in list(files)[:MAX_SOURCES] if isinstance(f, str)]
     dm = [d for d in list(demo)[:MAX_DEMO] if demo_ref(d)]
     cur = db.execute("INSERT INTO review_videos (issue_repo, issue_num, pr_repo, pr_number, created, kind, title, brief, sources, "
-                     "ask_voice, ask_voice_id, files, demo, show_code) VALUES ('',0,'',0,?,'brief',?,?,?,?,?,?,?,?)",
+                     "ask_voice, ask_voice_id, files, demo, show_code, ask_music) VALUES ('',0,'',0,?,'brief',?,?,?,?,?,?,?,?,?)",
                      (now, clean(title, TITLE_CHARS) or "Factory video", clean(brief, BRIEF_CHARS), json.dumps(src), voice, voice_id, json.dumps(fs),
-                      json.dumps(dm), int(bool(show_code))))
+                      json.dumps(dm), int(bool(show_code)), music))
     db.commit()
     return cur.lastrowid
 
@@ -912,9 +943,9 @@ def again_brief(db, vid: int, now: float) -> int | None:
             (row["title"], row["brief"], row["sources"])).fetchone():
         return None
     cur = db.execute("INSERT INTO review_videos (issue_repo, issue_num, pr_repo, pr_number, created, kind, title, brief, sources, "
-                     "ask_voice, ask_voice_id, files, demo, show_code) VALUES ('',0,'',0,?,'brief',?,?,?,?,?,?,?,?)",
+                     "ask_voice, ask_voice_id, files, demo, show_code, ask_music) VALUES ('',0,'',0,?,'brief',?,?,?,?,?,?,?,?,?)",
                      (now, row["title"], row["brief"], row["sources"], row["ask_voice"], row["ask_voice_id"], row.get("files") or "[]",
-                      row.get("demo") or "[]", int(row.get("show_code") or 0)))
+                      row.get("demo") or "[]", int(row.get("show_code") or 0), row.get("ask_music") or ""))
     db.commit()
     return cur.lastrowid
 
@@ -1262,7 +1293,8 @@ def make_brief(cfg, gh, db, row: dict, write=None, run=subprocess.run, post=None
             s["chain"] = images.get(f"s{i - 1:02d}.png") == got[1]       # it carries on from the scene before: no fade, same pointer
             if got[0]["act"] in ("click", "fill", "type", "check", "select"):    # what it acted on, named on the screen: "Sign in"
                 s["callout"] = clean(mat["demo"]["steps"][s["screen"]][1].partition(" ")[2], 60)
-    return {**_render(cfg, row, scenes, images, engine, voice_id, run, post), "narration": narration}
+    return {**_render(cfg, row, scenes, images, engine, voice_id, run, post, mood=music_for(cfg.videos, row.get("ask_music") or "")),
+            "narration": narration}
 
 
 def _brief_note(db, row: dict, text: str) -> None:
@@ -1290,10 +1322,12 @@ def work_brief(cfg, gh, db, row: dict, now_fn, write=None, run=subprocess.run, p
     except Exception:
         log.exception("videos: making the chat video %s failed", row["id"])
         return _skip_brief(cfg, gh, db, row, "tool_failed", now_fn())
-    db.execute("UPDATE review_videos SET status='ready', reason='', finished=?, mode=?, seconds=?, bytes=?, transcript=?, narration=?, voice=? "
-               "WHERE id=?", (now_fn(), done["mode"], done["seconds"], done["bytes"], done["transcript"], done["narration"], done["voice"], row["id"]))
+    db.execute("UPDATE review_videos SET status='ready', reason='', finished=?, mode=?, seconds=?, bytes=?, transcript=?, narration=?, voice=?, "
+               "music=?, music_note=? WHERE id=?", (now_fn(), done["mode"], done["seconds"], done["bytes"], done["transcript"], done["narration"],
+                                                    done["voice"], done.get("music", ""), done.get("music_note", ""), row["id"]))
     db.commit()
-    _brief_note(db, row, f"The video \"{row['title']}\" is ready ({clock(done['seconds'])}).")
+    without = f" It has no background music: {done['music_note']}." if done.get("music_note") else ""
+    _brief_note(db, row, f"The video \"{row['title']}\" is ready ({clock(done['seconds'])}).{without}")
 
 
 # ---- the poll ----
