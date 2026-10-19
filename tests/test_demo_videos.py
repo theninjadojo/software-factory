@@ -255,6 +255,35 @@ class TraceSteps(unittest.TestCase):
         self.assertEqual(json.loads(out.stdout), [["other", [], 50], ["fill", [], 90],
                                                   ["click", [[20, "hover"], [200, "menu half"]], 350]])
 
+    def test_without_the_elements_box_in_the_trace_it_is_found_in_the_picture(self):
+        """Playwright before 1.63 records only the click point: the spotlight then fits the element found around it in the picture."""
+        if not shutil.which("node"):
+            self.skipTest("no node")
+        js = r"""
+const {elementAt} = await import(process.argv[2]);
+const W = 400, H = 300, p = new Uint8ClampedArray(W * H * 4);
+const fill = (x, y, w, h, c) => { for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) p.set([...c, 255], (j * W + i) * 4); };
+fill(0, 0, W, H, [255, 244, 232]);                              // the page
+fill(100, 50, 200, 40, [66, 106, 240]);                         // a filled button with its label in the middle
+for (let i = 170; i < 230; i += 6) fill(i, 64, 2, 12, [255, 255, 255]);       // its letters' strokes
+fill(40, 200, 20, 20, [30, 30, 30]); for (let i = 66; i < 116; i += 6) fill(i, 204, 2, 12, [30, 30, 30]);     // an icon and its words, drawn flat on the page
+const out = {
+  button: elementAt(p, W, H, [200, 70]),                        // on its label: the button, not the letters
+  flat: elementAt(p, W, H, [130, 210]),                         // just past the words: the icon and the words, and the point
+  nothing: elementAt(p, W, H, [300, 200]),                      // empty page
+  outside: elementAt(p, W, H, [500, 10]),
+};
+console.log(JSON.stringify(out));"""
+        out = subprocess.run(["node", "--input-type=module", "-e", js, "-", str(RECIPES / "trace-steps.mjs")], capture_output=True, text=True,
+                             timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        got = json.loads(out.stdout)
+        self.assertEqual(got["button"], [100, 50, 200, 40])
+        x, y, w, h = got["flat"]
+        self.assertTrue(x <= 40 and y <= 200 and x + w >= 136 and y + h >= 220 and w < 100 and h < 40, got["flat"])
+        self.assertIsNone(got["nothing"])
+        self.assertIsNone(got["outside"])
+
     def test_the_recipe_runs_it_only_for_a_demo_run(self):
         text = (RECIPES / "playwright-screens.sh").read_text()
         self.assertIn('if [ "${FACTORY_STEPS:-}" = 1 ]', text)

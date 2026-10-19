@@ -16,7 +16,8 @@
 //               the label is the action and its target, never a typed value; the motion (JSON, may be empty) is what a video animates:
 //               {"act": click | fill | type | press | check | select | other, "x", "y": the pointer (click), "box": [x, y, w, h] where a
 //               typed value appeared (fill, type: the pixels that changed from the step before, inside the field when the trace
-//               says where it is), "field": [x, y, w, h] the element the step acted on (newer Playwright), "key": the key a press
+//               says where it is), "field": [x, y, w, h] the element the step acted on (from the trace in Playwright 1.63 and
+//               later, else found in the picture before the step: elementAt), "key": the key a press
 //               pressed (named keys only, see keyName), "url": the page's path while it is known (after a navigation, until a click,
 //               press, check or select may have left it)}, in the PNG's pixels, and for a step
 //               with a clip "clip": [[ms after the step began, <frame name>], ...] and "end": ms after it began of the step's own frame
@@ -225,6 +226,102 @@ export async function changed(page, a, b, within = null) {
   }, [`data:image/jpeg;base64,${a.toString('base64')}`, `data:image/jpeg;base64,${b.toString('base64')}`, within]);
 }
 
+// [x, y, w, h] of the element at `point` in a picture (RGBA `p`, W x H), for traces that do not say where the element a step acted on
+// is (Playwright before 1.63 records only the click point): the region of the element's own colour that the point is in. Its colour is
+// the commonest one around the point (a label's letters are fewer pixels than the button under them); the region is every pixel of
+// about that colour joined to it, so the letters inside are skipped and its edge or border stops it. When that region runs out to the
+// edge of the area searched (an item drawn flat on the page, a menu row, an outlined button: the colour is the page's), the element is
+// what is drawn on the page there instead: the icon and words around the point, joined across small gaps (inkAt). Null when neither
+// gives something the size of an element.
+export function elementAt(p, W, H, point) {
+  const [x, y] = point.map(Math.round);
+  if (!(x >= 0 && y >= 0 && x < W && y < H)) return null;
+  const R = 8, bin = (o) => ((p[o] >> 4) << 8) | ((p[o + 1] >> 4) << 4) | (p[o + 2] >> 4), count = new Map();
+  for (let j = Math.max(0, y - R); j <= Math.min(H - 1, y + R); j++) {
+    for (let i = Math.max(0, x - R); i <= Math.min(W - 1, x + R); i++) { const k = bin((j * W + i) * 4); count.set(k, (count.get(k) || 0) + 1); }
+  }
+  const mode = [...count].reduce((m, e) => (e[1] > m[1] ? e : m))[0];
+  const seed = [0, 0, 0], todo = [];
+  let n = 0;
+  for (let j = Math.max(0, y - R); j <= Math.min(H - 1, y + R); j++) {
+    for (let i = Math.max(0, x - R); i <= Math.min(W - 1, x + R); i++) {
+      const o = (j * W + i) * 4;
+      if (bin(o) === mode) { seed[0] += p[o]; seed[1] += p[o + 1]; seed[2] += p[o + 2]; n++; todo.push(j * W + i); }
+    }
+  }
+  seed.forEach((v, c) => { seed[c] = v / n; });
+  const X0 = Math.max(0, x - Math.round(W * 0.45)), X1 = Math.min(W - 1, x + Math.round(W * 0.45));
+  const Y0 = Math.max(0, y - Math.round(H * 0.2)), Y1 = Math.min(H - 1, y + Math.round(H * 0.2));
+  const like = (k) => { const o = k * 4; return Math.abs(p[o] - seed[0]) + Math.abs(p[o + 1] - seed[1]) + Math.abs(p[o + 2] - seed[2]) <= 48; };
+  const seen = new Uint8Array(W * H);
+  let x0 = x, y0 = y, x1 = x, y1 = y;
+  for (const k of todo) seen[k] = 1;
+  while (todo.length) {
+    const k = todo.pop(), i = k % W, j = (k - i) / W;
+    if (i <= X0 || i >= X1 || j <= Y0 || j >= Y1) return inkAt(p, W, H, [x, y], seed, [X0, Y0, X1, Y1]);    // it ran out: the page's colour
+    x0 = Math.min(x0, i); y0 = Math.min(y0, j); x1 = Math.max(x1, i); y1 = Math.max(y1, j);
+    for (const m of [k - 1, k + 1, k - W, k + W]) if (!seen[m] && like(m)) { seen[m] = 1; todo.push(m); }
+  }
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  return w < 12 || h < 10 ? null : [x0, y0, w, h];
+
+  // What is drawn on the background `bg` around the point: 4-pixel cells holding any pixel unlike it, grouped across gaps of up to
+  // 16 pixels sideways (between an icon and its words, and the words) and 4 up and down (the lines of one label); the group nearest
+  // the point, within 32 pixels of it (a button's middle may be empty), stretched to take in the point. Null when there is none, or it runs out of the area searched
+  // or is not the size of an element.
+  function inkAt(p, W, H, [x, y], bg, [X0, Y0, X1, Y1]) {
+    const S = 4, CW = Math.floor((X1 - X0 + 1) / S), CH = Math.floor((Y1 - Y0 + 1) / S), ink = new Uint8Array(CW * CH);
+    for (let cy = 0; cy < CH; cy++) {
+      for (let cx = 0; cx < CW; cx++) {
+        for (let j = 0; j < S && !ink[cy * CW + cx]; j++) {
+          for (let i = 0; i < S; i++) {
+            const o = ((Y0 + cy * S + j) * W + X0 + cx * S + i) * 4;
+            if (Math.abs(p[o] - bg[0]) + Math.abs(p[o + 1] - bg[1]) + Math.abs(p[o + 2] - bg[2]) > 96) { ink[cy * CW + cx] = 1; break; }
+          }
+        }
+      }
+    }
+    const px = Math.floor((x - X0) / S), py = Math.floor((y - Y0) / S);
+    let start = -1, best = 1e9;
+    for (let cy = Math.max(0, py - 8); cy <= Math.min(CH - 1, py + 8); cy++) {
+      for (let cx = Math.max(0, px - 8); cx <= Math.min(CW - 1, px + 8); cx++) {
+        const d = Math.hypot(cx - px, cy - py);
+        if (ink[cy * CW + cx] && d < best) { best = d; start = cy * CW + cx; }
+      }
+    }
+    if (start < 0) return null;
+    const seen = new Uint8Array(CW * CH), todo = [start];
+    let a0 = CW, b0 = CH, a1 = -1, b1 = -1;
+    seen[start] = 1;
+    while (todo.length) {
+      const k = todo.pop(), cx = k % CW, cy = (k - cx) / CW;
+      if (cx === 0 || cy === 0 || cx === CW - 1 || cy === CH - 1) return null;
+      a0 = Math.min(a0, cx); b0 = Math.min(b0, cy); a1 = Math.max(a1, cx); b1 = Math.max(b1, cy);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          const nx = cx + dx, ny = cy + dy, n = ny * CW + nx;
+          if (nx >= 0 && ny >= 0 && nx < CW && ny < CH && ink[n] && !seen[n]) { seen[n] = 1; todo.push(n); }
+        }
+      }
+    }
+    const l = Math.min(X0 + a0 * S, x - 6), t = Math.min(Y0 + b0 * S, y - 6);              // the point is on it too
+    const w = Math.max(X0 + (a1 + 1) * S, x + 6) - l, h = Math.max(Y0 + (b1 + 1) * S, y + 6) - t;
+    return w < 12 || h < 10 || w > W * 0.6 || h > H * 0.3 ? null : [l, t, w, h];
+  }
+}
+
+// elementAt on a JPEG, decoded on a canvas in the recipe's browser page.
+export async function element(page, jpeg, point) {
+  return page.evaluate(async ([src, img, point]) => {
+    const i = await new Promise((ok, bad) => { const m = new Image(); m.onload = () => ok(m); m.onerror = bad; m.src = img; });
+    const c = document.createElement('canvas');
+    c.width = i.width; c.height = i.height;
+    const g = c.getContext('2d', {willReadFrequently: true});
+    g.drawImage(i, 0, 0);
+    return new Function(`return (${src})`)()(g.getImageData(0, 0, i.width, i.height).data, i.width, i.height, point);
+  }, [elementAt.toString(), `data:image/jpeg;base64,${jpeg.toString('base64')}`, point]);
+}
+
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 function traces(dir) {
@@ -271,7 +368,10 @@ async function main([dir, out, prefix = '']) {
       await png(s.frame, s.name);
       const typed = s.act === 'fill' || s.act === 'type';
       const box = typed && s.before ? await changed(page, s.before, s.frame, s.field) : null;
-      const m = {act: s.act, ...(s.point ? {x: s.point[0], y: s.point[1]} : {}), ...(box ? {box} : {}), ...(s.field ? {field: s.field} : {}),
+      // where the element is, from the picture before the step when the trace does not say: its spotlight fits it, not the pointer
+      const seed = s.point || (box && [box[0] + box[2] / 2, box[1] + box[3] / 2]);
+      const field = s.field || (s.before && seed ? await element(page, s.before, seed).catch(() => null) : null);
+      const m = {act: s.act, ...(s.point ? {x: s.point[0], y: s.point[1]} : {}), ...(box ? {box} : {}), ...(field ? {field} : {}),
                  ...(s.key ? {key: s.key} : {}), ...(s.url ? {url: s.url} : {})};
       const kept = s.clip.slice(0, Math.max(0, MAX_CLIP_TOTAL - frames));
       if (kept.length) {
