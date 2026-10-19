@@ -95,6 +95,13 @@ const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'};
 const ease = (f, a, b) => interpolate(f, [a, b], [0, 1], {...clamp, easing: Easing.inOut(Easing.cubic)});
 
 // The pointer: an arrow with its tip at (0, 0).
+// A finger on a phone screen: a soft dot that lands on the target and presses, instead of an arrow gliding in.
+const Touch = ({x, y, opacity, press}) => (
+  <div style={{position: 'absolute', left: x - 22, top: y - 22, width: 44, height: 44, borderRadius: '50%', opacity,
+               background: 'rgba(255,255,255,0.55)', border: '2px solid rgba(17,17,17,0.35)', transform: `scale(${press})`,
+               boxShadow: '0 3px 10px rgba(0,0,0,0.35)'}} />
+);
+
 const Pointer = ({x, y, opacity, press}) => (
   <svg width="30" height="30" viewBox="0 0 24 24" style={{position: 'absolute', left: x, top: y, opacity, overflow: 'visible',
        transform: `scale(${press})`, transformOrigin: '0 0', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.45))'}}>
@@ -131,18 +138,23 @@ const Step = ({s, from, keep}) => {
   const clip = (s.clip || []).map((c) => ({...c, from: click + ms(c.at)}));
   const done = typing ? arrive + 4 + reveal : s.clip ? click + ms(s.end) : T ? arrive + 2 : 12;
 
-  // The camera: in on the target as the pointer travels, held through the step, back out once its result has been seen.
-  const Z = T ? (typing ? 1.6 : 1.5) : 1;
+  // The camera: in on the target as the pointer travels, held through the step, back out once its result has been seen. Not on a
+  // phone: the phone already fills the height, and zooming the screen inside a still phone body reads as the screen being wrong.
+  const Z = T && !g.phone ? (typing ? 1.6 : 1.5) : 1;
   const out0 = Math.max(arrive + 8, Math.min(done + 18, s.frames - 26));
   const p = T ? ease(f, 2, arrive + 4) * (1 - ease(f, out0, out0 + 22)) : 0;
-  const z = T ? 1 + (Z - 1) * p : keep ? 1 : interpolate(f, [0, s.frames], [1, 1.04]);
+  const z = T ? 1 + (Z - 1) * p : keep || g.phone ? 1 : interpolate(f, [0, s.frames], [1, 1.04]);
   const o = T || [dw / 2, dh / 2];
   const pan = (lo, hi, want) => Math.max(lo, Math.min(hi, want));
   const tx = pan(-(z - 1) * (dw - o[0]), (z - 1) * o[0], (dw / 2 - o[0]) * p * 0.6);
   const ty = pan(-(z - 1) * (dh - o[1]), (z - 1) * o[1], (dh / 2 - o[1]) * p * 0.6);
 
   let pointer = null;
-  if (start) {
+  if (g.phone && T) {                // a tap: the finger comes down just before the target is touched and lifts after it
+    const opacity = interpolate(f, [arrive - 8, arrive - 2, done + 4, done + 12], [0, 1, 1, 0], clamp);
+    const press = interpolate(f, [arrive - 8, arrive - 2, arrive, arrive + 3, arrive + 7], [1.5, 1, 1, 0.8, 1], clamp);
+    pointer = <Touch x={T[0]} y={T[1]} opacity={opacity} press={press} />;
+  } else if (start && !g.phone) {
     const [ex, ey] = T || start;
     const len = Math.hypot(ex - start[0], ey - start[1]) || 1;
     const c = [(start[0] + ex) / 2 + ((ey - start[1]) / len) * len * 0.18, (start[1] + ey) / 2 - ((ex - start[0]) / len) * len * 0.18];
@@ -203,17 +215,15 @@ const Step = ({s, from, keep}) => {
   );
 };
 
-// A still portrait screen: in the phone, slowly pushing in like the landscape picture does.
+// A still portrait screen: in the phone, held still (a phone's screen never zooms inside its body).
 const PhoneShot = ({s}) => {
-  const f = useCurrentFrame();
   const {width, height} = useVideoConfig();
   const g = frameOf(s, width, height);
-  const zoom = interpolate(f, [0, s.frames], [1, 1.04]);
   return (
     <AbsoluteFill>
       <Phone g={g} />
       <div style={{position: 'absolute', left: g.ox, top: g.oy, width: g.dw, height: g.dh, overflow: 'hidden', borderRadius: 24, background: C.panel}}>
-        <Img src={staticFile(`img/${s.image}`)} style={{width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${zoom})`}} />
+        <Img src={staticFile(`img/${s.image}`)} style={{width: '100%', height: '100%', objectFit: 'contain'}} />
       </div>
     </AbsoluteFill>
   );
