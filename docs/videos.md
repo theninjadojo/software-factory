@@ -54,12 +54,15 @@ and a test that walks through the flow.
    *Running the demo tests on a worker first*). The run records a Playwright trace with each action slowed by 400 ms, and the
    worker keeps the screen after each step of each test, with what the step did ("Click Sign in", "Fill Email"). A typed value
    is never kept as text. The worker also notes where each step acted: the point a click landed on, and the field a value was typed
-   into (the part of the screen that changed).
+   into (the part of the screen that changed). For a click, a key press or a page load it also keeps up to six of the frames
+   taken while the step ran, with their times: a menu opening, a page loading.
 3. The writer gets those steps in order and narrates the ones that tell the flow.
-4. Each step plays out on the real screens: the video starts on the screen before the step, a pointer moves to what the step acted
-   on, then either clicks (a ripple, and the next screen fades in) or types (the value appears in its field letter by letter behind
-   a caret, just as the app showed it: a password stays dots). A test's first step, and a step whose screen size changed, is shown
-   as a still.
+4. Each step plays out on the real screens like a screen recording: the video starts on the screen before the step, the camera
+   pushes in on what the step acts on while a pointer glides there, then it either clicks (a press and a ripple, then the frames
+   the run took play in their own time, or the next screen fades in when there are none) or types (the field is outlined and the
+   value appears in it letter by letter behind a caret, just as the app showed it: a password stays dots). The camera then eases
+   back out to the whole screen. Steps of one test that follow each other cut straight on, with the pointer where the last step
+   left it; anything else fades through black. A test's first step, and a step whose screen size changed, is shown as a still.
 
 The demo run is not shown on the Screens board and does not count as a result in the Tests register. A video waits at most an hour
 for it. A video is never made without the steps it promised: if the tests could not be run (no worker runs that repository's

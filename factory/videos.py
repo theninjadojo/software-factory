@@ -635,7 +635,12 @@ def spec(vc, scenes: list[dict], voice: str) -> dict:
             c["image"] = f"s{i:02d}.png"
             if s.get("motion"):                                  # a demo step: animated from the picture before it (Video.jsx Shot)
                 c["before"], c["size"] = f"s{i:02d}-before.png", list(s["size"])
-                c.update({k: s["motion"][k] for k in ("act", "x", "y", "box") if k in s["motion"]})
+                c.update({k: s["motion"][k] for k in ("act", "x", "y", "box", "field") if k in s["motion"]})
+                if s.get("clip"):                                # frames taken while the step ran, played in its time
+                    c["clip"] = [{"at": ms, "image": f"s{i:02d}-c{k}.png"} for k, ms in enumerate(s["clip"], 1)]
+                    c["end"] = s["motion"]["end"]
+                if s.get("chain"):
+                    c["chain"] = True
         if voice == "files" and c["say"]:
             c["audio"] = f"s{i:02d}.wav"
         out.append(c)
@@ -1038,9 +1043,10 @@ def step_title(label: str) -> str:
 
 def demo_material(db, row: dict) -> dict:
     """The step screenshots of a brief video's finished demo runs: {"tests": [(repo, test id, outcome, [step key])], "shots": {key:
-    PNG}, "titles": {key: title}, "steps": {key: (n, title)}, "motion": {key: (motion, PNG of the step before in the same test)}},
-    at most MAX_DEMO_STEPS steps, each PNG checked again. A step has motion (what it did and where, for the video to animate from the
-    picture before it) only when the worker said and the step before is there, the same size."""
+    PNG}, "titles": {key: title}, "steps": {key: (n, title)}, "motion": {key: (motion, PNG of the step before in the same test,
+    [(ms, PNG)] of the frames taken while it ran)}}, at most MAX_DEMO_STEPS steps, each PNG checked again. A step has motion (what it
+    did and where, for the video to animate from the picture before it) only when the worker said and the step before is there, the
+    same size; its frames only those that are good PNGs of that size too."""
     from . import jobs
     out = {"tests": [], "shots": {}, "titles": {}, "steps": {}, "motion": {}}
     for repo, jid in (demo_jobs(row) or {}).items():
@@ -1057,7 +1063,9 @@ def demo_material(db, row: dict) -> dict:
             out["shots"][key], out["titles"][key], out["steps"][key] = st["png"], f"Step {st['n']} · {title}", (st["n"], title)
             prev = by_test.get(st["test"], [])[-1:]
             if st.get("motion") and prev and png_size(out["shots"][prev[0]]) == png_size(st["png"]):
-                out["motion"][key] = (st["motion"], out["shots"][prev[0]])
+                size = png_size(st["png"])
+                clip = [(ms, p) for ms, p in st.get("clip") or () if render.png_ok(p) and png_size(p) == size]
+                out["motion"][key] = (st["motion"], out["shots"][prev[0]], clip)
             by_test.setdefault(st["test"], []).append(key)
         out["tests"] += [(repo, t, outcome.get(t, ""), keys) for t, keys in by_test.items()]
     return out
@@ -1216,6 +1224,9 @@ def make_brief(cfg, gh, db, row: dict, write=None, run=subprocess.run, post=None
         if s["kind"] == "shot" and (got := mat["demo"]["motion"].get(s["screen"])):
             s["motion"], s["size"] = got[0], png_size(mat["shots"][s["screen"]])
             images[f"s{i:02d}-before.png"] = got[1]
+            s["clip"] = [ms for ms, _ in got[2]]
+            images.update({f"s{i:02d}-c{k}.png": p for k, (_, p) in enumerate(got[2], 1)})
+            s["chain"] = images.get(f"s{i - 1:02d}.png") == got[1]       # it carries on from the scene before: no fade, same pointer
     return {**_render(cfg, row, scenes, images, engine, voice_id, run, post), "narration": narration}
 
 
