@@ -13,6 +13,8 @@
 //                  key: the key a press pressed ("Enter"), url: the page's path when known, callout: the name of what it acted on
 // /in/img/*.png    pictures named by the scenes (shot)
 // /in/audio/*.wav  the spoken text of each scene, when the factory made it (voice "files", e.g. ElevenLabs)
+// /in/audio/music.wav|mp3  a background track when script.json names it (music): played quietly under the whole video, looped,
+//                  dipping further while the voice speaks
 // With voice "piper" this container speaks each scene's `say` itself with the voice baked into the image.
 // Exit codes: 0 made, 2 bad input, 3 longer than max_seconds, 1 anything else.
 import {spawnSync} from 'node:child_process';
@@ -23,6 +25,7 @@ const IN = process.env.VIDEO_IN || '/in';
 const OUT = process.env.VIDEO_OUT || '/out';
 const SITE = '/tmp/site';
 const NAME = /^[a-z0-9][a-z0-9-]{0,40}\.(png|wav)$/;
+const MUSIC = /^music\.(wav|mp3)$/;
 const KINDS = new Set(['title', 'shot', 'code', 'points']);
 const ACTS = new Set(['click', 'fill', 'type', 'press', 'check', 'select', 'other']);
 const KEYS = '(?:Enter|Tab|Escape|Backspace|Delete|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|F[1-9]|F1[0-2])';
@@ -76,6 +79,14 @@ export function check(spec) {
     voice: spec.voice ?? 'piper',
   };
   if (!['piper', 'files', 'none'].includes(out.voice)) throw new Bad('voice must be piper, files or none');
+  if (spec.music !== undefined) {
+    if (typeof spec.music !== 'string' || !MUSIC.test(spec.music)) throw new Bad('music must be music.wav or music.mp3');
+    const p = `${IN}/audio/${spec.music}`;
+    if (!existsSync(p) || lstatSync(p).isSymbolicLink() || !lstatSync(p).isFile() || lstatSync(p).size > 20_000_000) {
+      throw new Bad('music is not a file of at most 20 MB in /in/audio');
+    }
+    out.music = spec.music;
+  }
   if (!Array.isArray(spec.scenes) || spec.scenes.length < 1 || spec.scenes.length > 40) throw new Bad('scenes must be 1 to 40 scenes');
   out.scenes = spec.scenes.map((s, i) => {
     const w = `scene ${i + 1}`;
@@ -183,6 +194,7 @@ async function main() {
     sc.lead = Math.round(lead * spec.fps);
     const secs = Math.max(2.5, talk + 0.8, s.before ? lead + 2.5 : 0, sc.clip ? lead + 2.6 + sc.end / 1000 : 0);  // a clip plays in full
     sc.frames = Math.ceil(secs * spec.fps);
+    sc.talk = Math.round(talk * spec.fps * (sc.audio ? 1 : 0));      // when the voice speaks: the music dips under it
     seconds.push(sc.frames / spec.fps);
     scenes.push(sc);
   }
@@ -191,7 +203,8 @@ async function main() {
     console.error(`the video would be ${total.toFixed(1)}s, longer than ${spec.max_seconds}s`);
     process.exit(3);
   }
-  const inputProps = {scenes, width: spec.width, height: spec.height, fps: spec.fps};
+  if (spec.music) copyFileSync(`${IN}/audio/${spec.music}`, `${SITE}/public/audio/${spec.music}`);
+  const inputProps = {scenes, width: spec.width, height: spec.height, fps: spec.fps, ...(spec.music ? {music: spec.music} : {})};
   const composition = await selectComposition({serveUrl: SITE, id: 'video', inputProps});
   await renderMedia({composition, serveUrl: SITE, codec: 'h264', audioCodec: 'aac', outputLocation: '/tmp/review.mp4', inputProps,
                      concurrency: 2, logLevel: 'warn'});
