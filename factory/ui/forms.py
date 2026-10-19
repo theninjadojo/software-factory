@@ -734,9 +734,9 @@ def harnesses_page(cfg, eff: dict, csrf: str, errors=None, state_dir=None) -> st
     return note + tools_section(state_dir, csrf) + '<div class="cards one">' + "".join(cards) + "</div>"
 
 
-def video_setup_card(cfg, image: dict, key: dict, csrf: str) -> str:
+def video_setup_card(cfg, image: dict, key: dict, csrf: str, no_music: str = "") -> str:
     """Below the Review videos settings: whether the video image is built (with a button that asks the orchestrator to build it) and
-    the ElevenLabs key (saved like on the Credentials page; never shown back)."""
+    the ElevenLabs key (saved like on the Credentials page; never shown back), with why the newest video got no music (`no_music`)."""
     from .. import videoimage
     vc = cfg.videos
     if image.get("building"):
@@ -761,6 +761,7 @@ def video_setup_card(cfg, image: dict, key: dict, csrf: str) -> str:
             f'<input type="hidden" name="back" value="videos"><button class="secondary">Test key</button></form>' if key.get("set") else "")
     key_html = (f'<section class="card" aria-labelledby="ve-h"><h3 id="ve-h">ElevenLabs key {kstate}</h3>'
                 '<p class="muted">For ElevenLabs voices and background music. Stored in a private file on this machine; it is never shown again.</p>'
+                + (f'<p role="status">{badge("No music", "warn")} The newest video was made without music: {esc(no_music)}.</p>' if no_music else "")
                 + (f'<form method="post" action="/credentials/save" class="field">{csrf_field(csrf)}<input type="hidden" name="name" value="elevenlabs">'
                    f'<input type="hidden" name="back" value="videos"><label for="ve-key">{"Replace the key" if key.get("set") else "API key"}</label>'
                    '<input id="ve-key" type="password" name="value" autocomplete="off" required minlength="8" maxlength="500"> '

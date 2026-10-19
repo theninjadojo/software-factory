@@ -8,7 +8,7 @@ import urllib.parse
 from pathlib import Path
 
 from .. import backup as B
-from .. import selfupdate as SU, tools, updates, version, videoimage, workerupdate
+from .. import selfupdate as SU, tools, updates, version, videoimage, videos, workerupdate
 from .. import db as dbm
 from ..config import deep_merge
 from ..router import decide
@@ -121,7 +121,9 @@ def render_settings(h, section: str, csrf: str, submitted=None, tester: str = ""
         db = h.app.ro_db()
         body = forms.auto_tally(*(dbm.auto_tally(db) if db is not None else (0, 0))) + body
     if section == "videos":
-        body += forms.video_setup_card(h.app.cfg(), videoimage.read(h.app.state_dir()), I.secret_status(h.app.cfg(), "elevenlabs"), csrf)
+        db = h.app.ro_db()
+        body += forms.video_setup_card(h.app.cfg(), videoimage.read(h.app.state_dir()), I.secret_status(h.app.cfg(), "elevenlabs"), csrf,
+                                       videos.last_music_note(db) if db is not None else "")
     return body
 
 

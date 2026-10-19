@@ -221,6 +221,10 @@ def check_openrouter(key: str, model: str) -> dict:
     return {"ok": False, "message": f"OpenRouter said HTTP {s}: {_scrub(str(body.get('error', body))[:160], key)}"}
 
 
+MUSIC_NOTE = ("Background music also needs Music turned on for a restricted key; ElevenLabs only says so when a track is made, so a "
+              "video without music says why.")
+
+
 def check_elevenlabs(key: str, voice_id: str) -> dict:
     """Reads the configured voice (or, without one, the account) with the key; says nothing about the key itself."""
     url = f"https://api.elevenlabs.io/v1/voices/{voice_id}" if voice_id else "https://api.elevenlabs.io/v1/user"
@@ -229,14 +233,21 @@ def check_elevenlabs(key: str, voice_id: str) -> dict:
         with urllib.request.urlopen(req, timeout=15) as r:
             body = json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
+        from .. import voices
+        if e.code == 401 and (perm := voices.missing_permission(e)) is not None:
+            if not voice_id and perm == "User (read)":       # a restricted key need not read the account: videos never do
+                return {"ok": True, "message": "The key is accepted. Set the ElevenLabs voice id on Settings → Review videos to check the "
+                                               "voice. " + MUSIC_NOTE}
+            why = voices.lacks("read the voice" if voice_id else "read the account", perm)
+            return {"ok": False, "message": why[0].upper() + why[1:] + "."}
         why = {401: "the key was refused", 404: "there is no voice with the configured id"}.get(e.code, f"HTTP {e.code}")
         return {"ok": False, "message": f"ElevenLabs: {why}."}
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
         return {"ok": False, "message": f"Could not reach ElevenLabs: {_scrub(str(getattr(e, 'reason', e)), key)[:160]}"}
     if voice_id:
         name = str(body.get("name") or "")[:60] if isinstance(body, dict) else ""
-        return {"ok": True, "message": f"The key works and the voice {name or voice_id} is available."}
-    return {"ok": True, "message": "The key works. Set the ElevenLabs voice id on Settings → Review videos."}
+        return {"ok": True, "message": f"The key works and the voice {name or voice_id} is available. {MUSIC_NOTE}"}
+    return {"ok": True, "message": f"The key works. Set the ElevenLabs voice id on Settings → Review videos. {MUSIC_NOTE}"}
 
 
 def classify_sample(cfg: Config, title: str, body: str, labels: list[str]) -> tuple[Classification, str]:

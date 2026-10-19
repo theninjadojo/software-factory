@@ -174,6 +174,16 @@ def ticket_music(db, repo: str, issue: int) -> str:
     return (row[0] or "") if row else ""
 
 
+def last_music_note(db) -> str:
+    """Why the newest video that asked for music has none ('' when it has music, or none asked)."""
+    try:
+        row = db.execute("SELECT music_note FROM review_videos WHERE status IN ('ready','stale') AND (music != '' OR music_note != '') "
+                         "ORDER BY id DESC LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        return ""
+    return (row[0] or "") if row else ""
+
+
 def music_ok(music: str) -> bool:
     return music in ("", "off", *voices.MOODS)
 
