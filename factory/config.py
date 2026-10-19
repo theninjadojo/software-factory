@@ -483,6 +483,7 @@ class VideosCfg:
     elevenlabs_key_file: str | None = None    # saved on the Credentials page; default: next to the GitHub token
     elevenlabs_voice_id: str = ""         # the ElevenLabs voice used unless a ticket names another
     elevenlabs_model: str = "eleven_multilingual_v2"
+    music: str = "off"                    # off, or a background track from ElevenLabs Music in a mood (voices.MOODS)
 
 
 @dataclass(frozen=True)
@@ -1074,7 +1075,7 @@ def _ui_url(v, section: str = "telegram"):
 
 
 def _videos(raw: dict, github_token_file=None) -> VideosCfg:
-    from .voices import ENGINES, MODEL_ID, VOICE_ID
+    from .voices import ENGINES, MODEL_ID, MOODS, VOICE_ID
     key_file = raw.get("elevenlabs_key_file") or (str(Path(github_token_file).parent / "elevenlabs_key") if github_token_file else None)
     v = VideosCfg(**{**raw, "ui_url": _ui_url(raw.get("ui_url"), "videos"), "elevenlabs_key_file": key_file})
     if v.voice not in ENGINES:
@@ -1085,6 +1086,8 @@ def _videos(raw: dict, github_token_file=None) -> VideosCfg:
         raise ValueError("videos.voice = elevenlabs needs videos.elevenlabs_voice_id")
     if not isinstance(v.elevenlabs_model, str) or not MODEL_ID.fullmatch(v.elevenlabs_model):
         raise ValueError("videos.elevenlabs_model must be an ElevenLabs model id such as eleven_multilingual_v2")
+    if v.music != "off" and v.music not in MOODS:
+        raise ValueError(f"videos.music must be off or one of {', '.join(MOODS)}")
     if not isinstance(v.enabled, bool):
         raise ValueError("videos.enabled must be true or false")
     if not isinstance(v.image, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,200}", v.image):
