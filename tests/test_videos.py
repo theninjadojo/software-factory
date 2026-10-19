@@ -181,6 +181,39 @@ class Music(unittest.TestCase):
         with self.assertRaisesRegex(voices.VoiceError, "refused the key"):
             voices.music("k", "calm", 30, post=refused)
 
+    def test_a_key_without_music_access_says_so(self):
+        def restricted(*a):
+            body = io.BytesIO(json.dumps({"detail": {"status": "missing_permissions", "message": "missing music_generation"}}).encode())
+            raise urllib.error.HTTPError("u", 401, "no", {}, body)
+        with self.assertRaisesRegex(voices.VoiceError, "may not make music; turn on Music for this key"):
+            voices.music("k", "calm", 30, post=restricted)
+
+    def test_a_key_without_a_permission_is_told_which_to_turn_on(self):
+        def restricted(permission):
+            def post(*a, **kw):
+                msg = f"The API key you used is missing the permission {permission} to execute this operation."
+                raise urllib.error.HTTPError("u", 401, "no", {}, io.BytesIO(json.dumps({"detail": {"status": "missing_permissions",
+                                                                                                   "message": msg}}).encode()))
+            return post
+        with self.assertRaisesRegex(voices.VoiceError, r"may not speak; turn on Text to Speech for this key"):
+            voices.elevenlabs("k", "voiceABCDEF12", "eleven_multilingual_v2", "Hello.", post=restricted("text_to_speech"))
+        with self.assertRaisesRegex(voices.VoiceError, r"may not make music; turn on Music for this key"):
+            voices.music("k", "calm", 30, post=restricted("music_generation"))
+
+        from factory.ui import integrations
+        def answer(permission):
+            def urlopen(req, timeout):
+                restricted(permission)()
+            return urlopen
+        with mock.patch.object(integrations.urllib.request, "urlopen", answer("user_read")):
+            got = integrations.check_elevenlabs("k", "")
+        self.assertTrue(got["ok"])                                                     # videos never read the account
+        self.assertIn("needs Music turned on", got["message"])
+        with mock.patch.object(integrations.urllib.request, "urlopen", answer("voices_read")):
+            got = integrations.check_elevenlabs("k", "voiceABCDEF12")
+        self.assertEqual(got, {"ok": False, "message": "The ElevenLabs key may not read the voice; turn on Voices (read) for this key in "
+                                                       "ElevenLabs (Developers, API keys)."})
+
     def test_the_setting_is_off_or_a_mood(self):
         self.assertEqual(parse(Config.raw(Config(), music="focused")).videos.music, "focused")
         self.assertEqual(parse(Config.raw(Config())).videos.music, "off")
@@ -302,6 +335,33 @@ class Making(Base):
         self.assertNotIn("music", run.seen["script"])
         self.assertEqual(videos.newest_for_pr(self.db, "o/r", 7)["status"], "ready")
 
+    def test_a_tickets_music_wins_over_the_config_and_a_failure_is_kept_on_the_video(self):
+        (self.t / "secrets" / "elevenlabs_key").write_text("sk_test_key\n")
+        videos.set_enabled(self.db, "o/r", 3, True, "admin", 900.0, music="bright")      # the config's is off
+        self.db.execute("DELETE FROM review_videos")
+        videos.store_notes(self.db, videos.parse_block(BLOCK, [("o/r", 7)]), 1000.0)
+        asked = []
+        with mock.patch.object(videos.voices, "music", lambda key, mood, seconds, **kw: asked.append(mood) or Music.MP3):
+            videos.work_one(self.cfg, FakeGH(), self.db, self.row(), lambda: 2000.0, self.container())
+        self.assertEqual(asked, ["bright"])
+        made = videos.newest_for_pr(self.db, "o/r", 7)
+        self.assertEqual((made["music"], made["music_note"]), ("bright", ""))
+
+        def refused(*a, **kw):
+            raise voices.VoiceError("the ElevenLabs key may not make music")
+        self.db.execute("DELETE FROM review_videos")
+        with mock.patch.object(videos.voices, "music", refused):
+            videos.work_one(self.cfg, FakeGH(), self.db, self.row(), lambda: 3000.0, self.container())
+        made = videos.newest_for_pr(self.db, "o/r", 7)
+        self.assertEqual((made["status"], made["music"], made["music_note"]), ("ready", "", "the ElevenLabs key may not make music"))
+
+        videos.set_enabled(self.db, "o/r", 3, True, "admin", 900.0, music="off")         # off asks for nothing, even with the config on
+        self.cfg = replace(self.cfg, videos=replace(self.cfg.videos, music="calm"))
+        self.db.execute("DELETE FROM review_videos")
+        with mock.patch.object(videos.voices, "music", refused):
+            videos.work_one(self.cfg, FakeGH(), self.db, self.row(), lambda: 4000.0, self.container())
+        self.assertEqual(videos.newest_for_pr(self.db, "o/r", 7)["music_note"], "")
+
     def test_a_voice_that_fails_skips_the_video_with_a_note(self):
         videos.set_enabled(self.db, "o/r", 3, True, "admin", 1000.0, "elevenlabs")      # no key saved
         gh = FakeGH()
@@ -375,6 +435,19 @@ class Queue(Base):
         self.assertEqual(videos.voice_for(self.cfg.videos, ("", "")), ("piper", ""))
         self.assertEqual(videos.voice_for(self.cfg.videos, ("elevenlabs", "")), ("elevenlabs", "voiceABCDEF12"))
 
+    def test_music_is_checked_when_saved(self):
+        with self.assertRaises(ValueError):
+            videos.set_enabled(self.db, "o/r", 3, True, "admin", 1.0, music="loud")
+        with self.assertRaises(ValueError):
+            videos.queue_brief(self.db, "T", "B", [], 1.0, music="loud")
+        videos.set_enabled(self.db, "o/r", 3, True, "admin", 1.0, music="calm")
+        self.assertEqual(videos.ticket_music(self.db, "o/r", 3), "calm")
+        self.assertEqual(videos.music_for(self.cfg.videos, ""), "off")
+        self.assertEqual(videos.music_for(self.cfg.videos, "focused"), "focused")
+        vid = videos.queue_brief(self.db, "T", "B", [], 1.0, music="bright")
+        self.db.execute("UPDATE review_videos SET status='ready' WHERE id=?", (vid,))
+        self.assertEqual(videos.get(self.db, videos.again_brief(self.db, vid, 2.0))["ask_music"], "bright")
+
 
 class Ui(Base):
     def test_the_player_may_load_media_from_this_site(self):
@@ -396,6 +469,28 @@ class Ui(Base):
         self.assertIn('value="abcDEF12345"', html)
         self.assertIn("ElevenLabs receives the narration text", html)
         self.assertNotIn("sk_test_key", html)
+
+    def test_music_is_chosen_with_the_voice_and_its_outcome_shown(self):
+        from factory.ui import reviewvideo
+        self.assertNotIn('name="music"', reviewvideo.voice_fields(self.cfg, "", ""))         # ElevenLabs makes it: needs the key
+        (self.t / "secrets" / "elevenlabs_key").write_text("sk_test_key")
+        html = reviewvideo.voice_fields(self.cfg, "", "", "bright")
+        self.assertIn('<option value="">Default (Off)</option>', html)
+        self.assertIn('<option value="bright" selected>Bright</option>', html)
+        self.assertEqual(reviewvideo._music({"music": "calm", "music_note": ""}), " · Calm music")
+        self.assertEqual(reviewvideo._music({"music": "", "music_note": "no <key>"}), " · No music: no &lt;key&gt;")
+        self.assertEqual(reviewvideo._music({"music": "", "music_note": ""}), "")
+
+    def test_the_key_card_says_when_the_newest_video_got_no_music(self):
+        from factory.ui import forms
+        self.assertEqual(videos.last_music_note(self.db), "")
+        for music, note in (("", "the ElevenLabs key may not make music"), ("calm", "")):
+            vid = videos.queue_brief(self.db, "T", "B", [], 1.0)
+            self.db.execute("UPDATE review_videos SET status='ready', music=?, music_note=? WHERE id=?", (music, note, vid))
+            self.assertEqual(videos.last_music_note(self.db), note)              # the newest decides: fixed once music works
+        html = forms.video_setup_card(self.cfg, {}, {"set": True, "configured": True}, "c", "the key <may> not make music")
+        self.assertIn("The newest video was made without music: the key &lt;may&gt; not make music.", html)
+        self.assertNotIn("No music", forms.video_setup_card(self.cfg, {}, {"set": True, "configured": True}, "c"))
 
 
 @unittest.skipUnless(os.environ.get("FACTORY_VIDEO_IMAGE") and shutil.which("docker"), "set FACTORY_VIDEO_IMAGE to render with the real image")

@@ -89,7 +89,7 @@ class Page(AdminCase):
         cookie, csrf = self.session()
         s, _, html = self.req("GET", "/settings?section=videos", cookie=cookie)
         self.assertEqual(s, 200)
-        for needle in ("Enable review videos", "Default voice", "ElevenLabs voice id", "Videos per day", "Video image", "ElevenLabs key", "Background music"):
+        for needle in ("Enable review videos", "Default voice", "ElevenLabs voice id", "Videos per day", "Video image", "ElevenLabs key", "Default background music"):
             self.assertIn(needle, html)
         form = {"section": "videos", "videos.enabled": "1", "videos.voice": "piper", "videos.elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM",
                 "videos.elevenlabs_model": "eleven_multilingual_v2", "videos.max_per_day": "4", "videos.max_seconds": "90", "videos.max_mb": "50",

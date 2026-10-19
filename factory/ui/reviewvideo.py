@@ -51,7 +51,7 @@ def fold(cfg, db, repo: str, issue: int, csrf: str, back: str, now: float) -> st
             'Make a review video for each pull request</label>'
             '<p class="muted" id="rv-help">A short walkthrough of the screens and the diff, narrated from the automated review, with a '
             'transcript. Applies to open pull requests too. Making a video again counts toward the daily limit.</p>'
-            + voice_fields(cfg, voice, voice_id) + '<button type="submit">Save</button></form>')
+            + voice_fields(cfg, voice, voice_id, videos.ticket_music(db, repo, issue)) + '<button type="submit">Save</button></form>')
     rows = ""
     if on:
         try:
@@ -69,8 +69,11 @@ def fold(cfg, db, repo: str, issue: int, csrf: str, back: str, now: float) -> st
     return views.fold("review-video", "Review video", "On" if on else "Off", form)
 
 
-def voice_fields(cfg, voice: str, voice_id: str) -> str:
-    """The voice choice. ElevenLabs is offered only with a saved key; it receives the narration text."""
+MOODS = (("off", "Off"), ("calm", "Calm"), ("bright", "Bright"), ("focused", "Focused"))
+
+
+def voice_fields(cfg, voice: str, voice_id: str, music: str = "") -> str:
+    """The voice and music choices. ElevenLabs (and its music) is offered only with a saved key; it receives the narration text."""
     vc = cfg.videos
     has_key = bool(voices.read_key(vc.elevenlabs_key_file))
     default = "ElevenLabs" if vc.voice == "elevenlabs" else "Piper"
@@ -82,6 +85,11 @@ def voice_fields(cfg, voice: str, voice_id: str) -> str:
                 f'placeholder="{esc(vc.elevenlabs_voice_id or "voice id")}" aria-describedby="rv-voice-help"></label>'
                 '<p class="muted" id="rv-voice-help">ElevenLabs receives the narration text of each video (file names and the review\'s '
                 'summary); Piper never leaves this machine. Leave the id empty for the configured voice.</p>')
+        default = dict(MOODS).get(vc.music, "Off")
+        sel = "".join(f'<option value="{v}"{" selected" if v == music else ""}>{esc(t)}</option>' for v, t in (("", f"Default ({default})"), *MOODS))
+        out += (f'<label>Background music <select name="music" aria-describedby="rv-music-help">{sel}</select></label>'
+                '<p class="muted" id="rv-music-help">A quiet instrumental track under the voice, made by ElevenLabs Music. The default is '
+                'set on <a href="/settings?section=videos">Settings → Review videos</a>.</p>')
     else:
         out += '<p class="muted">To use an ElevenLabs voice, save an ElevenLabs key on <a href="/settings?section=videos">Settings → Review videos</a>.</p>'
     return out
@@ -95,12 +103,14 @@ def save_post(h, form, csrf: str) -> None:
         return L._done(h, form, csrf, str(e), "bad")
     if not cfg.videos.enabled:
         return L._done(h, form, csrf, "Review videos are off. Turn them on in Settings → Review videos.", "bad")
-    voice, voice_id = form.get("voice", ""), form.get("voice_id", "").strip()
+    voice, voice_id, music = form.get("voice", ""), form.get("voice_id", "").strip(), form.get("music", "")
     if voice == "elevenlabs" and not (voice_id or cfg.videos.elevenlabs_voice_id):
         return L._done(h, form, csrf, "Give an ElevenLabs voice id, or set one on Settings → Review videos.", "bad")
+    if not videos.music_ok(music):
+        return L._done(h, form, csrf, "That is not a music choice the factory knows (off, calm, bright or focused).", "bad")
     db = sqlite3.connect(cfg.db_path, timeout=10)
     try:
-        queued = videos.set_enabled(db, repo, n, form.get("on") == "1", "admin", time.time(), voice, voice_id)
+        queued = videos.set_enabled(db, repo, n, form.get("on") == "1", "admin", time.time(), voice, voice_id, music)
     except ValueError:
         return L._done(h, form, csrf, "That is not a voice the factory knows (Piper, or ElevenLabs with a voice id of 8 to 40 letters and digits).", "bad")
     finally:
@@ -149,6 +159,13 @@ def player_csp(headers: dict) -> str:
     return headers["Content-Security-Policy"].rstrip("; ") + "; media-src 'self'"
 
 
+def _music(row: dict) -> str:
+    """' · <the music>' or ' · No music: <why>' for the line under a video; nothing when none was asked for."""
+    if row.get("music"):
+        return f' · {esc(dict(MOODS).get(row["music"], row["music"]))} music'
+    return f' · No music: {esc(row["music_note"])}' if row.get("music_note") else ""
+
+
 def player_get(h, q: dict, csrf: str) -> None:
     got = _video(h, q, False)
     if got is None:
@@ -161,7 +178,7 @@ def player_get(h, q: dict, csrf: str) -> None:
     head = esc(row["title"]) if row.get("kind") == "brief" else f'{esc(row["pr_repo"])}#{int(row["pr_number"])}'
     body = (f'<h2>{head}</h2>{stale}'
             f'<video controls preload="metadata" width="100%" src="{_link("/ticket/video/file", vid)}">The video could not be played. Download it instead.</video>'
-            f'<p class="muted">{esc(videos.clock(row["seconds"]))} · {int(row["bytes"]) // 1024} KB</p>'
+            f'<p class="muted">{esc(videos.clock(row["seconds"]))} · {int(row["bytes"]) // 1024} KB{_music(row)}</p>'
             f'<p><a href="{_link("/ticket/video/file", vid)}&amp;dl=1">Download video</a> · '
             f'<a href="{_link("/ticket/video/transcript", vid)}">Download transcript</a></p>'
             f'<section aria-label="Transcript"><h2>Transcript</h2>' + (f"<ol>{lines}</ol>" if lines else '<p class="muted">No transcript was saved for this video.</p>')
@@ -203,7 +220,8 @@ def list_get(h, q: dict, csrf: str) -> None:
         word, tone = BADGE.get(v["status"], (v["status"], ""))
         note = esc(videos.reasons(cfg.videos).get(v["reason"], "The video was not made.")) if v["status"] == "skipped" else (
             "This video is no longer available." if v["status"] == "removed" else
-            "Running the demo tests on a worker first." if v["status"] == "queued" and videos.demo_of(v) else "")
+            "Running the demo tests on a worker first." if v["status"] == "queued" and videos.demo_of(v) else
+            f'No music: {esc(v["music_note"])}' if v["status"] in ("ready", "stale") and v.get("music_note") else "")
         ready = v["status"] in ("ready", "stale")
         acts = (f'<a href="{_link("/ticket/video", v["id"])}">Watch</a> · <a href="{_link("/ticket/video/transcript", v["id"])}">Transcript</a>'
                 if ready else "")
