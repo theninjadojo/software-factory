@@ -1,0 +1,29 @@
+pipeline:
+  id: pipeline_theninjadojo_software_factory_build_1844
+  name: pipeline_theninjadojo_software_factory_build_1844
+  stages:
+    - name: Test
+      id: test
+      runtime: cloud
+      clone:
+        enabled: true
+      cache:
+        enabled: true
+      platform:
+        os: linux
+        arch: amd64
+      steps:
+        - name: Run Unit Tests
+          id: run_tests
+          run:
+            shell: bash
+            script: |-
+              mkdir -p .harness/reports
+              pip install pytest --quiet
+              python3 -m pytest tests --ignore=tests/e2e --ignore=tests/integration --junitxml=.harness/reports/junit.xml -v
+            report:
+              type: junit
+              paths:
+                - .harness/reports/junit.xml
+  tags:
+    onboarding: "true"
