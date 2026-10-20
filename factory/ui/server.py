@@ -205,16 +205,17 @@ class App:
         finally:
             db.close()
 
-    def decide_split(self, pid: int, repo: str, issue: int, accept: bool, start_action: str) -> bool:
+    def decide_split(self, pid: int, repo: str, issue: int, accept: bool, start_action: str, drop=()) -> bool:
         """Queue (accept) or reject a split proposal for the orchestrator, which creates the tickets at its next poll. The caller has
-        checked repo, issue and that start_action comes from the start options; the proposal must be this ticket's and still waiting."""
+        checked repo, issue and that start_action comes from the start options; the proposal must be this ticket's and still waiting.
+        drop: the positions the approver left out (split.decide checks them again)."""
         from .. import split
         from . import labels
         cfg = self.cfg()
         db = sqlite3.connect(cfg.db_path, timeout=10)
         try:
             split.ensure_tables(db)
-            return split.decide(db, pid, repo, issue, accept, start_action, [o[2] for o in labels.start_options(cfg) if o[2]])
+            return split.decide(db, pid, repo, issue, accept, start_action, [o[2] for o in labels.start_options(cfg) if o[2]], drop)
         finally:
             db.close()
 
