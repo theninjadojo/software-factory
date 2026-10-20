@@ -415,8 +415,16 @@ fn status(ctx: &Ctx) -> Result<()> {
                     .map(|p| format!("this {} {:.0}%", clean_line(k), p))
             })
             .collect();
-        if !parts.is_empty() {
-            println!("Claude    {}", parts.join(" · "));
+        let why = u
+            .get("reason")
+            .or_else(|| u.get("error"))
+            .and_then(Value::as_str)
+            .map(clean_line);
+        match (parts.is_empty(), why) {
+            (false, None) => println!("Claude    {}", parts.join(" · ")),
+            (false, Some(w)) => println!("Claude    {} (last known; {w})", parts.join(" · ")),
+            (true, Some(w)) => println!("Claude    usage unavailable: {w}"),
+            (true, None) => {}
         }
     }
     if !s.running.is_empty() {

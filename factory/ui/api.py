@@ -114,7 +114,7 @@ def get_status(h, q, token) -> dict:
             db.close()
     t = board.tile_numbers(d, rows, needs, now)
     try:
-        usage = json.loads(d["status"]["claude_usage"]["value"])
+        usage = {k: v for k, v in json.loads(d["status"]["claude_usage"]["value"]).items() if k != "token"}   # not even its fingerprint
     except (KeyError, ValueError, TypeError):
         usage = None
     last = d["status"].get("last_poll_ok", {}).get("value")

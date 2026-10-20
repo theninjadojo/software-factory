@@ -165,6 +165,11 @@ and `CapEff` is zero. Both engines were verified this way.
 
 With a subscription token in `claude.env`, the orchestrator asks `api.anthropic.com/api/oauth/usage` (at most every 5 minutes)
 for the 5-hour session and 7-day week utilization. The Factory page shows both percentages, Telegram's `/usage` shows them with
-reset times, and a `rate_limit` alert goes out once when either window reaches 90%. This endpoint is not a documented API and a
-`setup-token` may lack the scope for it: the meter then shows nothing (or the last numbers, marked `?`). An API key has no plan
-limits, so nothing is shown. Per-run token counts are on each run's page.
+reset times, and a `rate_limit` alert goes out once when either window reaches 90%. This endpoint is not a documented API, and a
+token made with `claude setup-token` usually lacks the permission to read it (Anthropic answers 403 with `permission_error: OAuth
+token does not meet scope requirement user:profile`). Agent runs are not affected; only the meter is. When the usage cannot be read,
+the Factory page's usage card, Telegram's and Slack's `/usage` and `shikumi status` say why (keeping the last numbers if there were
+any). The orchestrator logs the status code and Anthropic's reason once, when the failure starts or changes, and once when it
+works again. After a 401 or 403 it asks again hourly (at once when the token in `claude.env` changes), after a 429 when
+Anthropic's `Retry-After` says (15 minutes without one), and otherwise every 5 minutes. An API key has no plan limits, so nothing
+is fetched or shown. Per-run token counts are on each run's page.
