@@ -323,3 +323,57 @@ class Config(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Page(unittest.TestCase):
+    """The split card's form, sent through the UI server as a browser sends it (POST /tickets/split)."""
+    def setUp(self):
+        from test_ui_admin import AdminCase
+        self.case = type("C", (AdminCase,), {"runTest": lambda self: None})()
+        self.case.setUp()
+        self.addCleanup(self.case.doCleanups)
+        p = self.case.root / "config.toml"
+        p.write_text(p.read_text() + "\n[local]\nenabled = true\n")
+        self.repo = "your-org/standalone-service"
+        self.lt = tracker.LocalTracker(self.case.db)
+        self.cookie, self.csrf = self.case.session()
+
+    def propose(self):
+        n = self.lt.create(self.repo, "Big", "Do everything")
+        p = split.parse(block([item("One", "standalone-service"), item("Two", "standalone-service", [0]),
+                               item("Three", "standalone-service", [1])]), {self.repo})
+        return n, split.store(self.case.db, self.repo, Hub(None, self.case.db_path).get_issue(self.repo, n), p, source="architect")
+
+    def post(self, n, pid, decision, drop=()):
+        fields = [("repo", self.repo), ("n", str(n)), ("id", str(pid)), ("back", f"/ticket?repo={self.repo}&n={n}"),
+                  ("start", ""), ("decision", decision)] + [("drop", str(d)) for d in drop]
+        return self.case.post(self.cookie, self.csrf, "/tickets/split", fields)
+
+    def flash(self, n):
+        return self.case.req("GET", f"/ticket?repo={self.repo.replace('/', '%2F')}&n={n}", cookie=self.cookie)[2]
+
+    def test_approving_with_an_item_dropped_queues_the_split(self):
+        n, pid = self.propose()
+        self.assertIn('name="drop" value="1"', self.flash(n))                      # the card offers to drop each item
+        s, _, _ = self.post(n, pid, "approve", drop=[1])
+        self.assertEqual(s, 303)
+        self.assertIn("Splitting the ticket.", self.flash(n))
+        self.assertEqual(split.get(self.case.db, pid)["status"], "approved")
+        rows = {r["pos"]: r for r in split.items(self.case.db, pid)}
+        self.assertEqual([rows[p]["dropped"] for p in (0, 1, 2)], [0, 1, 0])
+        self.assertEqual(rows[2]["after"], "0")                                     # Three came after Two, which is gone: now after One
+        self.post(n, pid, "approve")                                                # decided already: nothing changes
+        self.assertIn("Nothing changed: that proposal was already decided", self.flash(n))
+
+    def test_dismissing_creates_nothing(self):
+        n, pid = self.propose()
+        self.assertEqual(self.post(n, pid, "dismiss")[0], 303)
+        self.assertIn("Dismissed. Nothing was created.", self.flash(n))
+        self.assertEqual(split.get(self.case.db, pid)["status"], "dismissed")
+        self.assertEqual([r["dropped"] for r in split.items(self.case.db, pid)], [0, 0, 0])
+
+    def test_two_tickets_must_remain(self):
+        n, pid = self.propose()
+        self.post(n, pid, "approve", drop=[0, 2])
+        self.assertIn("At least two tickets must remain.", self.flash(n))
+        self.assertEqual(split.get(self.case.db, pid)["status"], "proposed")
