@@ -1765,3 +1765,15 @@ main > [data-flash] { position:sticky; top:8px; z-index:40; box-shadow:0 8px 24p
 }
 .va-convo { margin:0 0 1.5rem; } .va-head { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; justify-content:space-between; }
 .va-head h2 { margin:0; }
+/* ---- A proposed split (splitcard.py): its parts, merge and drop boxes, and the decision ---- */
+.sp-parts { list-style:none; padding:0; margin:12px 0; display:flex; flex-direction:column; gap:8px; }
+.sp-part { background:var(--head); border:1px solid var(--line); padding:12px 14px; display:flex; flex-direction:column; gap:6px; }
+.sp-head { display:flex; align-items:flex-start; gap:12px; } .sp-head > b, .sp-head > .sp-title { flex:1; min-width:0; padding-top:2px; }
+.sp-n { flex:none; width:28px; height:28px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--line2); font:13px var(--mono); }
+.sp-title { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); } .sp-title input { font-size:15px; font-weight:600; width:100%; min-height:40px; }
+.sp-meta { font-size:13px; padding-left:40px; } .sp-acts { display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding-left:40px; } .sp-acts .check { min-height:44px; margin:0; }
+.sp-acts button.link { min-height:44px; color:var(--link); text-decoration:underline; } .sp-part details { padding-left:40px; } .sp-part ul, .sp-part p { margin:.3rem 0 0; }
+.sp-form { display:flex; flex-direction:column; gap:12px; border-top:1px solid var(--line); padding-top:16px; }
+.sp-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px 12px; } .sp-row p { margin:0; flex:1 1 260px; font-size:13px; }
+.sp-row label { display:flex; flex-direction:column; gap:4px; font-weight:600; flex:1 1 200px; } .sp-row select { min-height:44px; }
+@media (max-width: 640px) { .sp-meta, .sp-acts, .sp-part details { padding-left:0; } .sp-row > button { flex:1 1 100%; } }

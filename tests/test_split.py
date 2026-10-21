@@ -102,6 +102,7 @@ class Prompts(unittest.TestCase):
         self.assertEqual(telegram.parse_callback("split-no:12|o/api|3"), ("split-no:12", "o/api", 3))
         for bad in ("split:x|o/api|3", "split:|o/api|3", "splitx:1|o/api|3", "split:1234567890|o/api|3"):
             self.assertIsNone(telegram.parse_callback(bad))
+        self.assertEqual(telegram.parse_callback("split-one:12|o/api|3"), ("split-one:12", "o/api", 3))
 
 
 class Hub(tracker.Hub):
@@ -226,6 +227,46 @@ class Flow(unittest.TestCase):
         self.assertEqual(len(split.blockers(self.conn, self.gh, REPO, three, is_open, {})), 1)
         self.assertEqual(split.blockers(self.conn, self.gh, REPO, 5, is_open, {}), [])
 
+    def test_merged_parts_become_one_ticket_after_everything_they_came_after(self):
+        pid = self.propose([item("One"), item("Two", "api", [0]), item("Three", "api", [1]), item("Four", "api", [0])])
+        self.assertEqual(split.merge(self.conn, pid, REPO, self.parent, [2, 3]), "")
+        self.assertTrue(split.decide(self.conn, pid, REPO, self.parent, True, titles={2: "  Three and\nfour  "}))
+        rows = split.items(self.conn, pid)
+        kept = split.kept(rows)
+        self.assertEqual([(k["title"], k["after"]) for k in kept], [("One", ""), ("Two", "0"), ("Three and four", "0,1")])
+        self.assertIn("### Three", kept[2]["body"])
+        self.assertIn("### Four", kept[2]["body"])
+        self.assertEqual(sorted(r["title"] for r in rows if r["merged_into"] == 2), ["Four", "Three"])
+        self.run_process()
+        self.assertEqual(split.get(self.conn, pid)["status"], "done")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM local_tickets").fetchone()[0], 4)
+
+    def test_a_merge_that_would_wait_on_itself_or_leaves_one_ticket_is_refused(self):
+        pid = self.propose([item("One"), item("Two", "api", [0]), item("Three", "api", [1]), item("Four", "app", [0])])
+        self.assertIn("Part 2 has to happen between them", split.merge(self.conn, pid, REPO, self.parent, [0, 2]))
+        self.assertIn("same repository", split.merge(self.conn, pid, REPO, self.parent, [2, 3]))
+        self.assertEqual(split.merge(self.conn, pid, REPO, self.parent, [0, 1]), "")
+        self.assertEqual(split.merge(self.conn, pid, REPO, self.parent, [0, 2]), "")            # 0 brings its merge along
+        self.assertEqual(split.merges(split.get(self.conn, pid)), [[0, 1, 2]])
+        self.assertTrue(split.unmerge(self.conn, pid, REPO, self.parent, 0))
+        self.assertEqual(split.merges(split.get(self.conn, pid)), [])
+        two = self.propose([item("One"), item("Two", "api", [0])])
+        self.assertIn("every part", split.merge(self.conn, two, REPO, self.parent, [0, 1]))
+
+    def test_keeping_it_whole_starts_the_ticket_and_is_not_proposed_again(self):
+        pid = self.propose()
+        self.gh.add_labels(REPO, self.parent, [split.PROPOSED_LABEL])
+        self.assertFalse(split.decide(self.conn, pid, REPO, self.parent, False, "factory:evil", ("factory:analyze",), keep=True))
+        self.assertTrue(split.decide(self.conn, pid, REPO, self.parent, False, "factory:analyze", ("factory:analyze",), keep=True))
+        self.run_process()
+        self.assertEqual(split.get(self.conn, pid)["status"], "kept")
+        parent = self.gh.get_issue(REPO, self.parent)
+        self.assertEqual([lb["name"] for lb in parent["labels"]], ["factory:analyze"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM local_tickets").fetchone()[0], 1)
+        self.assertTrue(split.declined(self.conn, REPO, parent))
+        self.lt.edit(REPO, self.parent, "Big", "Something else now")
+        self.assertFalse(split.declined(self.conn, REPO, self.gh.get_issue(REPO, self.parent)))
+
     def test_umbrella_closes_once_when_every_child_is_closed(self):
         pid = self.propose()
         self.approve(pid)
@@ -293,8 +334,8 @@ class Card(unittest.TestCase):
         split.store(conn, REPO, {"number": n, "title": "Big", "body": "Do everything"}, p, source="architect")
         html = splitcard.card(CFG, conn, REPO, n, "tok", "/")
         self.assertIn("Proposed by the architect", html)
-        self.assertIn("(o/app, after 1)", html)
-        self.assertIn("(o/api, after 1, 2)", html)
+        self.assertIn("o/app, after 1<", html)
+        self.assertIn("o/api, after 1, 2<", html)
         self.assertIn("blocked by the ones it comes after", html)
         folded = splitcard.fold(CFG, conn, REPO, n, "tok", "/")
         self.assertIn('data-fold="linked" open', folded)                     # waiting for a person: open on the ticket page
@@ -344,9 +385,9 @@ class Page(unittest.TestCase):
                                item("Three", "standalone-service", [1])]), {self.repo})
         return n, split.store(self.case.db, self.repo, Hub(None, self.case.db_path).get_issue(self.repo, n), p, source="architect")
 
-    def post(self, n, pid, decision, drop=()):
+    def post(self, n, pid, decision, drop=(), extra=()):
         fields = [("repo", self.repo), ("n", str(n)), ("id", str(pid)), ("back", f"/ticket?repo={self.repo}&n={n}"),
-                  ("start", ""), ("decision", decision)] + [("drop", str(d)) for d in drop]
+                  ("start", ""), ("decision", decision)] + [("drop", str(d)) for d in drop] + list(extra)
         return self.case.post(self.cookie, self.csrf, "/tickets/split", fields)
 
     def flash(self, n):
@@ -377,3 +418,32 @@ class Page(unittest.TestCase):
         self.post(n, pid, "approve", drop=[0, 2])
         self.assertIn("At least two tickets must remain.", self.flash(n))
         self.assertEqual(split.get(self.case.db, pid)["status"], "proposed")
+
+    def test_merging_then_approving_with_a_title(self):
+        n, pid = self.propose()
+        self.post(n, pid, "merge", extra=[("pick", "1"), ("pick", "2")])
+        page = self.flash(n)
+        self.assertIn("Merged into one ticket.", page)
+        self.assertIn('name="title-1"', page)
+        self.assertIn("Create 2 tickets", page)
+        self.post(n, pid, "approve", extra=[("title-1", "Two and three, together")])
+        self.assertEqual(split.get(self.case.db, pid)["status"], "approved")
+        self.assertEqual([k["title"] for k in split.kept(split.items(self.case.db, pid))], ["One", "Two and three, together"])
+
+    def test_split_it_again_and_refused_merges(self):
+        n, pid = self.propose()
+        self.post(n, pid, "merge", extra=[("pick", "0")])
+        self.assertIn("Tick two or more parts", self.flash(n))
+        self.post(n, pid, "merge", extra=[("pick", "0"), ("pick", "1")])
+        self.case.post(self.cookie, self.csrf, "/tickets/split", [
+            ("repo", self.repo), ("n", str(n)), ("id", str(pid)), ("back", f"/ticket?repo={self.repo}&n={n}"), ("unmerge", "0")])
+        self.assertIn("Split again into its parts.", self.flash(n))
+        self.assertEqual(split.merges(split.get(self.case.db, pid)), [])
+
+    def test_working_on_it_as_one_ticket(self):
+        n, pid = self.propose()
+        self.post(n, pid, "keep")
+        page = self.flash(n)
+        self.assertIn("Working on it as one ticket.", page)
+        self.assertEqual(split.get(self.case.db, pid)["status"], "keeping")
+        self.assertIn("Kept as one ticket", page)

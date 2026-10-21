@@ -205,17 +205,32 @@ class App:
         finally:
             db.close()
 
-    def decide_split(self, pid: int, repo: str, issue: int, accept: bool, start_action: str, drop=()) -> bool:
-        """Queue (accept) or reject a split proposal for the orchestrator, which creates the tickets at its next poll. The caller has
-        checked repo, issue and that start_action comes from the start options; the proposal must be this ticket's and still waiting.
-        drop: the positions the approver left out (split.decide checks them again)."""
+    def decide_split(self, pid: int, repo: str, issue: int, accept: bool, start_action: str, drop=(), titles=None, keep=False) -> bool:
+        """Queue (accept) or reject a split proposal for the orchestrator, which creates the tickets at its next poll, or keep the
+        ticket whole (keep). The caller has checked repo, issue and that start_action comes from the start options; the proposal must
+        be this ticket's and still waiting. drop: the positions the approver left out; titles: merged tickets' own titles (split.decide
+        checks both again)."""
         from .. import split
         from . import labels
         cfg = self.cfg()
         db = sqlite3.connect(cfg.db_path, timeout=10)
         try:
             split.ensure_tables(db)
-            return split.decide(db, pid, repo, issue, accept, start_action, [o[2] for o in labels.start_options(cfg) if o[2]], drop)
+            return split.decide(db, pid, repo, issue, accept, start_action, [o[2] for o in labels.start_options(cfg) if o[2]], drop,
+                                titles, keep)
+        finally:
+            db.close()
+
+    def merge_split(self, pid: int, repo: str, issue: int, positions: list[int] | None, head: int | None = None) -> str:
+        """Merge parts of a waiting split proposal (positions), or undo one merge (head: its first position). '' when done, else why
+        not (safe to show)."""
+        from .. import split
+        db = sqlite3.connect(self.cfg().db_path, timeout=10)
+        try:
+            split.ensure_tables(db)
+            if head is not None:
+                return "" if split.unmerge(db, pid, repo, issue, head) else "Nothing changed: that proposal was already decided or is out of date."
+            return split.merge(db, pid, repo, issue, positions or [])
         finally:
             db.close()
 
