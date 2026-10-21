@@ -1245,10 +1245,14 @@ def usage_card(d: dict, now: float) -> str:
         pct = max(0, min(100, int(round(w["used"]))))
         bars += (f'<div class="sd-use"><span class="muted">This {esc(label)}</span><span class="mono">{pct}%</span></div>'
                  f'<meter class="sd-meter{" bad" if pct >= usage.LOW_PERCENT else ""}" min="0" max="100" value="{pct}" aria-label="Claude plan used this {esc(label)}">{pct}%</meter>')
-    if not bars:
+    why = esc(u.get("reason") or u.get("error") or "")
+    if not bars and not why:
         return ""
-    stale = '<p class="muted sd-fine">Could not refresh; these are the last known numbers.</p>' if u.get("error") else ""
-    return f'<section class="sd-card" aria-labelledby="use-h"><h2 id="use-h">Claude plan usage</h2>{bars}{stale}</section>'
+    if not bars:                    # it could never be read: say why instead of leaving the card out
+        note = f'<p class="muted sd-fine">Unavailable. {why}</p>'
+    else:
+        note = f'<p class="muted sd-fine">Could not refresh; these are the last known numbers. {why}</p>' if u.get("error") else ""
+    return f'<section class="sd-card" aria-labelledby="use-h"><h2 id="use-h">Claude plan usage</h2>{bars}{note}</section>'
 
 
 def running_card(d: dict, rows: list[dict], now: float) -> str:

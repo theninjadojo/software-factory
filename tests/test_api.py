@@ -155,6 +155,12 @@ class Reads(ApiCase):
         with mock.patch.object(L, "needs_cached", return_value=[]), mock.patch.object(L, "needs_you", side_effect=AssertionError("read GitHub")):
             self.assertTrue(self.api("GET", "/api/v1/status")[2]["needs_known"])
 
+    def test_status_gives_the_usage_reason_but_not_the_token_fingerprint(self):
+        dbm.set_status(self.db, "claude_usage", json.dumps({"fetched": 1.0, "error": "HTTP 403", "reason": "cannot read it", "token": "ab12cd34ef56"}))
+        u = self.api("GET", "/api/v1/status")[2]["usage"]
+        self.assertEqual((u["error"], u["reason"]), ("HTTP 403", "cannot read it"))
+        self.assertNotIn("token", u)
+
     def test_pause_and_resume(self):
         s, _, body = self.api("POST", "/api/v1/pause", {})
         self.assertEqual((s, body["ok"]), (200, True))
