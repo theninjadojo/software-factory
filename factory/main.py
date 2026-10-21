@@ -850,6 +850,8 @@ def dispatch_stage(cfg: Config, gh: GitHub, classifier, repo: str, issue: dict, 
             else:                                       # the architect's only counts when it is on and the plan is large enough
                 output, proposal, plan_size = split.sized(output, allowed, cfg.split.architect_min_areas, cfg.split.architect_min_items)
                 proposal = proposal if cfg.split.architect else None
+            if proposal and split.declined(conn, repo, issue):     # a person chose to keep this very text as one ticket
+                proposal = None
         doc, qs = Q.extract(output)                     # qs None: no block or a malformed one, so the classifier alone decides
         pending = [q for q in qs or [] if not q.safe]
         earlier = [q for st in before if st.stage != role.name for q in st.pending()]    # still unanswered from another stage
@@ -997,7 +999,8 @@ def propose_split(cfg: Config, gh: GitHub, conn, repo: str, num: int, proposal, 
         except Exception:
             log.warning("could not create the label %s in %s", split.PROPOSED_LABEL, repo)
         gh.add_labels(repo, num, [split.PROPOSED_LABEL])
-        buttons = [("Approve split", f"split:{pid}|{repo}|{num}"), ("Dismiss", f"split-no:{pid}|{repo}|{num}")]
+        buttons = [("Approve split", f"split:{pid}|{repo}|{num}"), ("Keep as one", f"split-one:{pid}|{repo}|{num}"),
+                   ("Dismiss", f"split-no:{pid}|{repo}|{num}")]
         whose = " of the architect's plan" if source == "architect" else ""
         alert(f"Proposed split{whose}: {repo} {tracker.display(num)} into "
               f"{len(proposal.items)} tickets.\n{proposal.reason}",
@@ -1012,13 +1015,15 @@ def start_labels(cfg: Config) -> list[str]:
 
 
 def confirm_split(conn, cfg: Config, gh: GitHub, repo: str, num: int, action: str) -> None:
-    """A person's Approve or Dismiss from the chat. The proposal is read back from the database and must be this ticket's; the
-    children are created by split.process."""
-    found = re.fullmatch(r"(split|split-no):(\d{1,9})", action)
-    if found and split.decide(conn, int(found.group(2)), repo, num, found.group(1) == "split"):
+    """A person's Approve, Keep as one or Dismiss from the chat. The proposal is read back from the database and must be this
+    ticket's; split.process creates the children, or starts a ticket kept whole with the auto label."""
+    found = re.fullmatch(r"(split|split-no|split-one):(\d{1,9})", action)
+    keep = found is not None and found.group(1) == "split-one"
+    if found and split.decide(conn, int(found.group(2)), repo, num, found.group(1) == "split",
+                              cfg.auto_label if keep else "", [cfg.auto_label], keep=keep):
         if found.group(1) == "split-no":
             gh.remove_label(repo, num, split.PROPOSED_LABEL)
-        emit("decision", "split " + ("approved" if found.group(1) == "split" else "dismissed"), repo, num)
+        emit("decision", "split " + {"split": "approved", "split-no": "dismissed", "split-one": "not used: kept as one ticket"}[found.group(1)], repo, num)
 
 
 def question_message(cfg: Config, repo: str, num: int, pending: list) -> tuple[str, list]:

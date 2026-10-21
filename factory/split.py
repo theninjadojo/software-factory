@@ -16,7 +16,11 @@ creates one twice. In the admin UI the approver may also drop items (flagged `dr
 dropped one inherits what that one came after). Children carry no label unless the approver chose one start action; the factory database is the record of which
 ticket belongs to which (so it works for local tickets too). A child names the earlier items of its own repository on a
 `Blocked by #N` line (which the project manager honours), and `blockers` keeps a later child's build waiting for the items it
-comes after. The parent stays open as an umbrella and `sweep` closes it once every child is closed. main.py decides when these run."""
+comes after. The parent stays open as an umbrella and `sweep` closes it once every child is closed. main.py decides when these run.
+
+While a proposal waits, a person may merge some of its parts into one ticket (`merge`, undone by `unmerge`; only positions come from
+the browser) and approve the rest as they are, or keep the ticket whole: the split is then not used, the parent is started with the
+chosen action, and no split is proposed again for the same ticket text (`declined`)."""
 import hashlib
 import json
 import logging
@@ -41,6 +45,8 @@ PROPOSAL = "\n\n### Proposed split\n\n{reason}\n\n{items}\n\nNothing is created 
 CHILD_HEAD = "Part of {parent} (item {pos} of {total}).\n\n"
 DONE = "The factory split this ticket, as a person approved. It stays open and closes when every ticket below is closed.\n\n{items}"
 CLOSED = "Every ticket this one was split into is closed, so the factory closed it."
+KEPT = ("A person chose to work on this ticket as one, so the proposed split was not used. The factory does not propose a split again "
+        "unless the ticket is edited.")
 
 
 @dataclass(frozen=True)
@@ -151,7 +157,7 @@ def ensure_tables(db) -> None:
         CREATE TABLE IF NOT EXISTS split_proposals (
             id INTEGER PRIMARY KEY AUTOINCREMENT, repo TEXT NOT NULL, issue INTEGER NOT NULL, run_id INTEGER,
             reason TEXT NOT NULL DEFAULT '', snapshot TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'proposed',   -- proposed, approved, done, dismissed, stale, failed
+            status TEXT NOT NULL DEFAULT 'proposed',   -- proposed, approved, done, dismissed, keeping, kept, stale, failed
             source TEXT NOT NULL DEFAULT '',           -- who proposed it: analyst, architect, review ('' = before this was kept)
             start_action TEXT NOT NULL DEFAULT '',     -- the one label the approver chose for every child ('' = none)
             fails INTEGER NOT NULL DEFAULT 0, detail TEXT NOT NULL DEFAULT '', umbrella_closed REAL,
@@ -166,8 +172,13 @@ def ensure_tables(db) -> None:
     """)
     if "dropped" not in {r[1] for r in db.execute("PRAGMA table_info(split_items)")}:   # 1 = the approver left it out; older databases get it here
         db.execute("ALTER TABLE split_items ADD COLUMN dropped INTEGER NOT NULL DEFAULT 0")
-    if "source" not in {r[1] for r in db.execute("PRAGMA table_info(split_proposals)")}:
+    if "merged_into" not in {r[1] for r in db.execute("PRAGMA table_info(split_items)")}:   # the ticket a merged part became (pos)
+        db.execute("ALTER TABLE split_items ADD COLUMN merged_into INTEGER")
+    cols = {r[1] for r in db.execute("PRAGMA table_info(split_proposals)")}
+    if "source" not in cols:
         db.execute("ALTER TABLE split_proposals ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+    if "merges" not in cols:                                # JSON lists of positions a person merged while it waits
+        db.execute("ALTER TABLE split_proposals ADD COLUMN merges TEXT NOT NULL DEFAULT '[]'")
     db.commit()
 
 
@@ -183,7 +194,7 @@ def store(db, repo: str, issue: dict, p: Proposal, run_id=None, source: str = ""
     return pid
 
 
-PCOLS = ("id", "repo", "issue", "reason", "snapshot", "status", "start_action", "fails", "detail", "umbrella_closed", "source")
+PCOLS = ("id", "repo", "issue", "reason", "snapshot", "status", "start_action", "fails", "detail", "umbrella_closed", "source", "merges")
 
 
 def get(db, pid: int) -> dict | None:
@@ -192,8 +203,8 @@ def get(db, pid: int) -> dict | None:
 
 
 def items(db, pid: int) -> list[dict]:
-    return [dict(zip(("pos", "title", "body", "repo", "after", "status", "child_repo", "child_issue", "dropped"), r)) for r in db.execute(
-        "SELECT pos, title, body, repo, after, status, child_repo, child_issue, dropped FROM split_items WHERE proposal_id=? ORDER BY pos",
+    return [dict(zip(("pos", "title", "body", "repo", "after", "status", "child_repo", "child_issue", "dropped", "merged_into"), r)) for r in db.execute(
+        "SELECT pos, title, body, repo, after, status, child_repo, child_issue, dropped, merged_into FROM split_items WHERE proposal_id=? ORDER BY pos",
         (int(pid),))]
 
 
@@ -236,28 +247,174 @@ def rewire(rows: list[dict], drop) -> dict[int, str]:
     return out
 
 
-def decide(db, pid: int, repo: str, issue: int, accept: bool, start_action: str = "", allowed_starts=(), drop=()) -> bool:
-    """A person's decision. Only a proposal of this very ticket that still waits; the start action must be one the caller allows.
-    drop: positions the approver leaves out (approve only); each must be an item of the proposal, once, and at least MIN_ITEMS must
-    remain. The dropped items are flagged, not deleted, and the kept items' `after` is rewired in the same transaction.
-    False when nothing changed."""
+def merges(p: dict) -> list[list[int]]:
+    """The groups of positions a person merged while the proposal waits, each sorted."""
+    try:
+        d = json.loads(p.get("merges") or "[]")
+    except ValueError:
+        return []
+    return [sorted(g) for g in d if isinstance(g, list) and len(g) > 1
+            and all(isinstance(x, int) and not isinstance(x, bool) for x in g)] if isinstance(d, list) else []
+
+
+def _joined(titles: list[str]) -> str:
+    """One title for merged parts: "A, b and c" (a word in capitals keeps them)."""
+    t = [titles[0]] + [x[:1].lower() + x[1:] if x[1:2].islower() else x for x in titles[1:]]
+    return (t[0] if len(t) == 1 else ", ".join(t[:-1]) + " and " + t[-1])[:MAX_TITLE]
+
+
+def plan(rows: list[dict], drop=(), merged=()) -> list[dict]:
+    """The tickets an approval makes, in the order they are created: {"members": positions, "title", "body", "repo", "after": indexes
+    of earlier tickets}. A dropped item is left out (what came after it comes after what it came after); merged items become one
+    ticket that comes after everything its parts came after. ValueError when merged parts would wait for each other."""
+    by, after = {r["pos"]: r for r in rows}, rewire(rows, drop)
+    head = {p: p for p in after}
+    for g in merged:
+        for p in g:
+            if p in head:
+                head[p] = min(g)
+    members: dict[int, list[int]] = {}
+    for p in sorted(after):
+        members.setdefault(head[p], []).append(p)
+    deps = {h: {head[int(a)] for p in ms for a in after[p].split(",") if a} - {h} for h, ms in members.items()}
+    order: list[int] = []
+    while len(order) < len(members):
+        nxt = next((h for h in sorted(members) if h not in order and deps[h] <= set(order)), None)
+        if nxt is None:
+            raise ValueError("merged parts would wait for each other")
+        order.append(nxt)
+    idx = {h: i for i, h in enumerate(order)}
+    out = []
+    for h in order:
+        ms = members[h]
+        first = by[ms[0]]
+        out.append({"members": ms, "repo": first["repo"], "after": sorted(idx[d] for d in deps[h]),
+                    "title": first["title"] if len(ms) == 1 else _joined([by[p]["title"] for p in ms]),
+                    "body": first["body"] if len(ms) == 1 else "\n\n".join(f"### {by[p]['title']}\n\n{by[p]['body']}" for p in ms)})
+    return out
+
+
+def _waiting(db, pid: int, repo: str, issue: int) -> dict | None:
     p = get(db, pid)
-    if p is None or p["repo"] != repo or p["issue"] != int(issue) or p["status"] != "proposed":
+    return p if p and p["repo"] == repo and p["issue"] == int(issue) and p["status"] == "proposed" else None
+
+
+def _between(rows: list[dict], merged: list, picked: set) -> list[int]:
+    """The tickets (numbered as the card shows them) that have to happen between the picked ones, so they cannot be merged."""
+    tickets = plan(rows, (), merged)
+    sel = {i for i, t in enumerate(tickets) if picked & set(t["members"])}
+    reach = []
+    for t in tickets:                                   # tickets are in order, so every `after` is already reached
+        r = set(t["after"])
+        for a in t["after"]:
+            r |= reach[a]
+        reach.append(r)
+    return [i + 1 for i in range(len(tickets)) if i not in sel and reach[i] & sel and any(i in reach[s] for s in sel)]
+
+
+def merge(db, pid: int, repo: str, issue: int, positions) -> str:
+    """Merge parts of a waiting proposal into one ticket. A part of an earlier merge brings that whole merge along. '' when done,
+    else why not (safe to show)."""
+    p = _waiting(db, pid, repo, issue)
+    if p is None:
+        return "Nothing changed: that proposal was already decided or is out of date."
+    rows = items(db, pid)
+    known = {r["pos"]: r for r in rows}
+    if (len(positions) < 2 or any(not isinstance(x, int) or isinstance(x, bool) for x in positions)
+            or len(set(positions)) != len(positions) or not set(positions) <= set(known)):
+        return "Tick two or more parts to merge them."
+    old, picked = merges(p), set(positions)
+    new = set(picked)
+    for g in old:
+        if new & set(g):
+            new |= set(g)
+    rest = [g for g in old if not new & set(g)] + [sorted(new)]
+    if len({known[x]["repo"] for x in new}) > 1:
+        return "Only parts for the same repository can be merged."
+    try:
+        left = len(plan(rows, (), rest))
+    except ValueError:
+        between = _between(rows, old, picked)
+        return (f"Part {', '.join(map(str, between))} has to happen between them. Tick it too, or merge other parts." if between
+                else "Those parts would wait for each other.")
+    if left < MIN_ITEMS:
+        return "That is every part. Choose Work on it as one ticket instead."
+    db.execute("UPDATE split_proposals SET merges=?, updated=? WHERE id=?", (json.dumps(rest), time.time(), int(pid)))
+    db.commit()
+    return ""
+
+
+def unmerge(db, pid: int, repo: str, issue: int, head: int) -> bool:
+    """Undo the merge whose first position is `head`, while the proposal waits."""
+    p = _waiting(db, pid, repo, issue)
+    old = merges(p) if p else []
+    rest = [g for g in old if g[0] != head]
+    if len(rest) == len(old):
+        return False
+    db.execute("UPDATE split_proposals SET merges=?, updated=? WHERE id=?", (json.dumps(rest), time.time(), int(pid)))
+    db.commit()
+    return True
+
+
+def declined(db, repo: str, issue: dict) -> bool:
+    """A person chose to keep this ticket whole, as its text still is: no split is proposed again."""
+    return any(r[0] == fingerprint(issue) for r in db.execute(
+        "SELECT snapshot FROM split_proposals WHERE repo=? AND issue=? AND status IN ('keeping','kept')", (repo, int(issue["number"]))))
+
+
+def _regroup(db, pid: int, rows: list[dict], tickets: list[dict], drop, titles: dict) -> None:
+    """Write the approved tickets as the proposal's items, in creation order; the dropped and the merged parts follow, flagged (a
+    merged part names the ticket it became). Nothing has been created yet, so the positions can be renumbered."""
+    into = {m: i for i, t in enumerate(tickets) for m in t["members"] if len(t["members"]) > 1}
+    new = []
+    for i, t in enumerate(tickets):
+        title = t["title"]
+        if len(t["members"]) > 1 and (own := _line(titles.get(t["members"][0]), MAX_TITLE)):
+            title = sanitize_markdown(own, MAX_TITLE + 20)
+        new.append((int(pid), i, title, t["body"], t["repo"], ",".join(map(str, t["after"])), 0, None))
+    for r in rows:
+        if r["pos"] in drop or r["pos"] in into:
+            new.append((int(pid), len(new), r["title"], r["body"], r["repo"], "", 1, into.get(r["pos"])))
+    db.execute("DELETE FROM split_items WHERE proposal_id=?", (int(pid),))
+    db.executemany("INSERT INTO split_items (proposal_id, pos, title, body, repo, after, dropped, merged_into) VALUES (?,?,?,?,?,?,?,?)", new)
+
+
+def decide(db, pid: int, repo: str, issue: int, accept: bool, start_action: str = "", allowed_starts=(), drop=(), titles=None,
+           keep: bool = False) -> bool:
+    """A person's decision. Only a proposal of this very ticket that still waits; the start action must be one the caller allows.
+    drop: positions the approver leaves out (approve only); each must be an item of the proposal, once, not merged, and at least
+    MIN_ITEMS tickets must remain. The dropped items are flagged, not deleted, and the kept items' `after` is rewired in the same
+    transaction; with merged parts the items are rewritten as `_regroup` says (titles: a merged ticket's own title, by its first
+    position). keep: the ticket is worked on as one (the start action goes on the ticket itself). False when nothing changed."""
+    p = _waiting(db, pid, repo, issue)
+    if p is None:
         return False
     if start_action and start_action not in allowed_starts:
         return False
+    accept = accept and not keep
     drop = list(drop) if accept else []
     rows = items(db, pid)
+    groups = merges(p) if accept else []
     if (any(not isinstance(d, int) or isinstance(d, bool) for d in drop) or len(set(drop)) != len(drop)
-            or not set(drop) <= {r["pos"] for r in rows} or len(rows) - len(drop) < MIN_ITEMS):
+            or not set(drop) <= {r["pos"] for r in rows} or len(rows) - len(drop) < MIN_ITEMS
+            or set(drop) & {x for g in groups for x in g}):
         return False
     try:
+        tickets = plan(rows, drop, groups) if groups else None
+    except ValueError:
+        return False
+    if tickets is not None and len(tickets) < MIN_ITEMS:
+        return False
+    status = "keeping" if keep else "approved" if accept else "dismissed"
+    try:
         cur = db.execute("UPDATE split_proposals SET status=?, start_action=?, updated=? WHERE id=? AND status='proposed'",
-                         ("approved" if accept else "dismissed", start_action if accept else "", time.time(), int(pid)))
+                         (status, start_action if accept or keep else "", time.time(), int(pid)))
         if cur.rowcount != 1:
             db.rollback()
             return False
-        if drop:
+        if tickets is not None:
+            _regroup(db, pid, rows, tickets, set(drop), titles or {})
+        elif drop:
             db.executemany("UPDATE split_items SET dropped=1 WHERE proposal_id=? AND pos=?", [(int(pid), d) for d in drop])
             db.executemany("UPDATE split_items SET after=? WHERE proposal_id=? AND pos=?",
                            [(after, int(pid), pos) for pos, after in rewire(rows, drop).items()])
@@ -362,8 +519,30 @@ def apply_one(github_ok: bool, gh, conn, p: dict, start_labels, emit, trigger_la
     emit("decision", f"split into {len(made)} tickets, as a person approved", repo, num)
 
 
+def keep_one(gh, conn, p: dict, start_labels, emit) -> None:
+    """The ticket is worked on as one: say so on it, take the proposed-split label off and start it with the chosen action."""
+    repo, num = p["repo"], p["issue"]
+    if gh.get_issue(repo, num).get("state") != "open":
+        return _set(conn, p["id"], "stale", "the ticket was closed")
+    gh.comment(repo, num, KEPT)
+    gh.remove_label(repo, num, PROPOSED_LABEL)
+    if p["start_action"] and p["start_action"] in start_labels:
+        gh.add_labels(repo, num, [p["start_action"]])
+    _set(conn, p["id"], "kept", "worked on as one ticket")
+    emit("decision", "kept as one ticket instead of splitting, as a person chose", repo, num)
+
+
 def process(cfg, gh, conn, emit, start_labels, trigger_labels=()) -> None:
-    """Create the children of every approved proposal (called every poll). A proposal that keeps failing is marked failed."""
+    """Create the children of every approved proposal, and start the tickets a person kept whole (called every poll). A proposal
+    that keeps failing is marked failed."""
+    for (pid,) in conn.execute("SELECT id FROM split_proposals WHERE status='keeping' ORDER BY id").fetchall():
+        p = get(conn, pid)
+        try:
+            keep_one(gh, conn, p, start_labels, emit)
+        except Exception:
+            log.exception("could not keep %s#%s whole", p["repo"], p["issue"])
+            fails = p["fails"] + 1
+            _set(conn, pid, "failed" if fails >= MAX_TRIES else "keeping", "could not start the ticket" if fails >= MAX_TRIES else "", fails)
     for (pid,) in conn.execute("SELECT id FROM split_proposals WHERE status='approved' ORDER BY id").fetchall():
         p = get(conn, pid)
         try:
