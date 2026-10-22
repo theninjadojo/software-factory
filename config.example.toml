@@ -21,6 +21,11 @@ trusted_permissions = ["admin", "maintain", "write"]   # who may apply a trigger
 # poll_seconds = 300                                # how often GitHub is read (default: [general] poll_seconds). Local tickets, approvals
 #                                                   # and schedules are still handled every [general] poll_seconds.
 
+# Tickets with no activity (a change, comment or job event) for this many days are archived: off the Factory floor, the board and the
+# default list. Older and All show them; nothing is deleted. A ticket with a running job is never archived. 1 to 365. Replaces board.done_days.
+# [tickets]
+# archive_days = 14
+
 # The local ticket tracker: tickets kept in the factory's own database (L-1, L-2, ...), and "Import" on the Tickets page, which
 # copies a GitHub issue here and marks the original "factory:moved". Off by default.
 # [local]

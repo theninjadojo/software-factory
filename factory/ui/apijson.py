@@ -31,7 +31,7 @@ def row_json(r: dict) -> dict:
             "title": r.get("title") or "", "state": r.get("state"), "closed": bool(r.get("closed")), "at": r.get("at") or "",
             "at_label": board.LABEL.get(r.get("at") or "", ""), "when": r.get("when"), "why": r.get("why") or "",
             "decision": r.get("decision") or "", "lined_up": bool(r.get("lined_up")), "priority": r.get("priority") or "normal",
-            "priority_source": r.get("prio_src") or "", "prs": [pr_json(p) for p in r.get("prs") or []], "need": need_brief(r.get("need"))}
+            "priority_source": r.get("prio_src") or "", "archived": bool(r.get("archived")), "prs": [pr_json(p) for p in r.get("prs") or []], "need": need_brief(r.get("need"))}
 
 
 def step_json(s: dict) -> dict:

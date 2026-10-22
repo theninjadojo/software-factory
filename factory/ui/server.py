@@ -666,10 +666,13 @@ class Handler(BaseHTTPRequestHandler):
             projects = board.project_options(cfg)
             asked = q.get("project") or ""
             project = board.chosen_project(cfg, asked)                     # only a configured name (or Standalone) is ever used
+            board.by_age(all_rows, "all", cfg.tickets_archive_days, now)       # marks "archived" on every row, so a ticket opened from another project still shows it
             rows = board.in_project(all_rows, cfg, project)
+            age = board.chosen_age(q)
+            rows, age_counts = board.by_age(rows, age, cfg.tickets_archive_days, now)
             if path == "/tickets" and q.get("view") == "board":          # any other value of view is the list
                 shown = L.flash_pop(csrf)
-                return self._send(200, views.page("Board · Tickets", kanban.board_page(rows, cfg, csrf, project, projects, L.has_token(self), now, gh_on),
+                return self._send(200, views.page("Board · Tickets", kanban.board_page(rows, cfg, csrf, project, projects, L.has_token(self), now, gh_on, age, age_counts),
                                                   path, csrf, wide=True, badges=badges, bare=True,
                                                   flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
             flt, at, text, order = board.list_filters(q, rows)
@@ -688,7 +691,7 @@ class Handler(BaseHTTPRequestHandler):
             detail = ""
             if sel is not None:
                 files, docs, events, images = board.enrich(db, sel)
-                back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}" + (f"&project={quote(project, safe='')}" if project else "")
+                back = f"/ticket?repo={quote(sel['repo'], safe='')}&n={int(sel['issue'])}" + (f"&project={quote(project, safe='')}" if project else "") + (f"&age={age}" if age != "recent" else "")
                 needs_html = (board.summary_card(db, sel["repo"], sel["issue"], docs, files) if sel["need"] else "") + board.needs_card(sel["need"], csrf, back)
                 sel["queued"] = (sel["repo"], sel["issue"]) in L._approved(self)       # a move waits for the factory: offer no other
                 sel["picker"] = kanban.stage_picker(sel, cfg, csrf, back, L.has_token(self))
@@ -735,7 +738,7 @@ class Handler(BaseHTTPRequestHandler):
         shown = L.flash_pop(csrf)
         title = f"{display(int(sel['issue']))} · Tickets" if explicit and sel else "Tickets"
         strip = features.tickets_strip(cfg, csrf, q.get("ask") == "local")
-        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip, project, projects, bool(asked and projects and not project), gh_on, more_new), path, csrf, wide=True,
+        return self._send(200, views.page(title, board.tickets_page(rows, sel, explicit, flt, text, at, order, detail, new, now, csrf, strip, project, projects, bool(asked and projects and not project), gh_on, more_new, age, age_counts, cfg.tickets_archive_days), path, csrf, wide=True,
                                           badges=badges, bare=True, flash=shown[0] if shown else None, flash_kind=shown[1] if shown else "ok"))
 
     def _get(self, path: str, q: dict, csrf: str) -> None:
@@ -757,6 +760,7 @@ class Handler(BaseHTTPRequestHandler):
             db = self.app.ro_db()
             try:
                 d["ticket_rows"] = board.ticket_rows(db, needs, L.titles_cached(), None, self.app.cfg().github_issues_enabled) if db is not None else []
+                d["age"], d["archive_days"] = board.chosen_age(q), self.app.cfg().tickets_archive_days
             finally:
                 if db is not None:
                     db.close()

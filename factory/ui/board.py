@@ -212,8 +212,41 @@ def ticket_rows(db, needs_rows=None, titles: dict | None = None, now: float | No
     prios = plan.who_set_all(db)
     for r in out:
         r["priority"], r["prio_src"] = prios.get((r["repo"], r["issue"]), ("normal", ""))
+    try:                                       # a local ticket's last change (a comment too) can be newer than its decision row
+        upd = {(r, n): u or 0 for r, n, u in db.execute("SELECT repo, number, updated FROM local_tickets")}
+    except sqlite3.Error:
+        upd = {}
+    for r in out:
+        r["active"] = max(r["when"] or 0, upd.get((r["repo"], r["issue"]), 0))
     out.sort(key=lambda r: (ORDER[r["state"]], -r["when"]))
     return out
+
+
+# ---------------------------------------------------------------- archive: a view filter on the rows, never a change to a ticket
+AGES = ("recent", "older", "all")
+AGE_WORD = {"recent": "Recent", "older": "Older", "all": "All"}
+
+
+def is_live(r: dict) -> bool:
+    return r["state"] == "working" or "run" in r["stations"].values()
+
+
+def archived(r: dict, days: int, now: float) -> bool:
+    """No activity for `days` days. A ticket with a running job, or with no known activity time, is never archived."""
+    return not is_live(r) and bool(r.get("active")) and r["active"] < now - days * 86400
+
+
+def by_age(rows: list[dict], age: str, days: int, now: float) -> tuple[list[dict], dict]:
+    """(the rows of one age, {age: count}); marks every row's "archived"."""
+    for r in rows:
+        r["archived"] = archived(r, days, now)
+    old = sum(r["archived"] for r in rows)
+    counts_ = {"recent": len(rows) - old, "older": old, "all": len(rows)}
+    return [r for r in rows if age == "all" or r["archived"] == (age == "older")], counts_
+
+
+def chosen_age(q: dict, default: str = "recent") -> str:
+    return q.get("age") if q.get("age") in AGES else default
 
 
 def queued_for_slot(db) -> dict:
@@ -479,8 +512,33 @@ def _qs(**kw) -> str:
     return urlencode({k: v for k, v in kw.items() if v})
 
 
-def ticket_url(r: dict, flt: str = "", q: str = "", at: str = "", project: str = "") -> str:
-    return "/ticket?" + _qs(repo=r["repo"], n=r["issue"], stage=flt, q=q, at=at, project=project)
+def age_q(age: str) -> str:
+    """The query value for an age: Recent is the default, so it is left out."""
+    return "" if age in ("", "recent") else age
+
+
+def age_nav(age: str, counts_: dict, path: str, **keep) -> str:
+    """The Recent | Older | All chips; each link keeps the page's other query values (keep)."""
+    chips = ""
+    for a in AGES:
+        on = age == a
+        n = int(counts_.get(a, 0))
+        chips += (f'<a class="chip{" current" if on else ""}" href="{esc(path + "?" + _qs(**keep, age=age_q(a)))}"{" aria-current=page" if on else ""} '
+                  f'aria-label="{AGE_WORD[a]}, {n} ticket{"" if n == 1 else "s"}">{AGE_WORD[a]} · {n}</a>')
+    return f'<nav class="chip-row" aria-label="Show tickets by age">{chips}</nav>'
+
+
+def archive_note(n: int, days: int, href: str, floor: bool = False) -> str:
+    """One line under a Recent view: how many tickets are archived and the way to them (empty when none are)."""
+    if not n:
+        return ""
+    what = (f"{n} archived ticket{'' if n == 1 else 's'} {'is' if n == 1 else 'are'} not shown." if floor
+            else f"{n} older ticket{'' if n == 1 else 's'} archived after {days} day{'' if days == 1 else 's'}. Nothing on a ticket changes.")
+    return f'<p class="muted sd-scope" role="status">{esc(what)} <a href="{esc(href)}">Show older</a></p>'
+
+
+def ticket_url(r: dict, flt: str = "", q: str = "", at: str = "", project: str = "", age: str = "") -> str:
+    return "/ticket?" + _qs(repo=r["repo"], n=r["issue"], stage=flt, q=q, at=at, project=project, age=age_q(age))
 
 
 STANDALONE = "_standalone"          # not a valid project name (names are letters, digits, spaces, dot, dash), so it never collides
@@ -506,11 +564,22 @@ def in_project(rows: list[dict], cfg, key: str) -> list[dict]:
     return [r for r in rows if r["repo"] in mine]
 
 
-def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf: str = "", project: str = "") -> str:
+def archived_pill(r: dict) -> str:
+    return '<span class="chip-tag mono muted">Archived</span>' if r.get("archived") else ""
+
+
+def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf: str = "", project: str = "", age: str = "recent", days: int = 14) -> str:
     if not rows and not q.strip() and not at:
         head, sub = ("Nothing needs you right now.", "Every local ticket is either working or done.") if flt == "needs" else ("No tickets here.", "")
+        more = "" if flt in ("", "all") else f'<a class="btn secondary" href="/tickets?{esc(_qs(stage="all", project=project, age=age_q(age)))}">Show all tickets</a>'
+        if age == "older":
+            head, sub = "No archived tickets.", ""
+        elif age == "recent":
+            sub = f"Nothing has changed in the last {days} day{'' if days == 1 else 's'}." if flt in ("", "all") else sub
+            if flt in ("", "all"):
+                head = "No recent tickets."
+                more = f'<a class="btn secondary" href="/tickets?{esc(_qs(project=project, age="older"))}">Show older</a>'
         sub = f'<p class="muted">{sub}</p>' if sub else ""
-        more = "" if flt in ("", "all") else f'<a class="btn secondary" href="/tickets?{esc(_qs(stage="all", project=project))}">Show all tickets</a>'
         return f'<div class="sd-empty sd-emptybox"><p><strong>{head}</strong></p>{sub}{more}</div>'
     if not rows:
         return '<p class="muted sd-empty">No tickets match. Pick another filter or clear the search.</p>'
@@ -518,9 +587,9 @@ def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf
     for r in rows[:60]:
         on = sel is not None and (r["repo"], r["issue"]) == sel
         out_line = f'<span class="sd-why muted">Outcome: {esc(r["outcome"])}</span>' if r.get("outcome") else ""
-        items += (f'<a class="sd-pick{" on" if on else ""}" href="{esc(ticket_url(r, flt, q, at, project))}"{" aria-current=page" if on else ""}>'
+        items += (f'<a class="sd-pick{" on" if on else ""}" href="{esc(ticket_url(r, flt, q, at, project, age))}"{" aria-current=page" if on else ""}>'
                   f'<span class="sd-row"><span class="mono muted">{esc(views.ref(r["repo"], r["issue"], short=True))}</span>'
-                  f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}'
+                  f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{archived_pill(r)}{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}'
                   f'<span class="mono muted sd-at" title="{esc("At " + LABEL[r["at"]] if r["at"] else "Not started")}">{esc(ago(r["when"], now) if r["when"] else "")}</span></span>'
                   f'<span class="sd-title">{esc(r["title"])}</span><span class="sd-why muted">{esc(r["why"])}</span>'
                   f"{out_line}{progress(r['stations'])}</a>")
@@ -532,12 +601,12 @@ def list_html(rows: list[dict], sel, flt: str, q: str, at: str, now: float, csrf
     return items + more
 
 
-def filters_html(c: dict, flt: str, q: str, at: str, order: str, repos=(), project: str = "", projects=()) -> str:
+def filters_html(c: dict, flt: str, q: str, at: str, order: str, repos=(), project: str = "", projects=(), age: str = "") -> str:
     chips = ""
     for key, word, tone in FILTERS:
         on = (flt or "all") == key
         dot = f'<span class="sd-dot {tone}" aria-hidden="true"></span>' if tone else ""
-        chips += (f'<a class="sd-chip{" on" if on else ""}" href="/tickets?{esc(_qs(stage=key, q=q, at=at, sort=order if order != "latest" else "", project=project))}"'
+        chips += (f'<a class="sd-chip{" on" if on else ""}" href="/tickets?{esc(_qs(stage=key, q=q, at=at, sort=order if order != "latest" else "", project=project, age=age_q(age)))}"'
                   f'{" aria-current=page" if on else ""}>{dot}{esc(word)} <b class="mono">{int(c.get(key, 0))}</b></a>')
     opt = lambda v, w, cur: f'<option value="{esc(v)}"{" selected" if v == cur else ""}>{esc(w)}</option>'
     station_opts = opt("", "Any", at) + "".join(opt(sid, w, at) for sid, w in STATIONS)
@@ -548,7 +617,7 @@ def filters_html(c: dict, flt: str, q: str, at: str, order: str, repos=(), proje
     count = f' <b class="mono sd-fcount">{used}</b>' if used else ""
     return (f'<div class="sd-filters" role="search"><nav class="sd-chips" aria-label="Filter by state">{chips}</nav><span class="sd-grow"></span>'
             f'<form method="get" action="/tickets" class="sd-form" data-autosubmit>'
-            f'<input type="hidden" name="stage" value="{esc(flt)}">'
+            f'<input type="hidden" name="stage" value="{esc(flt)}">' + (f'<input type="hidden" name="age" value="{esc(age_q(age))}">' if age_q(age) else "") +
             f'<label class="sd-search"><span class="sr">Search tickets</span><input type="search" name="q" value="{esc(q)}" placeholder="Search" title="Search by number or title"></label>'
             f'<details class="sd-menu sd-fmenu"><summary>Filters{count}{MORE_ICON}</summary><div class="sd-menul" role="group" aria-label="Filters">{pick_project}'
             f'<label class="sd-lab">Station <select name="at">{station_opts}</select></label>'
@@ -934,7 +1003,7 @@ def detail_html(r: dict, needs_html: str, files: list[dict], docs, events, fix_r
         body = f'<div id="live" data-src="/fragment/ticket">{body}</div>'
     return (f'<article class="sd-detail" aria-label="Ticket {esc(display(int(n)))}">'
             f'<div class="sd-dhead"><div class="sd-dtitle"><div class="sd-row"><span class="mono muted">{esc(views.ref(repo, n))}</span>'
-            f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}</div>'
+            f'<span class="sd-word {TICKET_TONE[r["state"]]}">{esc(TICKET_WORD[r["state"]])}</span>{archived_pill(r)}{prio_chip(r.get("priority", "normal"), r.get("prio_src", ""))}</div>'
             f'<h2>{esc(r["title"])}</h2></div><div class="sd-links">{move}{shown}{more_menu(more)}</div></div>'
             + FOLD_ALL + '<div class="sd-folds">' + body + local_html + handling + "</div>"
             + (f'<div class="sd-acts">{close_html}</div>' if close_html else "") + "</article>")
@@ -1069,16 +1138,16 @@ def phone_needs(rows: list[dict], csrf: str) -> str:
             f'<p class="muted sd-fine">{esc(what)}</p>{bulk}</section>')
 
 
-def _switch(project: str) -> str:
+def _switch(project: str, age: str = "") -> str:
     from . import kanban                      # kanban builds on this module
-    return kanban.switch("list", project)
+    return kanban.switch("list", project, age=age)
 
 
 DIALOG = re.compile(r"<noscript>.*?</noscript>|<dialog\b.*?</dialog>", re.S)
 
 
 def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: str, q: str, at: str, order: str, detail: str, new_ticket: str, now: float,
-                 csrf: str = "", settings: str = "", project: str = "", projects=(), unknown: bool = False, github: bool = True, more_new: str = "") -> str:
+                 csrf: str = "", settings: str = "", project: str = "", projects=(), unknown: bool = False, github: bool = True, more_new: str = "", age: str = "recent", age_counts: dict | None = None, days: int = 14) -> str:
     """settings: the strip of settings that shape this page (features.tickets_strip). rows are already narrowed to project
     (a configured name or STANDALONE; "" is all); projects are the switcher's choices; unknown: the asked-for project is gone.
     more_new: the header's other ways in (Import, Review tickets, New project), behind a More button; their popups stay outside
@@ -1087,23 +1156,27 @@ def tickets_page(rows: list[dict], sel_row: dict | None, explicit: bool, flt: st
     more = more_menu(DIALOG.sub("", more_new)) + popups if more_new else ""
     shown = pick(rows, flt, at, q, order)
     sel = (sel_row["repo"], sel_row["issue"]) if sel_row else None
-    back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at, project=project))}">← All tickets</a></p>'     # shown on a phone while a ticket is open
+    back = f'<p class="sd-back"><a href="/tickets?{esc(_qs(stage=flt, q=q, at=at, project=project, age=age_q(age)))}">← All tickets</a></p>'     # shown on a phone while a ticket is open
     note = ""
     if project in dict(projects):
         n = len(rows)
         what = "standalone repositories" if project == STANDALONE else project
         note = (f'<p class="muted sd-scope" role="status">Showing {esc(what)} · {n} ticket{"" if n == 1 else "s"} '
-                f'<a href="/tickets?{esc(_qs(stage=flt, q=q, at=at))}">Show all projects</a></p>')
+                f'<a href="/tickets?{esc(_qs(stage=flt, q=q, at=at, age=age_q(age)))}">Show all projects</a></p>')
     elif unknown:
         note = '<p class="muted sd-scope" role="status">That project no longer exists. Showing all projects.</p>'
     if not github:
         note = ('<p class="muted sd-scope" role="status">GitHub issues are off. Showing local tickets and GitHub work that is still running. '
                 '<a href="/settings">Turn on Work from GitHub issues</a></p>') + note
+    keep = dict(stage=flt, q=q, at=at, project=project, sort=order if order != "latest" else "")
+    ages = age_nav(age, age_counts or {}, "/tickets", **keep) if age_counts else ""
+    if age == "recent" and age_counts:
+        note += archive_note(age_counts["older"], days, "/tickets?" + _qs(**keep, age="older"))
     # One row: the title, Board | List, the state chips, search and Filters, the page's settings and the New buttons.
-    return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead sd-topbar"><h1>Tickets</h1>{_switch(project)}'
-            + filters_html(counts(rows), flt, q, at, order, project=project, projects=projects)
-            + f'<div class="sd-barend">{settings}{new_ticket}{more}</div></div>' + phone_needs(rows, csrf) + note
-            + f'<div class="sd-split"><section class="sd-list" aria-label="Ticket list">{list_html(shown, sel, flt, q, at, now, csrf, project)}</section>'
+    return (f'<div class="sd-page{" has-sel" if explicit else ""}">{back}<div class="sd-pagehead sd-topbar"><h1>Tickets</h1>{_switch(project, age)}'
+            + filters_html(counts(rows), flt, q, at, order, project=project, projects=projects, age=age)
+            + f'<div class="sd-barend">{settings}{new_ticket}{more}</div></div>' + ages + phone_needs(rows, csrf) + note
+            + f'<div class="sd-split"><section class="sd-list" aria-label="Ticket list">{list_html(shown, sel, flt, q, at, now, csrf, project, age, days)}</section>'
             + (detail or '<div class="sd-detail sd-none"><p class="muted">Pick a ticket to see its journey.</p></div>') + "</div>"
             + f'<template id="ld-detail"><div class="sd-detail sd-loading">{loader("Loading the ticket from GitHub")}</div></template></div>')
 
@@ -1165,7 +1238,7 @@ def floor_card(d: dict, rows: list[dict], now: float, csrf: str = "") -> str:
     plan, _ = floorplan.usable(*d["floor_layout"], ctx) if d.get("floor_layout") else (None, "")
     plan = plan or floorplan.default_plan(ctx)                       # no layout saved (or none usable): the default one, as the editor shows it
     svg = plant.floor_map(order, fl, workers, bool(d["cfg"].get("workers")), now, _floor_word,
-                          lambda sid: f"/tickets?{_qs(stage='all', at=sid)}", extras, floorplan.compile_plan(plan, ctx) if plan else None)
+                          lambda sid: f"/tickets?{_qs(stage='all', at=sid, age=age_q(d.get('age', 'recent')))}", extras, floorplan.compile_plan(plan, ctx) if plan else None)
     edit = '<a class="btn secondary fm-edit" href="/floor/edit">Edit layout</a>' if csrf else ""
     return snake(fl, [sid for sid, _, _ in order], svg, add_ticket(d["cfg"].get("repos") or [], csrf, roles, d["cfg"].get("attach_help") or "",
                                   tuple(d["cfg"].get("attach_limits") or (0, 0))) + edit)
@@ -1311,7 +1384,7 @@ def needs_tray(needs, csrf: str) -> str:
     if not rows:
         rows = '<p class="muted sd-pad">Nothing needs you. The factory will ask here, and on Telegram, when it needs a decision.</p>'
     return (f'<section class="sd-card sd-flush sd-needs" aria-labelledby="needs-h"><div class="sd-bar-h"><h2 id="needs-h">Needs you</h2>'
-            f'<div class="sd-acts">{bulk}<a class="btn secondary" href="/tickets?stage=needs">Open in Tickets</a></div></div>{rows}</section>')
+            f'<div class="sd-acts">{bulk}<a class="btn secondary" href="/tickets?stage=needs&age=all">Open in Tickets</a></div></div>{rows}</section>')
 
 
 def tile_numbers(d: dict, rows: list[dict], needs, now: float) -> dict:
@@ -1339,19 +1412,22 @@ def dashboard(d: dict, rows: list[dict], needs, csrf: str, now: float, mode_bar:
     last = d["status"].get("last_poll_ok", {}).get("value")
     seen = f"last poll {ago(float(last), now)}" if last else "no poll yet"
     line += f" · Not reporting, {seen}" if floor._stale(d, now) else f" · Healthy, {seen}"
+    age = chosen_age({"age": d.get("age")})
+    shown, age_counts = by_age(rows, age, d.get("archive_days", 14), now)          # the tiles count every ticket; the floor draws the age asked for
+    foot = archive_note(age_counts["older"], 0, "/?" + _qs(age="older"), floor=True) if age == "recent" else age_nav(age, age_counts, "/")
     t = tile_numbers(d, rows, needs, now)
     nneeds, asking, fail_rows = t["needs"], t["asking"], t["failed"]
     needs_sub = ("asking GitHub…" if d.get("needs_loading") else f"{nneeds} from the factory's own record, not confirmed with GitHub" if nneeds and needs is None
                  else f"{asking} with questions, {nneeds - asking} to decide" if nneeds else "nothing waiting")
     loading = bool(d.get("needs_loading"))       # GitHub has not been read yet: the database alone would show a stale count
-    tiles = (_tile("/tickets?stage=needs", "Needs you", "…" if loading else nneeds, "wait", needs_sub, hot=bool(nneeds) and not loading)
-             + _tile("/tickets?stage=working", "Working now", t["running"], "run", " and ".join(t["working_at"]) if d["running"] else "nothing running")
-             + _tile("/tickets?stage=prs", "PRs & CI", f'{t["open_prs"]} <small>open</small>', "run", f"{t['checks_running']} running checks, {t['checks_failing']} failing")
+    tiles = (_tile("/tickets?stage=needs&age=all", "Needs you", "…" if loading else nneeds, "wait", needs_sub, hot=bool(nneeds) and not loading)
+             + _tile("/tickets?stage=working&age=all", "Working now", t["running"], "run", " and ".join(t["working_at"]) if d["running"] else "nothing running")
+             + _tile("/tickets?stage=prs&age=all", "PRs & CI", f'{t["open_prs"]} <small>open</small>', "run", f"{t['checks_running']} running checks, {t['checks_failing']} failing")
              + _tile("/runs?status=passed", "Done today", t["passed_today"], "done", f"{t['runs_today']} runs in the last 24 hours")
-             + _tile("/tickets?stage=failed", "Failed", len(fail_rows), "fail", f'#{fail_rows[0]["issue"]} {fail_rows[0]["why"]}'[:48] if fail_rows else "none"))
+             + _tile("/tickets?stage=failed&age=all", "Failed", len(fail_rows), "fail", f'#{fail_rows[0]["issue"]} {fail_rows[0]["why"]}'[:48] if fail_rows else "none"))
     head = (f'<div class="sd-dash-head"><div><p class="muted sd-fine">{esc(line)}</p><h1>Factory</h1></div>'
             f'<div class="sd-acts"><a class="btn" href="/projects/new">New project</a>{floor.pause_form(paused, csrf)}<a class="btn secondary" href="/?mode=confirm">Mode: {"live" if cfg["live"] else "dry run"}</a></div></div>')
-    return (f'<div class="sd-dash">{head}{mode_bar}{d.get("settings_strip", "")}<div class="sd-tiles five">{tiles}</div>{floor_card(d, rows, now, csrf)}'
+    return (f'<div class="sd-dash">{head}{mode_bar}{d.get("settings_strip", "")}<div class="sd-tiles five">{tiles}</div>{floor_card(d, shown, now, csrf)}{foot}'
             f'<div class="sd-cols">{slot("/fragment/needs-tray", "Asking GitHub what needs you", "sd-card sd-flush sd-needs", '<h2 class="sd-bar-h">Needs you</h2>') if d.get("needs_loading") else needs_tray(needs, csrf)}<div class="sd-side">{running_card(d, rows, now)}{usage_card(d, now)}</div></div></div>')
 
 

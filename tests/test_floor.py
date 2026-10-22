@@ -37,7 +37,7 @@ class Render(unittest.TestCase):
         html = floor.render(d, "tok", None, [NEED, ASK], None)
         for needle in ("<h1>Factory</h1>", "Live · running · polling every 60 s · Healthy, last poll 5s ago", "Needs you", "Working now", "PRs &amp; CI",
                        "Done today", "Failed", "The floor", "Running now", "Build it", "CI · PR #3 · checks running", "Claude plan usage", 'value="41"',
-                       'href="/tickets?stage=needs"', 'href="/tickets?stage=prs"', 'action="/action/pause"', "Mode: live"):
+                       'href="/tickets?stage=needs&amp;age=all"', 'href="/tickets?stage=prs&amp;age=all"', 'action="/action/pause"', "Mode: live"):
             self.assertIn(needle, html)
         self.assertEqual(sum(f"sd-mach p{i} " in html for i in range(10)), 9)       # review is off in this config: no Review station
         self.assertNotIn("Review: ", html)
@@ -370,7 +370,7 @@ class Pages(UiCase):
         cookie, _ = self.session()
         with mock.patch("factory.ui.server.L.needs_cached", return_value=None), mock.patch("factory.ui.server.L.has_token", return_value=True):
             html = self.req("GET", "/", cookie=cookie)[2]
-        tile = re.search(r'<a class="sd-tile link[^"]*" href="/tickets\?stage=needs">.*?</a>', html, re.S).group(0)
+        tile = re.search(r'<a class="sd-tile link[^"]*" href="/tickets\?stage=needs&amp;age=all">.*?</a>', html, re.S).group(0)
         self.assertIn("…", tile)
         self.assertNotIn(" hot", tile)
         self.assertNotRegex(tile, r'sd-num wait">1<')

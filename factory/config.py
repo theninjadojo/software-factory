@@ -761,7 +761,7 @@ class Config:
     attach_max_mb: int = 5                      # local ticket attachments: the largest file,
     attach_max_files: int = 5                   # the most files on one ticket,
     attach_max_total_mb: int = 20               # and the most megabytes on one ticket
-    board_done_days: int = 7                    # Done cards stay on the Tickets board this many days after their last activity
+    tickets_archive_days: int = 14              # a ticket with no activity this many days is archived: off the floor, board and default list
     kind_aliases: dict = field(default_factory=lambda: dict(KIND_ALIASES))   # label -> kind (bug/feature/docs/chore/question)
 
 
@@ -1059,11 +1059,15 @@ def _attach_limit(loc: dict, key: str, default: int, hi: int) -> int:
     return v
 
 
-def _done_days(b: dict) -> int:
-    v = b.get("done_days", 7)
-    if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 365:
-        raise ValueError("board.done_days must be a whole number from 1 to 365")
-    return v
+def _archive_days(raw: dict) -> int:
+    """tickets.archive_days, else the older board.done_days, else 14."""
+    for sec, key in (("tickets", "archive_days"), ("board", "done_days")):
+        if key in raw.get(sec, {}):
+            v = raw[sec][key]
+            if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 365:
+                raise ValueError(f"{sec}.{key} must be a whole number from 1 to 365")
+            return v
+    return 14
 
 
 def _ui_url(v, section: str = "telegram"):
@@ -1559,6 +1563,6 @@ def parse(raw: dict) -> Config:
         attach_max_mb=_attach_limit(raw.get("local", {}), "max_attachment_mb", 5, 50),
         attach_max_files=_attach_limit(raw.get("local", {}), "max_attachments", 5, 20),
         attach_max_total_mb=_attach_limit(raw.get("local", {}), "max_attachments_total_mb", 20, 200),
-        board_done_days=_done_days(raw.get("board", {})),
+        tickets_archive_days=_archive_days(raw),
         kind_aliases=_aliases(raw.get("classifier", {}).get("kind_aliases")),
     )

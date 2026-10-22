@@ -31,7 +31,7 @@ class AdminCase(UiCase):
              "github.trigger_label": cfg.trigger_label, "repo0": "your-org/standalone-service",
              "github.poll_seconds": str(cfg.github_poll_seconds), "local.max_attachment_mb": str(cfg.attach_max_mb),
              "local.max_attachments": str(cfg.attach_max_files), "local.max_attachments_total_mb": str(cfg.attach_max_total_mb),
-             "board.done_days": str(cfg.board_done_days), "local.auto_import_seconds": str(cfg.local_auto_import_seconds)}
+             "tickets.archive_days": str(cfg.tickets_archive_days), "local.auto_import_seconds": str(cfg.local_auto_import_seconds)}
         if cfg.github_issues_enabled:
             f["github.issues_enabled"] = "1"                                              # a checked box is sent; an unchecked one is not
         f.update(over)
