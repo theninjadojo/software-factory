@@ -390,17 +390,28 @@ class Board(LocalTickets):
         self.assertIn(kanban.BLOCKED.strip(), kanban._ask("auto", "Auto", "L-1", pm=True)[0])          # the PM may hold a build
         self.assertNotIn(kanban.BLOCKED.strip(), kanban._ask("analyst", "Analyze", "L-1", pm=True)[0])
 
-    def test_done_cards_leave_the_board_after_the_configured_days(self):
-        from factory.ui import kanban
-        now = 1_000_000_000.0
-        rows = [{"when": now - 3600}, {"when": now - 8 * 86400}, {"when": 0}]
-        keep, old = kanban.recent(rows, 7, now)
-        self.assertEqual((keep, old), ([rows[0], rows[2]], 1))                       # no known activity time: it stays
-        self.assertEqual(self.cfg().board_done_days, 7)
+    def test_archive_is_a_view_filter_with_a_running_exemption(self):
+        from factory.ui import board
+        now, days = 1_000_000_000.0, 14
+        old = now - days * 86400 - 1
+        live = {"state": "working", "stations": {"build": "run"}, "active": old}
+        rows = [{"state": "done", "stations": {}, "active": now - 3600}, {"state": "needs", "stations": {}, "active": old},
+                {"state": "done", "stations": {}, "active": now - days * 86400}, {"state": "done", "stations": {}, "active": 0}, live]
+        shown, counts = board.by_age(rows, "recent", days, now)
+        self.assertEqual([rows[0], rows[2], rows[3], live], shown)                  # exactly at the cutoff, unknown time and a running job stay
+        self.assertEqual(counts, {"recent": 4, "older": 1, "all": 5})
+        self.assertEqual(board.by_age(rows, "older", days, now)[0], [rows[1]])
+        self.assertEqual(len(board.by_age(rows, "all", days, now)[0]), 5)
+        self.assertTrue(rows[1]["archived"])
+        self.assertEqual(board.chosen_age({"age": "bogus"}), "recent")
+        self.assertEqual(self.cfg().tickets_archive_days, 14)
+
+    def test_the_board_defaults_to_recent_and_older_shows_the_rest(self):
         n = tracker.LOCAL_BASE + 1
         self.create()
-        self.post(self.cookie, self.csrf, "/tickets/close", {"repo": REPO, "n": str(n)})
-        self.assertIn("Done · last 7 days", self.board()[2])
+        self.assertIn("Recent · 1", self.board()[2])
+        _, _, html = self.req("GET", "/tickets?view=board&age=older", cookie=self.cookie)
+        self.assertIn("No archived tickets.", html)
 
 class PriorityAndRoadmap(LocalTickets):
     def test_a_pinned_priority_sticks_and_the_roadmap_shows_it(self):

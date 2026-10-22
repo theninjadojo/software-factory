@@ -93,6 +93,7 @@ def get_meta(h, q, token) -> dict:
             "roles": [r.name for r in cfg.roles], "start_options": [{"value": v, "text": t} for v, t, _ in L.start_options(cfg)],
             "filters": [{"value": k, "label": lab} for k, lab, _ in board.FILTERS], "stations": [{"value": k, "label": lab} for k, lab in board.STATIONS],
             "priorities": [*plan.PRIORITIES, "pm"], "local_tickets": cfg.local_enabled, "github_issues": cfg.github_issues_enabled,
+            "ages": [{"value": a, "label": board.AGE_WORD[a]} for a in board.AGES], "archive_days": cfg.tickets_archive_days,
             "github_token": L.has_token(h), "review": cfg.review.enabled, "conflicts": cfg.conflicts.enabled}
 
 
@@ -130,6 +131,7 @@ def list_tickets(h, q, token) -> dict:
     _choice(q, "stage", [k for k, _, _ in board.FILTERS])
     _choice(q, "sort", ("latest", "oldest", "priority"))
     _choice(q, "at", list(board.LABEL))
+    _choice(q, "age", board.AGES)
     db = _db(h)
     try:
         needs = L.needs_you(h) if q.get("fresh") == "1" else L.needs_cached()
@@ -140,10 +142,13 @@ def list_tickets(h, q, token) -> dict:
     if q.get("project") and not project:
         raise Error(422, "invalid", "That project is not configured.", {"project": "Not a configured project."})
     rows = board.in_project(rows, cfg, project)
+    age = board.chosen_age(q, "all")                    # the API's default stays every ticket; a caller asks for recent or older
+    rows, age_counts = board.by_age(rows, age, cfg.tickets_archive_days, now)
     flt, at, text, order = board.list_filters(q, rows)
     shown = board.pick(rows, flt, at, text, order)
     limit = min(int(q["limit"]), 300) if q.get("limit", "").isdigit() and int(q["limit"]) > 0 else 300
-    return {"stage": flt, "project": project, "counts": board.counts(rows), "total": len(shown),
+    return {"stage": flt, "project": project, "age": age, "archive_days": cfg.tickets_archive_days, "age_counts": age_counts,
+            "counts": board.counts(rows), "total": len(shown),
             "tickets": [J.row_json(r) for r in shown[:limit]]}
 
 

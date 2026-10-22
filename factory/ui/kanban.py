@@ -4,7 +4,7 @@ A card's column is its derived state (board.ticket_state), never stored, so a mo
 factory already has: Start (/tickets/start, with Auto, a stage, Build, Review or Resolve conflicts), Close (/tickets/close) or
 Reopen (/tickets/local/state). Those handlers re-read the ticket and check everything again; this page only decides what to offer.
 Every choice opens a confirmation with its own button, so a drag only opens the card's menu and a stray click changes nothing.
-Done cards leave the board [board] done_days after their last activity; the list still shows them. A card shows its priority
+Tickets with no activity for [tickets] archive_days leave the board (Recent, the default); Older and All show them. A card shows its priority
 like the list does (pinned by a person, or set by the project manager). Every text is escaped."""
 from . import board, labels as L
 from .views import ago, csrf_field, esc, ref
@@ -226,58 +226,51 @@ def _card(row: dict, cfg, csrf: str, back: str, project: str, has_token: bool, n
     return f'<li class="kb-card" data-card data-col="{row["state"]}" draggable="true">{link}{acts}{menu(row, cfg, csrf, back, has_token)}</li>'
 
 
-def recent(rows: list[dict], days: int, now: float) -> tuple[list[dict], int]:
-    """(the Done cards to show, how many are older): a card leaves the board `days` after its last activity. A ticket with no
-    known activity time stays. Nothing on the ticket changes; the list shows them all."""
-    cut = now - days * 86400
-    keep = [r for r in rows if not r["when"] or r["when"] >= cut]
-    return keep, len(rows) - len(keep)
-
-
-def _days(n: int) -> str:
-    return f'{n} day{"" if n == 1 else "s"}'
-
-
 def _column(col: str, rows: list[dict], cfg, csrf: str, back: str, project: str, has_token: bool, now: float) -> str:
     mine = [r for r in rows if r["state"] == col]
     tone, word = board.TICKET_TONE[col], board.TICKET_WORD[col]
-    old = 0
-    if col == "done":
-        mine, old = recent(sorted(mine, key=lambda r: -(r["when"] or 0)), cfg.board_done_days, now)
-        word = f"Done · last {_days(cfg.board_done_days)}"
     cards = "".join(_card(r, cfg, csrf, back, project, has_token, now) for r in mine[:PER_COLUMN])
     more = f'<p class="muted kb-more">Showing {PER_COLUMN} of {len(mine)}. Open the list for the rest.</p>' if len(mine) > PER_COLUMN else ""
     body = f'<ul class="kb-cards">{cards}</ul>{more}' if mine else '<p class="muted kb-none">Nothing here.</p>'
-    if old:
-        body += (f'<div class="kb-archived"><p>{old} older ticket{"" if old == 1 else "s"} archived</p>'
-                 f'<p class="muted">Done cards leave the board {_days(cfg.board_done_days)} after their last change. Nothing on the ticket changes.</p>'
-                 f'<a href="/tickets?{esc(board._qs(stage="done", project=project))}">See them in the list</a></div>')
     return (f'<section class="kb-col" data-col="{col}" aria-label="{esc(board.TICKET_WORD[col])}, {len(mine)} ticket{"" if len(mine) == 1 else "s"}">'
             f'<h2><span class="sd-dot {tone}" aria-hidden="true"></span> {esc(word)} <b class="mono kb-count {tone}">{len(mine)}</b></h2>{body}</section>')
 
 
-def switch(view: str, project: str, projects=()) -> str:
+def switch(view: str, project: str, projects=(), age: str = "") -> str:
     """The Board | List switch (and the project filter on the board), keeping the project."""
     on = lambda v: ' class="on" aria-current="page"' if view == v else ""
     opt = lambda v, w: f'<option value="{esc(v)}"{" selected" if v == project else ""}>{esc(w)}</option>'
-    pick = (f'<form method="get" action="/tickets" class="sd-form" data-autosubmit><input type="hidden" name="view" value="board">'
+    pick = (f'<form method="get" action="/tickets" class="sd-form" data-autosubmit><input type="hidden" name="view" value="board">' + (f'<input type="hidden" name="age" value="{esc(board.age_q(age))}">' if board.age_q(age) else "") +
             f'<label class="sd-lab sd-project">Project <select name="project" aria-label="Filter tickets by project">{opt("", "All projects")}'
             f'{"".join(opt(v, w) for v, w in projects)}</select></label><button class="secondary sd-apply">Apply</button></form>') if projects and view == "board" else ""
     return (f'<nav class="sd-views" aria-label="Tickets view">'
-            f'<a{on("board")} href="/tickets?{esc(board._qs(view="board", project=project))}">Board</a>'
-            f'<a{on("list")} href="/tickets?{esc(board._qs(project=project))}">List</a></nav>{pick}')
+            f'<a{on("board")} href="/tickets?{esc(board._qs(view="board", project=project, age=board.age_q(age)))}">Board</a>'
+            f'<a{on("list")} href="/tickets?{esc(board._qs(project=project, age=board.age_q(age)))}">List</a></nav>{pick}')
 
 
-def board_page(rows: list[dict], cfg, csrf: str, project: str, projects, has_token: bool, now: float, github: bool) -> str:
-    """The Board view's whole page body. rows are already narrowed to the project."""
-    back = "/tickets?" + board._qs(view="board", project=project)
+def board_page(rows: list[dict], cfg, csrf: str, project: str, projects, has_token: bool, now: float, github: bool,
+               age: str = "recent", age_counts: dict | None = None) -> str:
+    """The Board view's whole page body. rows are already narrowed to the project and to the age (Recent, Older or All)."""
+    back = "/tickets?" + board._qs(view="board", project=project, age=board.age_q(age))
+    days = cfg.tickets_archive_days
+    keep = dict(view="board", project=project)
     note = ""
     if github and not has_token and any(not is_local_row(r) for r in rows):
         note = f'<p class="muted sd-scope" role="status">GitHub tickets cannot be moved until a GitHub token is saved on the Credentials page. Local tickets work.</p>'
-    if not rows:
+    counts = age_counts or {}
+    if not rows and age == "older":
+        grid = '<div class="sd-empty sd-emptybox"><p><strong>No archived tickets.</strong></p></div>'
+    elif not rows and age == "recent" and counts.get("older"):
+        grid = ('<div class="sd-empty sd-emptybox"><p><strong>No recent tickets.</strong></p>'
+                f'<p class="muted">Nothing has changed in the last {days} day{"" if days == 1 else "s"}.</p>'
+                f'<a class="btn secondary" href="/tickets?{esc(board._qs(**keep, age="older"))}">Show older</a></div>')
+    elif not rows:
         grid = ('<div class="sd-empty sd-emptybox"><p><strong>No tickets yet.</strong></p>'
                 '<p class="muted">Add a ticket and it appears here as a card.</p></div>')
     else:
         grid = '<div class="kb-board">' + "".join(_column(c, rows, cfg, csrf, back, project, has_token, now) for c in COLUMNS) + "</div>"
-    return ('<div class="sd-page kb-page"><div class="sd-pagehead sd-topbar"><h1>Tickets</h1>' + switch("board", project, projects) + "</div>" + note
+    ages = board.age_nav(age, counts, "/tickets", **keep) if counts else ""
+    if age == "recent" and rows:
+        note += board.archive_note(counts.get("older", 0), days, "/tickets?" + board._qs(**keep, age="older"))
+    return ('<div class="sd-page kb-page"><div class="sd-pagehead sd-topbar"><h1>Tickets</h1>' + switch("board", project, projects, age) + "</div>" + ages + note
             + '<p class="kb-alert" role="alert" data-kb-alert hidden></p>' + grid + "</div>")
