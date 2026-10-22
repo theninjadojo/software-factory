@@ -666,6 +666,7 @@ class Handler(BaseHTTPRequestHandler):
             projects = board.project_options(cfg)
             asked = q.get("project") or ""
             project = board.chosen_project(cfg, asked)                     # only a configured name (or Standalone) is ever used
+            board.by_age(all_rows, "all", cfg.tickets_archive_days, now)       # marks "archived" on every row, so a ticket opened from another project still shows it
             rows = board.in_project(all_rows, cfg, project)
             age = board.chosen_age(q)
             rows, age_counts = board.by_age(rows, age, cfg.tickets_archive_days, now)

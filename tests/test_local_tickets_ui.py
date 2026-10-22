@@ -440,6 +440,17 @@ class Board(LocalTickets):
         self.assertIn("age=older", floor)
         self.assertNotIn("1 archived ticket is not shown.", self.req("GET", "/?age=older", cookie=self.cookie)[2])
 
+    def test_the_floor_keeps_age_in_links_and_still_counts_archived_tickets(self):
+        self.create()
+        self.backdate(30)
+        floor = self.req("GET", "/", cookie=self.cookie)[2]
+        self.assertIn("stage=needs&amp;age=all", floor)                         # the tiles count every ticket and open All
+        self.assertIn("Show older", floor)
+        for path in ("/?age=older", "/?age=all", "/fragment/overview?age=older"):
+            s, _, html = self.req("GET", path, cookie=self.cookie)
+            self.assertEqual(s, 200, path)
+            self.assertNotIn("archived ticket is not shown", html, path)
+
     def test_a_comment_makes_an_old_ticket_recent_again(self):
         n = tracker.LOCAL_BASE + 1
         self.create()

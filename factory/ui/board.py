@@ -512,7 +512,6 @@ def _qs(**kw) -> str:
     return urlencode({k: v for k, v in kw.items() if v})
 
 
-
 def age_q(age: str) -> str:
     """The query value for an age: Recent is the default, so it is left out."""
     return "" if age in ("", "recent") else age
@@ -536,6 +535,7 @@ def archive_note(n: int, days: int, href: str, floor: bool = False) -> str:
     what = (f"{n} archived ticket{'' if n == 1 else 's'} {'is' if n == 1 else 'are'} not shown." if floor
             else f"{n} older ticket{'' if n == 1 else 's'} archived after {days} day{'' if days == 1 else 's'}. Nothing on a ticket changes.")
     return f'<p class="muted sd-scope" role="status">{esc(what)} <a href="{esc(href)}">Show older</a></p>'
+
 
 def ticket_url(r: dict, flt: str = "", q: str = "", at: str = "", project: str = "", age: str = "") -> str:
     return "/ticket?" + _qs(repo=r["repo"], n=r["issue"], stage=flt, q=q, at=at, project=project, age=age_q(age))
