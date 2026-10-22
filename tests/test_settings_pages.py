@@ -90,6 +90,31 @@ class SettingsPages(AdminCase):
             self.assertEqual(self.post(cookie, csrf, "/settings/save", self.section_form(section, **over))[0], 422, over)
         self.assertEqual(self.overrides(), {})
 
+    def test_archive_days_prefers_the_new_key_reads_the_old_one_and_refuses_bad_values(self):
+        from factory.config import _archive_days
+        self.assertEqual(_archive_days({}), 14)
+        self.assertEqual(_archive_days({"board": {"done_days": 7}}), 7)
+        self.assertEqual(_archive_days({"board": {"done_days": 7}, "tickets": {"archive_days": 30}}), 30)
+        for bad in (0, 366, True, "7"):
+            with self.assertRaises(ValueError, msg=bad):
+                _archive_days({"tickets": {"archive_days": bad}})
+        with self.assertRaises(ValueError):
+            _archive_days({"board": {"done_days": 0}})
+
+    def test_the_archive_setting_shows_the_old_key_and_refuses_a_bad_value(self):
+        cookie, csrf = self.session()
+        p = self.root / "config.toml"
+        p.write_text(p.read_text() + "\n[board]\ndone_days = 7\n")
+        self.assertEqual(self.cfg().tickets_archive_days, 7)
+        self.assertEqual(S.effective(deep_merge(S.base_raw(str(p)), {}), "tickets.archive_days"), 7)
+        for bad in ("0", "366", "x"):
+            s, _, html = self.post(cookie, csrf, "/settings/save", self.section_form("general", **{"tickets.archive_days": bad}))
+            self.assertEqual(s, 422, bad)
+            self.assertIn("between 1 and 365", html)
+        self.assertEqual(self.overrides(), {})
+        self.assertEqual(self.post(cookie, csrf, "/settings/save", self.section_form("general", **{"tickets.archive_days": "30"}))[0], 303)
+        self.assertEqual(self.cfg().tickets_archive_days, 30)
+
     def test_the_changed_marker_and_default_are_shown(self):
         cookie, csrf = self.session()
         self.post(cookie, csrf, "/settings/save", self.section_form("chat", **{"chat.max_per_hour": "5"}))

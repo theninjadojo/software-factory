@@ -215,6 +215,22 @@ class LocalTickets(ApiCase):
         super().setUp()
         self.local_on()
 
+    def test_the_list_filters_by_age_and_defaults_to_every_ticket(self):
+        import time
+        self.api("POST", "/api/v1/tickets", {"repo": REPO, "title": "Old one", "where": "local"})
+        db = dbm.connect(self.db_path)
+        db.execute("UPDATE local_tickets SET updated = ?", (time.time() - 40 * 86400,))
+        db.commit()
+        db.close()
+        s, _, out = self.api("GET", "/api/v1/tickets")
+        self.assertEqual((s, out["age"], out["total"], out["archive_days"]), (200, "all", 1, 14))
+        self.assertEqual((out["age_counts"], out["tickets"][0]["archived"]), ({"recent": 0, "older": 1, "all": 1}, True))
+        self.assertEqual(self.api("GET", "/api/v1/tickets?age=recent")[2]["tickets"], [])
+        self.assertEqual(len(self.api("GET", "/api/v1/tickets?age=older")[2]["tickets"]), 1)
+        self.assertEqual(self.api("GET", "/api/v1/tickets?age=bogus")[0], 422)
+        meta = self.api("GET", "/api/v1/meta")[2]
+        self.assertEqual((meta["archive_days"], [a["value"] for a in meta["ages"]]), (14, ["recent", "older", "all"]))
+
     def test_create_list_show_comment_edit_priority_close_reopen(self):
         s, _, made = self.api("POST", "/api/v1/tickets", {"repo": REPO, "title": "Fix the  <footer>", "body": "It **wraps**.", "where": "local"})
         self.assertEqual((s, made["issue"], made["ref"]), (201, LOCAL, "L-1"))
