@@ -986,7 +986,7 @@ def why_part(row: dict) -> tuple[str, str]:
         return row.get("reason") or "A decision needs a person", '<p class="muted">Decided before scores were recorded. The scores for this decision are not available.</p>'
     if d["reason"] != "low":
         return "Needs a person", f'<p class="muted">{esc(W.SENTENCES[d["reason"]])}</p>'
-    th, head = d["threshold"], "Needs a person: low confidence"
+    th, head = d["threshold"], "Waiting for you: the classifier is not sure enough"
     if d["missing"]:
         which = " and ".join(d["missing"])
         return head, (f'<p class="muted">The labels-only classifier is in use and the {esc(which)} label is missing (fixed confidence {d["confidence"]:.2f}, '
@@ -997,18 +997,20 @@ def why_part(row: dict) -> tuple[str, str]:
             continue
         v = d["answers"][key]
         if v is None:
-            rows += f'<tr><td data-label="Answer">{name}</td><td data-label="Choice">Set by label</td><td data-label="Score" class="mono">-</td><td data-label="Against {th:.2f}" class="muted">Not scored</td></tr>'
+            rows += f'<tr><td data-label="Answer">{name}</td><td data-label="Choice">Set by label</td><td data-label="How sure" class="mono">-</td><td data-label="Against {th:.2f}" class="muted">Not scored</td></tr>'
             continue
         below = v[1] < th
         verdict = f'<span style="color:var(--warn)">Below by {th - v[1]:.2f}</span>' if below else '<span style="color:var(--good)">Above</span>'
         label = f"<b>{name} (weakest)</b>" if key == weak else name
+        choice = {"yes": "no", "no": "yes"}.get(v[0], v[0]) if key == "human" else v[0]      # the row asks the opposite question
         rows += (f'<tr class="{"sd-weak" if key == weak else ""}"><td data-label="Answer">{label}</td>'
-                 f'<td data-label="Choice">{esc(v[0])}</td><td data-label="Score" class="mono">{v[1]:.2f}</td>'
+                 f'<td data-label="Choice">{esc(choice)}</td><td data-label="How sure" class="mono">{v[1]:.2f}</td>'
                  f'<td data-label="Against {th:.2f}">{verdict}</td></tr>')
     src = "labels-only" if d["source"] == "labels" else "Jev"
-    return head, (f'<p class="muted">Confidence {d["confidence"]:.2f}, below the threshold of {th:.2f}.</p><div class="scroll"><table class="stack sd-table">'
+    sure = (f' It was only {d["answers"][weak][1]:.2f} sure of {W.NOUNS[weak]}.' if weak else "")
+    return head, (f'<p class="muted">The factory carries on by itself only when it is at least {th:.2f} sure of every answer.{sure}</p><div class="scroll"><table class="stack sd-table">'
                   f'<caption class="sr">Classifier answers and scores</caption><thead><tr><th scope="col">Answer</th><th scope="col">Choice</th>'
-                  f'<th scope="col">Score</th><th scope="col">Against {th:.2f}</th></tr></thead><tbody>{rows}</tbody></table></div>'
+                  f'<th scope="col">How sure</th><th scope="col">Against {th:.2f}</th></tr></thead><tbody>{rows}</tbody></table></div>'
                   f'<p class="muted sd-fine">Scored by the {src} classifier. The overall score is the lowest of these.</p>')
 
 

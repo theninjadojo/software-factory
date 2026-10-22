@@ -2,7 +2,8 @@
 card and in the chat alert. Everything read back is validated, since the UI renders it (a bad value reads as "not available")."""
 import json
 
-ROWS = (("kind", "Kind"), ("size", "Size"), ("human", "Needs a person"), ("stage", "Next stage"))
+ROWS = (("kind", "Kind"), ("size", "Size"), ("human", "Can run without a person?"), ("stage", "Next stage"))
+NOUNS = {"kind": "the kind", "size": "the size", "human": "whether it needs a person", "stage": "the next stage"}
 SENTENCES = {
     "human": "The classifier flagged this ticket as needing a person.",
     "questions": "Open questions need a person.",
