@@ -257,6 +257,31 @@ class Inline(UiCase):
         self.assertEqual(L.titles_cached()[(REPO, 19)], "Old one")
         L._needs_cache.update(at=0.0, rows=None)
 
+    def test_many_local_tickets_with_questions_do_not_hide_a_call_for_a_person(self):
+        from factory import tracker
+        from factory.ui import labels as L
+        L._needs_cache.update(at=0.0, rows=None)
+        L._logins.clear()
+        asked = tracker.LOCAL_BASE + 500
+        stale = {tracker.LOCAL_BASE + i for i in range(1, L.NEEDS_EXTRA + 10)}       # more than the GitHub cap
+        dbm.record(self.db, REPO, asked, "t", "human", "cls=feature/high/human=False/conf=0.54/stage=implement; low confidence")
+        gh = mock.MagicMock()
+        gh.login.return_value = "bot"
+        gh.get_issue.side_effect = lambda repo, n: {"number": n, "title": f"T{n}", "state": "open", "labels": []}
+        h = mock.MagicMock()
+        h.app.cfg.return_value = mock.MagicMock(repos=[REPO], github_issues_enabled=False, local_enabled=True)
+        h.app.ro_db.return_value = self.app.ro_db()
+        with mock.patch("factory.ui.labels._gh", return_value=gh), \
+             mock.patch("factory.ui.labels.dbm.questions_waiting", return_value=stale), \
+             mock.patch("factory.ui.labels.actions_for", side_effect=lambda cfg, i, d, q: (L.NEEDS_PERSON, []) if i["number"] == asked else ("", [])), \
+             mock.patch("factory.ui.labels.Q.from_comments", side_effect=lambda c, me: c), \
+             mock.patch("factory.ui.labels.Q.latest", return_value=None), \
+             mock.patch.object(gh, "issue_comments", side_effect=lambda repo, n: n):
+            rows = L.needs_you(h)
+        self.assertEqual([r["issue"] for r in rows], [asked])                      # found although 49 newer-asked local tickets come first
+        self.assertEqual(rows[0]["reason"], "low confidence")
+        L._needs_cache.update(at=0.0, rows=None)
+
 
 def many(n):
     return Q.StageQuestions("architect", [Q.Question(f"q{i}", f"Question {i}?", (("a", "A"), ("b", "B")), "a", "why", Q.PERSON) for i in range(1, n + 1)])

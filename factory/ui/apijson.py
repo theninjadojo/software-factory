@@ -3,6 +3,7 @@ never a whole row, so a field added for the pages does not appear in the API by 
 HTML, and ticket text is untrusted (the command-line client strips control characters before printing it)."""
 from .. import db as dbm
 from .. import tracker
+from .. import why as W
 from . import board, kanban, views
 
 ROLES = ("analyst", "designer", "architect")
@@ -67,6 +68,8 @@ def need_json(need: dict | None) -> dict | None:
     if not asks:                     # the factory asks how to go on: the choices, and what the classifier made of the ticket
         out["actions"] = [{"action": a, "text": text} for a, text, _ in need.get("acts") or []]
         out.update(ticket_kind=need.get("kind"), complexity=need.get("complexity"), confidence=need.get("conf"))
+        sc = need.get("scores")      # why a person was asked (why.parse): the threshold and each answer's score; None on older decisions
+        out.update(scores=sc, why=W.line(sc) if sc else "")
     return out
 
 

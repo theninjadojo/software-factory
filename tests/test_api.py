@@ -345,6 +345,17 @@ class GitHubTickets(ApiCase):
                                   "queued", "outcome", "events"} | {"local"})
         self.assertFalse(re.search(r"&lt;|&gt;|&amp;", json.dumps(t)))
 
+    def test_a_decision_says_why_a_person_was_asked(self):
+        from factory import why as W
+        from factory.ui import apijson
+        sc = W.parse('{"reason": "low", "threshold": 0.6, "confidence": 0.54, "source": "jev", '
+                     '"answers": {"kind": ["feature", 1.0], "size": ["deep", 0.54]}}')
+        n = apijson.need_json({"acts": [("factory:implement", "Implement", "")], "scores": sc, "reason": "low confidence"})
+        self.assertEqual((n["scores"]["threshold"], n["scores"]["answers"]["size"]), (0.6, ["deep", 0.54]))
+        self.assertEqual(n["why"], "low confidence 0.54 (threshold 0.60). Weakest: size, deep, 0.54.")
+        old = apijson.need_json({"acts": [], "reason": "needs a person"})          # decided before scores were recorded
+        self.assertEqual((old["scores"], old["why"]), (None, ""))
+
 
 if __name__ == "__main__":
     import unittest

@@ -212,6 +212,20 @@ pub struct Need {
     pub ticket_kind: Option<String>,
     pub complexity: Option<String>,
     pub confidence: Option<f64>,
+    pub scores: Option<Scores>,
+    pub why: String,
+}
+
+/// Why the classifier handed a ticket to a person (factory/why.py): each answer's choice and score (`None`: set by a label).
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct Scores {
+    pub reason: String,
+    pub threshold: f64,
+    pub confidence: f64,
+    pub source: String,
+    pub answers: BTreeMap<String, Option<(String, f64)>>,
+    pub missing: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -401,5 +415,19 @@ mod tests {
         let _: Status = serde_json::from_str("{}").unwrap();
         let _: TicketList =
             serde_json::from_str(r#"{"tickets":[{"need":null,"prs":[{"number":3}]}]}"#).unwrap();
+    }
+
+    #[test]
+    fn a_decision_reads_its_scores() {
+        let n: Need = serde_json::from_str(r#"{"kind":"decision","why":"low confidence 0.54 (threshold 0.60)","scores":{"reason":"low",
+            "threshold":0.6,"confidence":0.54,"source":"jev","answers":{"size":["deep",0.54],"kind":null},"missing":[]}}"#).unwrap();
+        let s = n.scores.unwrap();
+        assert_eq!(
+            (s.threshold, s.answers["size"].clone()),
+            (0.6, Some(("deep".to_string(), 0.54)))
+        );
+        assert_eq!(s.answers["kind"], None);
+        let n: Need = serde_json::from_str(r#"{"kind":"decision","scores":null}"#).unwrap();
+        assert!(n.scores.is_none() && n.why.is_empty());
     }
 }
