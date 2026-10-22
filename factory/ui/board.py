@@ -661,12 +661,20 @@ def design_url(repo: str, issue: int) -> str:
     return "/ticket/design?" + _qs(repo=repo, n=issue)
 
 
+def design_shots(files: list[dict]) -> list[dict]:
+    """The screens of the latest design run that rendered any, as the full canvas shows them: every design round re-renders the same
+    paths, so earlier rounds would only repeat them."""
+    shots = [f for f in files if views.mockup_ok(f)]
+    last = max((f.get("run_id", 0) for f in shots), default=0)
+    return [f for f in shots if f.get("run_id", 0) == last]
+
+
 def design_html(files: list[dict], repo: str, issue: int, docs, prs_link: str, imports: list[dict] | None = None,
                 notes: list[dict] | None = None, csrf: str = "") -> str:
     """The designer's screens on the canvas the full design page and the Screens board share: pan, zoom and the notes as pins. A screen
     opens large in Review the screens; the Note tool drops a note on the canvas and comes back to the ticket."""
     from . import canvas as CV, review as RV
-    shots = [f for f in files if views.mockup_ok(f)]
+    shots = design_shots(files)
     linked = views.import_links(imports)
     if not shots and not linked:
         return ""
@@ -692,8 +700,8 @@ def design_fold(files: list[dict], repo: str, issue: int, docs, prs_link: str, i
                 notes: list[dict] | None = None, csrf: str = "") -> str:
     """The design output folded to one row: how many screens, open notes and linked designs."""
     card = design_html(files, repo, issue, docs, prs_link, imports, notes, csrf)
-    shots = sum(1 for f in files if views.mockup_ok(f))
-    keys = {f"mockup:{f['repo']}:{f['path']}" for f in files if views.mockup_ok(f)}
+    shots = len(design_shots(files))
+    keys = {f"mockup:{f['repo']}:{f['path']}" for f in design_shots(files)}
     opened = sum(1 for x in notes or [] if x.get("image") in keys)
     linked = len(imports or [])
     parts = ([f'{shots} screen{"s" if shots != 1 else ""}'] if shots else []) + ([f'{opened} open note{"s" if opened != 1 else ""}'] if opened else []) \
