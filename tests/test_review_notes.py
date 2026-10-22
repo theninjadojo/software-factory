@@ -298,6 +298,14 @@ class Page(UiCase):
         self.assertIn('name="back" value="ticket"', card)
         self.assertIn("1 open note", card)
 
+    def test_the_ticket_design_card_shows_only_the_latest_design_rounds_screens(self):
+        from factory.ui import board as B
+        files = [{"run_id": r, "repo": REPO, "path": p, "url": "", "pr": ""} for r in (3, 7, 9) for p in (PATH, PATH.replace("home", "list"))]
+        self.assertEqual([(f["run_id"], f["path"]) for f in B.design_shots(files)], [(9, PATH), (9, PATH.replace("home", "list"))])
+        card = B.design_html(files, REPO, 5, set(), "")
+        self.assertEqual(card.count('<figure class="pz-shot'), 2)              # not once per design round
+        self.assertIn(">2 screens<", B.design_fold(files, REPO, 5, set(), ""))
+
     def test_a_note_dropped_on_a_canvas_returns_to_that_canvas(self):
         cookie, csrf = self.session()
         s, h, _ = self.post(cookie, csrf, "/review/add", img=MOCKUP, x="12.5", y="40", w="0", h="0", text="Here", back="design")
