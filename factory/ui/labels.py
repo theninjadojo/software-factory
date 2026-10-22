@@ -533,9 +533,10 @@ def needs_you(h) -> list | None:
             asked = sorted((d.get("decided_at") or 0, n) for (r, n), d in decisions.items() if r == repo and d.get("outcome") == "human")
             want = [n for n in sorted(waiting.get(repo, ()), reverse=True) if n not in seen]
             want += [n for _, n in reversed(asked) if n not in seen and n not in want]
-            if not gh_on:
-                want = [n for n in want if tracker.is_local(n)]
-            more = _par(*[(lambda n=n, r=repo: gh.get_issue(r, n)) for n in want[:NEEDS_EXTRA]]) if want else []
+            # local tickets are read from the factory's own database, so only GitHub reads count against NEEDS_EXTRA (else many
+            # local tickets with questions crowd out the ones the factory handed to a person)
+            want = [n for n in want if tracker.is_local(n)] + ([n for n in want if not tracker.is_local(n)][:NEEDS_EXTRA] if gh_on else [])
+            more = _par(*[(lambda n=n, r=repo: gh.get_issue(r, n)) for n in want]) if want else []
             pages[repo] = pages[repo] + [i for i in more if "pull_request" not in i and i.get("state") == "open"]
         for repo, issues in pages.items():
             for i in issues:
