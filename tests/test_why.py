@@ -28,7 +28,8 @@ class T(unittest.TestCase):
     def test_card_shows_score_threshold_and_weakest(self):
         _, s = self.low()
         html = card(s)
-        for text in ("Confidence 0.62, below the threshold of 0.75.", "Size (weakest)", "Below by 0.13", "Above", "Needs a person: low confidence"):
+        for text in ("at least 0.75 sure of every answer. It was only 0.62 sure of the size.", "Size (weakest)", "Below by 0.13", "Above",
+                     "Waiting for you: the classifier is not sure enough", "Can run without a person?"):
             self.assertIn(text, html)
 
     def test_alert_line(self):
