@@ -734,6 +734,32 @@ fn show(ctx: &Ctx, r: &TicketRef, with_events: bool, cached: bool) -> Result<()>
             st.state("needs").replace("needs", "Needs you:"),
             clean_line(&n.reason)
         );
+        if !n.why.is_empty() {
+            println!("  {}", clean_line(&n.why));
+        }
+        if let Some(sc) = n
+            .scores
+            .as_ref()
+            .filter(|s| s.reason == "low" && s.missing.is_empty())
+        {
+            for (key, name) in SCORE_ROWS {
+                match sc.answers.get(*key) {
+                    Some(Some((choice, score))) => {
+                        let verdict = if *score < sc.threshold {
+                            format!("below {:.2} by {:.2}", sc.threshold, sc.threshold - score)
+                        } else {
+                            "above".to_string()
+                        };
+                        println!(
+                            "    {name:<15} {:<12} {score:.2}  {verdict}",
+                            clean_line(choice)
+                        );
+                    }
+                    Some(None) => println!("    {name:<15} {:<12} -     set by label", ""),
+                    None => {}
+                }
+            }
+        }
         if let Some(qs) = &n.questions {
             for q in qs.questions.iter().filter(|q| q.pending) {
                 let rec = q
@@ -945,6 +971,14 @@ fn start(ctx: &Ctx, r: &TicketRef, action: Option<&str>) -> Result<()> {
 }
 
 // ------------------------------------------------------------------ needs and answers
+
+/// The classifier's answers, in the order the ticket page shows them (factory/why.py ROWS).
+const SCORE_ROWS: &[(&str, &str)] = &[
+    ("kind", "Kind"),
+    ("size", "Size"),
+    ("human", "Needs a person"),
+    ("stage", "Next stage"),
+];
 
 fn needs(ctx: &Ctx) -> Result<()> {
     let Some(n) = ctx.get::<NeedsList>("needs", &[])? else {

@@ -52,7 +52,7 @@ the instance has `--repo`.
 | `shikumi status` | Live or dry run, paused, healthy, what is running and queued, what needs you, today's runs, Claude plan use |
 | `shikumi pause`, `resume` | Stop taking new work (running work finishes), and take it again |
 | `shikumi tickets [-s needs\|working\|prs\|failed\|new\|done\|all] [-p project] [-q text] [--sort ...] [--at station] [--fresh]` | The Tickets page as a table |
-| `shikumi ticket show <ticket> [--events] [--cached]` | Where it is, what it needs, what it can start, its PRs, its steps with models, time and tokens, and a local ticket's text and comments |
+| `shikumi ticket show <ticket> [--events] [--cached]` | Where it is, what it needs (for a decision, why the classifier did not go on by itself: each answer's score against the threshold), what it can start, its PRs, its steps with models, time and tokens, and a local ticket's text and comments |
 | `shikumi ticket doc <ticket> <analyst\|designer\|architect>` | A stage's document |
 | `shikumi ticket create --title ... [--body ... \| --body-file F\|-] [--repo ...] [--start auto\|<stage>] [--where local\|github]` | Open a ticket; nothing starts unless `--start` says so |
 | `shikumi ticket start <ticket> [action]` | Start work. Without an action, choose from what the ticket offers (`auto`, a stage, `build`, `review`, `conflicts`, or a decision's `stage:<name>` / `skip`) |
@@ -126,7 +126,7 @@ every ticket also comes with its `ref` (`#12` or `L-3`).
 | POST | `/api/v1/pause`, `/api/v1/resume` | Pause or resume the factory (work in progress finishes) |
 | GET | `/api/v1/tickets` | The ticket list. Filters: `stage` (`needs`, `working`, `prs`, `failed`, `new`, `done`, `all`), `project`, `q`, `sort` (`latest`, `oldest`, `priority`), `at` (a station), `limit`, `fresh=1` (ask GitHub now) |
 | POST | `/api/v1/tickets` | Create a ticket: `{repo, title, body?, start?, where?: "local" \| "github"}` → `201` with `issue` and `ref` |
-| GET | `/api/v1/tickets/<o>/<r>/<n>` | One ticket: its journey, what it needs (questions or a decision), PRs, stage documents, offered actions, outcome, and a local ticket's body and comments. `cached=1` uses the last GitHub read |
+| GET | `/api/v1/tickets/<o>/<r>/<n>` | One ticket: its journey, what it needs (questions, or a decision with the classifier's `scores` and a one-line `why`), PRs, stage documents, offered actions, outcome, and a local ticket's body and comments. `cached=1` uses the last GitHub read |
 | GET | `.../<n>/docs/<stage>` | A stage document (`analyst`, `designer`, `architect`) as text |
 | POST | `.../<n>/start` | `{action}`: one the ticket offers (`auto`, a stage name, `build`, `review`, `conflicts`, `stage:<name>`, `skip`) |
 | POST | `.../<n>/send-back` | `{stage}`: run that stage and the later ones again |
